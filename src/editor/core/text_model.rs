@@ -122,13 +122,30 @@ impl TextModel {
     // ==================== 坐标转换 ====================
     
     /// 获取光标的字符偏移量（带缓存）
+    /// 
+    /// ⚠️ 警告：如果缓存未命中，会使用 O(N) 的坐标转换。
+    /// 建议在光标移动后立即调用 `set_cursor_char_offset_cache` 
+    /// 使用 O(1) 的 `EditorView::pos_to_char` 预填充缓存。
     pub fn cursor_char_offset(&mut self) -> usize {
         if self.cached_char_pos.is_none() {
+            // O(N) 慢路径 - 仅在缓存未命中时使用
             let char_offset = self.rope.line_to_char(self.cursor.0)
                 + self.grapheme_to_char_index(self.cursor.0, self.cursor.1);
             self.cached_char_pos = Some(char_offset);
         }
         self.cached_char_pos.unwrap()
+    }
+    
+    /// 设置光标字符偏移缓存（优化用）
+    /// 
+    /// 在光标移动后，使用 O(1) 的 `EditorView::pos_to_char` 
+    /// 预计算字符偏移并填充缓存，避免后续 `cursor_char_offset` 
+    /// 触发 O(N) 的重算。
+    /// 
+    /// # 参数
+    /// - `char_offset`: 光标当前位置的字符偏移（由 O(1) 方法计算）
+    pub fn set_cursor_char_offset_cache(&mut self, char_offset: usize) {
+        self.cached_char_pos = Some(char_offset);
     }
     
     /// 位置 → 字符偏移
@@ -177,14 +194,22 @@ impl TextModel {
         self.invalidate_char_pos_cache();
     }
     
-    /// 删除选区内容
-    /// 返回：是否删除了内容
-    pub fn delete_selection(&mut self) -> bool {
+    /// 删除选区内容（使用预计算的字符偏移，O(1)）
+    /// 
+    /// # 参数
+    /// - `start_char`: 起始字符偏移（需由调用者用 O(1) 方法计算）
+    /// - `end_char`: 结束字符偏移（需由调用者用 O(1) 方法计算）
+    /// 
+    /// # 返回
+    /// 是否删除了内容
+    /// 
+    /// # 性能
+    /// 调用者应该使用 `EditorView::pos_to_char` (O(1)) 而不是
+    /// `TextModel::pos_to_char` (O(N)) 来计算字符偏移。
+    pub fn delete_selection_with_offsets(&mut self, start_char: usize, end_char: usize) -> bool {
         if let Some(selection) = &self.selection {
             if !selection.is_empty() {
-                let (start, end) = selection.range();
-                let start_char = self.pos_to_char(start);
-                let end_char = self.pos_to_char(end);
+                let (start, _end) = selection.range();
                 
                 self.rope.remove(start_char..end_char);
                 self.cursor = start;
@@ -192,6 +217,25 @@ impl TextModel {
                 self.invalidate_char_pos_cache();
                 
                 return true;
+            }
+        }
+        false
+    }
+    
+    /// 删除选区内容（O(N) 慢版本，仅用于向后兼容）
+    /// 
+    /// ⚠️ 警告：此方法使用 O(N) 的坐标转换，性能差！
+    /// 新代码应使用 `delete_selection_with_offsets` 配合
+    /// `EditorView::pos_to_char` (O(1))。
+    #[deprecated(note = "Use delete_selection_with_offsets with O(1) pos_to_char instead")]
+    pub fn delete_selection(&mut self) -> bool {
+        if let Some(selection) = &self.selection {
+            if !selection.is_empty() {
+                let (start, end) = selection.range();
+                let start_char = self.pos_to_char(start);  // O(N) - 慢！
+                let end_char = self.pos_to_char(end);      // O(N) - 慢！
+                
+                return self.delete_selection_with_offsets(start_char, end_char);
             }
         }
         false
