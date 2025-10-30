@@ -93,12 +93,12 @@ impl Editor {
             }
             
             MouseEventKind::ScrollDown => {
-                let step = self.scroll_step();
+                let step = self.config.scroll_step(self.view.viewport_height());
                 self.view.scroll_vertical(step as isize, self.model.len_lines());
             }
             
             MouseEventKind::ScrollUp => {
-                let step = self.scroll_step();
+                let step = self.config.scroll_step(self.view.viewport_height());
                 self.view.scroll_vertical(-(step as isize), self.model.len_lines());
             }
             
