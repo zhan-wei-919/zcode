@@ -212,9 +212,9 @@ impl Editor {
         
         if cursor.1 > 0 {
             // 行内删除 - 不影响行号结构
-            // 获取要删除的字符在文档中的绝对偏移
-            let start_char = self.model.pos_to_char((cursor.0, cursor.1 - 1));
-            let end_char = self.model.pos_to_char((cursor.0, cursor.1));
+            // 获取要删除的字符在文档中的绝对偏移（O(1) 通过布局缓存）
+            let start_char = self.view.pos_to_char(&self.model, (cursor.0, cursor.1 - 1));
+            let end_char = self.view.pos_to_char(&self.model, (cursor.0, cursor.1));
             
             self.model.remove_range(start_char, end_char);
             self.model.set_cursor(cursor.0, cursor.1 - 1);
@@ -223,8 +223,8 @@ impl Editor {
             // 跨行删除（合并到上一行）
             let prev_line_len = self.model.line_grapheme_len(cursor.0 - 1);
             
-            // 获取当前行开头在文档中的绝对字符偏移
-            let line_start_char = self.model.pos_to_char((cursor.0, 0));
+            // 获取当前行开头在文档中的绝对字符偏移（O(1) 通过布局缓存）
+            let line_start_char = self.view.pos_to_char(&self.model, (cursor.0, 0));
             // 换行符在行开头之前
             self.model.remove_range(line_start_char - 1, line_start_char);
             
