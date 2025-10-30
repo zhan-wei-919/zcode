@@ -6,6 +6,7 @@
 use super::text_model::TextModel;
 use super::view::EditorView;
 use crate::editor::input::{MouseController, Keybindings};
+use crate::editor::config::EditorConfig;
 
 /// 编辑器：组合数据模型和视图
 /// 
@@ -14,6 +15,7 @@ use crate::editor::input::{MouseController, Keybindings};
 /// - EditorView: 视口、布局、滚动（纯视图，无业务逻辑）
 /// - MouseController: 鼠标交互状态
 /// - Keybindings: 按键绑定系统
+/// - EditorConfig: 配置参数（唯一事实来源）
 /// 
 /// 未来扩展：
 /// - CommandHistory: 撤销/重做
@@ -30,16 +32,26 @@ pub struct Editor {
     
     /// 键位绑定
     pub keybindings: Keybindings,
+    
+    /// 编辑器配置（唯一事实来源）
+    pub config: EditorConfig,
 }
 
 impl Editor {
-    /// 创建新编辑器
+    /// 创建新编辑器（使用默认配置）
     pub fn new() -> Self {
+        let config = EditorConfig::default();
+        Self::with_config(config)
+    }
+    
+    /// 使用自定义配置创建编辑器
+    pub fn with_config(config: EditorConfig) -> Self {
         Self {
             model: TextModel::new(),
-            view: EditorView::new(4), // Tab 大小 = 4
-            mouse_controller: MouseController::new(),
-            keybindings: Keybindings::default(), // 使用默认键位
+            view: EditorView::new(config.tab_size),
+            mouse_controller: MouseController::with_config(config.clone()),
+            keybindings: Keybindings::default(),
+            config,
         }
     }
     
