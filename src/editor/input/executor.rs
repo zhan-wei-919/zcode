@@ -137,9 +137,21 @@ impl Editor {
         if let Some(selection) = self.model.selection() {
             if !selection.is_empty() {
                 let (start, end) = selection.range();
+                let lines_before = self.model.len_lines();
+                
                 let deleted = self.model.delete_selection();
                 if deleted {
-                    // 删除后，确保不超出新的行数范围
+                    let lines_after = self.model.len_lines();
+                    
+                    // 计算行数变化
+                    if lines_after < lines_before {
+                        // 删除了行
+                        let deleted_lines = lines_before - lines_after;
+                        self.view.layout_engine_mut().on_lines_deleted(start.0, deleted_lines);
+                    }
+                    // 如果 lines_after == lines_before，说明是单行内删除，不需要通知结构变化
+                    
+                    // 失效受影响的行
                     let total_lines = self.model.len_lines();
                     self.view.invalidate_layout_range(start.0, (end.0 + 1).min(total_lines));
                 }
@@ -190,8 +202,11 @@ impl Editor {
         self.model.insert_char('\n');
         self.model.set_cursor(cursor.0 + 1, 0);
         
-        // Enter 只影响当前行 + 新插入的行（2行）
-        // 使用 min 确保不超出边界
+        // 关键：通知布局引擎行号结构变化
+        // 在 cursor.0 处插入了 1 条新行（把原行拆成两行）
+        self.view.layout_engine_mut().on_lines_inserted(cursor.0, 1);
+        
+        // 失效受影响的行（被拆分的行 + 新行）
         let total_lines = self.model.len_lines();
         self.view.invalidate_layout_range(cursor.0, (cursor.0 + 2).min(total_lines));
         self.ensure_cursor_visible();
@@ -201,7 +216,7 @@ impl Editor {
         let cursor = self.model.cursor();
         
         if cursor.1 > 0 {
-            // 行内删除
+            // 行内删除 - 不影响行号结构
             // 获取要删除的字符在文档中的绝对偏移
             let start_char = self.model.pos_to_char((cursor.0, cursor.1 - 1));
             let end_char = self.model.pos_to_char((cursor.0, cursor.1));
@@ -218,9 +233,13 @@ impl Editor {
             // 换行符在行开头之前
             self.model.remove_range(line_start_char - 1, line_start_char);
             
+            // 关键：通知布局引擎行号结构变化
+            // 在 cursor.0 - 1 处删除了 1 条行（把 cursor.0 - 1 和 cursor.0 合并）
+            self.view.layout_engine_mut().on_lines_deleted(cursor.0 - 1, 1);
+            
             self.model.set_cursor(cursor.0 - 1, prev_line_len);
             
-            // 删除换行符后，行数减少了，需要基于新的行数来失效布局
+            // 失效受影响的行（合并后的行）
             let total_lines = self.model.len_lines();
             self.view.invalidate_layout_range(cursor.0 - 1, (cursor.0 + 1).min(total_lines));
         }
