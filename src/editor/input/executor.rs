@@ -131,7 +131,7 @@ impl Editor {
         }
     }
     
-    /// 删除选区内容
+    /// 删除选区内容（使用 O(1) 字符索引）
     /// 返回：是否删除了内容
     pub(crate) fn delete_selection(&mut self) -> bool {
         if let Some(selection) = self.model.selection() {
@@ -139,7 +139,13 @@ impl Editor {
                 let (start, end) = selection.range();
                 let lines_before = self.model.len_lines();
                 
-                let deleted = self.model.delete_selection();
+                // ✅ 使用 O(1) 的 pos_to_char（通过 LayoutEngine 缓存）
+                let start_char = self.view.pos_to_char(&self.model, start);
+                let end_char = self.view.pos_to_char(&self.model, end);
+                
+                // 调用优化后的方法
+                let deleted = self.model.delete_selection_with_offsets(start_char, end_char);
+                
                 if deleted {
                     let lines_after = self.model.len_lines();
                     
@@ -286,6 +292,23 @@ impl Editor {
             self.model.set_cursor(new_row, cursor.1.min(line_len));
             self.ensure_cursor_visible();
         }
+    }
+    
+    // ==================== 性能优化辅助方法 ====================
+    
+    /// 设置光标并预填充字符偏移缓存（O(1) 优化）
+    /// 
+    /// 使用 O(1) 的布局缓存计算字符偏移，避免后续操作触发 O(N) 重算。
+    /// 
+    /// # 使用场景
+    /// 在光标移动操作（左/右/上/下）后调用，预填充 `cursor_char_offset` 缓存。
+    #[allow(dead_code)]
+    fn set_cursor_optimized(&mut self, row: usize, col: usize) {
+        self.model.set_cursor(row, col);
+        
+        // 预填充缓存：使用 O(1) 的 pos_to_char
+        let char_offset = self.view.pos_to_char(&self.model, (row, col));
+        self.model.set_cursor_char_offset_cache(char_offset);
     }
 }
 
