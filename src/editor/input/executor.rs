@@ -95,12 +95,12 @@ impl Editor {
             
             // ==================== 滚动操作 ====================
             Command::ScrollUp => {
-                let step = self.scroll_step();
+                let step = self.config.scroll_step(self.view.viewport_height());
                 self.view.scroll_vertical(-(step as isize), self.model.len_lines());
                 true
             }
             Command::ScrollDown => {
-                let step = self.scroll_step();
+                let step = self.config.scroll_step(self.view.viewport_height());
                 self.view.scroll_vertical(step as isize, self.model.len_lines());
                 true
             }
@@ -174,11 +174,6 @@ impl Editor {
             let delta = cursor.0 as isize - (viewport_offset + viewport_height - 1) as isize;
             self.view.scroll_vertical(delta, self.model.len_lines());
         }
-    }
-    
-    /// 计算动态滚动步长（视口高度的 1/6）
-    pub(crate) fn scroll_step(&self) -> usize {
-        (self.view.viewport_height() / 6).max(1)
     }
     
     // 以下是原有的输入方法，现在作为私有方法被命令执行器调用
