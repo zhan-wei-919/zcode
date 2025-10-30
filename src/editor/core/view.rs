@@ -177,6 +177,35 @@ impl EditorView {
     pub fn invalidate_all_layout(&mut self) {
         self.layout_engine.invalidate_all();
     }
+    
+    // ==================== 字符索引（O(1)，性能关键） ====================
+    
+    /// 位置 → 字符偏移（O(1)）
+    /// 
+    /// 将 (row, col) 转换为文档中的绝对字符偏移。
+    /// 使用布局缓存实现 O(1) 查询，避免 O(N) 扫描。
+    /// 
+    /// # 参数
+    /// - `model`: TextModel（用于获取 rope 和行数）
+    /// - `pos`: (row, col) 位置
+    /// 
+    /// # 返回
+    /// 文档中的绝对字符偏移
+    /// 
+    /// # 性能
+    /// - O(1) 如果布局已缓存
+    /// - O(行长度) 如果需要计算布局（首次访问该行）
+    pub fn pos_to_char(&mut self, model: &TextModel, pos: (usize, usize)) -> usize {
+        let (row, col) = pos;
+        
+        // 行首的字符偏移
+        let line_char_offset = model.rope().line_to_char(row);
+        
+        // 列的字符偏移（O(1) 通过布局缓存）
+        let col_char_offset = self.layout_engine.grapheme_to_char_index(model.rope(), row, col);
+        
+        line_char_offset + col_char_offset
+    }
 }
 
 impl Default for EditorView {
