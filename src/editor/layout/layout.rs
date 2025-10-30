@@ -107,6 +107,72 @@ impl LayoutEngine {
         // 不需要修改每一行，layout_line 会自动检测 gen != text_gen
     }
     
+    // ==================== 行号平移 API ====================
+    
+    /// 在 row 处之后插入了 count 条新行
+    /// 
+    /// 例如：在第 3 行敲回车，把该行拆成两行
+    /// - 调用 `on_lines_inserted(3, 1)`
+    /// - 缓存向量在位置 4 插入 1 个 None
+    /// - 原来的行 4,5,6... 整体右移到 5,6,7...
+    /// 
+    /// # 参数
+    /// - `row`: 插入点所在行号
+    /// - `count`: 插入的行数
+    pub fn on_lines_inserted(&mut self, row: usize, count: usize) {
+        if count == 0 {
+            return;
+        }
+        
+        let insert_at = row.saturating_add(1);
+        
+        // 在 insert_at 位置插入 count 个 None，使后续缓存整体右移
+        // 使用 splice 进行 O(n) 插入操作
+        if insert_at <= self.cache.len() {
+            self.cache.splice(
+                insert_at..insert_at,
+                std::iter::repeat(None).take(count)
+            );
+        } else {
+            // 如果插入位置超出当前缓存范围，扩展缓存
+            self.cache.resize(insert_at, None);
+            self.cache.extend(std::iter::repeat(None).take(count));
+        }
+    }
+    
+    /// 在 row 处之后删除了 count 条行
+    /// 
+    /// 例如：删除换行符，把第 3 行与第 4 行合并
+    /// - 调用 `on_lines_deleted(3, 1)`
+    /// - 缓存向量删除位置 4 的条目
+    /// - 原来的行 5,6,7... 整体左移到 4,5,6...
+    /// 
+    /// # 参数
+    /// - `row`: 删除起点所在行号
+    /// - `count`: 删除的行数
+    pub fn on_lines_deleted(&mut self, row: usize, count: usize) {
+        if count == 0 {
+            return;
+        }
+        
+        let start = row.saturating_add(1);
+        if start >= self.cache.len() {
+            return;
+        }
+        
+        let end = (start + count).min(self.cache.len());
+        self.cache.drain(start..end);
+    }
+    
+    /// 结构性变化的兜底方案
+    /// 
+    /// 当无法准确确定插入/删除的行数时使用
+    /// 例如：粘贴多行文本、批量操作等
+    pub fn on_structure_changed(&mut self) {
+        // 全局失效，保守但安全
+        self.invalidate_all();
+    }
+    
     /// 获取指定行的布局（Vec 缓存，O(1) 访问）
     pub fn layout_line(&mut self, rope: &Rope, row: usize) -> &LineLayout {
         // 扩展 cache 到足够大小
@@ -393,4 +459,142 @@ mod tests {
         let x = engine.get_cursor_x(&rope, 0, 5, 10);
         assert_eq!(x, 0); // saturating_sub
     }
+    
+    #[test]
+    fn test_on_lines_inserted() {
+        let mut engine = LayoutEngine::new(4);
+        let mut rope = Rope::from_str("Line 0\nLine 1\nLine 2");
+        
+        // 访问所有行，填充缓存
+        engine.layout_line(&rope, 0);
+        engine.layout_line(&rope, 1);
+        engine.layout_line(&rope, 2);
+        assert_eq!(engine.cache.len(), 3);
+        
+        // 模拟在第 1 行插入换行：在 row=1 之后插入 1 条新行
+        engine.on_lines_inserted(1, 1);
+        
+        // 缓存向量长度应该增加
+        assert_eq!(engine.cache.len(), 4);
+        
+        // 原来的第 2 行现在应该在位置 3
+        // 注意：原位置 2 的缓存条目现在在位置 3
+        
+        // 新插入的位置 2 应该是 None
+        assert!(engine.cache[2].is_none());
+        
+        // 原来的第 2 行缓存仍然存在（现在在位置 3）
+        assert!(engine.cache[3].is_some());
+    }
+    
+    #[test]
+    fn test_on_lines_deleted() {
+        let mut engine = LayoutEngine::new(4);
+        let mut rope = Rope::from_str("Line 0\nLine 1\nLine 2\nLine 3");
+        
+        // 访问所有行，填充缓存
+        engine.layout_line(&rope, 0);
+        engine.layout_line(&rope, 1);
+        engine.layout_line(&rope, 2);
+        engine.layout_line(&rope, 3);
+        assert_eq!(engine.cache.len(), 4);
+        
+        // 模拟删除第 1 行后的 1 条行：删除 row=2（合并 row=1 和 row=2）
+        engine.on_lines_deleted(1, 1);
+        
+        // 缓存向量长度应该减少
+        assert_eq!(engine.cache.len(), 3);
+        
+        // 原来的第 3 行现在应该在位置 2
+        assert!(engine.cache[2].is_some());
+    }
+    
+    #[test]
+    fn test_on_lines_inserted_multiple() {
+        let mut engine = LayoutEngine::new(4);
+        let rope = Rope::from_str("Line 0\nLine 1\nLine 2");
+        
+        // 填充缓存
+        engine.layout_line(&rope, 0);
+        engine.layout_line(&rope, 1);
+        engine.layout_line(&rope, 2);
+        
+        // 插入 3 条新行
+        engine.on_lines_inserted(0, 3);
+        
+        // 缓存长度应该增加 3
+        assert_eq!(engine.cache.len(), 6);
+        
+        // 新插入的位置应该是 None
+        assert!(engine.cache[1].is_none());
+        assert!(engine.cache[2].is_none());
+        assert!(engine.cache[3].is_none());
+        
+        // 原来的行应该平移到新位置
+        assert!(engine.cache[4].is_some()); // 原来的 row 1
+        assert!(engine.cache[5].is_some()); // 原来的 row 2
+    }
+    
+    #[test]
+    fn test_on_lines_deleted_multiple() {
+        let mut engine = LayoutEngine::new(4);
+        let rope = Rope::from_str("Line 0\nLine 1\nLine 2\nLine 3\nLine 4");
+        
+        // 填充缓存
+        for i in 0..5 {
+            engine.layout_line(&rope, i);
+        }
+        assert_eq!(engine.cache.len(), 5);
+        
+        // 删除 2 条行
+        engine.on_lines_deleted(1, 2);
+        
+        // 缓存长度应该减少 2
+        assert_eq!(engine.cache.len(), 3);
+        
+        // 原来的第 4 行现在应该在位置 2
+        assert!(engine.cache[2].is_some());
+    }
+    
+    #[test]
+    fn test_on_lines_inserted_beyond_cache() {
+        let mut engine = LayoutEngine::new(4);
+        let rope = Rope::from_str("Line 0\nLine 1");
+        
+        // 只访问前 2 行
+        engine.layout_line(&rope, 0);
+        engine.layout_line(&rope, 1);
+        assert_eq!(engine.cache.len(), 2);
+        
+        // 在超出缓存范围的位置插入
+        engine.on_lines_inserted(5, 2);
+        
+        // 应该扩展缓存
+        assert!(engine.cache.len() >= 7); // 至少 5 + 2
+    }
+    
+    #[test]
+    fn test_cache_alignment_after_edit_sequence() {
+        let mut engine = LayoutEngine::new(4);
+        let rope = Rope::from_str("Line 0\nLine 1\nLine 2\nLine 3");
+        
+        // 填充缓存
+        for i in 0..4 {
+            engine.layout_line(&rope, i);
+        }
+        
+        // 模拟编辑序列
+        engine.on_lines_inserted(1, 1);  // 在 row 1 后插入 1 行
+        assert_eq!(engine.cache.len(), 5);
+        
+        engine.on_lines_deleted(2, 1);   // 删除新插入的行
+        assert_eq!(engine.cache.len(), 4);
+        
+        engine.on_lines_inserted(0, 2);  // 在开头插入 2 行
+        assert_eq!(engine.cache.len(), 6);
+        
+        // 验证缓存结构仍然有效
+        assert!(engine.cache[0].is_some()); // 原 row 0
+    }
 }
+
