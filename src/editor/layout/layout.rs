@@ -6,14 +6,24 @@ use unicode_width::UnicodeWidthStr;
 /// 单行布局信息
 #[derive(Clone, Debug)]
 pub struct LineLayout {
-    /// 每个字形簇的起始列位置
+    /// 每个字形簇的起始列位置（显示坐标）
     /// 例如：["a", "宽", "b"] → [0, 1, 3, 4]
     /// 长度 = grapheme_count + 1（最后一个是行尾位置）
     /// 使用 u32 避免极长行溢出（65535+ 列）
     pub cell_x: Vec<u32>,
     
     /// 该行的总显示宽度（u32 支持超长行）
-    pub display_width: u32, 
+    pub display_width: u32,
+    
+    /// 每个字形簇对应的字符偏移（Unicode scalar values 累计数）
+    /// 例如：["a", "é", "中"] → [0, 1, 3, 4]
+    /// - "a" = 1 char → 累计 1
+    /// - "é" = 2 chars (e + combining acute) → 累计 3
+    /// - "中" = 1 char → 累计 4
+    /// 
+    /// 这个索引让 grapheme_index → char_offset 变成 O(1)，
+    /// 避免在长行末尾编辑时的 O(N) 扫描
+    pub char_x: Vec<usize>,
     
     /// 代数：用于失效检测
     pub gen: u64,
@@ -218,31 +228,50 @@ impl LayoutEngine {
     }
     
     /// 计算单行布局（核心逻辑）
+    /// 
+    /// 同时计算：
+    /// 1. cell_x: 显示列累计（用于光标渲染、鼠标点击）
+    /// 2. char_x: 字符偏移累计（用于 Rope 索引，避免 O(N) 扫描）
     fn compute_layout(&self, rope: &Rope, row: usize) -> LineLayout {
         let line = rope.line(row).as_str().unwrap_or("");
         
         let mut cell_x = Vec::new();
-        cell_x.push(0);
+        let mut char_x = Vec::new();
         
-        let mut acc: u32 = 0;
+        cell_x.push(0);
+        char_x.push(0);
+        
+        let mut acc_col: u32 = 0;      // 显示列累计
+        let mut acc_char: usize = 0;   // 字符数累计
         
         for grapheme in line.graphemes(true) {
+            // 1. 计算显示宽度
             let width = if grapheme == "\t" {
                 // Tab 宽度：对齐到下一个 tab_size 的倍数
                 let tab = self.tab_size as u32;
-                let remainder = acc % tab;
+                let remainder = acc_col % tab;
                 if remainder == 0 { tab } else { tab - remainder }
             } else {
                 grapheme.width() as u32
             };
             
-            acc = acc.saturating_add(width);
-            cell_x.push(acc);
+            acc_col = acc_col.saturating_add(width);
+            cell_x.push(acc_col);
+            
+            // 2. 计算字符偏移（Unicode scalar values 个数）
+            // 例如：
+            // - "a" = 1 char
+            // - "é" (e + combining acute) = 2 chars
+            // - "👨‍👩‍👧‍👦" (family emoji) = 7 chars
+            let char_count = grapheme.chars().count();
+            acc_char += char_count;
+            char_x.push(acc_char);
         }
         
         LineLayout {
             cell_x,
-            display_width: acc,
+            display_width: acc_col,
+            char_x,
             gen: 0, // Will be set by caller
         }
     }
@@ -288,6 +317,42 @@ impl LayoutEngine {
         for row in start..end.min(rope.len_lines()) {
             self.layout_line(rope, row);
         }
+    }
+    
+    // ==================== 字符索引 API（O(1) 查询） ====================
+    
+    /// 字形簇索引 → 字符偏移（O(1)）
+    /// 
+    /// 这是性能关键路径！避免了 O(N) 的线性扫描。
+    /// 
+    /// # 参数
+    /// - `rope`: Rope 文本
+    /// - `row`: 行号
+    /// - `grapheme_idx`: 字形簇索引
+    /// 
+    /// # 返回
+    /// 该字形簇起点对应的字符偏移（相对于行首）
+    /// 
+    /// # 性能
+    /// - 时间复杂度：O(1)（缓存命中）或 O(行长度)（缓存未命中，需要计算布局）
+    /// - 空间复杂度：O(行长度)（布局缓存）
+    /// 
+    /// # 示例
+    /// ```ignore
+    /// // "aé中" 其中 "é" = 2 chars (e + combining acute)
+    /// grapheme_to_char_index(rope, 0, 0) == 0  // "a" 起点
+    /// grapheme_to_char_index(rope, 0, 1) == 1  // "é" 起点（1 char after "a"）
+    /// grapheme_to_char_index(rope, 0, 2) == 3  // "中" 起点（3 chars total）
+    /// grapheme_to_char_index(rope, 0, 3) == 4  // 行尾
+    /// ```
+    pub fn grapheme_to_char_index(&mut self, rope: &Rope, row: usize, grapheme_idx: usize) -> usize {
+        let layout = self.layout_line(rope, row);
+        
+        // 边界处理：如果索引超出范围，返回行尾的字符偏移
+        layout.char_x
+            .get(grapheme_idx)
+            .copied()
+            .unwrap_or_else(|| layout.char_x.last().copied().unwrap_or(0))
     }
 }
 
