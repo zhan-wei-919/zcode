@@ -127,11 +127,17 @@ impl FileTree {
     }
 
     /// 计算节点的完整路径（带缓存）
-    pub fn full_path(&self, id: NodeId) -> PathBuf {
+    pub fn full_path(&mut self, id: NodeId) -> PathBuf {
         if id == self.root {
             return self.absolute_root.clone();
         }
 
+        // 检查缓存
+        if let Some(cached_path) = self.path_cache.get(&id) {
+            return cached_path.clone();
+        }
+
+        // 缓存未命中，计算路径
         let mut path = self.absolute_root.clone();
         let mut current = id;
         let mut components = vec![];
@@ -149,6 +155,8 @@ impl FileTree {
             path.push(comp);
         }
 
+        // 写入缓存
+        self.path_cache.insert(id, path.clone());
         path
     }
 

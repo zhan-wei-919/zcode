@@ -2,6 +2,8 @@
 use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    event::{EnableMouseCapture, DisableMouseCapture},
+    cursor,
 };
 use ratatui::{
     prelude::*,
@@ -22,12 +24,11 @@ fn main() -> io::Result<()> {
     let path_to_open = &args[1];
     //======================
 
-    // 构建文件树（O(n) 复杂度）
     let file_tree = build_from_path(Path::new(path_to_open))?;
     
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, cursor::SetCursorStyle::BlinkingBar)?; // 启用鼠标捕获并设置光标为闪烁竖线
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -40,6 +41,6 @@ fn main() -> io::Result<()> {
     }
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture, cursor::SetCursorStyle::DefaultUserShape)?; // 禁用鼠标捕获并恢复默认光标
     Ok(())
 }

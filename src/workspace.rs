@@ -1,6 +1,6 @@
 //zcode/src/workspace.rs
 use crate::file_system::FileTree;
-use crate::editor::state::Editor;
+use crate::editor::Editor;
 
 /// 工作区：顶层状态容器，聚合所有功能模块
 /// 
