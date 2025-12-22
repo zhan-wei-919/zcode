@@ -1,9 +1,14 @@
-//zcode/src/lib.rs
 //! zcode - TUI 文本编辑器库
-//! 
-//! 这个 crate 提供了编辑器的核心功能，可以被集成测试和其他模块使用。
+//!
+//! 模块结构：
+//! - core: 核心框架（Service, View, Command, Event）
+//! - services: 服务层（FileService, KeybindingService, ConfigService）
+//! - models: 数据模型（FileTree, TextBuffer, Selection）
+//! - views: 视图层（ExplorerView, EditorView, EditorGroup）
+//! - app: 应用层（Workbench）
 
-pub mod editor;
-pub mod file_system;
-pub mod workspace;
-
+pub mod app;
+pub mod core;
+pub mod models;
+pub mod services;
+pub mod views;

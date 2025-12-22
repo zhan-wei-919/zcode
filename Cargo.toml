@@ -13,3 +13,6 @@ unicode-xid = "0.2"
 slotmap = "1.0"
 walkdir = "2.4"
 rustc-hash = "2.0"
+
+[dev-dependencies]
+tempfile = "3.23.0"
