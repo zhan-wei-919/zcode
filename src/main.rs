@@ -84,6 +84,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &Path) -
         while let Ok(msg) = rx.try_recv() {
             workbench.handle_message(msg);
         }
+
+        // 定时检查是否需要刷盘
+        workbench.tick();
     }
 }
 

@@ -5,13 +5,15 @@
 //! - 处理键盘输入
 //! - 处理鼠标交互
 //! - 管理选区
+//! - Undo/Redo 历史管理
+//! - 崩溃恢复（持久化）
 
 use super::viewport::Viewport;
 use crate::core::event::InputEvent;
 use crate::core::view::{EventResult, View};
 use crate::core::Command;
-use crate::models::{Granularity, Selection, TextBuffer};
-use crate::services::EditorConfig;
+use crate::models::{slice_to_cow, EditHistory, Granularity, Selection, TextBuffer};
+use crate::services::{ensure_backup_dir, get_ops_file_path, EditorConfig};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -30,6 +32,7 @@ pub struct EditorView {
     file_path: Option<PathBuf>,
     dirty: bool,
     mouse_state: MouseState,
+    history: EditHistory,
 }
 
 struct MouseState {
@@ -84,35 +87,105 @@ impl MouseState {
 
 impl EditorView {
     pub fn new() -> Self {
+        let buffer = TextBuffer::new();
+        let history = EditHistory::new(buffer.rope().clone());
         Self {
-            buffer: TextBuffer::new(),
+            buffer,
             viewport: Viewport::new(4),
             config: EditorConfig::default(),
             file_path: None,
             dirty: false,
             mouse_state: MouseState::new(),
+            history,
         }
     }
 
     pub fn with_config(config: EditorConfig) -> Self {
+        let buffer = TextBuffer::new();
+        let history = EditHistory::new(buffer.rope().clone());
         Self {
-            buffer: TextBuffer::new(),
+            buffer,
             viewport: Viewport::new(config.tab_size),
             config,
             file_path: None,
             dirty: false,
             mouse_state: MouseState::new(),
+            history,
         }
     }
 
     pub fn from_text(text: &str) -> Self {
+        let buffer = TextBuffer::from_text(text);
+        let history = EditHistory::new(buffer.rope().clone());
         Self {
-            buffer: TextBuffer::from_text(text),
+            buffer,
             viewport: Viewport::new(4),
             config: EditorConfig::default(),
             file_path: None,
             dirty: false,
             mouse_state: MouseState::new(),
+            history,
+        }
+    }
+
+    /// 从文件创建编辑器，支持持久化和崩溃恢复
+    pub fn from_file(path: PathBuf, content: &str) -> Self {
+        let buffer = TextBuffer::from_text(content);
+        let ops_file_path = get_ops_file_path(&path);
+
+        // 尝试启用持久化
+        let history = if let Some(ops_path) = ops_file_path {
+            // 检查是否有未恢复的备份
+            if EditHistory::has_backup(&ops_path) {
+                // 尝试恢复
+                match EditHistory::recover(buffer.rope().clone(), ops_path.clone()) {
+                    Ok((history, recovered_rope, cursor)) => {
+                        let mut view = Self {
+                            buffer: TextBuffer::from_text(content),
+                            viewport: Viewport::new(4),
+                            config: EditorConfig::default(),
+                            file_path: Some(path),
+                            dirty: history.is_dirty(),
+                            mouse_state: MouseState::new(),
+                            history,
+                        };
+                        view.buffer.set_rope(recovered_rope);
+                        view.buffer.set_cursor(cursor.0, cursor.1);
+                        return view;
+                    }
+                    Err(_) => {
+                        // 恢复失败，清除损坏的备份文件，使用新的历史
+                        let _ = EditHistory::clear_backup(&ops_path);
+                        Self::create_history_with_backup(buffer.rope().clone(), ops_path)
+                    }
+                }
+            } else {
+                // 没有备份，创建新的带持久化的历史
+                Self::create_history_with_backup(buffer.rope().clone(), ops_path)
+            }
+        } else {
+            // 无法获取备份路径，使用内存历史
+            EditHistory::new(buffer.rope().clone())
+        };
+
+        Self {
+            buffer,
+            viewport: Viewport::new(4),
+            config: EditorConfig::default(),
+            file_path: Some(path),
+            dirty: false,
+            mouse_state: MouseState::new(),
+            history,
+        }
+    }
+
+    fn create_history_with_backup(base_snapshot: ropey::Rope, ops_path: PathBuf) -> EditHistory {
+        // 确保备份目录存在
+        if ensure_backup_dir().is_ok() {
+            EditHistory::with_backup(base_snapshot.clone(), ops_path)
+                .unwrap_or_else(|_| EditHistory::new(base_snapshot))
+        } else {
+            EditHistory::new(base_snapshot)
         }
     }
 
@@ -140,8 +213,26 @@ impl EditorView {
         self.dirty = dirty;
     }
 
+    /// 定时检查是否需要刷盘（由主循环调用）
+    pub fn tick(&mut self) {
+        self.history.tick();
+    }
+
+    /// 保存后调用，更新基准快照并清除备份
+    pub fn on_save(&mut self) {
+        self.history.on_save(self.buffer.rope());
+
+        // 清除备份文件
+        if let Some(path) = &self.file_path {
+            if let Some(ops_path) = get_ops_file_path(path) {
+                let _ = EditHistory::clear_backup(&ops_path);
+            }
+        }
+    }
+
     pub fn set_content(&mut self, text: &str) {
         self.buffer = TextBuffer::from_text(text);
+        self.history = EditHistory::new(self.buffer.rope().clone());
         self.dirty = false;
     }
 
@@ -177,6 +268,14 @@ impl EditorView {
             (KeyCode::Delete, KeyModifiers::NONE) => self.execute(Command::DeleteForward),
             (KeyCode::Esc, KeyModifiers::NONE) => self.execute(Command::ClearSelection),
             (KeyCode::Char('q'), KeyModifiers::CONTROL) => return EventResult::Quit,
+            // Undo: Ctrl+Z
+            (KeyCode::Char('z'), KeyModifiers::CONTROL) => self.undo(),
+            // Redo: Shift+Ctrl+Z
+            (KeyCode::Char('z'), mods) if mods == KeyModifiers::CONTROL | KeyModifiers::SHIFT => {
+                self.redo()
+            }
+            // Redo: Ctrl+Y (alternative)
+            (KeyCode::Char('y'), KeyModifiers::CONTROL) => self.redo(),
             (KeyCode::Char(c), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
                 self.execute(Command::InsertChar(c))
             }
@@ -284,29 +383,24 @@ impl EditorView {
             Command::InsertChar(c) => {
                 self.delete_selection();
                 self.insert_char(c);
-                self.dirty = true;
             }
             Command::InsertNewline => {
                 self.delete_selection();
-                self.insert_newline();
-                self.dirty = true;
+                self.insert_char('\n');
             }
             Command::InsertTab => {
                 self.delete_selection();
                 self.insert_char('\t');
-                self.dirty = true;
             }
             Command::DeleteBackward => {
                 if !self.delete_selection() {
                     self.delete_backward();
                 }
-                self.dirty = true;
             }
             Command::DeleteForward => {
                 if !self.delete_selection() {
                     self.delete_forward();
                 }
-                self.dirty = true;
             }
             Command::ClearSelection => {
                 self.buffer.clear_selection();
@@ -352,65 +446,57 @@ impl EditorView {
     }
 
     fn insert_char(&mut self, c: char) {
-        let (row, col) = self.buffer.cursor();
-        self.buffer.insert_char(c);
-
-        if c == '\n' {
-            self.buffer.set_cursor(row + 1, 0);
-        } else {
-            self.buffer.set_cursor(row, col + 1);
-        }
-    }
-
-    fn insert_newline(&mut self) {
-        let (row, _) = self.buffer.cursor();
-        self.buffer.insert_char('\n');
-        self.buffer.set_cursor(row + 1, 0);
+        let parent = self.history.head();
+        let op = self.buffer.insert_char_op(c, parent);
+        self.history.push(op, self.buffer.rope());
+        self.dirty = true;
     }
 
     fn delete_backward(&mut self) {
-        let (row, col) = self.buffer.cursor();
-        if col > 0 {
-            let start = self.buffer.pos_to_char((row, col - 1));
-            let end = self.buffer.pos_to_char((row, col));
-            self.buffer.remove_range(start, end);
-            self.buffer.set_cursor(row, col - 1);
-        } else if row > 0 {
-            let prev_len = self.buffer.line_grapheme_len(row - 1);
-            let start = self.buffer.pos_to_char((row, 0));
-            self.buffer.remove_range(start - 1, start);
-            self.buffer.set_cursor(row - 1, prev_len);
+        let parent = self.history.head();
+        if let Some(op) = self.buffer.delete_backward_op(parent) {
+            self.history.push(op, self.buffer.rope());
+            self.dirty = true;
         }
     }
 
     fn delete_forward(&mut self) {
-        let (row, col) = self.buffer.cursor();
-        let line_len = self.buffer.line_grapheme_len(row);
-
-        if col < line_len {
-            let start = self.buffer.pos_to_char((row, col));
-            let end = self.buffer.pos_to_char((row, col + 1));
-            self.buffer.remove_range(start, end);
-        } else if row + 1 < self.buffer.len_lines() {
-            let start = self.buffer.pos_to_char((row, col));
-            self.buffer.remove_range(start, start + 1);
+        let parent = self.history.head();
+        if let Some(op) = self.buffer.delete_forward_op(parent) {
+            self.history.push(op, self.buffer.rope());
+            self.dirty = true;
         }
     }
 
     fn delete_selection(&mut self) -> bool {
-        if let Some(selection) = self.buffer.selection() {
-            if !selection.is_empty() {
-                let (start, end) = selection.range();
-                let start_char = self.buffer.pos_to_char(start);
-                let end_char = self.buffer.pos_to_char(end);
-                return self.buffer.delete_selection_with_offsets(start_char, end_char);
-            }
+        let parent = self.history.head();
+        if let Some(op) = self.buffer.delete_selection_op(parent) {
+            self.history.push(op, self.buffer.rope());
+            self.dirty = true;
+            true
+        } else {
+            false
         }
-        false
+    }
+
+    fn undo(&mut self) {
+        if let Some((rope, cursor)) = self.history.undo() {
+            self.buffer.set_rope(rope);
+            self.buffer.set_cursor(cursor.0, cursor.1);
+            self.dirty = self.history.is_dirty();
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some((rope, cursor)) = self.history.redo() {
+            self.buffer.set_rope(rope);
+            self.buffer.set_cursor(cursor.0, cursor.1);
+            self.dirty = self.history.is_dirty();
+        }
     }
 
     fn render_line(&self, line_str: &str, row: usize) -> Line<'static> {
-        let expanded = self.viewport.expand_tabs(line_str);
+        let expanded = self.viewport.expand_tabs_cow(line_str);
         let graphemes: Vec<&str> = expanded.graphemes(true).collect();
 
         let selection = self.buffer.selection();
@@ -562,8 +648,12 @@ impl View for EditorView {
 
         let content_lines: Vec<Line> = (visible_start..visible_end)
             .map(|i| {
-                let line_str = self.buffer.line(i).unwrap_or_default();
-                self.render_line(&line_str, i)
+                if let Some(slice) = self.buffer.line_slice(i) {
+                    let line_str = slice_to_cow(slice);
+                    self.render_line(&line_str, i)
+                } else {
+                    Line::default()
+                }
             })
             .collect();
 
@@ -624,5 +714,85 @@ mod tests {
         view.execute(Command::InsertChar('a'));
         assert_eq!(view.buffer().text(), "a");
         assert!(view.is_dirty());
+    }
+
+    #[test]
+    fn test_undo_redo() {
+        let mut view = EditorView::new();
+
+        // 插入 "abc"
+        view.execute(Command::InsertChar('a'));
+        view.execute(Command::InsertChar('b'));
+        view.execute(Command::InsertChar('c'));
+        assert_eq!(view.buffer().text(), "abc");
+        assert_eq!(view.cursor(), (0, 3));
+
+        // Undo 一次
+        view.undo();
+        assert_eq!(view.buffer().text(), "ab");
+        assert_eq!(view.cursor(), (0, 2));
+
+        // Undo 再一次
+        view.undo();
+        assert_eq!(view.buffer().text(), "a");
+        assert_eq!(view.cursor(), (0, 1));
+
+        // Redo
+        view.redo();
+        assert_eq!(view.buffer().text(), "ab");
+        assert_eq!(view.cursor(), (0, 2));
+
+        // Redo 再一次
+        view.redo();
+        assert_eq!(view.buffer().text(), "abc");
+        assert_eq!(view.cursor(), (0, 3));
+    }
+
+    #[test]
+    fn test_undo_redo_with_delete() {
+        let mut view = EditorView::from_text("hello");
+        view.execute(Command::CursorLineEnd);
+        assert_eq!(view.cursor(), (0, 5));
+
+        // 删除 'o'
+        view.execute(Command::DeleteBackward);
+        assert_eq!(view.buffer().text(), "hell");
+        assert_eq!(view.cursor(), (0, 4));
+
+        // Undo
+        view.undo();
+        assert_eq!(view.buffer().text(), "hello");
+        assert_eq!(view.cursor(), (0, 5));
+
+        // Redo
+        view.redo();
+        assert_eq!(view.buffer().text(), "hell");
+        assert_eq!(view.cursor(), (0, 4));
+    }
+
+    #[test]
+    fn test_undo_branch() {
+        let mut view = EditorView::new();
+
+        // 插入 "ab"
+        view.execute(Command::InsertChar('a'));
+        view.execute(Command::InsertChar('b'));
+        assert_eq!(view.buffer().text(), "ab");
+
+        // Undo 一次（回到 "a"）
+        view.undo();
+        assert_eq!(view.buffer().text(), "a");
+
+        // 插入 "c"（创建分支）
+        view.execute(Command::InsertChar('c'));
+        assert_eq!(view.buffer().text(), "ac");
+
+        // Undo（回到 "a"）
+        view.undo();
+        assert_eq!(view.buffer().text(), "a");
+
+        // Redo（应该走最新的分支，即 "c"）
+        view.redo();
+        assert_eq!(view.buffer().text(), "ac");
     }
 }

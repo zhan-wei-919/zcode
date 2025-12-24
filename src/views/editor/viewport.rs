@@ -5,7 +5,7 @@
 //! - 布局计算
 //! - 坐标转换
 
-use crate::models::TextBuffer;
+use crate::models::{slice_to_cow, TextBuffer};
 use ratatui::layout::Rect;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -112,19 +112,23 @@ impl Viewport {
 
     pub fn get_cursor_display_x(&self, buffer: &TextBuffer) -> u16 {
         let (row, col) = buffer.cursor();
-        let line = buffer.line(row).unwrap_or_default();
-        let expanded = self.expand_tabs(&line);
+        if let Some(slice) = buffer.line_slice(row) {
+            let line = slice_to_cow(slice);
+            let expanded = self.expand_tabs_cow(&line);
 
-        let graphemes: Vec<&str> = expanded.graphemes(true).collect();
-        let mut x = 0u32;
-        for (i, g) in graphemes.iter().enumerate() {
-            if i >= col {
-                break;
+            let graphemes: Vec<&str> = expanded.graphemes(true).collect();
+            let mut x = 0u32;
+            for (i, g) in graphemes.iter().enumerate() {
+                if i >= col {
+                    break;
+                }
+                x += g.width() as u32;
             }
-            x += g.width() as u32;
-        }
 
-        x.saturating_sub(self.horiz_offset) as u16
+            x.saturating_sub(self.horiz_offset) as u16
+        } else {
+            0
+        }
     }
 
     pub fn screen_to_pos(&self, x: u16, y: u16, buffer: &TextBuffer) -> Option<(usize, usize)> {
@@ -136,8 +140,9 @@ impl Viewport {
 
         let row = (self.viewport_offset + y as usize).min(buffer.len_lines().saturating_sub(1));
 
-        let line = buffer.line(row).unwrap_or_default();
-        let expanded = self.expand_tabs(&line);
+        let slice = buffer.line_slice(row)?;
+        let line = slice_to_cow(slice);
+        let expanded = self.expand_tabs_cow(&line);
         let graphemes: Vec<&str> = expanded.graphemes(true).collect();
 
         let target_x = self.horiz_offset + x as u32;
@@ -157,7 +162,8 @@ impl Viewport {
         Some((row, col.min(graphemes.len())))
     }
 
-    pub fn expand_tabs(&self, line: &str) -> String {
+    /// 展开 tab，接受 Cow<str> 避免不必要的分配
+    pub fn expand_tabs_cow(&self, line: &str) -> String {
         let mut expanded = String::new();
         let mut display_col = 0u32;
         let tab_size = self.tab_size as u32;
@@ -217,10 +223,10 @@ mod tests {
     fn test_expand_tabs() {
         let viewport = Viewport::new(4);
 
-        let expanded = viewport.expand_tabs("\thello");
+        let expanded = viewport.expand_tabs_cow("\thello");
         assert_eq!(expanded, "    hello");
 
-        let expanded = viewport.expand_tabs("a\tb");
+        let expanded = viewport.expand_tabs_cow("a\tb");
         assert_eq!(expanded, "a   b");
     }
 

@@ -12,6 +12,8 @@ use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
+use std::fs::File;
+use std::io::BufWriter;
 use std::path::Path;
 
 const HEADER_HEIGHT: u16 = 1;
@@ -147,12 +149,20 @@ impl Workbench {
     fn save_active_file(&mut self) {
         if let Some(editor) = self.editor_group.active_editor_mut() {
             if let Some(path) = editor.file_path().cloned() {
-                let content = editor.buffer().text();
-                if self.file_service.write_file(&path, &content).is_ok() {
-                    editor.set_dirty(false);
+                if let Ok(file) = File::create(&path) {
+                    let mut writer = BufWriter::new(file);
+                    if editor.buffer().write_to(&mut writer).is_ok() {
+                        editor.on_save();
+                        editor.set_dirty(false);
+                    }
                 }
             }
         }
+    }
+
+    /// 定时检查是否需要刷盘（由主循环调用）
+    pub fn tick(&mut self) {
+        self.editor_group.tick();
     }
 
     fn handle_explorer_result(&mut self, result: EventResult) -> EventResult {

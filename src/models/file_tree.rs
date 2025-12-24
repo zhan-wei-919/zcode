@@ -520,6 +520,7 @@ pub fn should_ignore(name: &str) -> bool {
             | "Thumbs.db"
             | "desktop.ini"
             | ".git"
+            | ".claude"
             | "node_modules"
     )
 }

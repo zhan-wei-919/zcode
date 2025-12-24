@@ -35,8 +35,7 @@ impl EditorTab {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "Untitled".to_string());
 
-        let mut editor = EditorView::from_text(content);
-        editor.set_file_path(path);
+        let editor = EditorView::from_file(path, content);
 
         Self { editor, title }
     }
@@ -163,6 +162,13 @@ impl EditorGroup {
 
     pub fn has_unsaved_changes(&self) -> bool {
         self.tabs.iter().any(|t| t.editor.is_dirty())
+    }
+
+    /// 定时检查所有编辑器是否需要刷盘
+    pub fn tick(&mut self) {
+        for tab in &mut self.tabs {
+            tab.editor.tick();
+        }
     }
 
     fn render_tabs(&self, frame: &mut Frame, area: Rect) {

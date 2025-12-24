@@ -1,5 +1,6 @@
 //! 选区模型：支持字符/单词/整行三种粒度
 
+use super::text_buffer::slice_to_cow;
 use ropey::Rope;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_xid::UnicodeXID;
@@ -48,8 +49,9 @@ impl Selection {
     }
 
     fn snap_to_word(&self, pos: (usize, usize), rope: &Rope) -> (usize, usize) {
-        let line = rope.line(pos.0).as_str().unwrap_or("");
-        let (start, end) = Self::word_bounds_at(line, pos.1);
+        let slice = rope.line(pos.0);
+        let line = slice_to_cow(slice);
+        let (start, end) = Self::word_bounds_at(&line, pos.1);
 
         if pos.1 - start < end - pos.1 {
             (pos.0, start)
@@ -119,8 +121,9 @@ impl Selection {
     }
 
     fn line_grapheme_len(rope: &Rope, row: usize) -> usize {
-        let line = rope.line(row).as_str().unwrap_or("");
-        let without_newline = line.strip_suffix('\n').unwrap_or(line);
+        let slice = rope.line(row);
+        let line = slice_to_cow(slice);
+        let without_newline = line.strip_suffix('\n').unwrap_or(&line);
         without_newline.graphemes(true).count()
     }
 

@@ -32,8 +32,8 @@
 | 复制 | ❌ 未实现 | |
 | 粘贴 | ❌ 未实现 | |
 | 剪切 | ❌ 未实现 | |
-| Undo | ❌ 未实现 | 需要 CommandHistory |
-| Redo | ❌ 未实现 | 需要 CommandHistory |
+| Undo | ✅ 已实现 | Git 模型 EditHistory，Ctrl+Z |
+| Redo | ✅ 已实现 | Git 模型 EditHistory，Shift+Ctrl+Z / Ctrl+Y |
 
 ### 0.3 编辑器模块 - 光标移动
 
@@ -119,10 +119,10 @@
 ### 0.10 功能统计
 
 ```
-已实现:     32 个
+已实现:     34 个
 部分实现:    4 个
-未实现:     20 个
-完成度:     约 57%
+未实现:     18 个
+完成度:     约 61%
 ```
 
 ---
@@ -284,7 +284,7 @@ pub trait FileProvider: Send + Sync {
 - [x] 多 Tab 支持（切换、关闭）
 - [x] 文件树键盘导航（上下选择、Enter 打开）
 - [x] 文件树鼠标双击展开/打开
-- [ ] Undo/Redo（CommandHistory）
+- [x] Undo/Redo（Git 模型 EditHistory）
 - [ ] 查找/替换
 - [ ] 命令面板（Ctrl+Shift+P）
 - [ ] 复制/粘贴/剪切
@@ -718,7 +718,7 @@ impl Workbench {
 - [x] 通过所有现有测试（70 个）
 
 ### Phase 6 完成标准
-- [ ] Undo/Redo 工作
+- [x] Undo/Redo 工作
 - [ ] 查找/替换可用
 - [ ] 复制/粘贴可用
 
@@ -736,6 +736,13 @@ impl Workbench {
 
 ## 7. 更新日志
 
+### 2024-12-24
+- 实现 Undo/Redo 功能（Git 模型）
+- 新增 `models/edit_op.rs` - EditOp 原子操作定义
+- 新增 `models/edit_history.rs` - Git 风格历史管理
+- 集成到 EditorView，支持 Ctrl+Z / Shift+Ctrl+Z / Ctrl+Y
+- 通过所有测试（83 个）
+
 ### 2024-XX-XX
 - 完成 Phase 1-5 架构重构
 - 实现双击展开目录/打开文件
@@ -743,3 +750,167 @@ impl Workbench {
 - 实现滚轮事件合并优化
 - 实现视口滚动跟随控制
 - 添加异步架构方案
+
+---
+
+## 8. Undo/Redo 设计（Git 模型）
+
+### 8.1 设计目标
+
+| 目标 | 说明 |
+|------|------|
+| 原子性 | 文本变更和光标位置同时记录，Undo 后光标正确恢复 |
+| 历史不丢失 | Undo 后新编辑创建分支，不覆盖 redo 历史 |
+| 高效 | 利用 Rope O(1) clone，checkpoint 避免重放 |
+| 可扩展 | 预留 Git 风格 API，支持未来 undo tree 可视化 |
+
+### 8.2 核心数据结构
+
+```
+models/
+├── edit_op.rs      # OpId + OpKind + EditOp
+└── edit_history.rs # EditHistory (Git 模型)
+```
+
+#### OpId - 操作唯一标识
+
+```rust
+pub struct OpId {
+    pub timestamp: u64,  // 毫秒时间戳
+    pub counter: u16,    // 同一毫秒内的计数器
+}
+```
+
+- 避免 UUID 依赖
+- `OpId::root()` 表示文件初始状态
+
+#### OpKind - 操作内容
+
+```rust
+pub enum OpKind {
+    Insert { char_offset: usize, text: String },
+    Delete { start: usize, end: usize, deleted: String },
+}
+```
+
+#### EditOp - 完整操作记录
+
+```rust
+pub struct EditOp {
+    pub id: OpId,                    // 唯一标识
+    pub parent: OpId,                // 父操作（形成 DAG）
+    pub kind: OpKind,                // 操作内容
+    pub cursor_before: (usize, usize), // 操作前光标
+    pub cursor_after: (usize, usize),  // 操作后光标
+}
+```
+
+#### EditHistory - 历史管理
+
+```rust
+pub struct EditHistory {
+    base_snapshot: Rope,              // 初始状态
+    ops: HashMap<OpId, EditOp>,       // DAG 存储
+    head: OpId,                       // 当前位置
+    children: HashMap<OpId, Vec<OpId>>, // 子节点索引
+    checkpoints: HashMap<OpId, Checkpoint>, // 快照缓存
+}
+```
+
+### 8.3 数据流
+
+```
+编辑操作:
+  用户输入 → TextBuffer.insert_char_op() → EditOp
+           → EditHistory.push(op) → 更新 DAG + HEAD
+           → 写入 .ops 文件（延迟刷盘）
+
+Undo:
+  Ctrl+Z → EditHistory.undo()
+         → HEAD = parent
+         → rebuild_rope_at(parent) → 从 checkpoint 重放
+         → TextBuffer.set_rope() + set_cursor()
+
+Redo:
+  Shift+Ctrl+Z → EditHistory.redo()
+               → HEAD = children.last()
+               → rebuild_rope_at(child)
+               → TextBuffer.set_rope() + set_cursor()
+```
+
+### 8.4 Git 模型 vs 线性模型
+
+```
+线性模型（传统编辑器）:
+  A → B → C
+  Undo 到 A，新编辑 D:
+  A → D  (B, C 丢失)
+
+Git 模型（当前实现）:
+  A → B → C
+  Undo 到 A，新编辑 D:
+  A → B → C
+   \→ D   (B, C 保留，形成分支)
+```
+
+### 8.5 API 设计
+
+#### 基础 API（EditorView 使用）
+
+```rust
+impl EditHistory {
+    pub fn push(&mut self, op: EditOp, current_rope: &Rope);
+    pub fn undo(&mut self) -> Option<(Rope, (usize, usize))>;
+    pub fn redo(&mut self) -> Option<(Rope, (usize, usize))>;
+    pub fn head(&self) -> OpId;
+    pub fn can_undo(&self) -> bool;
+    pub fn can_redo(&self) -> bool;
+    pub fn is_dirty(&self) -> bool;
+}
+```
+
+#### Git 风格 API（预留）
+
+```rust
+impl EditHistory {
+    pub fn get_op(&self, id: &OpId) -> Option<&EditOp>;
+    pub fn parent(&self, id: &OpId) -> Option<OpId>;
+    pub fn children_of(&self, id: &OpId) -> Vec<OpId>;
+    pub fn checkout(&mut self, id: OpId) -> Option<(Rope, (usize, usize))>;
+    pub fn log(&self) -> Vec<&EditOp>;      // 从 HEAD 回溯
+    pub fn reflog(&self) -> impl Iterator<Item = &EditOp>; // 所有操作
+    pub fn branch_points(&self) -> Vec<OpId>; // 分叉点
+}
+```
+
+### 8.6 性能优化
+
+| 优化 | 说明 |
+|------|------|
+| Checkpoint | 每 100 个操作保存 Rope 快照，避免从头重放 |
+| Rope O(1) clone | 快照共享内存，空间开销小 |
+| 延迟刷盘 | 批量写入 + 定时刷新，减少 IO |
+| 子节点索引 | `children: HashMap<OpId, Vec<OpId>>`，O(1) 查找 |
+
+### 8.7 崩溃恢复
+
+```
+.ops 文件格式（JSON Lines）:
+  {"id":{"timestamp":123,"counter":0},"parent":...,"kind":...}
+  {"id":{"timestamp":124,"counter":0},"parent":...,"kind":...}
+  HEAD=123:0001
+
+恢复流程:
+  1. 读取原文件 → base_snapshot
+  2. 解析 .ops 文件 → 重建 DAG
+  3. 找到 HEAD → rebuild_rope_at(HEAD)
+  4. 提示用户是否恢复
+```
+
+### 8.8 快捷键
+
+| 快捷键 | 功能 |
+|--------|------|
+| Ctrl+Z | Undo |
+| Shift+Ctrl+Z | Redo |
+| Ctrl+Y | Redo（备选）|
