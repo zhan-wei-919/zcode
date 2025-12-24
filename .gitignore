@@ -1,4 +1,5 @@
 /target
 .DS_Store
 test_tree.rs
-.claude.md
+.claude
+CLAUDE.md

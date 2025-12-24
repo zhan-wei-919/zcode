@@ -1,15 +1,9 @@
 //! 工作台：统一管理视图和输入分发
-//!
-//! 职责：
-//! - 管理 ExplorerView 和 EditorGroup
-//! - 根据鼠标点击位置切换活跃区域
-//! - 分发键盘事件给活跃视图
-//! - 处理全局快捷键
 
 use crate::core::event::InputEvent;
 use crate::core::view::{ActiveArea, EventResult, View};
-use crate::core::Command;
-use crate::models::build_file_tree;
+use crate::models::{build_file_tree, LoadState, NodeKind};
+use crate::runtime::{AppMessage, AsyncRuntime};
 use crate::services::{FileService, KeybindingService};
 use crate::views::{EditorGroup, ExplorerView};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
@@ -30,11 +24,12 @@ pub struct Workbench {
     active_area: ActiveArea,
     file_service: FileService,
     keybindings: KeybindingService,
+    runtime: AsyncRuntime,
     show_sidebar: bool,
 }
 
 impl Workbench {
-    pub fn new(root_path: &Path) -> std::io::Result<Self> {
+    pub fn new(root_path: &Path, runtime: AsyncRuntime) -> std::io::Result<Self> {
         let file_tree = build_file_tree(root_path)?;
 
         Ok(Self {
@@ -43,8 +38,50 @@ impl Workbench {
             active_area: ActiveArea::Editor,
             file_service: FileService::new(),
             keybindings: KeybindingService::new(),
+            runtime,
             show_sidebar: true,
         })
+    }
+
+    pub fn handle_message(&mut self, msg: AppMessage) {
+        match msg {
+            AppMessage::DirLoaded { path, entries } => {
+                if let Some(node_id) = self.explorer.file_tree_mut().find_node_by_path(&path) {
+                    for entry in entries {
+                        let kind = if entry.is_dir {
+                            NodeKind::Dir
+                        } else {
+                            NodeKind::File
+                        };
+                        let _ = self.explorer.file_tree_mut().insert_child(
+                            node_id,
+                            entry.name.into(),
+                            kind,
+                        );
+                    }
+                    self.explorer.file_tree_mut().set_load_state(node_id, LoadState::Loaded);
+                    self.explorer.refresh_cache();
+                }
+            }
+            AppMessage::DirLoadError { path, error: _ } => {
+                if let Some(node_id) = self.explorer.file_tree_mut().find_node_by_path(&path) {
+                    self.explorer.file_tree_mut().set_load_state(node_id, LoadState::NotLoaded);
+                    self.explorer.file_tree_mut().collapse(node_id);
+                    self.explorer.refresh_cache();
+                }
+            }
+            AppMessage::FileLoaded { path, content } => {
+                self.editor_group.open_file(path, &content);
+                self.active_area = ActiveArea::Editor;
+            }
+            AppMessage::FileError { path: _, error: _ } => {
+                // TODO: 显示错误
+            }
+        }
+    }
+
+    pub fn runtime(&self) -> &AsyncRuntime {
+        &self.runtime
     }
 
     pub fn active_area(&self) -> ActiveArea {
@@ -118,6 +155,20 @@ impl Workbench {
         }
     }
 
+    fn handle_explorer_result(&mut self, result: EventResult) -> EventResult {
+        match result {
+            EventResult::OpenFile => {
+                self.open_selected_file();
+                EventResult::Consumed
+            }
+            EventResult::LoadDir(path) => {
+                self.runtime.load_dir(path);
+                EventResult::Consumed
+            }
+            other => other,
+        }
+    }
+
     fn render_header(&self, frame: &mut Frame, area: Rect) {
         let title = "zcode - TUI Editor";
         let header = Paragraph::new(Span::styled(
@@ -168,10 +219,7 @@ impl View for Workbench {
                 match self.active_area {
                     ActiveArea::Explorer => {
                         let result = self.explorer.handle_input(event);
-                        if key_event.code == KeyCode::Enter {
-                            self.open_selected_file();
-                        }
-                        result
+                        self.handle_explorer_result(result)
                     }
                     ActiveArea::Editor => self.editor_group.handle_input(event),
                 }
@@ -184,10 +232,8 @@ impl View for Workbench {
                     ActiveArea::Editor => self.editor_group.handle_input(event),
                 };
 
-                // 处理 Explorer 返回的 OpenFile 请求
-                if matches!(result, EventResult::OpenFile) {
-                    self.open_selected_file();
-                    return EventResult::Consumed;
+                if matches!(self.active_area, ActiveArea::Explorer) {
+                    return self.handle_explorer_result(result);
                 }
 
                 result
@@ -245,12 +291,19 @@ impl View for Workbench {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
     use tempfile::tempdir;
+
+    fn create_test_runtime() -> AsyncRuntime {
+        let (tx, _rx) = mpsc::channel();
+        AsyncRuntime::new(tx)
+    }
 
     #[test]
     fn test_workbench_new() {
         let dir = tempdir().unwrap();
-        let workbench = Workbench::new(dir.path()).unwrap();
+        let runtime = create_test_runtime();
+        let workbench = Workbench::new(dir.path(), runtime).unwrap();
 
         assert_eq!(workbench.active_area(), ActiveArea::Editor);
         assert!(workbench.show_sidebar);
@@ -259,7 +312,8 @@ mod tests {
     #[test]
     fn test_toggle_sidebar() {
         let dir = tempdir().unwrap();
-        let mut workbench = Workbench::new(dir.path()).unwrap();
+        let runtime = create_test_runtime();
+        let mut workbench = Workbench::new(dir.path(), runtime).unwrap();
 
         assert!(workbench.show_sidebar);
         workbench.toggle_sidebar();

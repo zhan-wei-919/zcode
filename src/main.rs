@@ -7,17 +7,19 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
-use std::{env, io, path::Path, time::Duration};
+use std::{env, io, path::Path, sync::mpsc, time::Duration};
 
 mod app;
 mod core;
 mod models;
+mod runtime;
 mod services;
 mod views;
 
 use app::Workbench;
 use core::event::InputEvent;
 use core::view::{EventResult, View};
+use runtime::AsyncRuntime;
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -58,24 +60,29 @@ fn main() -> io::Result<()> {
 }
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &Path) -> io::Result<()> {
-    let mut workbench = Workbench::new(path)?;
+    let (tx, rx) = mpsc::channel();
+    let async_runtime = AsyncRuntime::new(tx);
+    let mut workbench = Workbench::new(path, async_runtime)?;
 
     loop {
         terminal.draw(|frame| {
             workbench.render(frame, frame.area());
         })?;
 
-        // 等待第一个事件
-        let event = event::read()?;
+        if event::poll(Duration::from_millis(16))? {
+            let event = event::read()?;
+            let events = drain_pending_events(event);
 
-        // 收集并合并队列中的所有待处理事件，避免事件堆积导致卡顿
-        let events = drain_pending_events(event);
-
-        for ev in events {
-            let input_event: InputEvent = ev.into();
-            if matches!(workbench.handle_input(&input_event), EventResult::Quit) {
-                return Ok(());
+            for ev in events {
+                let input_event: InputEvent = ev.into();
+                if matches!(workbench.handle_input(&input_event), EventResult::Quit) {
+                    return Ok(());
+                }
             }
+        }
+
+        while let Ok(msg) = rx.try_recv() {
+            workbench.handle_message(msg);
         }
     }
 }

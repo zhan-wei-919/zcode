@@ -7,12 +7,13 @@ edition = "2021"
 ratatui = "0.28"
 crossterm = "0.27"
 ropey = "1.6.0"
-unicode-segmentation = "1.10" 
+unicode-segmentation = "1.10"
 unicode-width = "0.1"
 unicode-xid = "0.2"
 slotmap = "1.0"
 walkdir = "2.4"
 rustc-hash = "2.0"
+tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 
 [dev-dependencies]
 tempfile = "3.23.0"

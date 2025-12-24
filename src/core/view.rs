@@ -4,6 +4,7 @@
 
 use ratatui::layout::Rect;
 use ratatui::Frame;
+use std::path::PathBuf;
 use super::event::InputEvent;
 
 pub trait View {
@@ -24,13 +25,15 @@ pub trait View {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventResult {
     Consumed,
     Ignored,
     Quit,
     /// 请求打开当前选中的文件
     OpenFile,
+    /// 请求异步加载目录内容
+    LoadDir(PathBuf),
 }
 
 impl EventResult {

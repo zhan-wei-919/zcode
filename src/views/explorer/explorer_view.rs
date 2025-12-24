@@ -7,7 +7,7 @@
 
 use crate::core::event::InputEvent;
 use crate::core::view::{EventResult, View};
-use crate::models::{FileTree, FileTreeRow, NodeId};
+use crate::models::{FileTree, FileTreeRow, LoadState, NodeId};
 use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -63,8 +63,35 @@ impl ExplorerView {
             .unwrap_or(false)
     }
 
-    fn refresh_cache(&mut self) {
+    pub fn refresh_cache(&mut self) {
         self.cached_rows = self.file_tree.flatten_for_view();
+    }
+
+    /// 尝试展开目录，根据 LoadState 决定行为
+    fn try_expand_dir(&mut self, id: NodeId) -> EventResult {
+        if self.file_tree.is_expanded(id) {
+            self.file_tree.collapse(id);
+            self.refresh_cache();
+            return EventResult::Consumed;
+        }
+
+        match self.file_tree.load_state(id) {
+            Some(LoadState::NotLoaded) => {
+                self.file_tree.set_load_state(id, LoadState::Loading);
+                self.file_tree.expand(id);
+                self.refresh_cache();
+                let path = self.file_tree.full_path(id);
+                EventResult::LoadDir(path)
+            }
+            Some(LoadState::Loading) => {
+                EventResult::Consumed
+            }
+            Some(LoadState::Loaded) | None => {
+                self.file_tree.expand(id);
+                self.refresh_cache();
+                EventResult::Consumed
+            }
+        }
     }
 
     fn handle_key(&mut self, event: &crossterm::event::KeyEvent) -> EventResult {
@@ -80,8 +107,7 @@ impl ExplorerView {
             KeyCode::Enter | KeyCode::Right => {
                 if let Some(id) = self.file_tree.selected() {
                     if self.file_tree.is_dir(id) {
-                        self.file_tree.toggle_expand(id);
-                        self.refresh_cache();
+                        return self.try_expand_dir(id);
                     }
                 }
                 EventResult::Consumed
@@ -144,9 +170,7 @@ impl ExplorerView {
                     // 双击：目录则展开/折叠，文件则打开
                     self.last_click = None;
                     if self.file_tree.is_dir(node_id) {
-                        self.file_tree.toggle_expand(node_id);
-                        self.refresh_cache();
-                        EventResult::Consumed
+                        self.try_expand_dir(node_id)
                     } else {
                         // 返回 OpenFile 让 Workbench 处理打开文件
                         EventResult::OpenFile

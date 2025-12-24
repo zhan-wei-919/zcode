@@ -37,6 +37,7 @@ impl InputEvent {
     }
 }
 
+// TODO: 实现粘贴事件
 impl From<crossterm::event::Event> for InputEvent {
     fn from(event: crossterm::event::Event) -> Self {
         match event {

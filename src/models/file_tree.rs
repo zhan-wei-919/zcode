@@ -1,10 +1,4 @@
 //! 文件树数据模型
-//!
-//! 使用 SlotMap 平坦存储树节点，支持：
-//! - 稳定的节点 ID（防止悬垂引用）
-//! - 展开/折叠状态管理
-//! - 路径缓存
-//! - 目录优先排序
 
 use rustc_hash::FxHashSet;
 use slotmap::{new_key_type, SlotMap};
@@ -15,7 +9,6 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
-use walkdir::WalkDir;
 
 new_key_type! { pub struct NodeId; }
 
@@ -23,6 +16,13 @@ new_key_type! { pub struct NodeId; }
 pub enum NodeKind {
     File,
     Dir,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum LoadState {
+    NotLoaded,
+    Loading,
+    Loaded,
 }
 
 #[derive(Debug)]
@@ -54,6 +54,7 @@ pub struct Node {
     pub name: OsString,
     pub parent: Option<NodeId>,
     pub children: Option<BTreeMap<OsString, NodeId>>,
+    pub load_state: LoadState,
 }
 
 impl Node {
@@ -63,15 +64,17 @@ impl Node {
             name,
             parent,
             children: None,
+            load_state: LoadState::Loaded,
         }
     }
 
-    fn new_dir(name: OsString, parent: Option<NodeId>) -> Self {
+    fn new_dir(name: OsString, parent: Option<NodeId>, load_state: LoadState) -> Self {
         Self {
             kind: NodeKind::Dir,
             name,
             parent,
             children: Some(BTreeMap::new()),
+            load_state,
         }
     }
 }
@@ -88,7 +91,7 @@ pub struct FileTree {
 impl FileTree {
     fn new_with_root(root_name: OsString, absolute_root: PathBuf) -> Self {
         let mut arena = SlotMap::with_key();
-        let root = arena.insert(Node::new_dir(root_name, None));
+        let root = arena.insert(Node::new_dir(root_name, None, LoadState::Loaded));
 
         let mut expanded = FxHashSet::default();
         expanded.insert(root);
@@ -124,11 +127,35 @@ impl FileTree {
         self.arena.get(id)
     }
 
+    pub fn absolute_root(&self) -> &Path {
+        &self.absolute_root
+    }
+
+    pub fn load_state(&self, id: NodeId) -> Option<LoadState> {
+        self.arena.get(id).map(|n| n.load_state)
+    }
+
+    pub fn set_load_state(&mut self, id: NodeId, state: LoadState) {
+        if let Some(node) = self.arena.get_mut(id) {
+            node.load_state = state;
+        }
+    }
+
     pub fn insert_child(
         &mut self,
         parent: NodeId,
         name: OsString,
         kind: NodeKind,
+    ) -> Result<NodeId, FileTreeError> {
+        self.insert_child_with_state(parent, name, kind, LoadState::NotLoaded)
+    }
+
+    pub fn insert_child_with_state(
+        &mut self,
+        parent: NodeId,
+        name: OsString,
+        kind: NodeKind,
+        load_state: LoadState,
     ) -> Result<NodeId, FileTreeError> {
         {
             let parent_ro = self
@@ -146,7 +173,7 @@ impl FileTree {
 
         let node = match kind {
             NodeKind::File => Node::new_file(name.clone(), Some(parent)),
-            NodeKind::Dir => Node::new_dir(name.clone(), Some(parent)),
+            NodeKind::Dir => Node::new_dir(name.clone(), Some(parent), load_state),
         };
         let id = self.arena.insert(node);
 
@@ -405,6 +432,7 @@ pub struct FileTreeRow {
     pub name: OsString,
     pub is_dir: bool,
     pub is_expanded: bool,
+    pub load_state: LoadState,
 }
 
 impl FileTree {
@@ -421,6 +449,7 @@ impl FileTree {
                         name: node.name.clone(),
                         is_dir: node.kind == NodeKind::Dir,
                         is_expanded: self.expanded.contains(&id),
+                        load_state: node.load_state,
                     });
                 }
             }
@@ -454,6 +483,59 @@ impl FileTree {
 
         result
     }
+
+    pub fn find_node_by_path(&mut self, path: &Path) -> Option<NodeId> {
+        if path == self.absolute_root {
+            return Some(self.root);
+        }
+
+        for (id, cached_path) in &self.path_cache {
+            if cached_path == path {
+                return Some(*id);
+            }
+        }
+
+        let relative = path.strip_prefix(&self.absolute_root).ok()?;
+        let mut current = self.root;
+
+        for component in relative.components() {
+            let name = component.as_os_str();
+            let children = self.arena.get(current)?.children.as_ref()?;
+            current = *children.get(name)?;
+        }
+
+        self.path_cache.insert(current, path.to_path_buf());
+        Some(current)
+    }
+}
+
+pub fn should_ignore(name: &str) -> bool {
+    matches!(
+        name,
+        ".DS_Store"
+            | ".Spotlight-V100"
+            | ".Trashes"
+            | ".fseventsd"
+            | ".TemporaryItems"
+            | "Thumbs.db"
+            | "desktop.ini"
+            | ".git"
+            | "node_modules"
+    )
+}
+
+fn load_dir_entries(path: &Path) -> io::Result<Vec<(OsString, bool)>> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if should_ignore(&name.to_string_lossy()) {
+            continue;
+        }
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        entries.push((name, is_dir));
+    }
+    Ok(entries)
 }
 
 pub fn build_file_tree(root_path: &Path) -> io::Result<FileTree> {
@@ -469,39 +551,10 @@ pub fn build_file_tree(root_path: &Path) -> io::Result<FileTree> {
 
     let mut tree = FileTree::new_with_root(root_name, absolute_root.clone());
 
-    let mut path_to_id: HashMap<PathBuf, NodeId> = HashMap::new();
-    path_to_id.insert(absolute_root.clone(), tree.root);
-
-    for entry in WalkDir::new(&absolute_root)
-        .follow_links(false)
-        .min_depth(1)
-        .into_iter()
-        .filter_entry(|e| {
-            let name = e.file_name().to_string_lossy();
-            !(name == "target" || name == "node_modules" || name == ".git")
-        })
-    {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let path = entry.path();
-
-        let parent_path = path.parent().unwrap_or(&absolute_root);
-        let parent_id = path_to_id.get(parent_path).copied().unwrap_or(tree.root);
-
-        let name = path.file_name().unwrap_or_default().to_os_string();
-
-        let kind = if entry.file_type().is_dir() {
-            NodeKind::Dir
-        } else {
-            NodeKind::File
-        };
-
-        if let Ok(node_id) = tree.insert_child(parent_id, name, kind) {
-            path_to_id.insert(path.to_path_buf(), node_id);
-        }
+    let entries = load_dir_entries(&absolute_root)?;
+    for (name, is_dir) in entries {
+        let kind = if is_dir { NodeKind::Dir } else { NodeKind::File };
+        let _ = tree.insert_child(tree.root, name, kind);
     }
 
     Ok(tree)

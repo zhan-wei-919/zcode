@@ -489,37 +489,215 @@ fn run_app(terminal: &mut Terminal<...>) -> io::Result<()> {
 
 ```toml
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "fs", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 ```
 
-#### Step 2: 创建 AsyncRuntime
+#### Step 2: 创建 runtime 模块
 
 ```
 src/
 └── runtime/
-    ├── mod.rs
+    ├── mod.rs          # 模块导出
     ├── message.rs      # AppMessage 定义
     └── runtime.rs      # AsyncRuntime 实现
 ```
 
+**message.rs** - 先定义基础消息类型，后续按需扩展：
+
+```rust
+use std::path::PathBuf;
+
+pub enum AppMessage {
+    // 文件树懒加载
+    DirLoaded {
+        path: PathBuf,
+        entries: Vec<DirEntryInfo>,
+    },
+    DirLoadError {
+        path: PathBuf,
+        error: String,
+    },
+
+    // 文件内容加载
+    FileLoaded {
+        path: PathBuf,
+        content: String,
+    },
+    FileError {
+        path: PathBuf,
+        error: String,
+    },
+}
+
+pub struct DirEntryInfo {
+    pub name: String,
+    pub is_dir: bool,
+}
+```
+
+**runtime.rs** - 封装 tokio runtime：
+
+```rust
+use std::sync::mpsc::Sender;
+use std::path::PathBuf;
+use super::message::{AppMessage, DirEntryInfo};
+
+pub struct AsyncRuntime {
+    runtime: tokio::runtime::Runtime,
+    tx: Sender<AppMessage>,
+}
+
+impl AsyncRuntime {
+    pub fn new(tx: Sender<AppMessage>) -> Self {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("Failed to create tokio runtime");
+        Self { runtime, tx }
+    }
+
+    pub fn load_dir(&self, path: PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            match tokio::fs::read_dir(&path).await {
+                Ok(mut entries) => {
+                    let mut result = Vec::new();
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        if let Ok(file_type) = entry.file_type().await {
+                            if let Some(name) = entry.file_name().to_str() {
+                                result.push(DirEntryInfo {
+                                    name: name.to_string(),
+                                    is_dir: file_type.is_dir(),
+                                });
+                            }
+                        }
+                    }
+                    let _ = tx.send(AppMessage::DirLoaded { path, entries: result });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppMessage::DirLoadError {
+                        path,
+                        error: e.to_string(),
+                    });
+                }
+            }
+        });
+    }
+
+    pub fn load_file(&self, path: PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            match tokio::fs::read_to_string(&path).await {
+                Ok(content) => {
+                    let _ = tx.send(AppMessage::FileLoaded { path, content });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppMessage::FileError {
+                        path,
+                        error: e.to_string(),
+                    });
+                }
+            }
+        });
+    }
+}
+```
+
 #### Step 3: 修改主循环
 
-- 添加 channel 接收
-- 添加 poll 超时
-- 处理 AppMessage
+**关键改动**：
 
-#### Step 4: 迁移文件操作
+| 现在 | 重构后 |
+|------|--------|
+| `event::read()` 阻塞等待 | `event::poll(16ms)` + 超时 |
+| 无异步消息处理 | `rx.try_recv()` 检查消息 |
+| `Workbench::new(path)` | `Workbench::new(path, runtime)` |
 
-- 大文件加载改为异步
-- 文件保存改为异步（可选）
+```rust
+fn run_app(terminal: &mut Terminal<...>, path: &Path) -> io::Result<()> {
+    // 1. 创建 channel 和 runtime
+    let (tx, rx) = std::sync::mpsc::channel();
+    let async_runtime = AsyncRuntime::new(tx);
 
-#### Step 5: 添加后台服务
+    // 2. Workbench 持有 runtime 引用
+    let mut workbench = Workbench::new(path, async_runtime)?;
 
-按需添加：
-- FileWatchService
-- LspService
-- AiService
-- SearchService
+    loop {
+        // 3. 渲染
+        terminal.draw(|frame| {
+            workbench.render(frame, frame.area());
+        })?;
+
+        // 4. 用 poll 替代 read，设置 16ms 超时（约 60fps）
+        if event::poll(Duration::from_millis(16))? {
+            let event = event::read()?;
+            let events = drain_pending_events(event);
+            for ev in events {
+                if matches!(workbench.handle_input(&ev.into()), EventResult::Quit) {
+                    return Ok(());
+                }
+            }
+        }
+
+        // 5. 处理异步消息
+        while let Ok(msg) = rx.try_recv() {
+            workbench.handle_message(msg);
+        }
+    }
+}
+```
+
+#### Step 4: 修改 Workbench
+
+```rust
+pub struct Workbench {
+    // ... 现有字段 ...
+    runtime: AsyncRuntime,
+}
+
+impl Workbench {
+    pub fn new(path: &Path, runtime: AsyncRuntime) -> io::Result<Self> {
+        // ...
+    }
+
+    pub fn handle_message(&mut self, msg: AppMessage) {
+        match msg {
+            AppMessage::DirLoaded { path, entries } => {
+                // 更新文件树
+            }
+            AppMessage::DirLoadError { path, error } => {
+                // 显示错误
+            }
+            AppMessage::FileLoaded { path, content } => {
+                // 打开编辑器 tab
+            }
+            AppMessage::FileError { path, error } => {
+                // 显示错误
+            }
+        }
+    }
+
+    pub fn runtime(&self) -> &AsyncRuntime {
+        &self.runtime
+    }
+}
+```
+
+#### Step 5: 迁移文件树为懒加载
+
+1. FileTree 节点增加 `LoadState` 枚举
+2. 初始化只加载根目录一层
+3. 展开目录时调用 `runtime.load_dir(path)`
+4. `handle_message` 收到 `DirLoaded` 后更新树
+
+#### Step 6: 后续扩展
+
+按需添加更多异步服务：
+- FileWatchService（文件监控）
+- LspService（语言服务）
+- AiService（AI 补全）
+- SearchService（全局搜索）
 
 ### 5.6 风险与对策
 
