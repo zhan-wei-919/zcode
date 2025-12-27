@@ -263,6 +263,7 @@ impl EditorView {
         self.viewport.enable_follow_cursor();
 
         match (event.code, event.modifiers) {
+            // 普通光标移动
             (KeyCode::Left, KeyModifiers::NONE) => self.execute(Command::CursorLeft),
             (KeyCode::Right, KeyModifiers::NONE) => self.execute(Command::CursorRight),
             (KeyCode::Up, KeyModifiers::NONE) => self.execute(Command::CursorUp),
@@ -273,6 +274,23 @@ impl EditorView {
             (KeyCode::End, KeyModifiers::CONTROL) => self.execute(Command::CursorFileEnd),
             (KeyCode::Left, KeyModifiers::CONTROL) => self.execute(Command::CursorWordLeft),
             (KeyCode::Right, KeyModifiers::CONTROL) => self.execute(Command::CursorWordRight),
+
+            // Shift+方向键：扩展选区
+            (KeyCode::Left, KeyModifiers::SHIFT) => self.extend_selection_left(),
+            (KeyCode::Right, KeyModifiers::SHIFT) => self.extend_selection_right(),
+            (KeyCode::Up, KeyModifiers::SHIFT) => self.extend_selection_up(),
+            (KeyCode::Down, KeyModifiers::SHIFT) => self.extend_selection_down(),
+            (KeyCode::Home, KeyModifiers::SHIFT) => self.extend_selection_to_line_start(),
+            (KeyCode::End, KeyModifiers::SHIFT) => self.extend_selection_to_line_end(),
+
+            // Ctrl+Shift+方向键：按词扩展选区
+            (KeyCode::Left, mods) if mods == KeyModifiers::CONTROL | KeyModifiers::SHIFT => {
+                self.extend_selection_word_left()
+            }
+            (KeyCode::Right, mods) if mods == KeyModifiers::CONTROL | KeyModifiers::SHIFT => {
+                self.extend_selection_word_right()
+            }
+
             (KeyCode::PageUp, KeyModifiers::NONE) => self.execute(Command::PageUp),
             (KeyCode::PageDown, KeyModifiers::NONE) => self.execute(Command::PageDown),
             (KeyCode::Enter, KeyModifiers::NONE) => self.execute(Command::InsertNewline),
@@ -549,6 +567,165 @@ impl EditorView {
         selection.update_cursor((last_line, last_col), self.buffer.rope());
         self.buffer.set_selection(Some(selection));
         self.buffer.set_cursor(last_line, last_col);
+    }
+
+    /// 开始或继续扩展选区
+    /// 如果没有选区，以当前光标位置为 anchor 创建选区
+    fn ensure_selection(&mut self) {
+        if self.buffer.selection().is_none() {
+            let pos = self.buffer.cursor();
+            self.buffer.set_selection(Some(Selection::new(pos, Granularity::Char)));
+        }
+    }
+
+    /// 扩展选区：向左一个字符
+    fn extend_selection_left(&mut self) {
+        self.ensure_selection();
+        let (row, col) = self.buffer.cursor();
+        let new_pos = if col > 0 {
+            (row, col - 1)
+        } else if row > 0 {
+            let prev_len = self.buffer.line_grapheme_len(row - 1);
+            (row - 1, prev_len)
+        } else {
+            (row, col)
+        };
+        self.buffer.update_selection_cursor(new_pos);
+        self.buffer.set_cursor(new_pos.0, new_pos.1);
+    }
+
+    /// 扩展选区：向右一个字符
+    fn extend_selection_right(&mut self) {
+        self.ensure_selection();
+        let (row, col) = self.buffer.cursor();
+        let line_len = self.buffer.line_grapheme_len(row);
+        let new_pos = if col < line_len {
+            (row, col + 1)
+        } else if row + 1 < self.buffer.len_lines() {
+            (row + 1, 0)
+        } else {
+            (row, col)
+        };
+        self.buffer.update_selection_cursor(new_pos);
+        self.buffer.set_cursor(new_pos.0, new_pos.1);
+    }
+
+    /// 扩展选区：向上一行
+    fn extend_selection_up(&mut self) {
+        self.ensure_selection();
+        let (row, col) = self.buffer.cursor();
+        if row > 0 {
+            let new_len = self.buffer.line_grapheme_len(row - 1);
+            let new_pos = (row - 1, col.min(new_len));
+            self.buffer.update_selection_cursor(new_pos);
+            self.buffer.set_cursor(new_pos.0, new_pos.1);
+        }
+    }
+
+    /// 扩展选区：向下一行
+    fn extend_selection_down(&mut self) {
+        self.ensure_selection();
+        let (row, col) = self.buffer.cursor();
+        if row + 1 < self.buffer.len_lines() {
+            let new_len = self.buffer.line_grapheme_len(row + 1);
+            let new_pos = (row + 1, col.min(new_len));
+            self.buffer.update_selection_cursor(new_pos);
+            self.buffer.set_cursor(new_pos.0, new_pos.1);
+        }
+    }
+
+    /// 扩展选区：到行首
+    fn extend_selection_to_line_start(&mut self) {
+        self.ensure_selection();
+        let (row, _) = self.buffer.cursor();
+        let new_pos = (row, 0);
+        self.buffer.update_selection_cursor(new_pos);
+        self.buffer.set_cursor(new_pos.0, new_pos.1);
+    }
+
+    /// 扩展选区：到行尾
+    fn extend_selection_to_line_end(&mut self) {
+        self.ensure_selection();
+        let (row, _) = self.buffer.cursor();
+        let line_len = self.buffer.line_grapheme_len(row);
+        let new_pos = (row, line_len);
+        self.buffer.update_selection_cursor(new_pos);
+        self.buffer.set_cursor(new_pos.0, new_pos.1);
+    }
+
+    /// 扩展选区：向左一个词
+    fn extend_selection_word_left(&mut self) {
+        self.ensure_selection();
+        let (row, col) = self.buffer.cursor();
+
+        if col == 0 {
+            if row > 0 {
+                let prev_len = self.buffer.line_grapheme_len(row - 1);
+                let new_pos = (row - 1, prev_len);
+                self.buffer.update_selection_cursor(new_pos);
+                self.buffer.set_cursor(new_pos.0, new_pos.1);
+            }
+            return;
+        }
+
+        let line_slice = match self.buffer.line_slice(row) {
+            Some(s) => s,
+            None => return,
+        };
+        let line = slice_to_cow(line_slice);
+        let graphemes: Vec<&str> = line.graphemes(true).collect();
+
+        let mut pos = col.min(graphemes.len());
+
+        while pos > 0 && graphemes[pos - 1].chars().all(|c| c.is_whitespace()) {
+            pos -= 1;
+        }
+
+        while pos > 0 && !graphemes[pos - 1].chars().all(|c| c.is_whitespace() || is_word_boundary_char(c)) {
+            pos -= 1;
+        }
+
+        let new_pos = (row, pos);
+        self.buffer.update_selection_cursor(new_pos);
+        self.buffer.set_cursor(new_pos.0, new_pos.1);
+    }
+
+    /// 扩展选区：向右一个词
+    fn extend_selection_word_right(&mut self) {
+        self.ensure_selection();
+        let (row, col) = self.buffer.cursor();
+        let line_len = self.buffer.line_grapheme_len(row);
+
+        if col >= line_len {
+            if row + 1 < self.buffer.len_lines() {
+                let new_pos = (row + 1, 0);
+                self.buffer.update_selection_cursor(new_pos);
+                self.buffer.set_cursor(new_pos.0, new_pos.1);
+            }
+            return;
+        }
+
+        let line_slice = match self.buffer.line_slice(row) {
+            Some(s) => s,
+            None => return,
+        };
+        let line = slice_to_cow(line_slice);
+        let graphemes: Vec<&str> = line.graphemes(true).collect();
+        let len = graphemes.len();
+
+        let mut pos = col;
+
+        while pos < len && !graphemes[pos].chars().all(|c| c.is_whitespace() || is_word_boundary_char(c)) {
+            pos += 1;
+        }
+
+        while pos < len && graphemes[pos].chars().all(|c| c.is_whitespace() || is_word_boundary_char(c)) {
+            pos += 1;
+        }
+
+        let new_pos = (row, pos.min(line_len));
+        self.buffer.update_selection_cursor(new_pos);
+        self.buffer.set_cursor(new_pos.0, new_pos.1);
     }
 
     fn insert_char(&mut self, c: char) {
