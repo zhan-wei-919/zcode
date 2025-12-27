@@ -29,9 +29,9 @@
 | Delete 键删除 | ✅ 已实现 | DeleteForward |
 | 删除整行 | ⚠️ 部分实现 | Ctrl+D 命令已定义，逻辑未实现 |
 | 删除到行尾 | ⚠️ 部分实现 | Ctrl+K 命令已定义，逻辑未实现 |
-| 复制 | ❌ 未实现 | |
-| 粘贴 | ❌ 未实现 | |
-| 剪切 | ❌ 未实现 | |
+| 复制 | ✅ 已实现 | Ctrl+C，arboard 剪贴板 |
+| 粘贴 | ✅ 已实现 | Ctrl+V，支持 bracketed paste |
+| 剪切 | ✅ 已实现 | Ctrl+X |
 | Undo | ✅ 已实现 | Git 模型 EditHistory，Ctrl+Z |
 | Redo | ✅ 已实现 | Git 模型 EditHistory，Shift+Ctrl+Z / Ctrl+Y |
 
@@ -119,10 +119,10 @@
 ### 0.10 功能统计
 
 ```
-已实现:     34 个
+已实现:     37 个
 部分实现:    4 个
-未实现:     18 个
-完成度:     约 61%
+未实现:     15 个
+完成度:     约 66%
 ```
 
 ---
@@ -285,9 +285,9 @@ pub trait FileProvider: Send + Sync {
 - [x] 文件树键盘导航（上下选择、Enter 打开）
 - [x] 文件树鼠标双击展开/打开
 - [x] Undo/Redo（Git 模型 EditHistory）
+- [x] 复制/粘贴/剪切（arboard + bracketed paste）
 - [ ] 查找/替换
 - [ ] 命令面板（Ctrl+Shift+P）
-- [ ] 复制/粘贴/剪切
 
 ### Phase 7: 异步架构重构（待开始）
 
@@ -720,7 +720,7 @@ impl Workbench {
 ### Phase 6 完成标准
 - [x] Undo/Redo 工作
 - [ ] 查找/替换可用
-- [ ] 复制/粘贴可用
+- [x] 复制/粘贴可用
 
 ### Phase 7 完成标准
 - [ ] 异步架构就绪
@@ -735,6 +735,14 @@ impl Workbench {
 ---
 
 ## 7. 更新日志
+
+### 2024-12-27
+- 实现复制/粘贴/剪切功能
+- 新增 `services/clipboard.rs` - ClipboardService（arboard 封装）
+- 支持 Ctrl+C/X/V 快捷键
+- 支持 crossterm bracketed paste 事件
+- 10MB 粘贴大小限制（TODO: 后续优化大文本处理）
+- 通过所有测试（87 个）
 
 ### 2024-12-24
 - 实现 Undo/Redo 功能（Git 模型）

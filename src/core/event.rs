@@ -11,6 +11,7 @@ pub enum InputEvent {
     Resize(u16, u16),
     FocusGained,
     FocusLost,
+    Paste(String),
 }
 
 impl InputEvent {
@@ -37,7 +38,6 @@ impl InputEvent {
     }
 }
 
-// TODO: 实现粘贴事件
 impl From<crossterm::event::Event> for InputEvent {
     fn from(event: crossterm::event::Event) -> Self {
         match event {
@@ -46,7 +46,7 @@ impl From<crossterm::event::Event> for InputEvent {
             crossterm::event::Event::Resize(w, h) => InputEvent::Resize(w, h),
             crossterm::event::Event::FocusGained => InputEvent::FocusGained,
             crossterm::event::Event::FocusLost => InputEvent::FocusLost,
-            crossterm::event::Event::Paste(_) => InputEvent::FocusLost,
+            crossterm::event::Event::Paste(s) => InputEvent::Paste(s),
         }
     }
 }

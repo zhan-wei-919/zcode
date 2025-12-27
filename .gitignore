@@ -4,3 +4,4 @@ test_tree.rs
 .claude
 CLAUDE.md
 /docs
+.gitignore

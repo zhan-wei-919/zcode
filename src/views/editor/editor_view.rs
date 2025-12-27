@@ -13,7 +13,7 @@ use crate::core::event::InputEvent;
 use crate::core::view::{EventResult, View};
 use crate::core::Command;
 use crate::models::{slice_to_cow, EditHistory, Granularity, Selection, TextBuffer};
-use crate::services::{ensure_backup_dir, get_ops_file_path, EditorConfig};
+use crate::services::{ensure_backup_dir, get_ops_file_path, ClipboardService, EditorConfig};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -33,6 +33,7 @@ pub struct EditorView {
     dirty: bool,
     mouse_state: MouseState,
     history: EditHistory,
+    clipboard: ClipboardService,
 }
 
 struct MouseState {
@@ -97,6 +98,7 @@ impl EditorView {
             dirty: false,
             mouse_state: MouseState::new(),
             history,
+            clipboard: ClipboardService::new(),
         }
     }
 
@@ -111,6 +113,7 @@ impl EditorView {
             dirty: false,
             mouse_state: MouseState::new(),
             history,
+            clipboard: ClipboardService::new(),
         }
     }
 
@@ -125,6 +128,7 @@ impl EditorView {
             dirty: false,
             mouse_state: MouseState::new(),
             history,
+            clipboard: ClipboardService::new(),
         }
     }
 
@@ -148,6 +152,7 @@ impl EditorView {
                             dirty: history.is_dirty(),
                             mouse_state: MouseState::new(),
                             history,
+                            clipboard: ClipboardService::new(),
                         };
                         view.buffer.set_rope(recovered_rope);
                         view.buffer.set_cursor(cursor.0, cursor.1);
@@ -176,6 +181,7 @@ impl EditorView {
             dirty: false,
             mouse_state: MouseState::new(),
             history,
+            clipboard: ClipboardService::new(),
         }
     }
 
@@ -276,6 +282,12 @@ impl EditorView {
             }
             // Redo: Ctrl+Y (alternative)
             (KeyCode::Char('y'), KeyModifiers::CONTROL) => self.redo(),
+            // Copy: Ctrl+C
+            (KeyCode::Char('c'), KeyModifiers::CONTROL) => self.copy(),
+            // Cut: Ctrl+X
+            (KeyCode::Char('x'), KeyModifiers::CONTROL) => self.cut(),
+            // Paste: Ctrl+V
+            (KeyCode::Char('v'), KeyModifiers::CONTROL) => self.paste(),
             (KeyCode::Char(c), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
                 self.execute(Command::InsertChar(c))
             }
@@ -495,6 +507,47 @@ impl EditorView {
         }
     }
 
+    fn copy(&mut self) {
+        if let Some(text) = self.buffer.get_selection_text() {
+            let _ = self.clipboard.set_text(&text);
+        }
+    }
+
+    fn cut(&mut self) {
+        if let Some(text) = self.buffer.get_selection_text() {
+            if self.clipboard.set_text(&text).is_ok() {
+                self.delete_selection();
+            }
+        }
+    }
+
+    fn paste(&mut self) {
+        if let Ok(text) = self.clipboard.get_text() {
+            if !text.is_empty() {
+                self.delete_selection();
+                self.insert_str(&text);
+            }
+        }
+    }
+
+    fn insert_str(&mut self, s: &str) {
+        let parent = self.history.head();
+        let op = self.buffer.insert_str_op(s, parent);
+        self.history.push(op, self.buffer.rope());
+        self.dirty = true;
+    }
+
+    /// 处理 bracketed paste 事件
+    /// TODO: 大文本粘贴优化（>10MB 时考虑分块处理或警告）
+    fn handle_paste(&mut self, text: &str) {
+        const PASTE_MAX_SIZE: usize = 10 * 1024 * 1024; // 10MB
+        if text.len() > PASTE_MAX_SIZE || text.is_empty() {
+            return;
+        }
+        self.delete_selection();
+        self.insert_str(text);
+    }
+
     fn render_line(&self, line_str: &str, row: usize) -> Line<'static> {
         let expanded = self.viewport.expand_tabs_cow(line_str);
         let graphemes: Vec<&str> = expanded.graphemes(true).collect();
@@ -610,6 +663,10 @@ impl View for EditorView {
         match event {
             InputEvent::Key(key_event) => self.handle_key(key_event),
             InputEvent::Mouse(mouse_event) => self.handle_mouse(mouse_event),
+            InputEvent::Paste(text) => {
+                self.handle_paste(text);
+                EventResult::Consumed
+            }
             _ => EventResult::Ignored,
         }
     }

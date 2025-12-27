@@ -102,6 +102,19 @@ impl TextBuffer {
             .unwrap_or(false)
     }
 
+    pub fn get_selection_text(&self) -> Option<String> {
+        let selection = self.selection.as_ref()?;
+        if selection.is_empty() {
+            return None;
+        }
+
+        let (start_pos, end_pos) = selection.range();
+        let start_char = self.pos_to_char(start_pos);
+        let end_char = self.pos_to_char(end_pos);
+
+        Some(self.rope.slice(start_char..end_char).to_string())
+    }
+
     pub fn len_lines(&self) -> usize {
         self.rope.len_lines()
     }
