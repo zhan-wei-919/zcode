@@ -175,6 +175,7 @@ impl Workbench {
             self.root_path.clone(),
             pattern,
             false, // case insensitive by default
+            false, // not regex by default
             tx,
         );
         self.global_search_task = Some(task);
@@ -195,7 +196,9 @@ impl Workbench {
                         self.global_search_panel
                             .set_progress(files_searched, files_with_matches);
                     }
-                    GlobalSearchMessage::Complete { .. } | GlobalSearchMessage::Cancelled { .. } => {
+                    GlobalSearchMessage::Complete { .. }
+                    | GlobalSearchMessage::Cancelled { .. }
+                    | GlobalSearchMessage::Error { .. } => {
                         self.global_search_panel.set_searching(false);
                         self.global_search_task = None;
                         self.global_search_rx = None;

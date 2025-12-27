@@ -402,18 +402,14 @@ mod tests {
             path: PathBuf::from("/test/file.rs"),
             matches: vec![
                 Match {
-                    start_byte: 0,
-                    end_byte: 5,
-                    start_char: 0,
-                    end_char: 5,
+                    start: 0,
+                    end: 5,
                     line: 0,
                     col: 0,
                 },
                 Match {
-                    start_byte: 10,
-                    end_byte: 15,
-                    start_char: 10,
-                    end_char: 15,
+                    start: 10,
+                    end: 15,
                     line: 1,
                     col: 0,
                 },

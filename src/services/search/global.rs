@@ -1,15 +1,15 @@
 //! 全局搜索服务
 //!
-//! 提供跨文件搜索功能：
-//! - 使用 ignore crate 遵守 .gitignore 规则
-//! - 自动跳过二进制文件
-//! - 异步增量返回结果
+//! - Literal 模式：流式搜索，8KB 栈 buffer
+//! - Regex 模式：mmap 全量搜索
+//! - 使用 ignore crate 的并行遍历，自动利用多核
 
-use super::searcher::{Match, StreamSearcher};
-use ignore::WalkBuilder;
-use ropey::Rope;
+use super::searcher::{search_regex_in_slice, Match, SearchConfig, StreamSearcher};
+use ignore::{WalkBuilder, WalkState};
+use memmap2::Mmap;
+use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
@@ -19,40 +19,37 @@ fn next_global_search_id() -> u64 {
     GLOBAL_SEARCH_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-/// 单个文件的搜索结果
 #[derive(Debug, Clone)]
 pub struct FileMatches {
     pub path: PathBuf,
     pub matches: Vec<Match>,
 }
 
-/// 全局搜索消息
 #[derive(Debug, Clone)]
 pub enum GlobalSearchMessage {
-    /// 找到一个文件的匹配结果
     FileMatches {
         search_id: u64,
         file_matches: FileMatches,
     },
-    /// 搜索进度更新
     Progress {
         search_id: u64,
         files_searched: usize,
         files_with_matches: usize,
     },
-    /// 搜索完成
     Complete {
         search_id: u64,
         total_files: usize,
         total_matches: usize,
     },
-    /// 搜索被取消
     Cancelled {
         search_id: u64,
     },
+    Error {
+        search_id: u64,
+        message: String,
+    },
 }
 
-/// 全局搜索任务句柄
 pub struct GlobalSearchTask {
     id: u64,
     cancelled: Arc<AtomicBool>,
@@ -89,7 +86,6 @@ impl Default for GlobalSearchTask {
     }
 }
 
-/// 全局搜索服务
 pub struct GlobalSearchService {
     runtime: tokio::runtime::Handle,
 }
@@ -99,12 +95,12 @@ impl GlobalSearchService {
         Self { runtime }
     }
 
-    /// 在目录中搜索
     pub fn search_in_dir(
         &self,
         root: PathBuf,
         pattern: String,
         case_sensitive: bool,
+        is_regex: bool,
         tx: Sender<GlobalSearchMessage>,
     ) -> GlobalSearchTask {
         let task = GlobalSearchTask::new();
@@ -121,9 +117,24 @@ impl GlobalSearchService {
                 return;
             }
 
-            // 在阻塞任务中执行搜索
+            // 编译搜索配置（只编译一次）
+            let config = if is_regex {
+                match SearchConfig::regex(&pattern, case_sensitive) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx.send(GlobalSearchMessage::Error {
+                            search_id,
+                            message: format!("Invalid regex: {}", e),
+                        });
+                        return;
+                    }
+                }
+            } else {
+                SearchConfig::literal(&pattern, case_sensitive)
+            };
+
             let _ = tokio::task::spawn_blocking(move || {
-                search_dir_sync(&root, &pattern, case_sensitive, search_id, &cancelled, &tx)
+                search_dir_parallel(&root, &config, search_id, &cancelled, &tx)
             })
             .await;
         });
@@ -132,106 +143,140 @@ impl GlobalSearchService {
     }
 }
 
-/// 检查文件是否可能是二进制文件
 fn is_likely_binary(content: &[u8]) -> bool {
-    // 检查前 8KB 是否有 NUL 字节
     content.iter().take(8192).any(|&b| b == 0)
 }
 
-/// 同步搜索目录
-fn search_dir_sync(
+/// 并行搜索目录
+fn search_dir_parallel(
     root: &Path,
-    pattern: &str,
-    case_sensitive: bool,
+    config: &SearchConfig,
     search_id: u64,
     cancelled: &AtomicBool,
     tx: &Sender<GlobalSearchMessage>,
 ) {
+    let files_searched = Arc::new(AtomicUsize::new(0));
+    let files_with_matches = Arc::new(AtomicUsize::new(0));
+    let total_matches = Arc::new(AtomicUsize::new(0));
+
     let walker = WalkBuilder::new(root)
-        .hidden(true)           // 跳过隐藏文件
-        .git_ignore(true)       // 遵守 .gitignore
-        .git_global(true)       // 遵守全局 gitignore
-        .git_exclude(true)      // 遵守 .git/info/exclude
-        .build();
+        .hidden(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .build_parallel();
 
-    let mut files_searched = 0usize;
-    let mut files_with_matches = 0usize;
-    let mut total_matches = 0usize;
+    walker.run(|| {
+        // 每个线程的局部状态
+        let config = config.clone();
+        let cancelled = cancelled;
+        let tx = tx.clone();
+        let files_searched = files_searched.clone();
+        let files_with_matches = files_with_matches.clone();
+        let total_matches = total_matches.clone();
 
-    for entry in walker.flatten() {
-        // 检查是否被取消
-        if cancelled.load(Ordering::Relaxed) {
-            let _ = tx.send(GlobalSearchMessage::Cancelled { search_id });
-            return;
-        }
+        Box::new(move |entry| {
+            // 检查取消
+            if cancelled.load(Ordering::Relaxed) {
+                return WalkState::Quit;
+            }
 
-        let path = entry.path();
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => return WalkState::Continue,
+            };
 
-        // 跳过目录
-        if !path.is_file() {
-            continue;
-        }
+            let path = entry.path();
+            if !path.is_file() {
+                return WalkState::Continue;
+            }
 
-        // 读取文件内容
-        let content = match std::fs::read(path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
+            let matches = match search_file(path, &config) {
+                Ok(m) => m,
+                Err(_) => return WalkState::Continue,
+            };
 
-        // 跳过二进制文件
-        if is_likely_binary(&content) {
-            continue;
-        }
+            let searched = files_searched.fetch_add(1, Ordering::Relaxed) + 1;
 
-        // 尝试转换为 UTF-8
-        let text = match std::str::from_utf8(&content) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
+            if !matches.is_empty() {
+                files_with_matches.fetch_add(1, Ordering::Relaxed);
+                total_matches.fetch_add(matches.len(), Ordering::Relaxed);
 
-        files_searched += 1;
+                let _ = tx.send(GlobalSearchMessage::FileMatches {
+                    search_id,
+                    file_matches: FileMatches {
+                        path: path.to_path_buf(),
+                        matches,
+                    },
+                });
+            }
 
-        // 创建 Rope 并搜索
-        let rope = Rope::from_str(text);
-        let searcher = StreamSearcher::new(&rope, pattern, case_sensitive);
-        let matches = searcher.find_all();
+            // 每 100 个文件发送进度
+            if searched % 100 == 0 {
+                let _ = tx.send(GlobalSearchMessage::Progress {
+                    search_id,
+                    files_searched: searched,
+                    files_with_matches: files_with_matches.load(Ordering::Relaxed),
+                });
+            }
 
-        if !matches.is_empty() {
-            files_with_matches += 1;
-            total_matches += matches.len();
+            WalkState::Continue
+        })
+    });
 
-            let _ = tx.send(GlobalSearchMessage::FileMatches {
-                search_id,
-                file_matches: FileMatches {
-                    path: path.to_path_buf(),
-                    matches,
-                },
-            });
-        }
+    // 发送完成或取消消息
+    if cancelled.load(Ordering::Relaxed) {
+        let _ = tx.send(GlobalSearchMessage::Cancelled { search_id });
+    } else {
+        let _ = tx.send(GlobalSearchMessage::Complete {
+            search_id,
+            total_files: files_searched.load(Ordering::Relaxed),
+            total_matches: total_matches.load(Ordering::Relaxed),
+        });
+    }
+}
 
-        // 每搜索 100 个文件发送一次进度
-        if files_searched % 100 == 0 {
-            let _ = tx.send(GlobalSearchMessage::Progress {
-                search_id,
-                files_searched,
-                files_with_matches,
-            });
-        }
+fn search_file(path: &Path, config: &SearchConfig) -> std::io::Result<Vec<Match>> {
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    let file_size = metadata.len() as usize;
+
+    if file_size == 0 {
+        return Ok(Vec::new());
     }
 
-    let _ = tx.send(GlobalSearchMessage::Complete {
-        search_id,
-        total_files: files_searched,
-        total_matches,
-    });
+    match config {
+        SearchConfig::Literal { .. } => {
+            // Literal 模式：流式搜索
+            let mut preview = [0u8; 8192];
+            let preview_len = std::io::Read::read(&mut &file, &mut preview)?;
+            if is_likely_binary(&preview[..preview_len]) {
+                return Ok(Vec::new());
+            }
+
+            let file = File::open(path)?;
+            StreamSearcher::new(file, config).search()
+        }
+        SearchConfig::Regex { .. } => {
+            // Regex 模式：mmap 全量搜索
+            // SAFETY: 文件在搜索期间不会被修改
+            let mmap = unsafe { Mmap::map(&file)? };
+
+            if is_likely_binary(&mmap) {
+                return Ok(Vec::new());
+            }
+
+            Ok(search_regex_in_slice(&mmap, config))
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::sync::mpsc;
     use tempfile::tempdir;
-    use std::fs;
 
     fn create_runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_multi_thread()
@@ -242,12 +287,11 @@ mod tests {
     }
 
     #[test]
-    fn test_global_search_basic() {
+    fn test_global_search_literal() {
         let rt = create_runtime();
         let service = GlobalSearchService::new(rt.handle().clone());
         let (tx, rx) = mpsc::channel();
 
-        // 创建临时目录和文件
         let dir = tempdir().unwrap();
         let file1 = dir.path().join("test1.txt");
         let file2 = dir.path().join("test2.txt");
@@ -261,10 +305,10 @@ mod tests {
             dir.path().to_path_buf(),
             "hello".to_string(),
             true,
+            false,
             tx,
         );
 
-        // 收集结果
         let mut file_matches = Vec::new();
         loop {
             match rx.recv_timeout(std::time::Duration::from_secs(5)) {
@@ -277,11 +321,52 @@ mod tests {
                 }
                 Ok(GlobalSearchMessage::Progress { .. }) => continue,
                 Ok(GlobalSearchMessage::Cancelled { .. }) => panic!("Unexpected cancel"),
+                Ok(GlobalSearchMessage::Error { message, .. }) => panic!("Error: {}", message),
                 Err(_) => panic!("Timeout"),
             }
         }
 
         assert_eq!(file_matches.len(), 2);
+    }
+
+    #[test]
+    fn test_global_search_regex() {
+        let rt = create_runtime();
+        let service = GlobalSearchService::new(rt.handle().clone());
+        let (tx, rx) = mpsc::channel();
+
+        let dir = tempdir().unwrap();
+        let file1 = dir.path().join("test1.txt");
+        let file2 = dir.path().join("test2.txt");
+
+        fs::write(&file1, "hello123 world").unwrap();
+        fs::write(&file2, "hello456 rust").unwrap();
+
+        let _task = service.search_in_dir(
+            dir.path().to_path_buf(),
+            r"hello\d+".to_string(),
+            true,
+            true,
+            tx,
+        );
+
+        let mut total = 0;
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(GlobalSearchMessage::FileMatches { file_matches, .. }) => {
+                    total += file_matches.matches.len();
+                }
+                Ok(GlobalSearchMessage::Complete { total_matches, .. }) => {
+                    assert_eq!(total_matches, 2);
+                    assert_eq!(total, 2);
+                    break;
+                }
+                Ok(GlobalSearchMessage::Progress { .. }) => continue,
+                Ok(GlobalSearchMessage::Cancelled { .. }) => panic!("Unexpected cancel"),
+                Ok(GlobalSearchMessage::Error { message, .. }) => panic!("Error: {}", message),
+                Err(_) => panic!("Timeout"),
+            }
+        }
     }
 
     #[test]
@@ -295,13 +380,13 @@ mod tests {
         let binary_file = dir.path().join("binary.bin");
 
         fs::write(&text_file, "hello world").unwrap();
-        // 写入包含 NUL 字节的二进制内容
         fs::write(&binary_file, b"hello\x00world").unwrap();
 
         let _task = service.search_in_dir(
             dir.path().to_path_buf(),
             "hello".to_string(),
             true,
+            false,
             tx,
         );
 
@@ -317,7 +402,6 @@ mod tests {
             }
         }
 
-        // 只应该找到文本文件
         assert_eq!(found_files.len(), 1);
         assert!(found_files[0].ends_with("text.txt"));
     }
@@ -338,6 +422,7 @@ mod tests {
             dir.path().to_path_buf(),
             "hello".to_string(),
             true,
+            false,
             tx,
         );
 

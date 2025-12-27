@@ -238,8 +238,8 @@ impl EditorGroup {
         }
 
         if let Some(m) = self.search_bar.current_match() {
-            let start_char = m.start_char;
-            let end_char = m.end_char;
+            let start_char = m.start;
+            let end_char = m.end;
 
             if let Some(editor) = self.active_editor_mut() {
                 editor.buffer_mut().replace_range(start_char, end_char, &replace_text);

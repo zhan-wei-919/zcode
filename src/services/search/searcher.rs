@@ -1,353 +1,348 @@
 //! 流式搜索器
 //!
-//! 利用 Ropey 的 chunks() 迭代器实现流式搜索，
-//! 使用栈上固定大小缓冲区处理跨 chunk 边界匹配
+//! - Literal 模式：流式搜索 + 8KB 栈 buffer (memchr)
+//! - Regex 模式：需要全量数据，由调用方提供 &[u8]
 
 use memchr::memmem::Finder;
-use ropey::Rope;
+use std::io::Read;
 
 const BUFFER_SIZE: usize = 8192;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SearchDirection {
-    Forward,
-    Backward,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Match {
-    pub start_byte: usize,
-    pub end_byte: usize,
-    pub start_char: usize,
-    pub end_char: usize,
+    pub start: usize,
+    pub end: usize,
     pub line: usize,
     pub col: usize,
 }
 
 impl Match {
-    pub fn new(start_byte: usize, end_byte: usize, rope: &Rope) -> Self {
-        let start_char = rope.byte_to_char(start_byte);
-        let end_char = rope.byte_to_char(end_byte);
-        let line = rope.char_to_line(start_char);
-        let line_start = rope.line_to_char(line);
-        let col = start_char - line_start;
-
-        Self {
-            start_byte,
-            end_byte,
-            start_char,
-            end_char,
-            line,
-            col,
-        }
+    pub fn new(start: usize, end: usize, line: usize, col: usize) -> Self {
+        Self { start, end, line, col }
     }
 }
 
-pub struct StreamSearcher<'a> {
-    rope: &'a Rope,
-    pattern: Vec<u8>,
-    case_sensitive: bool,
+/// 搜索配置，缓存编译好的搜索引擎
+pub enum SearchConfig {
+    Literal {
+        pattern: Vec<u8>,
+        case_sensitive: bool,
+        finder: Finder<'static>,
+    },
+    Regex {
+        regex: regex::Regex,
+    },
 }
 
-impl<'a> StreamSearcher<'a> {
-    pub fn new(rope: &'a Rope, pattern: &str, case_sensitive: bool) -> Self {
+impl SearchConfig {
+    pub fn literal(pattern: &str, case_sensitive: bool) -> Self {
         let pattern_bytes = if case_sensitive {
             pattern.as_bytes().to_vec()
         } else {
             pattern.to_lowercase().as_bytes().to_vec()
         };
 
-        Self {
-            rope,
+        // 创建 'static Finder，需要 leak pattern
+        let pattern_static: &'static [u8] = Box::leak(pattern_bytes.clone().into_boxed_slice());
+        let finder = Finder::new(pattern_static);
+
+        Self::Literal {
             pattern: pattern_bytes,
             case_sensitive,
+            finder,
         }
     }
 
-    /// 搜索所有匹配，返回迭代器
-    pub fn find_all(&self) -> Vec<Match> {
-        if self.pattern.is_empty() {
-            return Vec::new();
-        }
+    pub fn regex(pattern: &str, case_sensitive: bool) -> Result<Self, regex::Error> {
+        let regex = regex::RegexBuilder::new(pattern)
+            .case_insensitive(!case_sensitive)
+            .build()?;
+        Ok(Self::Regex { regex })
+    }
 
-        let finder = Finder::new(&self.pattern);
+    pub fn is_regex(&self) -> bool {
+        matches!(self, Self::Regex { .. })
+    }
+
+    pub fn pattern_len(&self) -> usize {
+        match self {
+            Self::Literal { pattern, .. } => pattern.len(),
+            Self::Regex { .. } => 0, // Regex 长度不固定
+        }
+    }
+}
+
+impl Clone for SearchConfig {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Literal { pattern, case_sensitive, .. } => {
+                let pattern_static: &'static [u8] = Box::leak(pattern.clone().into_boxed_slice());
+                Self::Literal {
+                    pattern: pattern.clone(),
+                    case_sensitive: *case_sensitive,
+                    finder: Finder::new(pattern_static),
+                }
+            }
+            Self::Regex { regex } => {
+                Self::Regex { regex: regex.clone() }
+            }
+        }
+    }
+}
+
+/// Literal 模式的流式搜索器
+/// 使用 8KB 栈 buffer，处理跨 chunk 边界匹配
+pub struct StreamSearcher<'a, R> {
+    reader: R,
+    config: &'a SearchConfig,
+}
+
+impl<'a, R: Read> StreamSearcher<'a, R> {
+    pub fn new(reader: R, config: &'a SearchConfig) -> Self {
+        Self { reader, config }
+    }
+
+    /// 执行流式搜索（仅支持 Literal 模式）
+    pub fn search(mut self) -> std::io::Result<Vec<Match>> {
+        let (finder, pattern_len, case_sensitive) = match self.config {
+            SearchConfig::Literal { finder, pattern, case_sensitive } => {
+                if pattern.is_empty() {
+                    return Ok(Vec::new());
+                }
+                (finder, pattern.len(), *case_sensitive)
+            }
+            SearchConfig::Regex { .. } => {
+                panic!("StreamSearcher 不支持 Regex 模式，请使用 search_regex_in_slice");
+            }
+        };
+
         let mut matches = Vec::new();
         let mut buffer = [0u8; BUFFER_SIZE];
         let mut buffer_len = 0usize;
-        let mut buffer_byte_offset = 0usize;
-        let pattern_len = self.pattern.len();
-
-        let mut chunks = self.rope.chunks();
+        let mut global_offset = 0usize;
         let mut search_start = 0usize;
+
+        // 行号计算
+        let mut current_line = 0usize;
+        let mut line_start_offset = 0usize;
 
         loop {
             // 在当前缓冲区中搜索
-            let search_buf = &buffer[search_start..buffer_len];
+            let search_buf = if case_sensitive {
+                &buffer[search_start..buffer_len]
+            } else {
+                // 大小写不敏感时，buffer 已经是小写
+                &buffer[search_start..buffer_len]
+            };
 
             if let Some(pos) = finder.find(search_buf) {
-                let global_byte_pos = buffer_byte_offset + search_start + pos;
-                let match_end = global_byte_pos + pattern_len;
-                matches.push(Match::new(global_byte_pos, match_end, self.rope));
+                let match_start = global_offset + search_start + pos;
+                let match_end = match_start + pattern_len;
 
-                // 移动搜索起点，避免重叠匹配
+                // 计算行号：统计从 line_start_offset 到 match_start 之间的换行符
+                let count_from = if line_start_offset >= global_offset {
+                    line_start_offset - global_offset
+                } else {
+                    0
+                };
+                let count_to = search_start + pos;
+
+                if count_to > count_from {
+                    let newlines = bytecount::count(&buffer[count_from..count_to], b'\n');
+                    if newlines > 0 {
+                        current_line += newlines;
+                        // 找到最后一个换行符的位置
+                        for i in (count_from..count_to).rev() {
+                            if buffer[i] == b'\n' {
+                                line_start_offset = global_offset + i + 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let col = match_start - line_start_offset;
+                matches.push(Match::new(match_start, match_end, current_line, col));
+
                 search_start += pos + 1;
                 continue;
             }
 
-            // 没找到，加载下一个 chunk
+            // 没找到，准备加载下一块数据
+            // 保留末尾 pattern_len - 1 字节以处理跨边界匹配
             let keep = if buffer_len > pattern_len - 1 {
                 pattern_len - 1
             } else {
                 buffer_len
             };
+
+            // 更新行号信息：统计即将丢弃部分的换行符
+            let discard_end = buffer_len - keep;
+            if discard_end > 0 {
+                let newlines = bytecount::count(&buffer[..discard_end], b'\n');
+                if newlines > 0 {
+                    current_line += newlines;
+                    for i in (0..discard_end).rev() {
+                        if buffer[i] == b'\n' {
+                            line_start_offset = global_offset + i + 1;
+                            break;
+                        }
+                    }
+                }
+            }
 
             // 移动保留的字节到缓冲区开头
             if keep > 0 && buffer_len > keep {
                 buffer.copy_within((buffer_len - keep)..buffer_len, 0);
             }
-            buffer_byte_offset += buffer_len - keep;
+            global_offset += buffer_len - keep;
             buffer_len = keep;
             search_start = 0;
 
-            // 加载新 chunk
-            match chunks.next() {
-                Some(chunk) => {
-                    let bytes = chunk.as_bytes();
-                    let copy_len = bytes.len().min(BUFFER_SIZE - buffer_len);
-
-                    if self.case_sensitive {
-                        buffer[buffer_len..buffer_len + copy_len]
-                            .copy_from_slice(&bytes[..copy_len]);
-                    } else {
-                        // 大小写不敏感：转换为小写
-                        for (i, &b) in bytes[..copy_len].iter().enumerate() {
-                            buffer[buffer_len + i] = b.to_ascii_lowercase();
-                        }
-                    }
-                    buffer_len += copy_len;
-                }
-                None => break,
-            }
-        }
-
-        matches
-    }
-
-    /// 从指定位置开始向前搜索下一个匹配
-    pub fn find_next(&self, from_byte: usize) -> Option<Match> {
-        if self.pattern.is_empty() {
-            return None;
-        }
-
-        let finder = Finder::new(&self.pattern);
-        let mut buffer = [0u8; BUFFER_SIZE];
-        let mut buffer_len = 0usize;
-        let pattern_len = self.pattern.len();
-
-        // 计算起始 chunk
-        let start_byte = from_byte;
-        let mut current_byte = 0usize;
-        let mut chunks = self.rope.chunks().peekable();
-
-        // 跳过 from_byte 之前的 chunks
-        while let Some(chunk) = chunks.peek() {
-            let chunk_len = chunk.len();
-            if current_byte + chunk_len > start_byte {
+            // 读取新数据
+            let bytes_read = self.reader.read(&mut buffer[buffer_len..])?;
+            if bytes_read == 0 {
                 break;
             }
-            current_byte += chunk_len;
-            chunks.next();
-        }
 
-        let mut buffer_byte_offset = current_byte;
-        let mut search_start = 0usize;
-        let mut first_chunk = true;
-
-        loop {
-            // 在当前缓冲区中搜索
-            let search_buf = &buffer[search_start..buffer_len];
-
-            if let Some(pos) = finder.find(search_buf) {
-                let global_byte_pos = buffer_byte_offset + search_start + pos;
-
-                // 确保匹配位置在 from_byte 之后
-                if global_byte_pos >= from_byte {
-                    let match_end = global_byte_pos + pattern_len;
-                    return Some(Match::new(global_byte_pos, match_end, self.rope));
+            // 大小写不敏感时转换为小写
+            if !case_sensitive {
+                for b in &mut buffer[buffer_len..buffer_len + bytes_read] {
+                    *b = b.to_ascii_lowercase();
                 }
-
-                search_start += pos + 1;
-                continue;
             }
-
-            // 保留末尾可能跨边界的部分
-            let keep = if buffer_len > pattern_len - 1 {
-                pattern_len - 1
-            } else {
-                buffer_len
-            };
-
-            if keep > 0 && buffer_len > keep {
-                buffer.copy_within((buffer_len - keep)..buffer_len, 0);
-            }
-            buffer_byte_offset += buffer_len - keep;
-            buffer_len = keep;
-            search_start = 0;
-
-            match chunks.next() {
-                Some(chunk) => {
-                    let bytes = chunk.as_bytes();
-
-                    // 第一个 chunk 需要从 from_byte 开始
-                    let skip = if first_chunk && buffer_byte_offset < start_byte {
-                        start_byte - buffer_byte_offset
-                    } else {
-                        0
-                    };
-                    first_chunk = false;
-
-                    let available = &bytes[skip.min(bytes.len())..];
-                    let copy_len = available.len().min(BUFFER_SIZE - buffer_len);
-
-                    if self.case_sensitive {
-                        buffer[buffer_len..buffer_len + copy_len]
-                            .copy_from_slice(&available[..copy_len]);
-                    } else {
-                        for (i, &b) in available[..copy_len].iter().enumerate() {
-                            buffer[buffer_len + i] = b.to_ascii_lowercase();
-                        }
-                    }
-                    buffer_len += copy_len;
-
-                    if skip > 0 {
-                        buffer_byte_offset += skip;
-                    }
-                }
-                None => return None,
-            }
-        }
-    }
-
-    /// 从指定位置开始向后搜索上一个匹配
-    pub fn find_prev(&self, from_byte: usize) -> Option<Match> {
-        if self.pattern.is_empty() {
-            return None;
+            buffer_len += bytes_read;
         }
 
-        // 向后搜索：收集所有匹配，找到 from_byte 之前的最后一个
-        let all_matches = self.find_all();
-
-        all_matches
-            .into_iter()
-            .filter(|m| m.start_byte < from_byte)
-            .last()
+        Ok(matches)
     }
 }
 
-/// 批量搜索器，用于同时搜索多个模式
-pub struct MultiPatternSearcher<'a> {
-    rope: &'a Rope,
-    ac: aho_corasick::AhoCorasick,
-    patterns_len: Vec<usize>,
+/// 在 slice 上执行 Regex 搜索
+pub fn search_regex_in_slice(data: &[u8], config: &SearchConfig) -> Vec<Match> {
+    let regex = match config {
+        SearchConfig::Regex { regex } => regex,
+        SearchConfig::Literal { .. } => {
+            panic!("search_regex_in_slice 只支持 Regex 模式");
+        }
+    };
+
+    // 尝试转换为 UTF-8
+    let text = match std::str::from_utf8(data) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut matches = Vec::new();
+    let mut current_line = 0usize;
+    let mut line_start = 0usize;
+    let mut last_pos = 0usize;
+
+    for mat in regex.find_iter(text) {
+        let start = mat.start();
+        let end = mat.end();
+
+        // 计算行号
+        let newlines = bytecount::count(&data[last_pos..start], b'\n');
+        if newlines > 0 {
+            current_line += newlines;
+            // 找最后一个换行符
+            for i in (last_pos..start).rev() {
+                if data[i] == b'\n' {
+                    line_start = i + 1;
+                    break;
+                }
+            }
+        }
+        last_pos = start;
+
+        let col = start - line_start;
+        matches.push(Match::new(start, end, current_line, col));
+    }
+
+    matches
 }
 
-impl<'a> MultiPatternSearcher<'a> {
-    pub fn new(rope: &'a Rope, patterns: &[&str], case_sensitive: bool) -> Self {
-        let patterns: Vec<String> = if case_sensitive {
-            patterns.iter().map(|s| s.to_string()).collect()
-        } else {
-            patterns.iter().map(|s| s.to_lowercase()).collect()
-        };
+/// Rope 的 Read 适配器
+pub struct RopeReader<'a> {
+    chunks: ropey::iter::Chunks<'a>,
+    current_chunk: &'a [u8],
+    pos: usize,
+}
 
-        let patterns_len: Vec<usize> = patterns.iter().map(|p| p.len()).collect();
-
-        let ac = aho_corasick::AhoCorasick::builder()
-            .ascii_case_insensitive(!case_sensitive)
-            .build(&patterns)
-            .expect("Failed to build AhoCorasick");
-
+impl<'a> RopeReader<'a> {
+    pub fn new(rope: &'a ropey::Rope) -> Self {
+        let mut chunks = rope.chunks();
+        let current_chunk = chunks.next().map(|s| s.as_bytes()).unwrap_or(&[]);
         Self {
-            rope,
-            ac,
-            patterns_len,
+            chunks,
+            current_chunk,
+            pos: 0,
         }
     }
+}
 
-    pub fn find_all(&self) -> Vec<(usize, Match)> {
-        let mut matches = Vec::new();
-        let text = self.rope.to_string();
-        let bytes = text.as_bytes();
+impl<'a> Read for RopeReader<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut total_read = 0;
 
-        for mat in self.ac.find_iter(bytes) {
-            let pattern_idx = mat.pattern().as_usize();
-            let start_byte = mat.start();
-            let end_byte = mat.end();
-            matches.push((pattern_idx, Match::new(start_byte, end_byte, self.rope)));
+        while total_read < buf.len() {
+            let remaining = &self.current_chunk[self.pos..];
+            if remaining.is_empty() {
+                // 获取下一个 chunk
+                match self.chunks.next() {
+                    Some(chunk) => {
+                        self.current_chunk = chunk.as_bytes();
+                        self.pos = 0;
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+
+            let to_copy = remaining.len().min(buf.len() - total_read);
+            buf[total_read..total_read + to_copy].copy_from_slice(&remaining[..to_copy]);
+            self.pos += to_copy;
+            total_read += to_copy;
         }
 
-        matches
+        Ok(total_read)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[test]
-    fn test_simple_search() {
-        let rope = Rope::from_str("hello world hello");
-        let searcher = StreamSearcher::new(&rope, "hello", true);
-        let matches = searcher.find_all();
+    fn test_literal_search() {
+        let data = b"hello world hello";
+        let config = SearchConfig::literal("hello", true);
+        let reader = Cursor::new(data);
+        let matches = StreamSearcher::new(reader, &config).search().unwrap();
 
         assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0].start_byte, 0);
-        assert_eq!(matches[1].start_byte, 12);
+        assert_eq!(matches[0].start, 0);
+        assert_eq!(matches[1].start, 12);
     }
 
     #[test]
     fn test_case_insensitive() {
-        let rope = Rope::from_str("Hello HELLO hello");
-        let searcher = StreamSearcher::new(&rope, "hello", false);
-        let matches = searcher.find_all();
+        let data = b"Hello HELLO hello";
+        let config = SearchConfig::literal("hello", false);
+        let reader = Cursor::new(data);
+        let matches = StreamSearcher::new(reader, &config).search().unwrap();
 
         assert_eq!(matches.len(), 3);
     }
 
     #[test]
-    fn test_find_next() {
-        let rope = Rope::from_str("hello world hello");
-        let searcher = StreamSearcher::new(&rope, "hello", true);
-
-        let m1 = searcher.find_next(0).unwrap();
-        assert_eq!(m1.start_byte, 0);
-
-        let m2 = searcher.find_next(1).unwrap();
-        assert_eq!(m2.start_byte, 12);
-
-        let m3 = searcher.find_next(13);
-        assert!(m3.is_none());
-    }
-
-    #[test]
-    fn test_find_prev() {
-        let rope = Rope::from_str("hello world hello");
-        let searcher = StreamSearcher::new(&rope, "hello", true);
-
-        let m1 = searcher.find_prev(17).unwrap();
-        assert_eq!(m1.start_byte, 12);
-
-        let m2 = searcher.find_prev(12).unwrap();
-        assert_eq!(m2.start_byte, 0);
-
-        let m3 = searcher.find_prev(0);
-        assert!(m3.is_none());
-    }
-
-    #[test]
-    fn test_line_col() {
-        let rope = Rope::from_str("line1\nline2 hello\nline3");
-        let searcher = StreamSearcher::new(&rope, "hello", true);
-        let matches = searcher.find_all();
+    fn test_line_numbers() {
+        let data = b"line1\nline2 hello\nline3";
+        let config = SearchConfig::literal("hello", true);
+        let reader = Cursor::new(data);
+        let matches = StreamSearcher::new(reader, &config).search().unwrap();
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].line, 1);
@@ -355,22 +350,31 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_pattern() {
-        let rope = Rope::from_str("hello");
-        let searcher = StreamSearcher::new(&rope, "", true);
-        let matches = searcher.find_all();
+    fn test_regex_search() {
+        let data = b"hello123 world456";
+        let config = SearchConfig::regex(r"\w+\d+", true).unwrap();
+        let matches = search_regex_in_slice(data, &config);
 
-        assert!(matches.is_empty());
+        assert_eq!(matches.len(), 2);
     }
 
     #[test]
-    fn test_multi_pattern() {
-        let rope = Rope::from_str("hello world foo bar");
-        let searcher = MultiPatternSearcher::new(&rope, &["hello", "foo"], true);
-        let matches = searcher.find_all();
+    fn test_rope_reader() {
+        let rope = ropey::Rope::from_str("hello world hello");
+        let config = SearchConfig::literal("hello", true);
+        let reader = RopeReader::new(&rope);
+        let matches = StreamSearcher::new(reader, &config).search().unwrap();
 
         assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0].0, 0); // pattern index for "hello"
-        assert_eq!(matches[1].0, 1); // pattern index for "foo"
+    }
+
+    #[test]
+    fn test_empty_pattern() {
+        let data = b"hello";
+        let config = SearchConfig::literal("", true);
+        let reader = Cursor::new(data);
+        let matches = StreamSearcher::new(reader, &config).search().unwrap();
+
+        assert!(matches.is_empty());
     }
 }

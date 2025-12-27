@@ -135,7 +135,8 @@ impl SearchBar {
             return;
         }
 
-        self.matches = SearchService::search_sync(rope, &self.search_text, self.case_sensitive);
+        self.matches = SearchService::search_sync(rope, &self.search_text, self.case_sensitive, false)
+            .unwrap_or_default();
 
         if self.matches.is_empty() {
             self.current_match_index = None;
@@ -153,7 +154,7 @@ impl SearchBar {
 
         // 找到光标位置之后的第一个匹配
         for (i, m) in self.matches.iter().enumerate() {
-            if m.start_byte >= cursor_byte {
+            if m.start >= cursor_byte {
                 self.current_match_index = Some(i);
                 return;
             }

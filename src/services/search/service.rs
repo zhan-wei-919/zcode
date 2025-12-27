@@ -1,8 +1,8 @@
-//! 异步搜索服务
+//! 单文件搜索服务
 //!
-//! 提供增量搜索功能，支持取消和批量返回结果
+//! 用于编辑器内搜索（Rope 已存在于内存中）
 
-use super::searcher::{Match, StreamSearcher};
+use super::searcher::{search_regex_in_slice, Match, RopeReader, SearchConfig, StreamSearcher};
 use ropey::Rope;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -27,6 +27,10 @@ pub enum SearchMessage {
     },
     Cancelled {
         search_id: u64,
+    },
+    Error {
+        search_id: u64,
+        message: String,
     },
 }
 
@@ -75,13 +79,13 @@ impl SearchService {
         Self { runtime }
     }
 
-    /// 在单个 Rope 中搜索
-    /// 返回 SearchTask 用于取消搜索
+    /// 在 Rope 中异步搜索
     pub fn search_in_rope(
         &self,
         rope: Rope,
         pattern: String,
         case_sensitive: bool,
+        is_regex: bool,
         tx: Sender<SearchMessage>,
     ) -> SearchTask {
         let task = SearchTask::new();
@@ -99,9 +103,24 @@ impl SearchService {
                 return;
             }
 
-            // 在阻塞任务中执行搜索
+            // 编译搜索配置
+            let config = if is_regex {
+                match SearchConfig::regex(&pattern, case_sensitive) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let _ = tx_for_complete.send(SearchMessage::Error {
+                            search_id,
+                            message: format!("Invalid regex: {}", e),
+                        });
+                        return;
+                    }
+                }
+            } else {
+                SearchConfig::literal(&pattern, case_sensitive)
+            };
+
             let result = tokio::task::spawn_blocking(move || {
-                search_rope_sync(&rope, &pattern, case_sensitive, search_id, &cancelled, &tx)
+                search_rope_sync(&rope, &config, search_id, &cancelled, &tx)
             })
             .await;
 
@@ -125,12 +144,32 @@ impl SearchService {
         rope: &Rope,
         pattern: &str,
         case_sensitive: bool,
-    ) -> Vec<Match> {
+        is_regex: bool,
+    ) -> Result<Vec<Match>, String> {
         if pattern.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let searcher = StreamSearcher::new(rope, pattern, case_sensitive);
-        searcher.find_all()
+
+        let config = if is_regex {
+            SearchConfig::regex(pattern, case_sensitive)
+                .map_err(|e| format!("Invalid regex: {}", e))?
+        } else {
+            SearchConfig::literal(pattern, case_sensitive)
+        };
+
+        match &config {
+            SearchConfig::Literal { .. } => {
+                let reader = RopeReader::new(rope);
+                StreamSearcher::new(reader, &config)
+                    .search()
+                    .map_err(|e| e.to_string())
+            }
+            SearchConfig::Regex { .. } => {
+                // Regex 需要全量数据
+                let text = rope.to_string();
+                Ok(search_regex_in_slice(text.as_bytes(), &config))
+            }
+        }
     }
 
     /// 查找下一个匹配
@@ -139,12 +178,10 @@ impl SearchService {
         pattern: &str,
         from_byte: usize,
         case_sensitive: bool,
-    ) -> Option<Match> {
-        if pattern.is_empty() {
-            return None;
-        }
-        let searcher = StreamSearcher::new(rope, pattern, case_sensitive);
-        searcher.find_next(from_byte)
+        is_regex: bool,
+    ) -> Result<Option<Match>, String> {
+        let matches = Self::search_sync(rope, pattern, case_sensitive, is_regex)?;
+        Ok(matches.into_iter().find(|m| m.start >= from_byte))
     }
 
     /// 查找上一个匹配
@@ -153,12 +190,10 @@ impl SearchService {
         pattern: &str,
         from_byte: usize,
         case_sensitive: bool,
-    ) -> Option<Match> {
-        if pattern.is_empty() {
-            return None;
-        }
-        let searcher = StreamSearcher::new(rope, pattern, case_sensitive);
-        searcher.find_prev(from_byte)
+        is_regex: bool,
+    ) -> Result<Option<Match>, String> {
+        let matches = Self::search_sync(rope, pattern, case_sensitive, is_regex)?;
+        Ok(matches.into_iter().filter(|m| m.start < from_byte).last())
     }
 }
 
@@ -166,14 +201,24 @@ const BATCH_SIZE: usize = 100;
 
 fn search_rope_sync(
     rope: &Rope,
-    pattern: &str,
-    case_sensitive: bool,
+    config: &SearchConfig,
     search_id: u64,
     cancelled: &AtomicBool,
     tx: &Sender<SearchMessage>,
 ) -> usize {
-    let searcher = StreamSearcher::new(rope, pattern, case_sensitive);
-    let all_matches = searcher.find_all();
+    let all_matches = match config {
+        SearchConfig::Literal { .. } => {
+            let reader = RopeReader::new(rope);
+            match StreamSearcher::new(reader, config).search() {
+                Ok(m) => m,
+                Err(_) => return 0,
+            }
+        }
+        SearchConfig::Regex { .. } => {
+            let text = rope.to_string();
+            search_regex_in_slice(text.as_bytes(), config)
+        }
+    };
 
     let total = all_matches.len();
 
@@ -209,22 +254,41 @@ mod tests {
     }
 
     #[test]
-    fn test_search_sync() {
+    fn test_search_sync_literal() {
         let rope = Rope::from_str("hello world hello");
-        let matches = SearchService::search_sync(&rope, "hello", true);
+        let matches = SearchService::search_sync(&rope, "hello", true, false).unwrap();
+        assert_eq!(matches.len(), 2);
+    }
+
+    #[test]
+    fn test_search_sync_regex() {
+        let rope = Rope::from_str("hello123 world456");
+        let matches = SearchService::search_sync(&rope, r"\w+\d+", true, true).unwrap();
         assert_eq!(matches.len(), 2);
     }
 
     #[test]
     fn test_find_next() {
         let rope = Rope::from_str("hello world hello");
-        let m = SearchService::find_next(&rope, "hello", 0, true);
+        let m = SearchService::find_next(&rope, "hello", 0, true, false).unwrap();
         assert!(m.is_some());
-        assert_eq!(m.unwrap().start_byte, 0);
+        assert_eq!(m.unwrap().start, 0);
 
-        let m = SearchService::find_next(&rope, "hello", 1, true);
+        let m = SearchService::find_next(&rope, "hello", 1, true, false).unwrap();
         assert!(m.is_some());
-        assert_eq!(m.unwrap().start_byte, 12);
+        assert_eq!(m.unwrap().start, 12);
+    }
+
+    #[test]
+    fn test_find_prev() {
+        let rope = Rope::from_str("hello world hello");
+        let m = SearchService::find_prev(&rope, "hello", 17, true, false).unwrap();
+        assert!(m.is_some());
+        assert_eq!(m.unwrap().start, 12);
+
+        let m = SearchService::find_prev(&rope, "hello", 12, true, false).unwrap();
+        assert!(m.is_some());
+        assert_eq!(m.unwrap().start, 0);
     }
 
     #[test]
@@ -234,9 +298,8 @@ mod tests {
         let (tx, rx) = mpsc::channel();
 
         let rope = Rope::from_str("hello world hello");
-        let _task = service.search_in_rope(rope, "hello".to_string(), true, tx);
+        let _task = service.search_in_rope(rope, "hello".to_string(), true, false, tx);
 
-        // 等待结果
         let mut total_matches = 0;
         loop {
             match rx.recv_timeout(std::time::Duration::from_secs(1)) {
@@ -251,6 +314,9 @@ mod tests {
                 Ok(SearchMessage::Cancelled { .. }) => {
                     panic!("Search was cancelled unexpectedly");
                 }
+                Ok(SearchMessage::Error { message, .. }) => {
+                    panic!("Error: {}", message);
+                }
                 Err(_) => {
                     panic!("Timeout waiting for search results");
                 }
@@ -264,30 +330,27 @@ mod tests {
         let service = SearchService::new(rt.handle().clone());
         let (tx, rx) = mpsc::channel();
 
-        // 创建一个大文本
         let text = "hello ".repeat(10000);
         let rope = Rope::from_str(&text);
 
-        let task = service.search_in_rope(rope, "hello".to_string(), true, tx);
+        let task = service.search_in_rope(rope, "hello".to_string(), true, false, tx);
         task.cancel();
 
-        // 等待取消消息或完成
         loop {
             match rx.recv_timeout(std::time::Duration::from_secs(1)) {
-                Ok(SearchMessage::Cancelled { .. }) => {
-                    break;
-                }
-                Ok(SearchMessage::Complete { .. }) => {
-                    // 搜索可能在取消前完成
-                    break;
-                }
-                Ok(SearchMessage::Matches { .. }) => {
-                    continue;
-                }
-                Err(_) => {
-                    break;
-                }
+                Ok(SearchMessage::Cancelled { .. }) => break,
+                Ok(SearchMessage::Complete { .. }) => break,
+                Ok(SearchMessage::Matches { .. }) => continue,
+                Ok(SearchMessage::Error { .. }) => break,
+                Err(_) => break,
             }
         }
+    }
+
+    #[test]
+    fn test_invalid_regex() {
+        let rope = Rope::from_str("hello world");
+        let result = SearchService::search_sync(&rope, "[invalid", true, true);
+        assert!(result.is_err());
     }
 }

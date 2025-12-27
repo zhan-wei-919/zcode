@@ -22,5 +22,5 @@ pub use file::{DirEntry, FileError, FileMetadata, FileProvider, FileService, Loc
 pub use keybinding::KeybindingService;
 pub use search::{
     FileMatches, GlobalSearchMessage, GlobalSearchService, GlobalSearchTask,
-    Match, SearchDirection, SearchMessage, SearchService, SearchTask, StreamSearcher,
+    Match, SearchConfig, SearchMessage, SearchService, SearchTask, StreamSearcher,
 };

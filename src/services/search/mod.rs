@@ -1,14 +1,13 @@
 //! 搜索服务模块
 //!
-//! 提供流式搜索和异步搜索功能：
-//! - StreamSearcher: 基于 Ropey chunks 的流式搜索器
-//! - SearchService: 异步搜索服务
-//! - GlobalSearchService: 全局（多文件）搜索服务
+//! - StreamSearcher: 流式搜索器 (Literal 模式，8KB 栈 buffer)
+//! - SearchService: 单文件搜索服务 (编辑器内搜索)
+//! - GlobalSearchService: 全局多文件搜索服务
 
 mod global;
 mod searcher;
 mod service;
 
 pub use global::{FileMatches, GlobalSearchMessage, GlobalSearchService, GlobalSearchTask};
-pub use searcher::{Match, SearchDirection, StreamSearcher};
+pub use searcher::{search_regex_in_slice, Match, RopeReader, SearchConfig, StreamSearcher};
 pub use service::{SearchMessage, SearchService, SearchTask};
