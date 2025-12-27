@@ -22,6 +22,10 @@ impl AsyncRuntime {
         Self { runtime, tx }
     }
 
+    pub fn tokio_handle(&self) -> tokio::runtime::Handle {
+        self.runtime.handle().clone()
+    }
+
     pub fn load_dir(&self, path: PathBuf) {
         let tx = self.tx.clone();
         self.runtime.spawn(async move {

@@ -4,8 +4,10 @@ use crate::core::event::InputEvent;
 use crate::core::view::{ActiveArea, EventResult, View};
 use crate::models::{build_file_tree, LoadState, NodeKind};
 use crate::runtime::{AppMessage, AsyncRuntime};
-use crate::services::{FileService, KeybindingService};
-use crate::views::{EditorGroup, ExplorerView};
+use crate::services::{
+    FileService, GlobalSearchMessage, GlobalSearchService, GlobalSearchTask, KeybindingService,
+};
+use crate::views::{EditorGroup, ExplorerView, GlobalSearchPanel};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -14,7 +16,8 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use std::fs::File;
 use std::io::BufWriter;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver};
 
 const HEADER_HEIGHT: u16 = 1;
 const STATUS_HEIGHT: u16 = 1;
@@ -23,25 +26,36 @@ const EXPLORER_WIDTH_PERCENT: u16 = 20;
 pub struct Workbench {
     explorer: ExplorerView,
     editor_group: EditorGroup,
+    global_search_panel: GlobalSearchPanel,
     active_area: ActiveArea,
     file_service: FileService,
     keybindings: KeybindingService,
     runtime: AsyncRuntime,
     show_sidebar: bool,
+    root_path: PathBuf,
+    global_search_service: GlobalSearchService,
+    global_search_task: Option<GlobalSearchTask>,
+    global_search_rx: Option<Receiver<GlobalSearchMessage>>,
 }
 
 impl Workbench {
     pub fn new(root_path: &Path, runtime: AsyncRuntime) -> std::io::Result<Self> {
         let file_tree = build_file_tree(root_path)?;
+        let global_search_service = GlobalSearchService::new(runtime.tokio_handle().clone());
 
         Ok(Self {
             explorer: ExplorerView::new(file_tree),
             editor_group: EditorGroup::new(),
+            global_search_panel: GlobalSearchPanel::new(),
             active_area: ActiveArea::Editor,
             file_service: FileService::new(),
             keybindings: KeybindingService::new(),
             runtime,
             show_sidebar: true,
+            root_path: root_path.to_path_buf(),
+            global_search_service,
+            global_search_task: None,
+            global_search_rx: None,
         })
     }
 
@@ -121,7 +135,74 @@ impl Workbench {
                 self.editor_group.close_active_tab();
                 Some(EventResult::Consumed)
             }
+            // Ctrl+P: 切换全局搜索面板（macOS 兼容）
+            (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                self.toggle_global_search();
+                Some(EventResult::Consumed)
+            }
             _ => None,
+        }
+    }
+
+    fn toggle_global_search(&mut self) {
+        if self.global_search_panel.is_visible() {
+            self.global_search_panel.hide();
+            self.active_area = ActiveArea::Editor;
+        } else {
+            self.global_search_panel.show();
+            self.active_area = ActiveArea::GlobalSearch;
+        }
+    }
+
+    fn start_global_search(&mut self) {
+        let pattern = self.global_search_panel.search_text().to_string();
+        if pattern.is_empty() {
+            return;
+        }
+
+        // 取消之前的搜索
+        if let Some(task) = self.global_search_task.take() {
+            task.cancel();
+        }
+
+        self.global_search_panel.clear_results();
+        self.global_search_panel.set_searching(true);
+
+        let (tx, rx) = mpsc::channel();
+        self.global_search_rx = Some(rx);
+
+        let task = self.global_search_service.search_in_dir(
+            self.root_path.clone(),
+            pattern,
+            false, // case insensitive by default
+            tx,
+        );
+        self.global_search_task = Some(task);
+    }
+
+    fn poll_global_search(&mut self) {
+        if let Some(rx) = &self.global_search_rx {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    GlobalSearchMessage::FileMatches { file_matches, .. } => {
+                        self.global_search_panel.add_file_matches(file_matches);
+                    }
+                    GlobalSearchMessage::Progress {
+                        files_searched,
+                        files_with_matches,
+                        ..
+                    } => {
+                        self.global_search_panel
+                            .set_progress(files_searched, files_with_matches);
+                    }
+                    GlobalSearchMessage::Complete { .. } | GlobalSearchMessage::Cancelled { .. } => {
+                        self.global_search_panel.set_searching(false);
+                        self.global_search_task = None;
+                        self.global_search_rx = None;
+                        return;
+                    }
+                }
+            }
         }
     }
 
@@ -163,6 +244,7 @@ impl Workbench {
     /// 定时检查是否需要刷盘（由主循环调用）
     pub fn tick(&mut self) {
         self.editor_group.tick();
+        self.poll_global_search();
     }
 
     fn handle_explorer_result(&mut self, result: EventResult) -> EventResult {
@@ -210,6 +292,7 @@ impl Workbench {
         let active = match self.active_area {
             ActiveArea::Explorer => "Explorer",
             ActiveArea::Editor => "Editor",
+            ActiveArea::GlobalSearch => "Search",
         };
 
         let status_text = format!("{} | {} | {}", mode, cursor_info, active);
@@ -232,6 +315,25 @@ impl View for Workbench {
                         self.handle_explorer_result(result)
                     }
                     ActiveArea::Editor => self.editor_group.handle_input(event),
+                    ActiveArea::GlobalSearch => {
+                        // 处理全局搜索面板的输入
+                        let old_text = self.global_search_panel.search_text().to_string();
+
+                        // Enter 触发搜索
+                        if key_event.code == KeyCode::Enter {
+                            self.start_global_search();
+                            return EventResult::Consumed;
+                        }
+
+                        let result = self.global_search_panel.handle_input(event);
+
+                        // 如果搜索文本变化，可以实现增量搜索（可选）
+                        if self.global_search_panel.search_text() != old_text {
+                            // 可以在这里实现 debounce 的增量搜索
+                        }
+
+                        result
+                    }
                 }
             }
             InputEvent::Mouse(mouse_event) => {
@@ -240,6 +342,7 @@ impl View for Workbench {
                 let result = match self.active_area {
                     ActiveArea::Explorer => self.explorer.handle_input(event),
                     ActiveArea::Editor => self.editor_group.handle_input(event),
+                    ActiveArea::GlobalSearch => self.global_search_panel.handle_input(event),
                 };
 
                 if matches!(self.active_area, ActiveArea::Explorer) {
@@ -270,7 +373,19 @@ impl View for Workbench {
         self.render_header(frame, header_area);
         self.render_status(frame, status_area);
 
-        if self.show_sidebar {
+        // 如果全局搜索面板可见，显示在侧边栏位置
+        if self.global_search_panel.is_visible() {
+            let body_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(EXPLORER_WIDTH_PERCENT),
+                    Constraint::Percentage(100 - EXPLORER_WIDTH_PERCENT),
+                ])
+                .split(body_area);
+
+            self.global_search_panel.render(frame, body_chunks[0]);
+            self.editor_group.render(frame, body_chunks[1]);
+        } else if self.show_sidebar {
             let body_chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
@@ -294,6 +409,7 @@ impl View for Workbench {
         match self.active_area {
             ActiveArea::Explorer => None,
             ActiveArea::Editor => self.editor_group.cursor_position(),
+            ActiveArea::GlobalSearch => self.global_search_panel.cursor_position(),
         }
     }
 }

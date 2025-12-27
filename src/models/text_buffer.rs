@@ -59,7 +59,6 @@ impl TextBuffer {
         Ok(())
     }
 
-    #[cfg(test)]
     pub fn text(&self) -> String {
         self.rope.to_string()
     }
@@ -310,6 +309,13 @@ impl TextBuffer {
     /// 替换整个 Rope（用于 Undo/Redo）
     pub fn set_rope(&mut self, rope: Rope) {
         self.rope = rope;
+        self.invalidate_char_pos_cache();
+    }
+
+    /// 替换指定范围的文本（用于搜索替换）
+    pub fn replace_range(&mut self, start_char: usize, end_char: usize, text: &str) {
+        self.rope.remove(start_char..end_char);
+        self.rope.insert(start_char, text);
         self.invalidate_char_pos_cache();
     }
 

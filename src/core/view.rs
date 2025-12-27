@@ -54,6 +54,7 @@ impl EventResult {
 pub enum ActiveArea {
     Explorer,
     Editor,
+    GlobalSearch,
 }
 
 impl Default for ActiveArea {
