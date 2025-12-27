@@ -25,6 +25,11 @@ use std::time::Instant;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// 判断字符是否是词边界字符（标点符号等）
+fn is_word_boundary_char(c: char) -> bool {
+    c.is_ascii_punctuation() || matches!(c, '（' | '）' | '【' | '】' | '「' | '」' | '，' | '。' | '：' | '；' | '"' | '"')
+}
+
 pub struct EditorView {
     buffer: TextBuffer,
     viewport: Viewport,
@@ -266,6 +271,8 @@ impl EditorView {
             (KeyCode::End, KeyModifiers::NONE) => self.execute(Command::CursorLineEnd),
             (KeyCode::Home, KeyModifiers::CONTROL) => self.execute(Command::CursorFileStart),
             (KeyCode::End, KeyModifiers::CONTROL) => self.execute(Command::CursorFileEnd),
+            (KeyCode::Left, KeyModifiers::CONTROL) => self.execute(Command::CursorWordLeft),
+            (KeyCode::Right, KeyModifiers::CONTROL) => self.execute(Command::CursorWordRight),
             (KeyCode::PageUp, KeyModifiers::NONE) => self.execute(Command::PageUp),
             (KeyCode::PageDown, KeyModifiers::NONE) => self.execute(Command::PageDown),
             (KeyCode::Enter, KeyModifiers::NONE) => self.execute(Command::InsertNewline),
@@ -288,6 +295,8 @@ impl EditorView {
             (KeyCode::Char('x'), KeyModifiers::CONTROL) => self.cut(),
             // Paste: Ctrl+V
             (KeyCode::Char('v'), KeyModifiers::CONTROL) => self.paste(),
+            // Select All: Ctrl+A
+            (KeyCode::Char('a'), KeyModifiers::CONTROL) => self.execute(Command::SelectAll),
             (KeyCode::Char(c), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
                 self.execute(Command::InsertChar(c))
             }
@@ -417,6 +426,9 @@ impl EditorView {
             Command::ClearSelection => {
                 self.buffer.clear_selection();
             }
+            Command::CursorWordLeft => self.cursor_word_left(),
+            Command::CursorWordRight => self.cursor_word_right(),
+            Command::SelectAll => self.select_all(),
             _ => {}
         }
     }
@@ -455,6 +467,88 @@ impl EditorView {
             let new_len = self.buffer.line_grapheme_len(row + 1);
             self.buffer.set_cursor(row + 1, col.min(new_len));
         }
+    }
+
+    fn cursor_word_left(&mut self) {
+        let (row, col) = self.buffer.cursor();
+
+        if col == 0 {
+            // 行首，跳到上一行末尾
+            if row > 0 {
+                let prev_len = self.buffer.line_grapheme_len(row - 1);
+                self.buffer.set_cursor(row - 1, prev_len);
+            }
+            return;
+        }
+
+        // 获取当前行文本
+        let line_slice = match self.buffer.line_slice(row) {
+            Some(s) => s,
+            None => return,
+        };
+        let line = slice_to_cow(line_slice);
+        let graphemes: Vec<&str> = line.graphemes(true).collect();
+
+        // 从当前位置向左找词边界
+        let mut pos = col.min(graphemes.len());
+
+        // 跳过当前位置左边的空白
+        while pos > 0 && graphemes[pos - 1].chars().all(|c| c.is_whitespace()) {
+            pos -= 1;
+        }
+
+        // 跳过词字符
+        while pos > 0 && !graphemes[pos - 1].chars().all(|c| c.is_whitespace() || is_word_boundary_char(c)) {
+            pos -= 1;
+        }
+
+        self.buffer.set_cursor(row, pos);
+    }
+
+    fn cursor_word_right(&mut self) {
+        let (row, col) = self.buffer.cursor();
+        let line_len = self.buffer.line_grapheme_len(row);
+
+        if col >= line_len {
+            // 行尾，跳到下一行开头
+            if row + 1 < self.buffer.len_lines() {
+                self.buffer.set_cursor(row + 1, 0);
+            }
+            return;
+        }
+
+        // 获取当前行文本
+        let line_slice = match self.buffer.line_slice(row) {
+            Some(s) => s,
+            None => return,
+        };
+        let line = slice_to_cow(line_slice);
+        let graphemes: Vec<&str> = line.graphemes(true).collect();
+        let len = graphemes.len();
+
+        let mut pos = col;
+
+        // 跳过当前词字符
+        while pos < len && !graphemes[pos].chars().all(|c| c.is_whitespace() || is_word_boundary_char(c)) {
+            pos += 1;
+        }
+
+        // 跳过空白和标点
+        while pos < len && graphemes[pos].chars().all(|c| c.is_whitespace() || is_word_boundary_char(c)) {
+            pos += 1;
+        }
+
+        self.buffer.set_cursor(row, pos.min(line_len));
+    }
+
+    fn select_all(&mut self) {
+        let last_line = self.buffer.len_lines().saturating_sub(1);
+        let last_col = self.buffer.line_grapheme_len(last_line);
+
+        let mut selection = Selection::new((0, 0), Granularity::Char);
+        selection.update_cursor((last_line, last_col), self.buffer.rope());
+        self.buffer.set_selection(Some(selection));
+        self.buffer.set_cursor(last_line, last_col);
     }
 
     fn insert_char(&mut self, c: char) {

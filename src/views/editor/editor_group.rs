@@ -175,6 +175,13 @@ impl EditorGroup {
         for tab in &mut self.tabs {
             tab.editor.tick();
         }
+        // 轮询搜索结果
+        self.search_bar.poll();
+    }
+
+    /// 设置 tokio runtime，启用异步搜索
+    pub fn set_runtime(&mut self, runtime: tokio::runtime::Handle) {
+        self.search_bar.set_runtime(runtime);
     }
 
     pub fn search_bar(&self) -> &SearchBar {

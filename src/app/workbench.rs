@@ -43,9 +43,12 @@ impl Workbench {
         let file_tree = build_file_tree(root_path)?;
         let global_search_service = GlobalSearchService::new(runtime.tokio_handle().clone());
 
+        let mut editor_group = EditorGroup::new();
+        editor_group.set_runtime(runtime.tokio_handle().clone());
+
         Ok(Self {
             explorer: ExplorerView::new(file_tree),
-            editor_group: EditorGroup::new(),
+            editor_group,
             global_search_panel: GlobalSearchPanel::new(),
             active_area: ActiveArea::Editor,
             file_service: FileService::new(),
@@ -174,8 +177,8 @@ impl Workbench {
         let task = self.global_search_service.search_in_dir(
             self.root_path.clone(),
             pattern,
-            false, // case insensitive by default
-            false, // not regex by default
+            self.global_search_panel.case_sensitive(),
+            self.global_search_panel.use_regex(),
             tx,
         );
         self.global_search_task = Some(task);

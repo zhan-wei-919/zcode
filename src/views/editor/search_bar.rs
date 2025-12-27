@@ -4,7 +4,7 @@
 
 use crate::core::event::InputEvent;
 use crate::core::view::{EventResult, View};
-use crate::services::search::{Match, SearchService};
+use crate::services::search::{Match, SearchMessage, SearchService, SearchTask};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -12,6 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use ropey::Rope;
+use std::sync::mpsc::{self, Receiver};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchBarMode {
@@ -33,9 +34,15 @@ pub struct SearchBar {
     replace_text: String,
     cursor_pos: usize,
     case_sensitive: bool,
+    use_regex: bool,
     matches: Vec<Match>,
     current_match_index: Option<usize>,
     area: Option<Rect>,
+    // 异步搜索
+    search_service: Option<SearchService>,
+    search_task: Option<SearchTask>,
+    search_rx: Option<Receiver<SearchMessage>>,
+    searching: bool,
 }
 
 impl SearchBar {
@@ -48,10 +55,20 @@ impl SearchBar {
             replace_text: String::new(),
             cursor_pos: 0,
             case_sensitive: false,
+            use_regex: false,
             matches: Vec::new(),
             current_match_index: None,
             area: None,
+            search_service: None,
+            search_task: None,
+            search_rx: None,
+            searching: false,
         }
+    }
+
+    /// 设置 tokio runtime，启用异步搜索
+    pub fn set_runtime(&mut self, runtime: tokio::runtime::Handle) {
+        self.search_service = Some(SearchService::new(runtime));
     }
 
     pub fn is_visible(&self) -> bool {
@@ -114,6 +131,10 @@ impl SearchBar {
         self.case_sensitive
     }
 
+    pub fn use_regex(&self) -> bool {
+        self.use_regex
+    }
+
     pub fn height(&self) -> u16 {
         if !self.visible {
             0
@@ -127,22 +148,81 @@ impl SearchBar {
         }
     }
 
-    /// 执行搜索（同步）
+    /// 执行搜索
+    /// 如果有 runtime 则异步搜索，否则同步搜索
     pub fn search(&mut self, rope: &Rope) {
+        // 取消之前的搜索
+        if let Some(task) = self.search_task.take() {
+            task.cancel();
+        }
+        self.search_rx = None;
+
         if self.search_text.is_empty() {
             self.matches.clear();
             self.current_match_index = None;
+            self.searching = false;
             return;
         }
 
-        self.matches = SearchService::search_sync(rope, &self.search_text, self.case_sensitive, false)
-            .unwrap_or_default();
-
-        if self.matches.is_empty() {
+        // 如果有 search_service，使用异步搜索
+        if let Some(service) = &self.search_service {
+            let (tx, rx) = mpsc::channel();
+            let task = service.search_in_rope(
+                rope.clone(),
+                self.search_text.clone(),
+                self.case_sensitive,
+                self.use_regex,
+                tx,
+            );
+            self.search_task = Some(task);
+            self.search_rx = Some(rx);
+            self.searching = true;
+            self.matches.clear();
             self.current_match_index = None;
         } else {
-            self.current_match_index = Some(0);
+            // 同步搜索（fallback）
+            self.matches = SearchService::search_sync(rope, &self.search_text, self.case_sensitive, self.use_regex)
+                .unwrap_or_default();
+
+            if self.matches.is_empty() {
+                self.current_match_index = None;
+            } else {
+                self.current_match_index = Some(0);
+            }
+            self.searching = false;
         }
+    }
+
+    /// 轮询异步搜索结果
+    pub fn poll(&mut self) {
+        if let Some(rx) = &self.search_rx {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    SearchMessage::Matches { matches, .. } => {
+                        self.matches.extend(matches);
+                        if self.current_match_index.is_none() && !self.matches.is_empty() {
+                            self.current_match_index = Some(0);
+                        }
+                    }
+                    SearchMessage::Complete { .. } => {
+                        self.searching = false;
+                        self.search_task = None;
+                        self.search_rx = None;
+                        return;
+                    }
+                    SearchMessage::Cancelled { .. } | SearchMessage::Error { .. } => {
+                        self.searching = false;
+                        self.search_task = None;
+                        self.search_rx = None;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn is_searching(&self) -> bool {
+        self.searching
     }
 
     /// 根据光标位置更新当前匹配索引
@@ -325,6 +405,11 @@ impl View for SearchBar {
                         self.case_sensitive = !self.case_sensitive;
                         return EventResult::Consumed;
                     }
+                    (KeyCode::Char('x'), KeyModifiers::ALT) => {
+                        // Alt+X: 切换正则模式
+                        self.use_regex = !self.use_regex;
+                        return EventResult::Consumed;
+                    }
                     (KeyCode::Char('r'), KeyModifiers::ALT) => {
                         // Alt+R: 切换替换模式
                         self.toggle_replace_mode();
@@ -379,7 +464,9 @@ impl View for SearchBar {
         // 清除背景
         frame.render_widget(Clear, area);
 
-        let match_info = if self.matches.is_empty() {
+        let match_info = if self.searching {
+            "Searching...".to_string()
+        } else if self.matches.is_empty() {
             if self.search_text.is_empty() {
                 String::new()
             } else {
@@ -391,6 +478,7 @@ impl View for SearchBar {
         };
 
         let case_indicator = if self.case_sensitive { "[Aa]" } else { "[aa]" };
+        let regex_indicator = if self.use_regex { "[.*]" } else { "[  ]" };
 
         // 搜索行
         let search_style = if self.focused_field == FocusedField::Search {
@@ -404,6 +492,7 @@ impl View for SearchBar {
             Span::styled(&self.search_text, search_style),
             Span::raw(" "),
             Span::styled(case_indicator, Style::default().fg(Color::DarkGray)),
+            Span::styled(regex_indicator, Style::default().fg(Color::DarkGray)),
             Span::raw(" "),
             Span::styled(&match_info, Style::default().fg(Color::Yellow)),
         ]);
@@ -424,6 +513,7 @@ impl View for SearchBar {
                 Span::styled(self.search_text.clone(), search_style),
                 Span::raw(" "),
                 Span::styled(case_indicator, Style::default().fg(Color::DarkGray)),
+                Span::styled(regex_indicator, Style::default().fg(Color::DarkGray)),
                 Span::raw(" "),
                 Span::styled(match_info.clone(), Style::default().fg(Color::Yellow)),
             ]);

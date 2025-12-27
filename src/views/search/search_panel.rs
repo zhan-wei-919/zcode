@@ -34,6 +34,8 @@ pub struct GlobalSearchPanel {
     visible: bool,
     search_text: String,
     cursor_pos: usize,
+    case_sensitive: bool,
+    use_regex: bool,
     results: Vec<FileMatches>,
     flat_items: Vec<SearchResultItem>,
     selected_index: usize,
@@ -41,6 +43,7 @@ pub struct GlobalSearchPanel {
     searching: bool,
     total_matches: usize,
     files_searched: usize,
+    files_with_matches: usize,
     area: Option<Rect>,
 }
 
@@ -50,6 +53,8 @@ impl GlobalSearchPanel {
             visible: false,
             search_text: String::new(),
             cursor_pos: 0,
+            case_sensitive: false,
+            use_regex: false,
             results: Vec::new(),
             flat_items: Vec::new(),
             selected_index: 0,
@@ -57,6 +62,7 @@ impl GlobalSearchPanel {
             searching: false,
             total_matches: 0,
             files_searched: 0,
+            files_with_matches: 0,
             area: None,
         }
     }
@@ -81,6 +87,14 @@ impl GlobalSearchPanel {
         &self.search_text
     }
 
+    pub fn case_sensitive(&self) -> bool {
+        self.case_sensitive
+    }
+
+    pub fn use_regex(&self) -> bool {
+        self.use_regex
+    }
+
     pub fn is_searching(&self) -> bool {
         self.searching
     }
@@ -95,6 +109,7 @@ impl GlobalSearchPanel {
         self.selected_index = 0;
         self.total_matches = 0;
         self.files_searched = 0;
+        self.files_with_matches = 0;
         self.list_state.select(None);
     }
 
@@ -104,8 +119,9 @@ impl GlobalSearchPanel {
         self.rebuild_flat_items();
     }
 
-    pub fn set_progress(&mut self, files_searched: usize, _files_with_matches: usize) {
+    pub fn set_progress(&mut self, files_searched: usize, files_with_matches: usize) {
         self.files_searched = files_searched;
+        self.files_with_matches = files_with_matches;
     }
 
     pub fn selected_item(&self) -> Option<&SearchResultItem> {
@@ -245,6 +261,16 @@ impl View for GlobalSearchPanel {
                         self.delete_backward();
                         return EventResult::Consumed;
                     }
+                    (KeyCode::Char('c'), KeyModifiers::ALT) => {
+                        // Alt+C: 切换大小写敏感
+                        self.case_sensitive = !self.case_sensitive;
+                        return EventResult::Consumed;
+                    }
+                    (KeyCode::Char('x'), KeyModifiers::ALT) => {
+                        // Alt+X: 切换正则模式
+                        self.use_regex = !self.use_regex;
+                        return EventResult::Consumed;
+                    }
                     (KeyCode::Char(c), mods)
                         if mods.is_empty() || mods == KeyModifiers::SHIFT =>
                     {
@@ -282,7 +308,7 @@ impl View for GlobalSearchPanel {
 
         // 渲染搜索框
         let status = if self.searching {
-            format!("Searching... ({} files)", self.files_searched)
+            format!("Searching... {} files ({} with matches)", self.files_searched, self.files_with_matches)
         } else if self.total_matches > 0 {
             format!("{} results in {} files", self.total_matches, self.results.len())
         } else if !self.search_text.is_empty() {
@@ -291,9 +317,15 @@ impl View for GlobalSearchPanel {
             "Enter search term".to_string()
         };
 
+        let case_indicator = if self.case_sensitive { "[Aa]" } else { "[aa]" };
+        let regex_indicator = if self.use_regex { "[.*]" } else { "[  ]" };
+
         let search_line = Line::from(vec![
             Span::styled("Search: ", Style::default().fg(Color::Cyan)),
             Span::styled(&self.search_text, Style::default().fg(Color::White)),
+            Span::raw(" "),
+            Span::styled(case_indicator, Style::default().fg(Color::DarkGray)),
+            Span::styled(regex_indicator, Style::default().fg(Color::DarkGray)),
         ]);
 
         let status_line = Line::from(Span::styled(
