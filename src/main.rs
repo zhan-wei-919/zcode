@@ -9,17 +9,10 @@ use crossterm::{
 use ratatui::prelude::*;
 use std::{env, io, path::Path, sync::mpsc, time::Duration};
 
-mod app;
-mod core;
-mod models;
-mod runtime;
-mod services;
-mod views;
-
-use app::Workbench;
-use core::event::InputEvent;
-use core::view::{EventResult, View};
-use runtime::AsyncRuntime;
+use zcode::app::Workbench;
+use zcode::core::event::InputEvent;
+use zcode::core::view::{EventResult, View};
+use zcode::runtime::AsyncRuntime;
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();

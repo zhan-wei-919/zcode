@@ -4,9 +4,7 @@ use crate::core::event::InputEvent;
 use crate::core::view::{ActiveArea, EventResult, View};
 use crate::models::{build_file_tree, LoadState, NodeKind};
 use crate::runtime::{AppMessage, AsyncRuntime};
-use crate::services::{
-    FileService, GlobalSearchMessage, GlobalSearchService, GlobalSearchTask, KeybindingService,
-};
+use crate::services::{FileService, GlobalSearchMessage, GlobalSearchService, GlobalSearchTask};
 use crate::views::{EditorGroup, ExplorerView, GlobalSearchPanel};
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -29,7 +27,6 @@ pub struct Workbench {
     global_search_panel: GlobalSearchPanel,
     active_area: ActiveArea,
     file_service: FileService,
-    keybindings: KeybindingService,
     runtime: AsyncRuntime,
     show_sidebar: bool,
     root_path: PathBuf,
@@ -52,7 +49,6 @@ impl Workbench {
             global_search_panel: GlobalSearchPanel::new(),
             active_area: ActiveArea::Editor,
             file_service: FileService::new(),
-            keybindings: KeybindingService::new(),
             runtime,
             show_sidebar: true,
             root_path: root_path.to_path_buf(),

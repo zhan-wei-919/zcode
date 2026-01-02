@@ -32,6 +32,13 @@ impl EditorTab {
         }
     }
 
+    pub fn with_config(title: String, config: EditorConfig) -> Self {
+        Self {
+            editor: EditorView::with_config(config),
+            title,
+        }
+    }
+
     pub fn from_file(path: PathBuf, content: &str) -> Self {
         let title = path
             .file_name()
@@ -39,6 +46,17 @@ impl EditorTab {
             .unwrap_or_else(|| "Untitled".to_string());
 
         let editor = EditorView::from_file(path, content);
+
+        Self { editor, title }
+    }
+
+    pub fn from_file_with_config(path: PathBuf, content: &str, config: EditorConfig) -> Self {
+        let title = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Untitled".to_string());
+
+        let editor = EditorView::from_file_with_config(path, content, config);
 
         Self { editor, title }
     }
@@ -69,7 +87,8 @@ impl EditorGroup {
             config: EditorConfig::default(),
             search_bar: SearchBar::new(),
         };
-        group.tabs.push(EditorTab::new("Untitled".to_string()));
+        group.tabs
+            .push(EditorTab::with_config("Untitled".to_string(), group.config.clone()));
         group
     }
 
@@ -81,7 +100,8 @@ impl EditorGroup {
             config,
             search_bar: SearchBar::new(),
         };
-        group.tabs.push(EditorTab::new("Untitled".to_string()));
+        group.tabs
+            .push(EditorTab::with_config("Untitled".to_string(), group.config.clone()));
         group
     }
 
@@ -93,7 +113,7 @@ impl EditorGroup {
             }
         }
 
-        let tab = EditorTab::from_file(path, content);
+        let tab = EditorTab::from_file_with_config(path, content, self.config.clone());
         self.tabs.push(tab);
         self.active_index = self.tabs.len() - 1;
     }

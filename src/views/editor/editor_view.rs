@@ -27,7 +27,14 @@ use unicode_width::UnicodeWidthStr;
 
 /// 判断字符是否是词边界字符（标点符号等）
 fn is_word_boundary_char(c: char) -> bool {
-    c.is_ascii_punctuation() || matches!(c, '（' | '）' | '【' | '】' | '「' | '」' | '，' | '。' | '：' | '；' | '"' | '"')
+    c.is_ascii_punctuation()
+        || matches!(
+            c,
+            '（' | '）'
+                | '【' | '】'
+                | '「' | '」'
+                | '，' | '。' | '：' | '；'
+        )
 }
 
 pub struct EditorView {
@@ -139,8 +146,14 @@ impl EditorView {
 
     /// 从文件创建编辑器，支持持久化和崩溃恢复
     pub fn from_file(path: PathBuf, content: &str) -> Self {
+        Self::from_file_with_config(path, content, EditorConfig::default())
+    }
+
+    /// 从文件创建编辑器（可注入配置），支持持久化和崩溃恢复
+    pub fn from_file_with_config(path: PathBuf, content: &str, config: EditorConfig) -> Self {
         let buffer = TextBuffer::from_text(content);
         let ops_file_path = get_ops_file_path(&path);
+        let tab_size = config.tab_size;
 
         // 尝试启用持久化
         let history = if let Some(ops_path) = ops_file_path {
@@ -151,8 +164,8 @@ impl EditorView {
                     Ok((history, recovered_rope, cursor)) => {
                         let mut view = Self {
                             buffer: TextBuffer::from_text(content),
-                            viewport: Viewport::new(4),
-                            config: EditorConfig::default(),
+                            viewport: Viewport::new(tab_size),
+                            config,
                             file_path: Some(path),
                             dirty: history.is_dirty(),
                             mouse_state: MouseState::new(),
@@ -180,8 +193,8 @@ impl EditorView {
 
         Self {
             buffer,
-            viewport: Viewport::new(4),
-            config: EditorConfig::default(),
+            viewport: Viewport::new(tab_size),
+            config,
             file_path: Some(path),
             dirty: false,
             mouse_state: MouseState::new(),

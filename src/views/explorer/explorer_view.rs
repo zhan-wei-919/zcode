@@ -292,15 +292,12 @@ impl View for ExplorerView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::build_file_tree;
-    use std::path::Path;
 
     #[test]
     fn test_explorer_view_new() {
-        use crate::models::{FileTree, NodeKind};
-        use std::ffi::OsString;
+        use crate::models::FileTree;
 
-        let mut tree = FileTree::new_with_root_for_test("test".into(), PathBuf::from("/test"));
+        let tree = FileTree::new_with_root_for_test("test".into(), PathBuf::from("/test"));
         let view = ExplorerView::new(tree);
 
         assert!(view.selected().is_some());
