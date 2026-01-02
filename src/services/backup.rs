@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 const APP_NAME: &str = "zcode";
 const BACKUP_DIR: &str = "backups";
+const LOG_DIR: &str = "logs";
 
 /// 获取应用数据目录
 fn get_app_data_dir() -> Option<PathBuf> {
@@ -73,6 +74,11 @@ pub fn get_backup_dir() -> Option<PathBuf> {
     get_app_data_dir().map(|p| p.join(BACKUP_DIR))
 }
 
+/// 获取日志目录路径
+pub fn get_log_dir() -> Option<PathBuf> {
+    get_app_data_dir().map(|p| p.join(LOG_DIR))
+}
+
 /// 获取指定文件的 .ops 备份文件路径
 pub fn get_ops_file_path(file_path: &std::path::Path) -> Option<PathBuf> {
     // 获取绝对路径
@@ -94,6 +100,19 @@ pub fn get_ops_file_path(file_path: &std::path::Path) -> Option<PathBuf> {
 pub fn ensure_backup_dir() -> std::io::Result<PathBuf> {
     let dir = get_backup_dir().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "Cannot determine backup directory")
+    })?;
+
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir)?;
+    }
+
+    Ok(dir)
+}
+
+/// 确保日志目录存在
+pub fn ensure_log_dir() -> std::io::Result<PathBuf> {
+    let dir = get_log_dir().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "Cannot determine log directory")
     })?;
 
     if !dir.exists() {
@@ -125,6 +144,15 @@ mod tests {
         let dir = dir.unwrap();
         assert!(dir.to_string_lossy().contains(APP_NAME));
         assert!(dir.to_string_lossy().contains(BACKUP_DIR));
+    }
+
+    #[test]
+    fn test_get_log_dir() {
+        let dir = get_log_dir();
+        assert!(dir.is_some());
+        let dir = dir.unwrap();
+        assert!(dir.to_string_lossy().contains(APP_NAME));
+        assert!(dir.to_string_lossy().contains(LOG_DIR));
     }
 
     #[test]

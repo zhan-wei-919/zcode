@@ -9,12 +9,21 @@ use crossterm::{
 use ratatui::prelude::*;
 use std::{env, io, path::Path, sync::mpsc, time::Duration};
 
+mod logging;
+
 use zcode::app::Workbench;
 use zcode::core::event::InputEvent;
 use zcode::core::view::{EventResult, View};
 use zcode::runtime::AsyncRuntime;
 
 fn main() -> io::Result<()> {
+    let logging_guard = logging::init();
+    if cfg!(debug_assertions) {
+        if let Some(guard) = &logging_guard {
+            eprintln!("Log dir: {}", guard.log_dir().display());
+        }
+    }
+
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: {} <path>", args[0]);
@@ -22,29 +31,39 @@ fn main() -> io::Result<()> {
     }
     let path_to_open = Path::new(&args[1]);
 
-    enable_raw_mode()?;
+    tracing::info!(path = %path_to_open.display(), "starting");
+
+    enable_raw_mode()
+        .inspect_err(|e| tracing::error!(error = ?e, "enable_raw_mode failed"))?;
     let mut stdout = io::stdout();
     execute!(
         stdout,
         EnterAlternateScreen,
         EnableMouseCapture,
         cursor::SetCursorStyle::BlinkingBar
-    )?;
+    )
+    .inspect_err(|e| tracing::error!(error = ?e, "enter alternate screen failed"))?;
 
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend)
+        .inspect_err(|e| tracing::error!(error = ?e, "terminal init failed"))?;
 
     let result = run_app(&mut terminal, path_to_open);
 
-    disable_raw_mode()?;
+    disable_raw_mode().inspect_err(|e| tracing::error!(error = ?e, "disable_raw_mode failed"))?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture,
         cursor::SetCursorStyle::DefaultUserShape
-    )?;
+    )
+    .inspect_err(|e| tracing::error!(error = ?e, "leave alternate screen failed"))?;
 
     if let Err(e) = result {
+        tracing::error!(error = ?e, "application error");
+        if let Some(guard) = &logging_guard {
+            eprintln!("Log dir: {}", guard.log_dir().display());
+        }
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }

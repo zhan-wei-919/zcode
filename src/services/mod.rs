@@ -15,7 +15,7 @@ pub mod file;
 pub mod keybinding;
 pub mod search;
 
-pub use backup::{ensure_backup_dir, get_backup_dir, get_ops_file_path};
+pub use backup::{ensure_backup_dir, ensure_log_dir, get_backup_dir, get_log_dir, get_ops_file_path};
 pub use clipboard::{ClipboardError, ClipboardService};
 pub use config::{ConfigService, EditorConfig};
 pub use file::{DirEntry, FileError, FileMetadata, FileProvider, FileService, LocalFileProvider};
