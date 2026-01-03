@@ -1,0 +1,449 @@
+use crate::app::theme::UiTheme;
+use crate::kernel::editor::{EditorPaneState, SearchBarField, SearchBarMode, SearchBarState};
+use crate::models::slice_to_cow;
+use crate::kernel::services::ports::EditorConfig;
+use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs};
+use ratatui::Frame;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
+use super::layout::EditorPaneLayout;
+
+pub fn render_editor_pane(
+    frame: &mut Frame,
+    layout: &EditorPaneLayout,
+    pane: &EditorPaneState,
+    config: &EditorConfig,
+    theme: &UiTheme,
+) {
+    if layout.area.width == 0 || layout.area.height == 0 {
+        return;
+    }
+
+    render_tabs(frame, layout.tab_area, pane, theme);
+
+    if let Some(search_area) = layout.search_area {
+        render_search_bar(frame, search_area, &pane.search_bar, theme);
+    }
+
+    render_editor(frame, layout, pane, config, theme);
+}
+
+pub fn cursor_position_editor(
+    layout: &EditorPaneLayout,
+    pane: &EditorPaneState,
+    config: &EditorConfig,
+) -> Option<(u16, u16)> {
+    if pane.search_bar.visible {
+        let area = layout.search_area?;
+        return cursor_position_search_bar(area, &pane.search_bar);
+    }
+
+    let tab = pane.active_tab()?;
+    let (row, _col) = tab.buffer.cursor();
+    let offset = tab.viewport.line_offset;
+
+    if layout.content_area.width == 0 || layout.content_area.height == 0 {
+        return None;
+    }
+
+    if row < offset || row >= offset + (layout.editor_area.height as usize).max(1) {
+        return None;
+    }
+
+    let cursor_x_abs = cursor_display_x_abs(&tab.buffer, config.tab_size);
+    let cursor_x_rel = cursor_x_abs.saturating_sub(tab.viewport.horiz_offset) as u16;
+
+    let x = layout.content_area.x.saturating_add(cursor_x_rel);
+    let y = layout.content_area.y.saturating_add((row - offset) as u16);
+
+    Some((x, y))
+}
+
+fn render_tabs(frame: &mut Frame, area: Rect, pane: &EditorPaneState, theme: &UiTheme) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let titles: Vec<Line> = pane
+        .tabs
+        .iter()
+        .enumerate()
+        .map(|(i, tab)| {
+            let active = i == pane.active;
+            let fg = if active {
+                theme.sidebar_tab_active_fg
+            } else {
+                theme.sidebar_tab_inactive_fg
+            };
+            let mut spans = Vec::with_capacity(3);
+            spans.push(Span::raw(" "));
+            if tab.dirty {
+                spans.push(Span::styled("● ", Style::default().fg(fg)));
+            }
+            spans.push(Span::styled(
+                tab.title.as_str(),
+                Style::default().fg(fg).add_modifier(if active {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+            ));
+            spans.push(Span::raw(" "));
+            Line::from(spans)
+        })
+        .collect();
+
+    let tabs_widget = Tabs::new(titles)
+        .select(pane.active)
+        .highlight_style(Style::default().bg(theme.sidebar_tab_active_bg));
+
+    frame.render_widget(tabs_widget, area);
+}
+
+fn render_search_bar(frame: &mut Frame, area: Rect, state: &SearchBarState, theme: &UiTheme) {
+    if !state.visible || area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    frame.render_widget(Clear, area);
+
+    let match_info = if state.searching {
+        "Searching...".to_string()
+    } else if let Some(err) = state.last_error.as_deref() {
+        format!("Error: {}", err)
+    } else if state.matches.is_empty() {
+        if state.search_text.is_empty() {
+            String::new()
+        } else {
+            "No results".to_string()
+        }
+    } else {
+        let current = state.current_match_index.map(|i| i + 1).unwrap_or(0);
+        format!("{}/{}", current, state.matches.len())
+    };
+
+    let case_indicator = if state.case_sensitive { "[Aa]" } else { "[aa]" };
+    let regex_indicator = if state.use_regex { "[.*]" } else { "[  ]" };
+
+    match state.mode {
+        SearchBarMode::Search => {
+            let search_style = if state.focused_field == SearchBarField::Search {
+                Style::default().fg(theme.palette_fg)
+            } else {
+                Style::default().fg(theme.palette_muted_fg)
+            };
+
+            let line = Line::from(vec![
+                Span::styled("Find: ", Style::default().fg(theme.header_fg)),
+                Span::styled(state.search_text.as_str(), search_style),
+                Span::raw(" "),
+                Span::styled(case_indicator, Style::default().fg(theme.palette_muted_fg)),
+                Span::styled(regex_indicator, Style::default().fg(theme.palette_muted_fg)),
+                Span::raw(" "),
+                Span::styled(match_info, Style::default().fg(theme.header_fg)),
+            ]);
+
+            let widget = Paragraph::new(line).block(
+                Block::default()
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(theme.separator)),
+            );
+            frame.render_widget(widget, area);
+        }
+        SearchBarMode::Replace => {
+            let top = Rect::new(area.x, area.y, area.width, 1.min(area.height));
+            let bottom = Rect::new(
+                area.x,
+                area.y.saturating_add(1),
+                area.width,
+                area.height.saturating_sub(1),
+            );
+
+            let search_style = if state.focused_field == SearchBarField::Search {
+                Style::default().fg(theme.palette_fg)
+            } else {
+                Style::default().fg(theme.palette_muted_fg)
+            };
+
+            let search_line = Line::from(vec![
+                Span::styled("Find: ", Style::default().fg(theme.header_fg)),
+                Span::styled(state.search_text.as_str(), search_style),
+                Span::raw(" "),
+                Span::styled(case_indicator, Style::default().fg(theme.palette_muted_fg)),
+                Span::styled(regex_indicator, Style::default().fg(theme.palette_muted_fg)),
+                Span::raw(" "),
+                Span::styled(match_info, Style::default().fg(theme.header_fg)),
+            ]);
+            frame.render_widget(Paragraph::new(search_line), top);
+
+            let replace_style = if state.focused_field == SearchBarField::Replace {
+                Style::default().fg(theme.palette_fg)
+            } else {
+                Style::default().fg(theme.palette_muted_fg)
+            };
+
+            let replace_line = Line::from(vec![
+                Span::styled("Replace: ", Style::default().fg(theme.header_fg)),
+                Span::styled(state.replace_text.as_str(), replace_style),
+            ]);
+
+            let widget = Paragraph::new(replace_line).block(
+                Block::default()
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(theme.separator)),
+            );
+            frame.render_widget(widget, bottom);
+        }
+    }
+}
+
+fn render_editor(
+    frame: &mut Frame,
+    layout: &EditorPaneLayout,
+    pane: &EditorPaneState,
+    config: &EditorConfig,
+    theme: &UiTheme,
+) {
+    if layout.editor_area.width == 0 || layout.editor_area.height == 0 {
+        return;
+    }
+
+    let Some(tab) = pane.active_tab() else {
+        return;
+    };
+
+    let total_lines = tab.buffer.len_lines().max(1);
+    let max_line_width = total_lines.to_string().len();
+
+    if config.show_line_numbers && layout.gutter_area.width > 0 {
+        let start = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
+        let end = (start + layout.editor_area.height as usize).min(total_lines);
+
+        let gutter_lines: Vec<Line> = (start..end)
+            .map(|i| {
+                Line::from(Span::styled(
+                    format!("{:>width$} ", i + 1, width = max_line_width),
+                    Style::default().fg(theme.palette_muted_fg),
+                ))
+            })
+            .collect();
+
+        frame.render_widget(Paragraph::new(gutter_lines), layout.gutter_area);
+    }
+
+    if layout.content_area.width == 0 || layout.content_area.height == 0 {
+        return;
+    }
+
+    let height = layout.editor_area.height as usize;
+    let start = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
+    let end = (start + height).min(total_lines);
+
+    let mut lines = Vec::with_capacity(end.saturating_sub(start));
+    for row in start..end {
+        if let Some(slice) = tab.buffer.line_slice(row) {
+            let line_str = slice_to_cow(slice);
+            lines.push(render_line(
+                &line_str,
+                row,
+                tab.viewport.horiz_offset,
+                tab.buffer.selection(),
+                config.tab_size,
+                theme,
+            ));
+        } else {
+            lines.push(Line::default());
+        }
+    }
+
+    frame.render_widget(Paragraph::new(lines).block(Block::default()), layout.content_area);
+}
+
+fn render_line(
+    line: &str,
+    row: usize,
+    horiz_offset: u32,
+    selection: Option<&crate::models::Selection>,
+    tab_size: u8,
+    theme: &UiTheme,
+) -> Line<'static> {
+    let expanded = expand_tabs(line, tab_size);
+    let graphemes: Vec<&str> = expanded.graphemes(true).collect();
+
+    let (sel_start, sel_end) = match selection.map(|s| s.range()) {
+        None => return render_line_plain(&graphemes, horiz_offset),
+        Some(((start_row, start_col), (end_row, end_col))) => {
+            if row < start_row || row > end_row {
+                return render_line_plain(&graphemes, horiz_offset);
+            }
+
+            if row == start_row && row == end_row {
+                (start_col, end_col)
+            } else if row == start_row {
+                (start_col, graphemes.len())
+            } else if row == end_row {
+                (0, end_col)
+            } else {
+                (0, graphemes.len())
+            }
+        }
+    };
+
+    render_line_with_selection(&graphemes, horiz_offset, sel_start, sel_end, theme)
+}
+
+fn render_line_plain(graphemes: &[&str], horiz_offset: u32) -> Line<'static> {
+    let horiz = horiz_offset as usize;
+    let mut skip = 0usize;
+    let mut acc = 0usize;
+
+    for g in graphemes.iter() {
+        if acc >= horiz {
+            break;
+        }
+        acc += g.width();
+        skip += 1;
+    }
+
+    let visible: String = graphemes.iter().skip(skip).copied().collect();
+    Line::from(visible)
+}
+
+fn render_line_with_selection(
+    graphemes: &[&str],
+    horiz_offset: u32,
+    sel_start: usize,
+    sel_end: usize,
+    theme: &UiTheme,
+) -> Line<'static> {
+    let horiz = horiz_offset as usize;
+    let mut skip = 0usize;
+    let mut acc = 0usize;
+
+    for g in graphemes.iter() {
+        if acc >= horiz {
+            break;
+        }
+        acc += g.width();
+        skip += 1;
+    }
+
+    let mut spans = Vec::new();
+    let mut current = String::new();
+    let mut in_sel = false;
+
+    for (idx, g) in graphemes.iter().enumerate().skip(skip) {
+        let should_highlight = idx >= sel_start && idx < sel_end;
+
+        if should_highlight != in_sel {
+            if !current.is_empty() {
+                if in_sel {
+                    spans.push(Span::styled(
+                        current.clone(),
+                        Style::default()
+                            .bg(theme.palette_selected_bg)
+                            .fg(theme.palette_selected_fg),
+                    ));
+                } else {
+                    spans.push(Span::raw(current.clone()));
+                }
+                current.clear();
+            }
+            in_sel = should_highlight;
+        }
+        current.push_str(g);
+    }
+
+    if !current.is_empty() {
+        if in_sel {
+            spans.push(Span::styled(
+                current,
+                Style::default()
+                    .bg(theme.palette_selected_bg)
+                    .fg(theme.palette_selected_fg),
+            ));
+        } else {
+            spans.push(Span::raw(current));
+        }
+    }
+
+    Line::from(spans)
+}
+
+fn cursor_position_search_bar(area: Rect, state: &SearchBarState) -> Option<(u16, u16)> {
+    let (prefix, text) = match state.focused_field {
+        SearchBarField::Search => ("Find: ", state.search_text.as_str()),
+        SearchBarField::Replace => ("Replace: ", state.replace_text.as_str()),
+    };
+
+    let cursor = state.cursor_pos.min(text.len());
+    let before = &text[..cursor];
+    let prefix_w = prefix.width() as u16;
+    let before_w = before.width() as u16;
+
+    let y = match state.focused_field {
+        SearchBarField::Search => area.y,
+        SearchBarField::Replace => area.y.saturating_add(1),
+    };
+    let x = area.x.saturating_add(prefix_w).saturating_add(before_w);
+    Some((x, y))
+}
+
+fn cursor_display_x_abs(buffer: &crate::models::TextBuffer, tab_size: u8) -> u32 {
+    let (row, col) = buffer.cursor();
+    let Some(slice) = buffer.line_slice(row) else {
+        return 0;
+    };
+    let line = slice_to_cow(slice);
+    let graphemes = line.graphemes(true);
+
+    let mut display_col = 0u32;
+    for (i, g) in graphemes.enumerate() {
+        if i >= col {
+            break;
+        }
+        if g == "\t" {
+            let tab = tab_size as u32;
+            let rem = display_col % tab;
+            display_col += if rem == 0 { tab } else { tab - rem };
+        } else if g == "\n" {
+            break;
+        } else {
+            display_col += g.width() as u32;
+        }
+    }
+
+    display_col
+}
+
+fn expand_tabs(line: &str, tab_size: u8) -> String {
+    let mut expanded = String::new();
+    let mut display_col = 0u32;
+    let tab_size = tab_size as u32;
+
+    for ch in line.chars() {
+        if ch == '\t' {
+            let remainder = display_col % tab_size;
+            let spaces = if remainder == 0 {
+                tab_size
+            } else {
+                tab_size - remainder
+            };
+            for _ in 0..spaces {
+                expanded.push(' ');
+            }
+            display_col += spaces;
+        } else if ch == '\n' {
+            break;
+        } else {
+            expanded.push(ch);
+            display_col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
+        }
+    }
+
+    expanded
+}

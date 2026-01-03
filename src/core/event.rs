@@ -85,7 +85,17 @@ impl Key {
 
 impl From<KeyEvent> for Key {
     fn from(event: KeyEvent) -> Self {
-        Self::new(event.code, event.modifiers)
+        let mut code = event.code;
+        let mut modifiers = event.modifiers;
+
+        if let KeyCode::Char(ch) = code {
+            if ch.is_ascii_uppercase() {
+                code = KeyCode::Char(ch.to_ascii_lowercase());
+                modifiers |= KeyModifiers::SHIFT;
+            }
+        }
+
+        Self::new(code, modifiers)
     }
 }
 

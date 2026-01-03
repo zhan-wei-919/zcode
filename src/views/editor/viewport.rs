@@ -80,7 +80,8 @@ impl Viewport {
             if (cursor_x as u32) < self.horiz_offset {
                 self.horiz_offset = cursor_x as u32;
             } else if (cursor_x as u32) >= self.horiz_offset + width as u32 {
-                self.horiz_offset = (cursor_x as u32).saturating_sub(width.saturating_sub(1) as u32);
+                self.horiz_offset =
+                    (cursor_x as u32).saturating_sub(width.saturating_sub(1) as u32);
             }
         }
     }

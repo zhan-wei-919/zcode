@@ -242,7 +242,11 @@ impl EditHistory {
 
         self.head = id;
         let rope = self.rebuild_rope_at(id);
-        let cursor = self.ops.get(&id).map(|op| op.cursor_after()).unwrap_or((0, 0));
+        let cursor = self
+            .ops
+            .get(&id)
+            .map(|op| op.cursor_after())
+            .unwrap_or((0, 0));
         Some((rope, cursor))
     }
 
@@ -439,7 +443,10 @@ impl EditHistory {
                     }
                 } else if let Some(op) = EditOp::from_json_line(&line) {
                     last_cursor = op.cursor_after();
-                    children.entry(op.parent).or_insert_with(Vec::new).push(op.id);
+                    children
+                        .entry(op.parent)
+                        .or_insert_with(Vec::new)
+                        .push(op.id);
                     ops.insert(op.id, op);
                 }
             }
@@ -518,13 +525,7 @@ mod tests {
 
         // 插入 " world"
         let mut rope = base.clone();
-        let op = EditOp::insert(
-            history.head(),
-            5,
-            " world".to_string(),
-            (0, 5),
-            (0, 11),
-        );
+        let op = EditOp::insert(history.head(), 5, " world".to_string(), (0, 5), (0, 11));
         op.apply(&mut rope);
         history.push(op, &rope);
 

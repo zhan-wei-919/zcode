@@ -45,7 +45,10 @@ impl AsyncRuntime {
                             }
                         }
                     }
-                    let _ = tx.send(AppMessage::DirLoaded { path, entries: result });
+                    let _ = tx.send(AppMessage::DirLoaded {
+                        path,
+                        entries: result,
+                    });
                 }
                 Err(e) => {
                     let _ = tx.send(AppMessage::DirLoadError {

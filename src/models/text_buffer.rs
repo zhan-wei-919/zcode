@@ -192,7 +192,13 @@ impl TextBuffer {
         self.cursor = cursor_after;
         self.cached_char_pos = Some(char_offset + 1);
 
-        EditOp::insert(parent, char_offset, c.to_string(), cursor_before, cursor_after)
+        EditOp::insert(
+            parent,
+            char_offset,
+            c.to_string(),
+            cursor_before,
+            cursor_after,
+        )
     }
 
     /// 插入字符串，返回 EditOp
@@ -207,14 +213,23 @@ impl TextBuffer {
         let cursor_after = if newlines > 0 {
             let last_newline = s.rfind('\n').unwrap();
             let after_last_newline = &s[last_newline + 1..];
-            (cursor_before.0 + newlines, after_last_newline.graphemes(true).count())
+            (
+                cursor_before.0 + newlines,
+                after_last_newline.graphemes(true).count(),
+            )
         } else {
             (cursor_before.0, cursor_before.1 + s.graphemes(true).count())
         };
         self.cursor = cursor_after;
         self.cached_char_pos = Some(char_offset + s.chars().count());
 
-        EditOp::insert(parent, char_offset, s.to_string(), cursor_before, cursor_after)
+        EditOp::insert(
+            parent,
+            char_offset,
+            s.to_string(),
+            cursor_before,
+            cursor_after,
+        )
     }
 
     /// 向后删除（Backspace），返回 EditOp
@@ -232,7 +247,14 @@ impl TextBuffer {
             self.cursor = cursor_after;
             self.invalidate_char_pos_cache();
 
-            Some(EditOp::delete(parent, start, end, deleted, cursor_before, cursor_after))
+            Some(EditOp::delete(
+                parent,
+                start,
+                end,
+                deleted,
+                cursor_before,
+                cursor_after,
+            ))
         } else if row > 0 {
             let prev_len = self.line_grapheme_len(row - 1);
             let start = self.pos_to_char((row, 0)) - 1;
@@ -244,7 +266,14 @@ impl TextBuffer {
             self.cursor = cursor_after;
             self.invalidate_char_pos_cache();
 
-            Some(EditOp::delete(parent, start, end, deleted, cursor_before, cursor_after))
+            Some(EditOp::delete(
+                parent,
+                start,
+                end,
+                deleted,
+                cursor_before,
+                cursor_after,
+            ))
         } else {
             None
         }
@@ -265,7 +294,14 @@ impl TextBuffer {
             // 光标位置不变
             self.invalidate_char_pos_cache();
 
-            Some(EditOp::delete(parent, start, end, deleted, cursor_before, cursor_before))
+            Some(EditOp::delete(
+                parent,
+                start,
+                end,
+                deleted,
+                cursor_before,
+                cursor_before,
+            ))
         } else if row + 1 < self.len_lines() {
             let start = self.pos_to_char((row, col));
             let end = start + 1;
@@ -275,7 +311,14 @@ impl TextBuffer {
             // 光标位置不变
             self.invalidate_char_pos_cache();
 
-            Some(EditOp::delete(parent, start, end, deleted, cursor_before, cursor_before))
+            Some(EditOp::delete(
+                parent,
+                start,
+                end,
+                deleted,
+                cursor_before,
+                cursor_before,
+            ))
         } else {
             None
         }
@@ -301,7 +344,14 @@ impl TextBuffer {
         self.selection = None;
         self.invalidate_char_pos_cache();
 
-        Some(EditOp::delete(parent, start_char, end_char, deleted, cursor_before, cursor_after))
+        Some(EditOp::delete(
+            parent,
+            start_char,
+            end_char,
+            deleted,
+            cursor_before,
+            cursor_after,
+        ))
     }
 
     // ==================== Undo/Redo 支持 ====================

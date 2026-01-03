@@ -2,12 +2,13 @@
 //!
 //! VS Code 风格的搜索/替换栏，显示在编辑器上方
 
+use crate::app::theme::UiTheme;
 use crate::core::event::InputEvent;
 use crate::core::view::{EventResult, View};
 use crate::services::search::{Match, SearchMessage, SearchService, SearchTask};
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
@@ -38,6 +39,7 @@ pub struct SearchBar {
     matches: Vec<Match>,
     current_match_index: Option<usize>,
     area: Option<Rect>,
+    theme: UiTheme,
     // 异步搜索
     search_service: Option<SearchService>,
     search_task: Option<SearchTask>,
@@ -59,11 +61,16 @@ impl SearchBar {
             matches: Vec::new(),
             current_match_index: None,
             area: None,
+            theme: UiTheme::default(),
             search_service: None,
             search_task: None,
             search_rx: None,
             searching: false,
         }
+    }
+
+    pub fn set_theme(&mut self, theme: UiTheme) {
+        self.theme = theme;
     }
 
     /// 设置 tokio runtime，启用异步搜索
@@ -181,8 +188,13 @@ impl SearchBar {
             self.current_match_index = None;
         } else {
             // 同步搜索（fallback）
-            self.matches = SearchService::search_sync(rope, &self.search_text, self.case_sensitive, self.use_regex)
-                .unwrap_or_default();
+            self.matches = SearchService::search_sync(
+                rope,
+                &self.search_text,
+                self.case_sensitive,
+                self.use_regex,
+            )
+            .unwrap_or_default();
 
             if self.matches.is_empty() {
                 self.current_match_index = None;
@@ -194,9 +206,11 @@ impl SearchBar {
     }
 
     /// 轮询异步搜索结果
-    pub fn poll(&mut self) {
+    pub fn poll(&mut self) -> bool {
+        let mut changed = false;
         if let Some(rx) = &self.search_rx {
             while let Ok(msg) = rx.try_recv() {
+                changed = true;
                 match msg {
                     SearchMessage::Matches { matches, .. } => {
                         self.matches.extend(matches);
@@ -208,17 +222,19 @@ impl SearchBar {
                         self.searching = false;
                         self.search_task = None;
                         self.search_rx = None;
-                        return;
+                        return true;
                     }
                     SearchMessage::Cancelled { .. } | SearchMessage::Error { .. } => {
                         self.searching = false;
                         self.search_task = None;
                         self.search_rx = None;
-                        return;
+                        return true;
                     }
                 }
             }
         }
+
+        changed
     }
 
     pub fn is_searching(&self) -> bool {
@@ -439,9 +455,7 @@ impl View for SearchBar {
                         self.delete_forward();
                         return EventResult::Consumed;
                     }
-                    (KeyCode::Char(c), mods)
-                        if mods.is_empty() || mods == KeyModifiers::SHIFT =>
-                    {
+                    (KeyCode::Char(c), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
                         self.insert_char(c);
                         return EventResult::Consumed;
                     }
@@ -482,23 +496,32 @@ impl View for SearchBar {
 
         // 搜索行
         let search_style = if self.focused_field == FocusedField::Search {
-            Style::default().fg(Color::White)
+            Style::default().fg(self.theme.palette_fg)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(self.theme.palette_muted_fg)
         };
 
         let search_line = Line::from(vec![
-            Span::styled("Find: ", Style::default().fg(Color::Cyan)),
+            Span::styled("Find: ", Style::default().fg(self.theme.header_fg)),
             Span::styled(&self.search_text, search_style),
             Span::raw(" "),
-            Span::styled(case_indicator, Style::default().fg(Color::DarkGray)),
-            Span::styled(regex_indicator, Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                case_indicator,
+                Style::default().fg(self.theme.palette_muted_fg),
+            ),
+            Span::styled(
+                regex_indicator,
+                Style::default().fg(self.theme.palette_muted_fg),
+            ),
             Span::raw(" "),
-            Span::styled(&match_info, Style::default().fg(Color::Yellow)),
+            Span::styled(&match_info, Style::default().fg(self.theme.header_fg)),
         ]);
 
-        let search_para = Paragraph::new(search_line)
-            .block(Block::default().borders(Borders::BOTTOM));
+        let search_para = Paragraph::new(search_line).block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::default().fg(self.theme.separator)),
+        );
 
         if self.mode == SearchBarMode::Search {
             frame.render_widget(search_para, area);
@@ -509,31 +532,43 @@ impl View for SearchBar {
 
             // 重新创建 search_line 因为 search_para 已经消费了它
             let search_line_for_replace = Line::from(vec![
-                Span::styled("Find: ", Style::default().fg(Color::Cyan)),
+                Span::styled("Find: ", Style::default().fg(self.theme.header_fg)),
                 Span::styled(self.search_text.clone(), search_style),
                 Span::raw(" "),
-                Span::styled(case_indicator, Style::default().fg(Color::DarkGray)),
-                Span::styled(regex_indicator, Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    case_indicator,
+                    Style::default().fg(self.theme.palette_muted_fg),
+                ),
+                Span::styled(
+                    regex_indicator,
+                    Style::default().fg(self.theme.palette_muted_fg),
+                ),
                 Span::raw(" "),
-                Span::styled(match_info.clone(), Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    match_info.clone(),
+                    Style::default().fg(self.theme.header_fg),
+                ),
             ]);
 
             let search_para_no_border = Paragraph::new(search_line_for_replace);
             frame.render_widget(search_para_no_border, search_area);
 
             let replace_style = if self.focused_field == FocusedField::Replace {
-                Style::default().fg(Color::White)
+                Style::default().fg(self.theme.palette_fg)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(self.theme.palette_muted_fg)
             };
 
             let replace_line = Line::from(vec![
-                Span::styled("Replace: ", Style::default().fg(Color::Cyan)),
+                Span::styled("Replace: ", Style::default().fg(self.theme.header_fg)),
                 Span::styled(self.replace_text.clone(), replace_style),
             ]);
 
-            let replace_para = Paragraph::new(replace_line)
-                .block(Block::default().borders(Borders::BOTTOM));
+            let replace_para = Paragraph::new(replace_line).block(
+                Block::default()
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(self.theme.separator)),
+            );
             frame.render_widget(replace_para, replace_area);
         }
     }

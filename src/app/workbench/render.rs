@@ -1,0 +1,872 @@
+use super::palette;
+use super::Workbench;
+use crate::kernel::{
+    Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, SearchResultItem,
+    SearchViewport, SidebarTab, SplitDirection,
+};
+use crate::views::{compute_editor_pane_layout, cursor_position_editor, render_editor_pane};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::Frame;
+
+pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
+    workbench.last_render_area = Some(area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(super::HEADER_HEIGHT),
+            Constraint::Min(0),
+            Constraint::Length(super::STATUS_HEIGHT),
+        ])
+        .split(area);
+
+    let header_area = chunks[0];
+    let body_area = chunks[1];
+    let status_area = chunks[2];
+
+    workbench.render_header(frame, header_area);
+    workbench.render_status(frame, status_area);
+
+    let (main_area, bottom_panel_area) = if workbench.store.state().ui.bottom_panel.visible {
+        let panel_height = super::util::bottom_panel_height(body_area.height);
+        let areas = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(panel_height)])
+            .split(body_area);
+        let panel_area = (areas[1].height > 0).then_some(areas[1]);
+        (areas[0], panel_area)
+    } else {
+        (body_area, None)
+    };
+
+    workbench.last_bottom_panel_area = bottom_panel_area;
+
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(super::ACTIVITY_BAR_WIDTH),
+            Constraint::Min(0),
+        ])
+        .split(main_area);
+
+    let activity_area = columns[0];
+    let content_area = columns[1];
+
+    workbench.last_activity_bar_area =
+        (activity_area.width > 0 && activity_area.height > 0).then_some(activity_area);
+    if activity_area.width > 0 && activity_area.height > 0 {
+        workbench.render_activity_bar(frame, activity_area);
+    }
+
+    if workbench.store.state().ui.sidebar_visible && content_area.width > 0 {
+        let sidebar_width = super::util::sidebar_width(content_area.width);
+        let body_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
+            .split(content_area);
+
+        workbench.last_sidebar_area =
+            (body_chunks[0].width > 0 && body_chunks[0].height > 0).then_some(body_chunks[0]);
+
+        if body_chunks[0].width > 0 && body_chunks[0].height > 0 {
+            workbench.render_sidebar(frame, body_chunks[0]);
+        } else {
+            workbench.last_sidebar_tabs_area = None;
+            workbench.last_sidebar_content_area = None;
+        }
+
+        workbench.render_editor_panes(frame, body_chunks[1]);
+    } else {
+        workbench.last_sidebar_area = None;
+        workbench.last_sidebar_tabs_area = None;
+        workbench.last_sidebar_content_area = None;
+        workbench.render_editor_panes(frame, content_area);
+    }
+
+    if let Some(panel_area) = bottom_panel_area {
+        workbench.render_bottom_panel(frame, panel_area);
+    }
+
+    if workbench.store.state().ui.command_palette.visible {
+        palette::render(workbench, frame, area);
+    }
+
+    if let Some((x, y)) = cursor_position(workbench) {
+        frame.set_cursor_position((x, y));
+    }
+}
+
+pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
+    if workbench.store.state().ui.command_palette.visible
+        && workbench.store.state().ui.focus == FocusTarget::CommandPalette
+    {
+        return palette::cursor(workbench);
+    }
+
+    match workbench.store.state().ui.focus {
+        FocusTarget::Explorer => {
+            if workbench.store.state().ui.sidebar_tab == SidebarTab::Search {
+                let search_state = &workbench.store.state().search;
+                workbench.search_view.cursor_position(
+                    &search_state.query,
+                    search_state.query_cursor,
+                    search_state.case_sensitive,
+                    search_state.use_regex,
+                )
+            } else {
+                None
+            }
+        }
+        FocusTarget::Editor => {
+            let pane = workbench.store.state().ui.editor_layout.active_pane;
+            let area = *workbench.last_editor_inner_areas.get(pane)?;
+            let pane_state = workbench.store.state().editor.pane(pane)?;
+            let config = &workbench.store.state().editor.config;
+            let layout = compute_editor_pane_layout(area, pane_state, config);
+            cursor_position_editor(&layout, pane_state, config)
+        }
+        FocusTarget::BottomPanel | FocusTarget::CommandPalette => None,
+    }
+}
+
+impl Workbench {
+    fn active_label(&self) -> &'static str {
+        match self.store.state().ui.focus {
+            FocusTarget::Explorer => match self.store.state().ui.sidebar_tab {
+                SidebarTab::Explorer => "Explorer",
+                SidebarTab::Search => "Search",
+            },
+            FocusTarget::Editor => "Editor",
+            FocusTarget::BottomPanel => "Panel",
+            FocusTarget::CommandPalette => "Palette",
+        }
+    }
+
+    fn render_header(&self, frame: &mut Frame, area: Rect) {
+        let title = "zcode - TUI Editor";
+        let header = Paragraph::new(Span::styled(
+            title,
+            Style::default().fg(self.theme.header_fg),
+        ))
+        .block(Block::default().borders(Borders::BOTTOM));
+        frame.render_widget(header, area);
+    }
+
+    fn render_status(&self, frame: &mut Frame, area: Rect) {
+        let (mode, cursor_info) = if let Some(pane) = self
+            .store
+            .state()
+            .editor
+            .pane(self.store.state().ui.editor_layout.active_pane)
+        {
+            if let Some(tab) = pane.active_tab() {
+                let (row, col) = tab.buffer.cursor();
+                let dirty = if tab.dirty { " [+]" } else { "" };
+                let file_name = tab
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| tab.title.clone());
+
+                (
+                    format!("{}{}", file_name, dirty),
+                    format!("Ln {}, Col {}", row + 1, col + 1),
+                )
+            } else {
+                ("No file".to_string(), String::new())
+            }
+        } else {
+            ("No file".to_string(), String::new())
+        };
+
+        let active = self.active_label();
+
+        let status_text = format!("{} | {} | {}", mode, cursor_info, active);
+        let status = Paragraph::new(status_text);
+        frame.render_widget(status, area);
+    }
+
+    fn render_activity_bar(&self, frame: &mut Frame, area: Rect) {
+        let active = self.store.state().ui.sidebar_tab;
+
+        let base = Style::default()
+            .bg(self.theme.activity_bg)
+            .fg(self.theme.activity_fg);
+        let active_style = Style::default()
+            .bg(self.theme.activity_active_bg)
+            .fg(self.theme.activity_active_fg);
+
+        let explorer_style = if active == SidebarTab::Explorer {
+            active_style
+        } else {
+            base
+        };
+
+        let search_style = if active == SidebarTab::Search {
+            active_style
+        } else {
+            base
+        };
+
+        let lines = vec![
+            Line::from(Span::styled(" E ", explorer_style)),
+            Line::from(Span::styled(" S ", search_style)),
+        ];
+
+        let widget = Paragraph::new(lines)
+            .style(base)
+            .block(Block::default().borders(Borders::RIGHT));
+        frame.render_widget(widget, area);
+    }
+
+    fn render_sidebar(&mut self, frame: &mut Frame, area: Rect) {
+        let is_focused = self.store.state().ui.focus == FocusTarget::Explorer;
+        let border_style = if is_focused {
+            Style::default().fg(self.theme.focus_border)
+        } else {
+            Style::default().fg(self.theme.inactive_border)
+        };
+
+        let block = Block::default()
+            .borders(Borders::RIGHT)
+            .border_style(border_style);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        if inner.width == 0 || inner.height == 0 {
+            self.last_sidebar_tabs_area = None;
+            self.last_sidebar_content_area = None;
+            return;
+        }
+
+        let tab_height = 1u16;
+        if inner.height <= tab_height {
+            self.last_sidebar_tabs_area = Some(inner);
+            self.last_sidebar_content_area = None;
+            return;
+        }
+
+        let areas = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(tab_height), Constraint::Min(0)])
+            .split(inner);
+
+        let tabs_area = areas[0];
+        let content_area = areas[1];
+
+        self.last_sidebar_tabs_area = Some(tabs_area);
+        self.last_sidebar_content_area = Some(content_area);
+
+        let active_tab = self.store.state().ui.sidebar_tab;
+        let tab_active = Style::default()
+            .fg(self.theme.sidebar_tab_active_fg)
+            .bg(self.theme.sidebar_tab_active_bg);
+        let tab_inactive = Style::default().fg(self.theme.sidebar_tab_inactive_fg);
+
+        let explorer_style = if active_tab == SidebarTab::Explorer {
+            tab_active
+        } else {
+            tab_inactive
+        };
+        let search_style = if active_tab == SidebarTab::Search {
+            tab_active
+        } else {
+            tab_inactive
+        };
+
+        let tab_line = Line::from(vec![
+            Span::styled(" EXPLORER ", explorer_style),
+            Span::styled(" SEARCH ", search_style),
+        ]);
+
+        frame.render_widget(Paragraph::new(tab_line), tabs_area);
+
+        match active_tab {
+            SidebarTab::Explorer => {
+                self.sync_explorer_view_height(content_area.height);
+                let explorer_state = &self.store.state().explorer;
+                self.explorer.render(
+                    frame,
+                    content_area,
+                    &explorer_state.rows,
+                    explorer_state.selected(),
+                    explorer_state.scroll_offset,
+                    &self.theme,
+                );
+            }
+            SidebarTab::Search => {
+                let search_box_height = 2u16.min(content_area.height);
+                let results_height = content_area.height.saturating_sub(search_box_height);
+                self.sync_search_view_height(SearchViewport::Sidebar, results_height);
+                let search_state = &self.store.state().search;
+                self.search_view
+                    .render(frame, content_area, search_state, &self.theme);
+            }
+        }
+    }
+
+    fn render_bottom_panel(&mut self, frame: &mut Frame, area: Rect) {
+        let tab = self.store.state().ui.bottom_panel.active_tab;
+        let is_focused = self.store.state().ui.focus == FocusTarget::BottomPanel;
+        let border_style = if is_focused {
+            Style::default().fg(self.theme.focus_border)
+        } else {
+            Style::default().fg(self.theme.inactive_border)
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(inner);
+        let tabs_area = rows[0];
+        let content_area = rows[1];
+
+        self.render_bottom_panel_tabs(frame, tabs_area, tab);
+
+        match tab {
+            BottomPanelTab::Problems => self.render_bottom_panel_problems(frame, content_area),
+            BottomPanelTab::SearchResults => {
+                self.render_bottom_panel_search_results(frame, content_area)
+            }
+            BottomPanelTab::Logs => self.render_bottom_panel_logs(frame, content_area),
+        }
+    }
+
+    fn render_bottom_panel_tabs(&self, frame: &mut Frame, area: Rect, active: BottomPanelTab) {
+        let tab_active = Style::default()
+            .fg(self.theme.sidebar_tab_active_fg)
+            .bg(self.theme.sidebar_tab_active_bg);
+        let tab_inactive = Style::default().fg(self.theme.sidebar_tab_inactive_fg);
+
+        let problems_style = if active == BottomPanelTab::Problems {
+            tab_active
+        } else {
+            tab_inactive
+        };
+        let search_style = if active == BottomPanelTab::SearchResults {
+            tab_active
+        } else {
+            tab_inactive
+        };
+        let logs_style = if active == BottomPanelTab::Logs {
+            tab_active
+        } else {
+            tab_inactive
+        };
+
+        let line = Line::from(vec![
+            Span::styled(" PROBLEMS ", problems_style),
+            Span::styled(" SEARCH RESULTS ", search_style),
+            Span::styled(" LOGS ", logs_style),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
+    }
+
+    fn render_bottom_panel_problems(&self, frame: &mut Frame, area: Rect) {
+        let msg = Line::from(Span::styled(
+            "No problems",
+            Style::default().fg(self.theme.palette_muted_fg),
+        ));
+        frame.render_widget(Paragraph::new(msg), area);
+    }
+
+    fn render_bottom_panel_logs(&self, frame: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        if self.logs.is_empty() {
+            let msg = Line::from(Span::styled(
+                "No logs yet",
+                Style::default().fg(self.theme.palette_muted_fg),
+            ));
+            frame.render_widget(Paragraph::new(msg), area);
+            return;
+        }
+
+        let height = area.height as usize;
+        let visible = height.min(self.logs.len());
+        let start = self.logs.len().saturating_sub(visible);
+
+        let mut lines = Vec::with_capacity(visible);
+        for line in self.logs.iter().skip(start) {
+            lines.push(Line::from(line.as_str()));
+        }
+
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+
+    fn render_bottom_panel_search_results(&mut self, frame: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(area);
+        let summary_area = rows[0];
+        let list_area = rows[1];
+
+        self.sync_search_view_height(SearchViewport::BottomPanel, list_area.height);
+        let snapshot = self.store.state().search.snapshot(SearchViewport::BottomPanel);
+
+        let summary = if snapshot.searching {
+            format!(
+                "Searching... {} files ({} with matches)",
+                snapshot.files_searched, snapshot.files_with_matches
+            )
+        } else if let Some(err) = snapshot.last_error {
+            format!("Error: {}", err)
+        } else if snapshot.total_matches > 0 {
+            format!(
+                "{} results in {} files",
+                snapshot.total_matches, snapshot.file_count
+            )
+        } else if !snapshot.search_text.is_empty() {
+            "No results".to_string()
+        } else {
+            "Enter search term in Search sidebar".to_string()
+        };
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                summary,
+                Style::default().fg(self.theme.palette_muted_fg),
+            ))),
+            summary_area,
+        );
+
+        if list_area.width == 0 || list_area.height == 0 {
+            return;
+        }
+
+        if snapshot.items.is_empty() {
+            return;
+        }
+
+        let search_state = &self.store.state().search;
+
+        let height = list_area.height as usize;
+        let start = snapshot.scroll_offset.min(snapshot.items.len());
+        let end = (start + height).min(snapshot.items.len());
+        let selected = snapshot
+            .selected_index
+            .min(snapshot.items.len().saturating_sub(1));
+
+        let mut lines = Vec::with_capacity(end.saturating_sub(start));
+        for (i, item) in snapshot.items.iter().enumerate().take(end).skip(start) {
+            let is_selected = i == selected;
+            let marker_style = if is_selected {
+                Style::default().fg(self.theme.focus_border)
+            } else {
+                Style::default().fg(self.theme.palette_muted_fg)
+            };
+            let marker = if is_selected { ">" } else { " " };
+
+            match *item {
+                SearchResultItem::FileHeader { file_index } => {
+                    let Some(file) = search_state.files.get(file_index) else {
+                        continue;
+                    };
+                    let file_name = file
+                        .path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| file.path.to_string_lossy().to_string());
+                    let icon = if file.expanded { "▼" } else { "▶" };
+                    let match_count = file.matches.len();
+                    lines.push(Line::from(vec![
+                        Span::styled(marker, marker_style),
+                        Span::raw(" "),
+                        Span::styled(format!("{} ", icon), Style::default()),
+                        Span::styled(file_name, Style::default().fg(self.theme.accent_fg)),
+                        Span::styled(
+                            format!(" ({})", match_count),
+                            Style::default().fg(self.theme.palette_muted_fg),
+                        ),
+                    ]));
+                }
+                SearchResultItem::MatchLine {
+                    file_index,
+                    match_index,
+                } => {
+                    let Some(file) = search_state.files.get(file_index) else {
+                        continue;
+                    };
+                    let Some(match_info) = file.matches.get(match_index) else {
+                        continue;
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled(marker, marker_style),
+                        Span::raw("  "),
+                        Span::styled(
+                            format!("L{}:", match_info.line + 1),
+                            Style::default().fg(self.theme.palette_muted_fg),
+                        ),
+                        Span::raw(" "),
+                        Span::styled(
+                            format!("col {}", match_info.col + 1),
+                            Style::default().fg(self.theme.header_fg),
+                        ),
+                    ]));
+                }
+            }
+        }
+
+        frame.render_widget(Paragraph::new(lines), list_area);
+    }
+
+    fn render_editor_panes(&mut self, frame: &mut Frame, area: Rect) {
+        let panes = self.store.state().ui.editor_layout.panes.max(1);
+        self.last_editor_areas.clear();
+        self.last_editor_areas.reserve(panes.min(2));
+        self.last_editor_inner_areas.clear();
+        self.last_editor_inner_areas.reserve(panes.min(2));
+        self.last_editor_content_sizes.resize_with(panes, || (0, 0));
+        self.last_editor_container_area = (area.width > 0 && area.height > 0).then_some(area);
+        self.last_editor_splitter_area = None;
+
+        match panes {
+            1 => {
+                self.editor_split_dragging = false;
+                self.last_editor_areas.push(area);
+                self.last_editor_inner_areas.push(area);
+
+                let layout = {
+                    let Some(pane_state) = self.store.state().editor.pane(0) else {
+                        return;
+                    };
+                    let config = &self.store.state().editor.config;
+                    compute_editor_pane_layout(area, pane_state, config)
+                };
+                self.sync_editor_viewport_size(0, &layout);
+                if let Some(pane_state) = self.store.state().editor.pane(0) {
+                    let config = &self.store.state().editor.config;
+                    render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                }
+            }
+            2 => {
+                let direction = self.store.state().ui.editor_layout.split_direction;
+                match direction {
+                    SplitDirection::Vertical => {
+                        let available = area.width;
+                        if available < 3 {
+                            self.editor_split_dragging = false;
+                            self.last_editor_areas.push(area);
+                            self.last_editor_inner_areas.push(area);
+
+                            let active = self.store.state().ui.editor_layout.active_pane.min(1);
+                            let layout = {
+                                let Some(pane_state) = self.store.state().editor.pane(active) else {
+                                    return;
+                                };
+                                let config = &self.store.state().editor.config;
+                                compute_editor_pane_layout(area, pane_state, config)
+                            };
+                            self.sync_editor_viewport_size(active, &layout);
+                            if let Some(pane_state) = self.store.state().editor.pane(active) {
+                                let config = &self.store.state().editor.config;
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                            }
+                            return;
+                        }
+
+                        let total = available.saturating_sub(1);
+                        let ratio = self.store.state().ui.editor_layout.split_ratio;
+                        let mut left_width = ((total as u32) * (ratio as u32) / 1000) as u16;
+                        left_width = left_width.clamp(1, total.saturating_sub(1));
+                        let right_width = total.saturating_sub(left_width);
+
+                        let left_area = Rect::new(area.x, area.y, left_width, area.height);
+                        let sep_area = Rect::new(area.x + left_width, area.y, 1, area.height);
+                        let right_area =
+                            Rect::new(area.x + left_width + 1, area.y, right_width, area.height);
+                        self.last_editor_splitter_area =
+                            (sep_area.width > 0 && sep_area.height > 0).then_some(sep_area);
+
+                        self.last_editor_areas.push(left_area);
+                        self.last_editor_areas.push(right_area);
+
+                        let active = self.store.state().ui.editor_layout.active_pane;
+                        let focus = self.store.state().ui.focus;
+
+                        let inactive_border = Style::default().fg(self.theme.inactive_border);
+                        let active_border = Style::default().fg(self.theme.focus_border);
+                        let sep_style = if focus == FocusTarget::Editor {
+                            Style::default().fg(self.theme.focus_border)
+                        } else {
+                            Style::default().fg(self.theme.separator)
+                        };
+
+                        frame.render_widget(
+                            Block::default()
+                                .borders(Borders::LEFT)
+                                .border_style(sep_style),
+                            sep_area,
+                        );
+
+                        let left_border = if active == 0 {
+                            active_border
+                        } else {
+                            inactive_border
+                        };
+                        let right_border = if active == 1 {
+                            active_border
+                        } else {
+                            inactive_border
+                        };
+
+                        let left_block = Block::default()
+                            .borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM)
+                            .border_style(left_border);
+                        let left_inner = left_block.inner(left_area);
+                        frame.render_widget(left_block, left_area);
+                        self.last_editor_inner_areas.push(left_inner);
+                        if left_inner.width > 0 && left_inner.height > 0 {
+                            let layout = {
+                                let Some(pane_state) = self.store.state().editor.pane(0) else {
+                                    return;
+                                };
+                                let config = &self.store.state().editor.config;
+                                compute_editor_pane_layout(left_inner, pane_state, config)
+                            };
+                            self.sync_editor_viewport_size(0, &layout);
+                            if let Some(pane_state) = self.store.state().editor.pane(0) {
+                                let config = &self.store.state().editor.config;
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                            }
+                        }
+
+                        let right_block = Block::default()
+                            .borders(Borders::RIGHT | Borders::TOP | Borders::BOTTOM)
+                            .border_style(right_border);
+                        let right_inner = right_block.inner(right_area);
+                        frame.render_widget(right_block, right_area);
+                        self.last_editor_inner_areas.push(right_inner);
+                        if right_inner.width > 0 && right_inner.height > 0 {
+                            let layout = {
+                                let Some(pane_state) = self.store.state().editor.pane(1) else {
+                                    return;
+                                };
+                                let config = &self.store.state().editor.config;
+                                compute_editor_pane_layout(right_inner, pane_state, config)
+                            };
+                            self.sync_editor_viewport_size(1, &layout);
+                            if let Some(pane_state) = self.store.state().editor.pane(1) {
+                                let config = &self.store.state().editor.config;
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                            }
+                        }
+                    }
+                    SplitDirection::Horizontal => {
+                        let available = area.height;
+                        if available < 3 {
+                            self.editor_split_dragging = false;
+                            self.last_editor_areas.push(area);
+                            self.last_editor_inner_areas.push(area);
+
+                            let active = self.store.state().ui.editor_layout.active_pane.min(1);
+                            let layout = {
+                                let Some(pane_state) = self.store.state().editor.pane(active) else {
+                                    return;
+                                };
+                                let config = &self.store.state().editor.config;
+                                compute_editor_pane_layout(area, pane_state, config)
+                            };
+                            self.sync_editor_viewport_size(active, &layout);
+                            if let Some(pane_state) = self.store.state().editor.pane(active) {
+                                let config = &self.store.state().editor.config;
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                            }
+                            return;
+                        }
+
+                        let total = available.saturating_sub(1);
+                        let ratio = self.store.state().ui.editor_layout.split_ratio;
+                        let mut top_height = ((total as u32) * (ratio as u32) / 1000) as u16;
+                        top_height = top_height.clamp(1, total.saturating_sub(1));
+                        let bottom_height = total.saturating_sub(top_height);
+
+                        let top_area = Rect::new(area.x, area.y, area.width, top_height);
+                        let sep_area = Rect::new(area.x, area.y + top_height, area.width, 1);
+                        let bottom_area = Rect::new(
+                            area.x,
+                            area.y + top_height + 1,
+                            area.width,
+                            bottom_height,
+                        );
+                        self.last_editor_splitter_area =
+                            (sep_area.width > 0 && sep_area.height > 0).then_some(sep_area);
+
+                        self.last_editor_areas.push(top_area);
+                        self.last_editor_areas.push(bottom_area);
+
+                        let active = self.store.state().ui.editor_layout.active_pane;
+                        let focus = self.store.state().ui.focus;
+
+                        let inactive_border = Style::default().fg(self.theme.inactive_border);
+                        let active_border = Style::default().fg(self.theme.focus_border);
+                        let sep_style = if focus == FocusTarget::Editor {
+                            Style::default().fg(self.theme.focus_border)
+                        } else {
+                            Style::default().fg(self.theme.separator)
+                        };
+
+                        frame.render_widget(
+                            Block::default()
+                                .borders(Borders::TOP)
+                                .border_style(sep_style),
+                            sep_area,
+                        );
+
+                        let top_border = if active == 0 {
+                            active_border
+                        } else {
+                            inactive_border
+                        };
+                        let bottom_border = if active == 1 {
+                            active_border
+                        } else {
+                            inactive_border
+                        };
+
+                        let top_block = Block::default()
+                            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+                            .border_style(top_border);
+                        let top_inner = top_block.inner(top_area);
+                        frame.render_widget(top_block, top_area);
+                        self.last_editor_inner_areas.push(top_inner);
+                        if top_inner.width > 0 && top_inner.height > 0 {
+                            let layout = {
+                                let Some(pane_state) = self.store.state().editor.pane(0) else {
+                                    return;
+                                };
+                                let config = &self.store.state().editor.config;
+                                compute_editor_pane_layout(top_inner, pane_state, config)
+                            };
+                            self.sync_editor_viewport_size(0, &layout);
+                            if let Some(pane_state) = self.store.state().editor.pane(0) {
+                                let config = &self.store.state().editor.config;
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                            }
+                        }
+
+                        let bottom_block = Block::default()
+                            .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
+                            .border_style(bottom_border);
+                        let bottom_inner = bottom_block.inner(bottom_area);
+                        frame.render_widget(bottom_block, bottom_area);
+                        self.last_editor_inner_areas.push(bottom_inner);
+                        if bottom_inner.width > 0 && bottom_inner.height > 0 {
+                            let layout = {
+                                let Some(pane_state) = self.store.state().editor.pane(1) else {
+                                    return;
+                                };
+                                let config = &self.store.state().editor.config;
+                                compute_editor_pane_layout(bottom_inner, pane_state, config)
+                            };
+                            self.sync_editor_viewport_size(1, &layout);
+                            if let Some(pane_state) = self.store.state().editor.pane(1) {
+                                let config = &self.store.state().editor.config;
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                self.editor_split_dragging = false;
+                self.last_editor_areas.push(area);
+                self.last_editor_inner_areas.push(area);
+
+                let active = self.store.state().ui.editor_layout.active_pane.min(panes - 1);
+                let layout = {
+                    let Some(pane_state) = self.store.state().editor.pane(active) else {
+                        return;
+                    };
+                    let config = &self.store.state().editor.config;
+                    compute_editor_pane_layout(area, pane_state, config)
+                };
+                self.sync_editor_viewport_size(active, &layout);
+                if let Some(pane_state) = self.store.state().editor.pane(active) {
+                    let config = &self.store.state().editor.config;
+                    render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                }
+            }
+        }
+    }
+
+    fn sync_editor_viewport_size(&mut self, pane: usize, layout: &crate::views::EditorPaneLayout) {
+        if pane >= self.last_editor_content_sizes.len() {
+            return;
+        }
+
+        let width = layout.content_area.width;
+        let height = layout.editor_area.height;
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        let prev = self.last_editor_content_sizes[pane];
+        let next = (width, height);
+        if prev == next {
+            return;
+        }
+        self.last_editor_content_sizes[pane] = next;
+
+        let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::SetViewportSize {
+            pane,
+            width: width as usize,
+            height: height as usize,
+        }));
+    }
+
+    fn sync_explorer_view_height(&mut self, height: u16) {
+        if height == 0 {
+            return;
+        }
+
+        if self.last_explorer_view_height == Some(height) {
+            return;
+        }
+        self.last_explorer_view_height = Some(height);
+        let _ = self.dispatch_kernel(KernelAction::ExplorerSetViewHeight {
+            height: height as usize,
+        });
+    }
+
+    fn sync_search_view_height(&mut self, viewport: SearchViewport, height: u16) {
+        if height == 0 {
+            return;
+        }
+
+        let slot = match viewport {
+            SearchViewport::Sidebar => &mut self.last_search_sidebar_results_height,
+            SearchViewport::BottomPanel => &mut self.last_search_panel_results_height,
+        };
+
+        if *slot == Some(height) {
+            return;
+        }
+        *slot = Some(height);
+
+        let _ = self.dispatch_kernel(KernelAction::SearchSetViewHeight {
+            viewport,
+            height: height as usize,
+        });
+    }
+}

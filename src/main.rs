@@ -7,7 +7,12 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::prelude::*;
-use std::{env, io, path::Path, sync::mpsc, time::Duration};
+use std::{
+    env, io,
+    path::Path,
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 mod logging;
 
@@ -17,11 +22,15 @@ use zcode::core::view::{EventResult, View};
 use zcode::runtime::AsyncRuntime;
 
 fn main() -> io::Result<()> {
-    let logging_guard = logging::init();
+    let mut logging_guard = logging::init();
     if cfg!(debug_assertions) {
         if let Some(guard) = &logging_guard {
             eprintln!("Log dir: {}", guard.log_dir().display());
         }
+    }
+
+    if let Ok(path) = zcode::kernel::services::adapters::ensure_settings_file() {
+        tracing::info!(settings_path = %path.display(), "settings ready");
     }
 
     let args: Vec<String> = env::args().collect();
@@ -33,8 +42,7 @@ fn main() -> io::Result<()> {
 
     tracing::info!(path = %path_to_open.display(), "starting");
 
-    enable_raw_mode()
-        .inspect_err(|e| tracing::error!(error = ?e, "enable_raw_mode failed"))?;
+    enable_raw_mode().inspect_err(|e| tracing::error!(error = ?e, "enable_raw_mode failed"))?;
     let mut stdout = io::stdout();
     execute!(
         stdout,
@@ -48,7 +56,8 @@ fn main() -> io::Result<()> {
     let mut terminal = Terminal::new(backend)
         .inspect_err(|e| tracing::error!(error = ?e, "terminal init failed"))?;
 
-    let result = run_app(&mut terminal, path_to_open);
+    let log_rx = logging_guard.as_mut().and_then(|guard| guard.take_log_rx());
+    let result = run_app(&mut terminal, path_to_open, log_rx);
 
     disable_raw_mode().inspect_err(|e| tracing::error!(error = ?e, "disable_raw_mode failed"))?;
     execute!(
@@ -71,34 +80,57 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, path: &Path) -> io::Result<()> {
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    path: &Path,
+    log_rx: Option<mpsc::Receiver<String>>,
+) -> io::Result<()> {
     let (tx, rx) = mpsc::channel();
     let async_runtime = AsyncRuntime::new(tx);
-    let mut workbench = Workbench::new(path, async_runtime)?;
+    let mut workbench = Workbench::new(path, async_runtime, log_rx)?;
+
+    let mut dirty = true;
+    let mut last_tick = Instant::now();
+    let tick_rate = Duration::from_millis(50);
 
     loop {
-        terminal.draw(|frame| {
-            workbench.render(frame, frame.area());
-        })?;
+        if dirty {
+            terminal.draw(|frame| {
+                workbench.render(frame, frame.area());
+            })?;
+            dirty = false;
+        }
 
-        if event::poll(Duration::from_millis(16))? {
+        let timeout = tick_rate
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or(Duration::ZERO);
+
+        if event::poll(timeout)? {
             let event = event::read()?;
             let events = drain_pending_events(event);
 
             for ev in events {
                 let input_event: InputEvent = ev.into();
-                if matches!(workbench.handle_input(&input_event), EventResult::Quit) {
-                    return Ok(());
+                match workbench.handle_input(&input_event) {
+                    EventResult::Quit => return Ok(()),
+                    EventResult::Ignored => {}
+                    _ => dirty = true,
                 }
             }
         }
 
         while let Ok(msg) = rx.try_recv() {
             workbench.handle_message(msg);
+            dirty = true;
         }
 
         // 定时检查是否需要刷盘
-        workbench.tick();
+        if last_tick.elapsed() >= tick_rate {
+            if workbench.tick() {
+                dirty = true;
+            }
+            last_tick = Instant::now();
+        }
     }
 }
 
@@ -139,20 +171,35 @@ fn coalesce_scroll_events(events: Vec<Event>) -> Vec<Event> {
                 }
                 _ => {
                     // 遇到非滚轮事件，先 flush 累积的滚轮事件
-                    flush_scroll_events(&mut result, &mut scroll_up_count, &mut scroll_down_count, &last_scroll_event);
+                    flush_scroll_events(
+                        &mut result,
+                        &mut scroll_up_count,
+                        &mut scroll_down_count,
+                        &last_scroll_event,
+                    );
                     result.push(ev);
                 }
             },
             _ => {
                 // 非鼠标事件，先 flush 累积的滚轮事件
-                flush_scroll_events(&mut result, &mut scroll_up_count, &mut scroll_down_count, &last_scroll_event);
+                flush_scroll_events(
+                    &mut result,
+                    &mut scroll_up_count,
+                    &mut scroll_down_count,
+                    &last_scroll_event,
+                );
                 result.push(ev);
             }
         }
     }
 
     // 处理剩余的滚轮事件
-    flush_scroll_events(&mut result, &mut scroll_up_count, &mut scroll_down_count, &last_scroll_event);
+    flush_scroll_events(
+        &mut result,
+        &mut scroll_up_count,
+        &mut scroll_down_count,
+        &last_scroll_event,
+    );
 
     result
 }

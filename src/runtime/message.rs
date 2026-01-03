@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+#[derive(Debug, Clone)]
 pub struct DirEntryInfo {
     pub name: String,
     pub is_dir: bool,

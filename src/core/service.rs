@@ -18,8 +18,12 @@ impl std::fmt::Display for ServiceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ServiceError::NotFound(name) => write!(f, "Service not found: {}", name),
-            ServiceError::InitializationFailed(msg) => write!(f, "Service initialization failed: {}", msg),
-            ServiceError::AlreadyRegistered(name) => write!(f, "Service already registered: {}", name),
+            ServiceError::InitializationFailed(msg) => {
+                write!(f, "Service initialization failed: {}", msg)
+            }
+            ServiceError::AlreadyRegistered(name) => {
+                write!(f, "Service already registered: {}", name)
+            }
         }
     }
 }
@@ -153,7 +157,11 @@ mod tests {
     fn test_multiple_services() {
         let mut registry = ServiceRegistry::new();
         registry.register(TestService { value: 1 }).unwrap();
-        registry.register(AnotherService { data: "hello".to_string() }).unwrap();
+        registry
+            .register(AnotherService {
+                data: "hello".to_string(),
+            })
+            .unwrap();
 
         assert_eq!(registry.get::<TestService>().unwrap().value, 1);
         assert_eq!(registry.get::<AnotherService>().unwrap().data, "hello");

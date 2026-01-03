@@ -2,10 +2,10 @@
 //!
 //! 所有可渲染、可交互的视图组件都实现此 trait
 
+use super::event::InputEvent;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 use std::path::PathBuf;
-use super::event::InputEvent;
 
 pub trait View {
     fn handle_input(&mut self, event: &InputEvent) -> EventResult;

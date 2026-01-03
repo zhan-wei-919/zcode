@@ -2,14 +2,13 @@
 //!
 //! 所有 UI 视图组件：
 //! - ExplorerView: 文件浏览器
-//! - EditorView: 编辑器
-//! - EditorGroup: 多 Tab 管理
-//! - GlobalSearchPanel: 全局搜索面板
+//! - Editor: 纯渲染/命中测试
+//! - SearchView: 全局搜索面板（纯渲染）
 
 pub mod editor;
 pub mod explorer;
 pub mod search;
 
-pub use editor::{EditorGroup, EditorTab, EditorView, Viewport};
+pub use editor::{compute_editor_pane_layout, cursor_position_editor, hit_test_editor_mouse, hit_test_editor_tab, render_editor_pane, EditorPaneLayout};
 pub use explorer::ExplorerView;
-pub use search::GlobalSearchPanel;
+pub use search::SearchView;

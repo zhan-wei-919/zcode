@@ -5,8 +5,7 @@ use slotmap::{new_key_type, SlotMap};
 use std::{
     collections::{BTreeMap, HashMap},
     ffi::OsString,
-    fmt,
-    io,
+    fmt, io,
     path::{Path, PathBuf},
 };
 
@@ -158,10 +157,7 @@ impl FileTree {
         load_state: LoadState,
     ) -> Result<NodeId, FileTreeError> {
         {
-            let parent_ro = self
-                .arena
-                .get(parent)
-                .ok_or(FileTreeError::InvalidNodeId)?;
+            let parent_ro = self.arena.get(parent).ok_or(FileTreeError::InvalidNodeId)?;
             let children_ro = parent_ro
                 .children
                 .as_ref()
@@ -554,7 +550,11 @@ pub fn build_file_tree(root_path: &Path) -> io::Result<FileTree> {
 
     let entries = load_dir_entries(&absolute_root)?;
     for (name, is_dir) in entries {
-        let kind = if is_dir { NodeKind::Dir } else { NodeKind::File };
+        let kind = if is_dir {
+            NodeKind::Dir
+        } else {
+            NodeKind::File
+        };
         let _ = tree.insert_child(tree.root, name, kind);
     }
 

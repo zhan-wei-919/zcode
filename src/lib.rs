@@ -2,7 +2,7 @@
 
 pub mod app;
 pub mod core;
+pub mod kernel;
 pub mod models;
 pub mod runtime;
-pub mod services;
 pub mod views;

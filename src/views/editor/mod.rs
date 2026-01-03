@@ -1,11 +1,10 @@
-//! 编辑器模块
+//! Editor UI: pure render + hit-test over kernel state.
 
-mod editor_group;
-mod editor_view;
-mod search_bar;
-mod viewport;
+mod hit_test;
+mod layout;
+mod render;
 
-pub use editor_group::{EditorGroup, EditorTab};
-pub use editor_view::EditorView;
-pub use search_bar::{SearchBar, SearchBarMode};
-pub use viewport::Viewport;
+pub use hit_test::{hit_test_editor_mouse, hit_test_editor_tab};
+pub use layout::{compute_editor_pane_layout, EditorPaneLayout};
+pub use render::{cursor_position_editor, render_editor_pane};
+

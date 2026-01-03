@@ -207,14 +207,7 @@ mod tests {
     #[test]
     fn test_delete_apply() {
         let mut rope = Rope::from_str("hello world");
-        let op = EditOp::delete(
-            OpId::root(),
-            5,
-            11,
-            " world".to_string(),
-            (0, 11),
-            (0, 5),
-        );
+        let op = EditOp::delete(OpId::root(), 5, 11, " world".to_string(), (0, 11), (0, 5));
         op.apply(&mut rope);
         assert_eq!(rope.to_string(), "hello");
     }
