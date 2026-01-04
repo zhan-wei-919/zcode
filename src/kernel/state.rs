@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::models::{FileTree, FileTreeRow, LoadState, NodeId, NodeKind};
-use crate::runtime::DirEntryInfo;
+use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
 
 use super::effect::Effect;

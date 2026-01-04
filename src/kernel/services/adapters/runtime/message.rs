@@ -1,12 +1,5 @@
-//! 异步消息定义
-
+use crate::kernel::services::ports::DirEntryInfo;
 use std::path::PathBuf;
-
-#[derive(Debug, Clone)]
-pub struct DirEntryInfo {
-    pub name: String,
-    pub is_dir: bool,
-}
 
 pub enum AppMessage {
     DirLoaded {
@@ -17,7 +10,6 @@ pub enum AppMessage {
         path: PathBuf,
         error: String,
     },
-
     FileLoaded {
         path: PathBuf,
         content: String,
@@ -27,3 +19,4 @@ pub enum AppMessage {
         error: String,
     },
 }
+

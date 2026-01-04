@@ -1,24 +1,14 @@
-//! 编辑操作定义
-//!
-//! EditOp 是原子编辑操作，同时描述文本变更和光标变更。
-//! 采用 Git 模型：每个操作有唯一 ID 和父指针，历史形成 DAG。
-//! 支持序列化到磁盘用于崩溃恢复。
-
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// 操作唯一标识符（时间戳 + 计数器，避免 UUID 依赖）
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OpId {
-    /// 毫秒时间戳
     pub timestamp: u64,
-    /// 同一毫秒内的计数器
     pub counter: u16,
 }
 
 impl OpId {
-    /// 生成新的 OpId
     pub fn new() -> Self {
         static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
         let timestamp = SystemTime::now()
@@ -29,7 +19,6 @@ impl OpId {
         Self { timestamp, counter }
     }
 
-    /// 根节点 ID（表示文件初始状态）
     pub fn root() -> Self {
         Self {
             timestamp: 0,
@@ -60,44 +49,29 @@ impl fmt::Display for OpId {
     }
 }
 
-/// 操作内容
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum OpKind {
-    /// 插入文本
     Insert {
-        /// 插入位置（char offset）
         char_offset: usize,
-        /// 插入的文本
         text: String,
     },
-    /// 删除文本
     Delete {
-        /// 删除起始位置（char offset）
         start: usize,
-        /// 删除结束位置（char offset）
         end: usize,
-        /// 被删除的文本（用于 Undo）
         deleted: String,
     },
 }
 
-/// 原子编辑操作（Git 模型）
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EditOp {
-    /// 唯一标识
     pub id: OpId,
-    /// 父操作 ID
     pub parent: OpId,
-    /// 操作内容
     pub kind: OpKind,
-    /// 操作前的光标位置
     pub cursor_before: (usize, usize),
-    /// 操作后的光标位置
     pub cursor_after: (usize, usize),
 }
 
 impl EditOp {
-    /// 创建插入操作
     pub fn insert(
         parent: OpId,
         char_offset: usize,
@@ -114,7 +88,6 @@ impl EditOp {
         }
     }
 
-    /// 创建删除操作
     pub fn delete(
         parent: OpId,
         start: usize,
@@ -136,7 +109,6 @@ impl EditOp {
         }
     }
 
-    /// 生成反向操作（用于 Undo，新操作的 parent 指向当前操作）
     pub fn inverse(&self) -> OpKind {
         match &self.kind {
             OpKind::Insert { char_offset, text } => OpKind::Delete {
@@ -151,34 +123,28 @@ impl EditOp {
         }
     }
 
-    /// 获取操作后的光标位置
     pub fn cursor_after(&self) -> (usize, usize) {
         self.cursor_after
     }
 
-    /// 获取操作前的光标位置
     pub fn cursor_before(&self) -> (usize, usize) {
         self.cursor_before
     }
 
-    /// 应用操作到 Rope
     pub fn apply(&self, rope: &mut ropey::Rope) {
         self.kind.apply(rope);
     }
 
-    /// 序列化为 JSON 行
     pub fn to_json_line(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
     }
 
-    /// 从 JSON 行反序列化
     pub fn from_json_line(line: &str) -> Option<Self> {
         serde_json::from_str(line).ok()
     }
 }
 
 impl OpKind {
-    /// 应用操作到 Rope
     pub fn apply(&self, rope: &mut ropey::Rope) {
         match self {
             OpKind::Insert { char_offset, text } => {

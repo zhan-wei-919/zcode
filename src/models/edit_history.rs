@@ -1,6 +1,6 @@
-//! 编辑历史管理（Git 模型）
+//! 编辑历史管理
 //!
-//! 采用类似 Git 的 DAG 结构存储历史：
+//! 采用 DAG 结构存储历史：
 //! - 每个操作有唯一 ID 和父指针
 //! - HEAD 指向当前状态
 //! - 历史永不丢失，Undo 后新编辑会创建分支
@@ -46,29 +46,18 @@ struct Checkpoint {
     snapshot: Rope,
 }
 
-/// 编辑历史（Git 模型）
+/// 编辑历史
 pub struct EditHistory {
-    /// 基准快照（文件打开时或保存后的状态，对应 root）
     base_snapshot: Rope,
-    /// 所有操作（DAG 结构）
     ops: HashMap<OpId, EditOp>,
-    /// 当前 HEAD 指向的操作 ID
     head: OpId,
-    /// 子节点索引（parent -> children）
     children: HashMap<OpId, Vec<OpId>>,
-    /// 检查点缓存（op_id -> snapshot）
     checkpoints: HashMap<OpId, Checkpoint>,
-    /// 待写入磁盘的操作
     pending_ops: Vec<EditOp>,
-    /// 上次刷新时间
     last_flush: Instant,
-    /// 备份文件路径
     ops_file_path: Option<PathBuf>,
-    /// 备份文件句柄
     ops_file: Option<File>,
-    /// 配置
     config: EditHistoryConfig,
-    /// 操作计数（用于决定何时创建检查点）
     op_count: usize,
 }
 
@@ -250,7 +239,7 @@ impl EditHistory {
         Some((rope, cursor))
     }
 
-    /// 从 HEAD 回溯历史（类似 git log）
+    /// 从 HEAD 回溯历史
     pub fn log(&self) -> Vec<&EditOp> {
         let mut result = Vec::new();
         let mut current = self.head;
@@ -267,7 +256,7 @@ impl EditHistory {
         result
     }
 
-    /// 获取所有操作（类似 git reflog）
+    /// 获取所有操作
     pub fn reflog(&self) -> impl Iterator<Item = &EditOp> {
         self.ops.values()
     }

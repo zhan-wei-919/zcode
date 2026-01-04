@@ -99,7 +99,8 @@ fn render_tabs(frame: &mut Frame, area: Rect, pane: &EditorPaneState, theme: &Ui
 
     let tabs_widget = Tabs::new(titles)
         .select(pane.active)
-        .highlight_style(Style::default().bg(theme.sidebar_tab_active_bg));
+        .highlight_style(Style::default().bg(theme.sidebar_tab_active_bg))
+        .padding("", "");
 
     frame.render_widget(tabs_widget, area);
 }

@@ -1,14 +1,22 @@
 use super::Workbench;
 use crate::kernel::{Action as KernelAction, EditorAction, Effect as KernelEffect};
+use crate::kernel::services::adapters::perf;
 use std::fs::File;
 use std::io::BufWriter;
 use std::sync::mpsc;
 
 impl Workbench {
     pub(super) fn dispatch_kernel(&mut self, action: KernelAction) -> bool {
-        let result = self.store.dispatch(action);
-        for effect in result.effects {
-            self.run_effect(effect);
+        let _scope = perf::scope("kernel.dispatch");
+        let result = {
+            let _scope = perf::scope("kernel.reduce");
+            self.store.dispatch(action)
+        };
+        {
+            let _scope = perf::scope("kernel.effects");
+            for effect in result.effects {
+                self.run_effect(effect);
+            }
         }
         self.sync_editor_search_slots();
         result.state_changed
@@ -37,9 +45,16 @@ impl Workbench {
 
     fn run_effect(&mut self, effect: KernelEffect) {
         match effect {
-            KernelEffect::LoadFile(path) => self.runtime.load_file(path),
-            KernelEffect::LoadDir(path) => self.runtime.load_dir(path),
+            KernelEffect::LoadFile(path) => {
+                let _scope = perf::scope("effect.load_file");
+                self.runtime.load_file(path)
+            }
+            KernelEffect::LoadDir(path) => {
+                let _scope = perf::scope("effect.load_dir");
+                self.runtime.load_dir(path)
+            }
             KernelEffect::ReloadSettings => {
+                let _scope = perf::scope("effect.reload_settings");
                 self.reload_settings();
             }
             KernelEffect::StartGlobalSearch {
@@ -48,6 +63,7 @@ impl Workbench {
                 case_sensitive,
                 use_regex,
             } => {
+                let _scope = perf::scope("effect.global_search");
                 if let Some(task) = self.global_search_task.take() {
                     task.cancel();
                 }
@@ -73,6 +89,7 @@ impl Workbench {
                 case_sensitive,
                 use_regex,
             } => {
+                let _scope = perf::scope("effect.editor_search");
                 self.sync_editor_search_slots();
                 if pane >= self.editor_search_tasks.len() {
                     return;
@@ -101,6 +118,7 @@ impl Workbench {
                 }));
             }
             KernelEffect::CancelEditorSearch { pane } => {
+                let _scope = perf::scope("effect.cancel_search");
                 self.sync_editor_search_slots();
                 if pane >= self.editor_search_tasks.len() {
                     return;
@@ -111,6 +129,7 @@ impl Workbench {
                 self.editor_search_rx[pane] = None;
             }
             KernelEffect::WriteFile { pane, path } => {
+                let _scope = perf::scope("effect.write_file");
                 let success = write_file_from_state(&self.store, pane, &path);
                 if !success {
                     tracing::error!(path = %path.display(), "write_file failed");
@@ -122,11 +141,13 @@ impl Workbench {
                 }));
             }
             KernelEffect::SetClipboardText(text) => {
+                let _scope = perf::scope("effect.clipboard_set");
                 if let Err(e) = self.clipboard.set_text(&text) {
                     tracing::warn!(error = %e, "clipboard.set_text failed");
                 }
             }
             KernelEffect::RequestClipboardText { pane } => {
+                let _scope = perf::scope("effect.clipboard_get");
                 match self.clipboard.get_text() {
                     Ok(text) if !text.is_empty() => {
                         let _ = self.dispatch_kernel(KernelAction::Editor(

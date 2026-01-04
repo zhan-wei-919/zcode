@@ -9,9 +9,10 @@ use crate::kernel::services::adapters::{
     ClipboardService, GlobalSearchService, GlobalSearchTask, KeybindingContext, KeybindingService,
     SearchService, SearchTask,
 };
+use crate::kernel::services::adapters::perf;
 use crate::kernel::services::ports::{GlobalSearchMessage, SearchMessage};
 use crate::models::build_file_tree;
-use crate::runtime::{AppMessage, AsyncRuntime};
+use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::views::{ExplorerView, SearchView};
 use ratatui::layout::Rect;
 use ratatui::Frame;
@@ -214,10 +215,12 @@ impl Workbench {
 
 impl View for Workbench {
     fn handle_input(&mut self, event: &InputEvent) -> EventResult {
+        let _scope = perf::scope("view.input");
         input::handle_input(self, event)
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect) {
+        let _scope = perf::scope("view.render");
         render::render(self, frame, area);
     }
 

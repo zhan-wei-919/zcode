@@ -3,6 +3,7 @@ use super::Workbench;
 use crate::core::view::EventResult;
 use crate::core::Command;
 use crate::kernel::{Action as KernelAction, SidebarTab, SplitDirection};
+use crate::kernel::services::adapters::perf;
 use crossterm::event::{MouseButton, MouseEventKind};
 
 impl Workbench {
@@ -44,6 +45,7 @@ impl Workbench {
     }
 
     pub(super) fn handle_mouse_area(&mut self, event: &crossterm::event::MouseEvent) -> bool {
+        let _scope = perf::scope("input.mouse.area");
         if let MouseEventKind::Down(MouseButton::Left) = event.kind {
             if self
                 .last_bottom_panel_area
@@ -80,6 +82,7 @@ impl Workbench {
         &mut self,
         event: &crossterm::event::MouseEvent,
     ) -> Option<EventResult> {
+        let _scope = perf::scope("input.mouse.split");
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let splitter = self.last_editor_splitter_area?;

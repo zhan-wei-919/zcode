@@ -4,7 +4,7 @@ use std::time::Instant;
 use crate::core::Command;
 use crate::kernel::editor::EditorAction;
 use crate::kernel::state::BottomPanelTab;
-use crate::runtime::DirEntryInfo;
+use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::GlobalSearchMessage;
 use crate::kernel::search::SearchViewport;
 

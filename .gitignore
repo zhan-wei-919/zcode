@@ -3,5 +3,6 @@
 test_tree.rs
 .claude
 CLAUDE.md
+AGENTS.md
 /docs
 .gitignore

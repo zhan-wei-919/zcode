@@ -8,6 +8,7 @@ use crate::kernel::{
     SearchViewport, SidebarTab,
 };
 use crate::kernel::services::adapters::KeybindingContext;
+use crate::kernel::services::adapters::perf;
 use crate::views::{compute_editor_pane_layout, hit_test_editor_mouse, hit_test_editor_tab};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
@@ -16,6 +17,7 @@ use std::time::Instant;
 
 impl Workbench {
     pub(super) fn handle_key_event(&mut self, key_event: &KeyEvent) -> EventResult {
+        let _scope = perf::scope("input.key");
         let context = self.keybinding_context();
         let key: Key = (*key_event).into();
 
@@ -66,6 +68,7 @@ impl Workbench {
     }
 
     pub(super) fn handle_paste(&mut self, text: &str) -> EventResult {
+        let _scope = perf::scope("input.paste");
         let context = self.keybinding_context();
         match context {
             KeybindingContext::Editor => {
@@ -136,6 +139,7 @@ impl Workbench {
         &mut self,
         event: &crossterm::event::MouseEvent,
     ) -> EventResult {
+        let _scope = perf::scope("input.mouse.editor");
         let active_pane = self.store.state().ui.editor_layout.active_pane;
 
         let pane = if self.store.state().editor.pane(active_pane).is_some() {
@@ -221,6 +225,7 @@ impl Workbench {
         &mut self,
         event: &crossterm::event::MouseEvent,
     ) -> EventResult {
+        let _scope = perf::scope("input.mouse.explorer");
         if !self.explorer.contains(event.column, event.row) {
             return EventResult::Ignored;
         }
@@ -256,6 +261,7 @@ impl Workbench {
         &mut self,
         event: &crossterm::event::MouseEvent,
     ) -> EventResult {
+        let _scope = perf::scope("input.mouse.search");
         if !self.search_view.contains(event.column, event.row) {
             return EventResult::Ignored;
         }

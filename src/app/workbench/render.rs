@@ -4,6 +4,7 @@ use crate::kernel::{
     Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, SearchResultItem,
     SearchViewport, SidebarTab, SplitDirection,
 };
+use crate::kernel::services::adapters::perf;
 use crate::views::{compute_editor_pane_layout, cursor_position_editor, render_editor_pane};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
@@ -12,6 +13,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
+    let _scope = perf::scope("render.frame");
     workbench.last_render_area = Some(area);
 
     let chunks = Layout::default()
@@ -27,8 +29,14 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
     let body_area = chunks[1];
     let status_area = chunks[2];
 
-    workbench.render_header(frame, header_area);
-    workbench.render_status(frame, status_area);
+    {
+        let _scope = perf::scope("render.header");
+        workbench.render_header(frame, header_area);
+    }
+    {
+        let _scope = perf::scope("render.status");
+        workbench.render_status(frame, status_area);
+    }
 
     let (main_area, bottom_panel_area) = if workbench.store.state().ui.bottom_panel.visible {
         let panel_height = super::util::bottom_panel_height(body_area.height);
@@ -58,6 +66,7 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
     workbench.last_activity_bar_area =
         (activity_area.width > 0 && activity_area.height > 0).then_some(activity_area);
     if activity_area.width > 0 && activity_area.height > 0 {
+        let _scope = perf::scope("render.activity");
         workbench.render_activity_bar(frame, activity_area);
     }
 
@@ -72,29 +81,38 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
             (body_chunks[0].width > 0 && body_chunks[0].height > 0).then_some(body_chunks[0]);
 
         if body_chunks[0].width > 0 && body_chunks[0].height > 0 {
+            let _scope = perf::scope("render.sidebar");
             workbench.render_sidebar(frame, body_chunks[0]);
         } else {
             workbench.last_sidebar_tabs_area = None;
             workbench.last_sidebar_content_area = None;
         }
 
+        let _scope = perf::scope("render.editors");
         workbench.render_editor_panes(frame, body_chunks[1]);
     } else {
         workbench.last_sidebar_area = None;
         workbench.last_sidebar_tabs_area = None;
         workbench.last_sidebar_content_area = None;
+        let _scope = perf::scope("render.editors");
         workbench.render_editor_panes(frame, content_area);
     }
 
     if let Some(panel_area) = bottom_panel_area {
+        let _scope = perf::scope("render.panel");
         workbench.render_bottom_panel(frame, panel_area);
     }
 
     if workbench.store.state().ui.command_palette.visible {
+        let _scope = perf::scope("render.palette");
         palette::render(workbench, frame, area);
     }
 
-    if let Some((x, y)) = cursor_position(workbench) {
+    let cursor = {
+        let _scope = perf::scope("render.cursor");
+        cursor_position(workbench)
+    };
+    if let Some((x, y)) = cursor {
         frame.set_cursor_position((x, y));
     }
 }

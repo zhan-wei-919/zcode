@@ -19,7 +19,7 @@ mod logging;
 use zcode::app::Workbench;
 use zcode::core::event::InputEvent;
 use zcode::core::view::{EventResult, View};
-use zcode::runtime::AsyncRuntime;
+use zcode::kernel::services::adapters::AsyncRuntime;
 
 fn main() -> io::Result<()> {
     let mut logging_guard = logging::init();
