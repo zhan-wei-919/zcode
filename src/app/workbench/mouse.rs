@@ -2,8 +2,8 @@ use super::util;
 use super::Workbench;
 use crate::core::view::EventResult;
 use crate::core::Command;
-use crate::kernel::{Action as KernelAction, SidebarTab, SplitDirection};
 use crate::kernel::services::adapters::perf;
+use crate::kernel::{Action as KernelAction, SidebarTab, SplitDirection};
 use crossterm::event::{MouseButton, MouseEventKind};
 
 impl Workbench {

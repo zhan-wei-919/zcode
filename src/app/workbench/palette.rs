@@ -84,4 +84,3 @@ pub(super) fn cursor(workbench: &Workbench) -> Option<(u16, u16)> {
 
     Some((x, y))
 }
-

@@ -1,6 +1,6 @@
 use crate::core::Command;
-use crate::kernel::Effect;
 use crate::kernel::services::ports::SearchMessage;
+use crate::kernel::Effect;
 
 use super::action::EditorAction;
 use super::state::{EditorPaneState, EditorState, SearchBarMode};
@@ -45,11 +45,13 @@ impl EditorState {
             }
             EditorAction::ReplaceCurrent { pane } => self.replace_current(pane),
             EditorAction::ReplaceAll { pane } => self.replace_all(pane),
-            EditorAction::SearchStarted { pane, search_id } => {
-                self.search_started(pane, search_id)
-            }
+            EditorAction::SearchStarted { pane, search_id } => self.search_started(pane, search_id),
             EditorAction::SearchMessage { pane, message } => self.search_message(pane, message),
-            EditorAction::Saved { pane, path, success } => self.saved(pane, path, success),
+            EditorAction::Saved {
+                pane,
+                path,
+                success,
+            } => self.saved(pane, path, success),
             EditorAction::CloseTabAt { pane, index } => self.close_tab_at(pane, index),
         }
     }
@@ -65,26 +67,42 @@ impl EditorState {
             Command::FindPrev => self.find_prev(pane),
             Command::Save => self.save(pane),
             Command::EditorSearchBarClose => self.close_search_bar(pane),
-            Command::EditorSearchBarSwitchField => self.dispatch_action(EditorAction::SearchBarSwitchField { pane }),
+            Command::EditorSearchBarSwitchField => {
+                self.dispatch_action(EditorAction::SearchBarSwitchField { pane })
+            }
             Command::EditorSearchBarToggleCaseSensitive => {
                 self.dispatch_action(EditorAction::SearchBarToggleCaseSensitive { pane })
             }
-            Command::EditorSearchBarToggleRegex => self.dispatch_action(EditorAction::SearchBarToggleRegex { pane }),
+            Command::EditorSearchBarToggleRegex => {
+                self.dispatch_action(EditorAction::SearchBarToggleRegex { pane })
+            }
             Command::EditorSearchBarToggleReplaceMode => {
                 self.dispatch_action(EditorAction::SearchBarToggleReplaceMode { pane })
             }
-            Command::EditorSearchBarCursorLeft => self.dispatch_action(EditorAction::SearchBarCursorLeft { pane }),
+            Command::EditorSearchBarCursorLeft => {
+                self.dispatch_action(EditorAction::SearchBarCursorLeft { pane })
+            }
             Command::EditorSearchBarCursorRight => {
                 self.dispatch_action(EditorAction::SearchBarCursorRight { pane })
             }
-            Command::EditorSearchBarCursorHome => self.dispatch_action(EditorAction::SearchBarCursorHome { pane }),
-            Command::EditorSearchBarCursorEnd => self.dispatch_action(EditorAction::SearchBarCursorEnd { pane }),
-            Command::EditorSearchBarBackspace => self.dispatch_action(EditorAction::SearchBarBackspace { pane }),
+            Command::EditorSearchBarCursorHome => {
+                self.dispatch_action(EditorAction::SearchBarCursorHome { pane })
+            }
+            Command::EditorSearchBarCursorEnd => {
+                self.dispatch_action(EditorAction::SearchBarCursorEnd { pane })
+            }
+            Command::EditorSearchBarBackspace => {
+                self.dispatch_action(EditorAction::SearchBarBackspace { pane })
+            }
             Command::EditorSearchBarDeleteForward => {
                 self.dispatch_action(EditorAction::SearchBarDeleteForward { pane })
             }
-            Command::EditorSearchBarReplaceCurrent => self.dispatch_action(EditorAction::ReplaceCurrent { pane }),
-            Command::EditorSearchBarReplaceAll => self.dispatch_action(EditorAction::ReplaceAll { pane }),
+            Command::EditorSearchBarReplaceCurrent => {
+                self.dispatch_action(EditorAction::ReplaceCurrent { pane })
+            }
+            Command::EditorSearchBarReplaceAll => {
+                self.dispatch_action(EditorAction::ReplaceAll { pane })
+            }
             cmd => self.forward_to_active_tab(pane, cmd),
         }
     }
@@ -177,7 +195,12 @@ impl EditorState {
         (true, effects)
     }
 
-    fn set_viewport_size(&mut self, pane: usize, width: usize, height: usize) -> (bool, Vec<Effect>) {
+    fn set_viewport_size(
+        &mut self,
+        pane: usize,
+        width: usize,
+        height: usize,
+    ) -> (bool, Vec<Effect>) {
         let tab_size = self.config.tab_size;
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
@@ -188,7 +211,8 @@ impl EditorState {
             let prev_offset = tab.viewport.line_offset;
             let prev_h = tab.viewport.horiz_offset;
             viewport::clamp_and_follow(&mut tab.viewport, &tab.buffer, tab_size);
-            changed |= tab.viewport.line_offset != prev_offset || tab.viewport.horiz_offset != prev_h;
+            changed |=
+                tab.viewport.line_offset != prev_offset || tab.viewport.horiz_offset != prev_h;
         }
 
         (changed, Vec::new())
@@ -315,7 +339,9 @@ impl EditorState {
             return (false, Vec::new());
         }
 
-        let Some(len) = (!pane_state.search_bar.matches.is_empty()).then_some(pane_state.search_bar.matches.len()) else {
+        let Some(len) = (!pane_state.search_bar.matches.is_empty())
+            .then_some(pane_state.search_bar.matches.len())
+        else {
             return (false, Vec::new());
         };
 
@@ -345,12 +371,20 @@ impl EditorState {
             return (false, Vec::new());
         }
 
-        let Some(len) = (!pane_state.search_bar.matches.is_empty()).then_some(pane_state.search_bar.matches.len()) else {
+        let Some(len) = (!pane_state.search_bar.matches.is_empty())
+            .then_some(pane_state.search_bar.matches.len())
+        else {
             return (false, Vec::new());
         };
 
         let prev = match pane_state.search_bar.current_match_index {
-            Some(i) => if i == 0 { len - 1 } else { i - 1 },
+            Some(i) => {
+                if i == 0 {
+                    len - 1
+                } else {
+                    i - 1
+                }
+            }
             None => len - 1,
         };
         pane_state.search_bar.current_match_index = Some(prev);
@@ -380,14 +414,13 @@ impl EditorState {
     }
 
     fn forward_to_active_tab(&mut self, pane: usize, command: Command) -> (bool, Vec<Effect>) {
-        let tab_size = self.config.tab_size;
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
         };
         let Some(tab) = pane_state.active_tab_mut() else {
             return (false, Vec::new());
         };
-        tab.apply_command(command, pane, tab_size)
+        tab.apply_command(command, pane, &self.config)
     }
 
     fn insert_text(&mut self, pane: usize, text: &str) -> (bool, Vec<Effect>) {
@@ -402,7 +435,13 @@ impl EditorState {
         (changed, Vec::new())
     }
 
-    fn mouse_down(&mut self, pane: usize, x: u16, y: u16, now: std::time::Instant) -> (bool, Vec<Effect>) {
+    fn mouse_down(
+        &mut self,
+        pane: usize,
+        x: u16,
+        y: u16,
+        now: std::time::Instant,
+    ) -> (bool, Vec<Effect>) {
         let tab_size = self.config.tab_size;
         let click_slop = self.config.click_slop;
         let triple_click_ms = self.config.triple_click_ms;
@@ -413,14 +452,7 @@ impl EditorState {
         let Some(tab) = pane_state.active_tab_mut() else {
             return (false, Vec::new());
         };
-        let changed = tab.mouse_down(
-            x,
-            y,
-            now,
-            tab_size,
-            click_slop,
-            triple_click_ms,
-        );
+        let changed = tab.mouse_down(x, y, now, tab_size, click_slop, triple_click_ms);
         (changed, Vec::new())
     }
 
@@ -466,9 +498,13 @@ impl EditorState {
         let max_offset = total_lines.saturating_sub(height);
 
         if delta_lines > 0 {
-            tab.viewport.line_offset = (tab.viewport.line_offset + delta_lines as usize).min(max_offset);
+            tab.viewport.line_offset =
+                (tab.viewport.line_offset + delta_lines as usize).min(max_offset);
         } else {
-            tab.viewport.line_offset = tab.viewport.line_offset.saturating_sub((-delta_lines) as usize);
+            tab.viewport.line_offset = tab
+                .viewport
+                .line_offset
+                .saturating_sub((-delta_lines) as usize);
         }
 
         (tab.viewport.line_offset != prev, Vec::new())
@@ -500,7 +536,12 @@ impl EditorState {
         (changed, Vec::new())
     }
 
-    fn saved(&mut self, pane: usize, path: std::path::PathBuf, success: bool) -> (bool, Vec<Effect>) {
+    fn saved(
+        &mut self,
+        pane: usize,
+        path: std::path::PathBuf,
+        success: bool,
+    ) -> (bool, Vec<Effect>) {
         if !success {
             return (false, Vec::new());
         }

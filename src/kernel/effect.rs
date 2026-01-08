@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use ropey::Rope;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum Effect {

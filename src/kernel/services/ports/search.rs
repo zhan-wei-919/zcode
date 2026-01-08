@@ -69,4 +69,3 @@ pub enum GlobalSearchMessage {
         message: String,
     },
 }
-

@@ -4,15 +4,15 @@ use super::theme::UiTheme;
 use crate::core::event::InputEvent;
 use crate::core::view::{EventResult, View};
 use crate::core::Command;
-use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, Store};
+use crate::kernel::services::adapters::perf;
+use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::kernel::services::adapters::{
     ClipboardService, GlobalSearchService, GlobalSearchTask, KeybindingContext, KeybindingService,
     SearchService, SearchTask,
 };
-use crate::kernel::services::adapters::perf;
 use crate::kernel::services::ports::{EditorConfig, GlobalSearchMessage, SearchMessage};
+use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, Store};
 use crate::models::build_file_tree;
-use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::views::{ExplorerView, SearchView};
 use ratatui::layout::Rect;
 use ratatui::Frame;

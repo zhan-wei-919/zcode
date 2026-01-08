@@ -2,7 +2,9 @@
 //!
 //! 实现 FileProvider trait，操作本地文件系统
 
-use crate::kernel::services::ports::file::{DirEntry, FileError, FileMetadata, FileProvider, Result};
+use crate::kernel::services::ports::file::{
+    DirEntry, FileError, FileMetadata, FileProvider, Result,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 

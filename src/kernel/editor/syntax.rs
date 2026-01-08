@@ -1,0 +1,410 @@
+//! Syntax support (in-process): parsing + highlighting helpers.
+
+use crate::models::EditOp;
+use ropey::Rope;
+use std::path::Path;
+use tree_sitter::{InputEdit, Parser, Point, Tree};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LanguageId {
+    Rust,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HighlightKind {
+    Comment,
+    String,
+    Keyword,
+    Type,
+    Number,
+    Attribute,
+    Lifetime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HighlightSpan {
+    pub start: usize,
+    pub end: usize,
+    pub kind: HighlightKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AbsHighlightSpan {
+    start: usize,
+    end: usize,
+    kind: HighlightKind,
+}
+
+pub struct SyntaxDocument {
+    language: LanguageId,
+    parser: Parser,
+    tree: Tree,
+}
+
+impl SyntaxDocument {
+    pub fn for_path(path: &Path, rope: &Rope) -> Option<Self> {
+        match path.extension().and_then(|s| s.to_str()) {
+            Some("rs") => Self::new(LanguageId::Rust, rope),
+            _ => None,
+        }
+    }
+
+    fn new(language: LanguageId, rope: &Rope) -> Option<Self> {
+        let mut parser = Parser::new();
+        match language {
+            LanguageId::Rust => parser.set_language(tree_sitter_rust::language()).ok()?,
+        }
+
+        let tree = parse_rope(&mut parser, rope, None)?;
+        Some(Self {
+            language,
+            parser,
+            tree,
+        })
+    }
+
+    pub fn language(&self) -> LanguageId {
+        self.language
+    }
+
+    pub fn reparse(&mut self, rope: &Rope) {
+        if let Some(tree) = parse_rope(&mut self.parser, rope, None) {
+            self.tree = tree;
+        }
+    }
+
+    pub fn apply_edit(&mut self, rope: &Rope, op: &EditOp) {
+        let Some(edit) = build_input_edit(rope, op) else {
+            self.reparse(rope);
+            return;
+        };
+
+        self.tree.edit(&edit);
+        if let Some(tree) = parse_rope(&mut self.parser, rope, Some(&self.tree)) {
+            self.tree = tree;
+        } else {
+            self.reparse(rope);
+        }
+    }
+
+    pub fn is_in_string_or_comment(&self, byte_offset: usize) -> bool {
+        let root = self.tree.root_node();
+        let Some(mut node) = root.descendant_for_byte_range(byte_offset, byte_offset) else {
+            return false;
+        };
+
+        loop {
+            let kind = node.kind();
+            if is_comment_kind(kind) || is_string_kind(kind) {
+                return true;
+            }
+            match node.parent() {
+                Some(parent) => node = parent,
+                None => return false,
+            }
+        }
+    }
+
+    pub fn highlight_lines(
+        &self,
+        rope: &Rope,
+        start_line: usize,
+        end_line_exclusive: usize,
+    ) -> Vec<Vec<HighlightSpan>> {
+        if start_line >= end_line_exclusive {
+            return Vec::new();
+        }
+
+        let total_lines = rope.len_lines().max(1);
+        let start_line = start_line.min(total_lines);
+        let end_line_exclusive = end_line_exclusive.min(total_lines);
+        if start_line >= end_line_exclusive {
+            return Vec::new();
+        }
+
+        let range_start = rope.line_to_byte(start_line);
+        let range_end = rope.line_to_byte(end_line_exclusive);
+
+        let spans = collect_highlights(&self.tree, range_start, range_end);
+
+        let mut per_line = vec![Vec::new(); end_line_exclusive - start_line];
+
+        for span in spans {
+            let span_start = span.start.max(range_start);
+            let span_end = span.end.min(range_end);
+            if span_start >= span_end {
+                continue;
+            }
+
+            let first_line = rope.byte_to_line(span_start);
+            let last_line = rope.byte_to_line(span_end.saturating_sub(1));
+
+            let line_lo = first_line.max(start_line);
+            let line_hi = last_line.min(end_line_exclusive.saturating_sub(1));
+
+            for line in line_lo..=line_hi {
+                let line_start = rope.line_to_byte(line);
+                let line_end = rope.line_to_byte((line + 1).min(total_lines));
+
+                let s = span_start.max(line_start);
+                let e = span_end.min(line_end);
+                if s >= e {
+                    continue;
+                }
+
+                per_line[line - start_line].push(HighlightSpan {
+                    start: s - line_start,
+                    end: e - line_start,
+                    kind: span.kind,
+                });
+            }
+        }
+
+        for line_spans in &mut per_line {
+            line_spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+            merge_adjacent_spans(line_spans);
+        }
+
+        per_line
+    }
+}
+
+fn parse_rope(parser: &mut Parser, rope: &Rope, old_tree: Option<&Tree>) -> Option<Tree> {
+    parser.parse_with(
+        &mut |byte_offset, _| {
+            let (chunk, chunk_start, _, _) = rope.chunk_at_byte(byte_offset);
+            let rel = byte_offset.saturating_sub(chunk_start);
+            &chunk.as_bytes()[rel..]
+        },
+        old_tree,
+    )
+}
+
+fn build_input_edit(rope: &Rope, op: &EditOp) -> Option<InputEdit> {
+    let (start_char, old_text, new_text) = match &op.kind {
+        crate::models::edit_op::OpKind::Insert { char_offset, text } => {
+            (*char_offset, "", text.as_str())
+        }
+        crate::models::edit_op::OpKind::Delete {
+            start,
+            end: _,
+            deleted,
+        } => (*start, deleted.as_str(), ""),
+        crate::models::edit_op::OpKind::Replace {
+            start,
+            end: _,
+            deleted,
+            inserted,
+        } => (*start, deleted.as_str(), inserted.as_str()),
+    };
+
+    if start_char > rope.len_chars() {
+        return None;
+    }
+
+    let start_byte = rope.char_to_byte(start_char);
+    let start_position = point_for_char(rope, start_char, start_byte)?;
+
+    let old_end_byte = start_byte + old_text.as_bytes().len();
+    let new_end_byte = start_byte + new_text.as_bytes().len();
+
+    let old_end_position = advance_point(start_position, old_text);
+    let new_end_position = advance_point(start_position, new_text);
+
+    Some(InputEdit {
+        start_byte,
+        old_end_byte,
+        new_end_byte,
+        start_position,
+        old_end_position,
+        new_end_position,
+    })
+}
+
+fn point_for_char(rope: &Rope, char_idx: usize, byte_idx: usize) -> Option<Point> {
+    let row = rope.char_to_line(char_idx);
+    let line_start = rope.line_to_byte(row);
+    let col = byte_idx.saturating_sub(line_start);
+
+    Some(Point { row, column: col })
+}
+
+fn advance_point(start: Point, text: &str) -> Point {
+    let mut row = start.row;
+    let mut col = start.column;
+
+    for &b in text.as_bytes() {
+        if b == b'\n' {
+            row = row.saturating_add(1);
+            col = 0;
+        } else {
+            col = col.saturating_add(1);
+        }
+    }
+
+    Point { row, column: col }
+}
+
+fn merge_adjacent_spans(spans: &mut Vec<HighlightSpan>) {
+    if spans.len() <= 1 {
+        return;
+    }
+
+    let mut out: Vec<HighlightSpan> = Vec::with_capacity(spans.len());
+    for span in spans.drain(..) {
+        if let Some(prev) = out.last_mut() {
+            if prev.kind == span.kind && span.start <= prev.end {
+                prev.end = prev.end.max(span.end);
+                continue;
+            }
+        }
+        out.push(span);
+    }
+    *spans = out;
+}
+
+fn collect_highlights(tree: &Tree, start_byte: usize, end_byte: usize) -> Vec<AbsHighlightSpan> {
+    let root = tree.root_node();
+    let mut stack = vec![root];
+    let mut spans = Vec::new();
+
+    while let Some(node) = stack.pop() {
+        let node_start = node.start_byte();
+        let node_end = node.end_byte();
+
+        if node_end <= start_byte || node_start >= end_byte {
+            continue;
+        }
+
+        if let Some(kind) = classify_node(node.kind()) {
+            spans.push(AbsHighlightSpan {
+                start: node_start,
+                end: node_end,
+                kind,
+            });
+
+            if matches!(
+                kind,
+                HighlightKind::Comment | HighlightKind::String | HighlightKind::Attribute
+            ) {
+                continue;
+            }
+        }
+
+        let child_count = node.child_count();
+        for i in (0..child_count).rev() {
+            if let Some(child) = node.child(i) {
+                stack.push(child);
+            }
+        }
+    }
+
+    spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+    spans
+}
+
+fn classify_node(kind: &str) -> Option<HighlightKind> {
+    if is_comment_kind(kind) {
+        return Some(HighlightKind::Comment);
+    }
+    if is_string_kind(kind) {
+        return Some(HighlightKind::String);
+    }
+    if matches!(kind, "integer_literal" | "float_literal") {
+        return Some(HighlightKind::Number);
+    }
+    if matches!(kind, "type_identifier" | "primitive_type") {
+        return Some(HighlightKind::Type);
+    }
+    if matches!(kind, "attribute_item" | "inner_attribute_item") {
+        return Some(HighlightKind::Attribute);
+    }
+    if kind == "lifetime" {
+        return Some(HighlightKind::Lifetime);
+    }
+    if is_rust_keyword(kind) {
+        return Some(HighlightKind::Keyword);
+    }
+    None
+}
+
+fn is_comment_kind(kind: &str) -> bool {
+    kind.contains("comment")
+}
+
+fn is_string_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "string_literal"
+            | "raw_string_literal"
+            | "byte_string_literal"
+            | "raw_byte_string_literal"
+            | "char_literal"
+            | "byte_literal"
+    )
+}
+
+fn is_rust_keyword(kind: &str) -> bool {
+    matches!(
+        kind,
+        "as" | "async"
+            | "await"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ropey::Rope;
+    use std::path::Path;
+
+    #[test]
+    fn test_highlight_comment_range() {
+        let rope = Rope::from_str("fn main() { // hi\n}\n");
+        let doc = SyntaxDocument::for_path(Path::new("test.rs"), &rope).expect("rust syntax");
+
+        let spans = doc.highlight_lines(&rope, 0, 1);
+        assert_eq!(spans.len(), 1);
+
+        let line = "fn main() { // hi";
+        let idx = line.find("//").unwrap();
+
+        assert!(spans[0]
+            .iter()
+            .any(|s| { s.kind == HighlightKind::Comment && s.start <= idx && idx < s.end }));
+    }
+}

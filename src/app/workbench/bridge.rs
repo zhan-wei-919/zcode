@@ -1,6 +1,6 @@
 use super::Workbench;
-use crate::kernel::{Action as KernelAction, EditorAction, Effect as KernelEffect};
 use crate::kernel::services::adapters::perf;
+use crate::kernel::{Action as KernelAction, EditorAction, Effect as KernelEffect};
 use std::fs::File;
 use std::io::BufWriter;
 use std::sync::mpsc;
@@ -162,9 +162,11 @@ impl Workbench {
                 let _scope = perf::scope("effect.clipboard_get");
                 match self.clipboard.get_text() {
                     Ok(text) if !text.is_empty() => {
-                        let _ = self.dispatch_kernel(KernelAction::Editor(
-                            EditorAction::InsertText { pane, text },
-                        ));
+                        let _ =
+                            self.dispatch_kernel(KernelAction::Editor(EditorAction::InsertText {
+                                pane,
+                                text,
+                            }));
                     }
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "clipboard.get_text failed"),
@@ -174,7 +176,11 @@ impl Workbench {
     }
 }
 
-fn write_file_from_state(store: &crate::kernel::Store, pane: usize, path: &std::path::Path) -> bool {
+fn write_file_from_state(
+    store: &crate::kernel::Store,
+    pane: usize,
+    path: &std::path::Path,
+) -> bool {
     let Some(pane_state) = store.state().editor.pane(pane) else {
         return false;
     };

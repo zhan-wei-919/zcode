@@ -2,12 +2,12 @@ use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::models::{FileTree, FileTreeRow, LoadState, NodeId, NodeKind};
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
+use crate::models::{FileTree, FileTreeRow, LoadState, NodeId, NodeKind};
 
-use super::effect::Effect;
 use super::editor::EditorState;
+use super::effect::Effect;
 use super::search::SearchState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,10 +237,7 @@ impl ExplorerState {
             return false;
         }
 
-        let max_scroll = self
-            .rows
-            .len()
-            .saturating_sub(self.view_height.max(1));
+        let max_scroll = self.rows.len().saturating_sub(self.view_height.max(1));
         let prev = self.scroll_offset;
 
         if delta > 0 {
@@ -276,11 +273,7 @@ impl ExplorerState {
         false
     }
 
-    pub fn click_row(
-        &mut self,
-        row: usize,
-        now: Instant,
-    ) -> (bool, Vec<Effect>) {
+    pub fn click_row(&mut self, row: usize, now: Instant) -> (bool, Vec<Effect>) {
         if row >= self.rows.len() {
             return (false, Vec::new());
         }

@@ -3,7 +3,14 @@ use crate::models::{Granularity, Selection};
 use super::state::{EditorMouseState, EditorTabState};
 use super::viewport;
 
-fn click_granularity(mouse: &mut EditorMouseState, x: u16, y: u16, now: std::time::Instant, slop: u16, triple_click_ms: u64) -> Granularity {
+fn click_granularity(
+    mouse: &mut EditorMouseState,
+    x: u16,
+    y: u16,
+    now: std::time::Instant,
+    slop: u16,
+    triple_click_ms: u64,
+) -> Granularity {
     if let Some((lx, ly, lt)) = mouse.last_click {
         let dx = (x as i32 - lx as i32).abs();
         let dy = (y as i32 - ly as i32).abs();
@@ -29,11 +36,18 @@ fn click_granularity(mouse: &mut EditorMouseState, x: u16, y: u16, now: std::tim
 }
 
 impl EditorTabState {
-    pub fn mouse_down(&mut self, x: u16, y: u16, now: std::time::Instant, tab_size: u8, slop: u16, triple_click_ms: u64) -> bool {
+    pub fn mouse_down(
+        &mut self,
+        x: u16,
+        y: u16,
+        now: std::time::Instant,
+        tab_size: u8,
+        slop: u16,
+        triple_click_ms: u64,
+    ) -> bool {
         self.viewport.follow_cursor = true;
 
-        let granularity =
-            click_granularity(&mut self.mouse, x, y, now, slop, triple_click_ms);
+        let granularity = click_granularity(&mut self.mouse, x, y, now, slop, triple_click_ms);
         self.mouse.granularity = granularity;
 
         let Some(pos) = viewport::screen_to_pos(&self.viewport, &self.buffer, tab_size, x, y)
@@ -77,4 +91,3 @@ impl EditorTabState {
         true
     }
 }
-

@@ -60,6 +60,12 @@ pub enum OpKind {
         end: usize,
         deleted: String,
     },
+    Replace {
+        start: usize,
+        end: usize,
+        deleted: String,
+        inserted: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -109,6 +115,29 @@ impl EditOp {
         }
     }
 
+    pub fn replace(
+        parent: OpId,
+        start: usize,
+        end: usize,
+        deleted: String,
+        inserted: String,
+        cursor_before: (usize, usize),
+        cursor_after: (usize, usize),
+    ) -> Self {
+        Self {
+            id: OpId::new(),
+            parent,
+            kind: OpKind::Replace {
+                start,
+                end,
+                deleted,
+                inserted,
+            },
+            cursor_before,
+            cursor_after,
+        }
+    }
+
     pub fn inverse(&self) -> OpKind {
         match &self.kind {
             OpKind::Insert { char_offset, text } => OpKind::Delete {
@@ -119,6 +148,17 @@ impl EditOp {
             OpKind::Delete { start, deleted, .. } => OpKind::Insert {
                 char_offset: *start,
                 text: deleted.clone(),
+            },
+            OpKind::Replace {
+                start,
+                deleted,
+                inserted,
+                ..
+            } => OpKind::Replace {
+                start: *start,
+                end: start + inserted.chars().count(),
+                deleted: inserted.clone(),
+                inserted: deleted.clone(),
             },
         }
     }
@@ -152,6 +192,15 @@ impl OpKind {
             }
             OpKind::Delete { start, end, .. } => {
                 rope.remove(*start..*end);
+            }
+            OpKind::Replace {
+                start,
+                end,
+                inserted,
+                ..
+            } => {
+                rope.remove(*start..*end);
+                rope.insert(*start, inserted);
             }
         }
     }
@@ -189,6 +238,22 @@ mod tests {
 
         delete_kind.apply(&mut rope);
         assert_eq!(rope.to_string(), "");
+    }
+
+    #[test]
+    fn test_replace_apply() {
+        let mut rope = Rope::from_str("hello world");
+        let op = EditOp::replace(
+            OpId::root(),
+            6,
+            11,
+            "world".to_string(),
+            "rust".to_string(),
+            (0, 11),
+            (0, 10),
+        );
+        op.apply(&mut rope);
+        assert_eq!(rope.to_string(), "hello rust");
     }
 
     #[test]

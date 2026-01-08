@@ -126,4 +126,3 @@ pub fn screen_to_pos(
 
     Some((row, col.min(graphemes.len())))
 }
-

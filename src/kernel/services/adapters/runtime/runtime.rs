@@ -1,6 +1,6 @@
 use super::message::AppMessage;
-use crate::models::should_ignore;
 use crate::kernel::services::ports::DirEntryInfo;
+use crate::models::should_ignore;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
@@ -74,4 +74,3 @@ impl AsyncRuntime {
         });
     }
 }
-

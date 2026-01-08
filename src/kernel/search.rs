@@ -31,7 +31,9 @@ pub struct SearchFileResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchResultItem {
-    FileHeader { file_index: usize },
+    FileHeader {
+        file_index: usize,
+    },
     MatchLine {
         file_index: usize,
         match_index: usize,
@@ -382,16 +384,12 @@ impl SearchState {
 
         if file.expanded {
             file.expanded = false;
-            let Some(header_pos) = self
-                .items
-                .iter()
-                .position(|i| {
-                    matches!(
-                        *i,
-                        SearchResultItem::FileHeader { file_index: idx } if idx == file_index
-                    )
-                })
-            else {
+            let Some(header_pos) = self.items.iter().position(|i| {
+                matches!(
+                    *i,
+                    SearchResultItem::FileHeader { file_index: idx } if idx == file_index
+                )
+            }) else {
                 return true;
             };
 
@@ -399,7 +397,9 @@ impl SearchState {
             let mut end = start;
             while end < self.items.len() {
                 match self.items[end] {
-                    SearchResultItem::MatchLine { file_index: idx, .. } if idx == file_index => {
+                    SearchResultItem::MatchLine {
+                        file_index: idx, ..
+                    } if idx == file_index => {
                         end += 1;
                     }
                     _ => break,
@@ -419,15 +419,12 @@ impl SearchState {
         } else {
             file.expanded = true;
 
-            let header_pos = self
-                .items
-                .iter()
-                .position(|i| {
-                    matches!(
-                        *i,
-                        SearchResultItem::FileHeader { file_index: idx } if idx == file_index
-                    )
-                });
+            let header_pos = self.items.iter().position(|i| {
+                matches!(
+                    *i,
+                    SearchResultItem::FileHeader { file_index: idx } if idx == file_index
+                )
+            });
             let Some(header_pos) = header_pos else {
                 return true;
             };
@@ -530,7 +527,9 @@ mod tests {
             }],
             expanded: true,
         });
-        state.items.push(SearchResultItem::FileHeader { file_index: 0 });
+        state
+            .items
+            .push(SearchResultItem::FileHeader { file_index: 0 });
         state.items.push(SearchResultItem::MatchLine {
             file_index: 0,
             match_index: 0,

@@ -1,9 +1,9 @@
 use super::super::theme::UiTheme;
 use super::Workbench;
 use crate::core::Command;
-use crate::kernel::{Action as KernelAction, EditorAction};
 use crate::kernel::services::adapters::{KeybindingContext, KeybindingService};
 use crate::kernel::services::ports::{GlobalSearchMessage, SearchMessage};
+use crate::kernel::{Action as KernelAction, EditorAction};
 use std::sync::mpsc;
 use std::time::Instant;
 
@@ -45,10 +45,7 @@ impl Workbench {
                         );
 
                         changed |= self.dispatch_kernel(KernelAction::Editor(
-                            EditorAction::SearchMessage {
-                                pane,
-                                message: msg,
-                            },
+                            EditorAction::SearchMessage { pane, message: msg },
                         ));
 
                         if done {

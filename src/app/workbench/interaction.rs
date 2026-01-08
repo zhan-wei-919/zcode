@@ -3,12 +3,12 @@ use super::Workbench;
 use crate::core::event::Key;
 use crate::core::view::EventResult;
 use crate::core::Command;
+use crate::kernel::services::adapters::perf;
+use crate::kernel::services::adapters::KeybindingContext;
 use crate::kernel::{
     Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, PendingAction,
     SearchResultItem, SearchViewport, SidebarTab,
 };
-use crate::kernel::services::adapters::KeybindingContext;
-use crate::kernel::services::adapters::perf;
 use crate::views::{
     compute_editor_pane_layout, hit_test_editor_mouse, hit_test_editor_tab, hit_test_tab_hover,
     TabHitResult,
@@ -100,9 +100,11 @@ impl Workbench {
             KeybindingContext::EditorSearchBar => {
                 let pane = self.store.state().ui.editor_layout.active_pane;
                 for ch in text.chars() {
-                    let _ = self.dispatch_kernel(KernelAction::Editor(
-                        EditorAction::SearchBarAppend { pane, ch },
-                    ));
+                    let _ =
+                        self.dispatch_kernel(KernelAction::Editor(EditorAction::SearchBarAppend {
+                            pane,
+                            ch,
+                        }));
                 }
                 EventResult::Consumed
             }
@@ -236,7 +238,8 @@ impl Workbench {
                 EventResult::Ignored
             }
             MouseEventKind::Down(MouseButton::Middle) => {
-                if let Some(index) = hit_test_tab_hover(&layout, pane_state, event.column, event.row, hovered_idx)
+                if let Some(index) =
+                    hit_test_tab_hover(&layout, pane_state, event.column, event.row, hovered_idx)
                 {
                     let is_dirty = self
                         .store
@@ -251,9 +254,11 @@ impl Workbench {
                             on_confirm: PendingAction::CloseTab { pane, index },
                         });
                     } else {
-                        let _ = self.dispatch_kernel(KernelAction::Editor(
-                            EditorAction::CloseTabAt { pane, index },
-                        ));
+                        let _ =
+                            self.dispatch_kernel(KernelAction::Editor(EditorAction::CloseTabAt {
+                                pane,
+                                index,
+                            }));
                     }
                     return EventResult::Consumed;
                 }
@@ -275,7 +280,8 @@ impl Workbench {
                 EventResult::Consumed
             }
             MouseEventKind::Moved => {
-                if let Some(index) = hit_test_tab_hover(&layout, pane_state, event.column, event.row, hovered_idx)
+                if let Some(index) =
+                    hit_test_tab_hover(&layout, pane_state, event.column, event.row, hovered_idx)
                 {
                     let _ = self.dispatch_kernel(KernelAction::SetHoveredTab { pane, index });
                 } else {
@@ -357,7 +363,8 @@ impl Workbench {
                 if let Some(row) = self.search_view.hit_test_results_row(event, scroll_offset) {
                     if row < items_len {
                         let item = self.store.state().search.items.get(row).copied();
-                        let _ = self.dispatch_kernel(KernelAction::SearchClickRow { row, viewport });
+                        let _ =
+                            self.dispatch_kernel(KernelAction::SearchClickRow { row, viewport });
                         match item {
                             Some(SearchResultItem::FileHeader { .. }) => {
                                 let _ = self.dispatch_kernel(KernelAction::RunCommand(
@@ -384,10 +391,7 @@ impl Workbench {
                 EventResult::Consumed
             }
             MouseEventKind::ScrollDown => {
-                let _ = self.dispatch_kernel(KernelAction::SearchScroll {
-                    delta: 3,
-                    viewport,
-                });
+                let _ = self.dispatch_kernel(KernelAction::SearchScroll { delta: 3, viewport });
                 EventResult::Consumed
             }
             _ => EventResult::Ignored,

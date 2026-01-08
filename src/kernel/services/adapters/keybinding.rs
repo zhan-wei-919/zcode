@@ -25,7 +25,9 @@ impl KeybindingContext {
             "editor" => Some(Self::Editor),
             "searchbar" | "editorsearchbar" | "editor.searchbar" => Some(Self::EditorSearchBar),
             "explorer" | "sidebarexplorer" | "sidebar.explorer" => Some(Self::SidebarExplorer),
-            "search" | "sidebarsearch" | "sidebar.search" | "globalsearch" => Some(Self::SidebarSearch),
+            "search" | "sidebarsearch" | "sidebar.search" | "globalsearch" => {
+                Some(Self::SidebarSearch)
+            }
             "palette" | "commandpalette" | "command_palette" => Some(Self::CommandPalette),
             "bottompanel" | "bottom_panel" | "panel" => Some(Self::BottomPanel),
             _ => None,
@@ -81,10 +83,9 @@ impl KeybindingService {
                 .command_palette
                 .get(key)
                 .or_else(|| self.global.get(key)),
-            KeybindingContext::BottomPanel => self
-                .bottom_panel
-                .get(key)
-                .or_else(|| self.global.get(key)),
+            KeybindingContext::BottomPanel => {
+                self.bottom_panel.get(key).or_else(|| self.global.get(key))
+            }
         }
     }
 
@@ -155,9 +156,15 @@ fn default_global_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::ctrl_shift(KeyCode::Char('e')), Command::FocusExplorer);
     bindings.insert(Key::ctrl_shift(KeyCode::Char('f')), Command::FocusSearch);
     bindings.insert(Key::ctrl(KeyCode::Char('j')), Command::ToggleBottomPanel);
-    bindings.insert(Key::ctrl_shift(KeyCode::Char('j')), Command::FocusBottomPanel);
+    bindings.insert(
+        Key::ctrl_shift(KeyCode::Char('j')),
+        Command::FocusBottomPanel,
+    );
     bindings.insert(Key::ctrl(KeyCode::Char('\\')), Command::SplitEditorVertical);
-    bindings.insert(Key::ctrl_shift(KeyCode::Char('\\')), Command::CloseEditorSplit);
+    bindings.insert(
+        Key::ctrl_shift(KeyCode::Char('\\')),
+        Command::CloseEditorSplit,
+    );
     bindings.insert(Key::ctrl(KeyCode::Char(',')), Command::OpenSettings);
 
     bindings
@@ -191,7 +198,10 @@ fn default_editor_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::shift(KeyCode::Down), Command::ExtendSelectionDown);
     bindings.insert(Key::shift(KeyCode::Home), Command::ExtendSelectionLineStart);
     bindings.insert(Key::shift(KeyCode::End), Command::ExtendSelectionLineEnd);
-    bindings.insert(Key::ctrl_shift(KeyCode::Left), Command::ExtendSelectionWordLeft);
+    bindings.insert(
+        Key::ctrl_shift(KeyCode::Left),
+        Command::ExtendSelectionWordLeft,
+    );
     bindings.insert(
         Key::ctrl_shift(KeyCode::Right),
         Command::ExtendSelectionWordRight,
@@ -214,10 +224,16 @@ fn default_editor_search_bar_keybindings() -> FxHashMap<Key, Command> {
         Command::EditorSearchBarReplaceCurrent,
     );
     bindings.insert(
-        Key::new(KeyCode::Enter, crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT),
+        Key::new(
+            KeyCode::Enter,
+            crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+        ),
         Command::EditorSearchBarReplaceAll,
     );
-    bindings.insert(Key::simple(KeyCode::Tab), Command::EditorSearchBarSwitchField);
+    bindings.insert(
+        Key::simple(KeyCode::Tab),
+        Command::EditorSearchBarSwitchField,
+    );
     bindings.insert(
         Key::alt(KeyCode::Char('c')),
         Command::EditorSearchBarToggleCaseSensitive,
@@ -230,12 +246,18 @@ fn default_editor_search_bar_keybindings() -> FxHashMap<Key, Command> {
         Key::alt(KeyCode::Char('r')),
         Command::EditorSearchBarToggleReplaceMode,
     );
-    bindings.insert(Key::simple(KeyCode::Left), Command::EditorSearchBarCursorLeft);
+    bindings.insert(
+        Key::simple(KeyCode::Left),
+        Command::EditorSearchBarCursorLeft,
+    );
     bindings.insert(
         Key::simple(KeyCode::Right),
         Command::EditorSearchBarCursorRight,
     );
-    bindings.insert(Key::simple(KeyCode::Home), Command::EditorSearchBarCursorHome);
+    bindings.insert(
+        Key::simple(KeyCode::Home),
+        Command::EditorSearchBarCursorHome,
+    );
     bindings.insert(Key::simple(KeyCode::End), Command::EditorSearchBarCursorEnd);
     bindings.insert(
         Key::simple(KeyCode::Backspace),
@@ -270,8 +292,14 @@ fn default_sidebar_search_keybindings() -> FxHashMap<Key, Command> {
 
     bindings.insert(Key::simple(KeyCode::Enter), Command::GlobalSearchStart);
     bindings.insert(Key::simple(KeyCode::Left), Command::GlobalSearchCursorLeft);
-    bindings.insert(Key::simple(KeyCode::Right), Command::GlobalSearchCursorRight);
-    bindings.insert(Key::simple(KeyCode::Backspace), Command::GlobalSearchBackspace);
+    bindings.insert(
+        Key::simple(KeyCode::Right),
+        Command::GlobalSearchCursorRight,
+    );
+    bindings.insert(
+        Key::simple(KeyCode::Backspace),
+        Command::GlobalSearchBackspace,
+    );
     bindings.insert(
         Key::alt(KeyCode::Char('c')),
         Command::GlobalSearchToggleCaseSensitive,
@@ -315,13 +343,19 @@ fn default_bottom_panel_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::simple(KeyCode::BackTab), Command::PrevBottomPanelTab);
     bindings.insert(Key::simple(KeyCode::Up), Command::SearchResultsMoveUp);
     bindings.insert(Key::simple(KeyCode::Down), Command::SearchResultsMoveDown);
-    bindings.insert(Key::simple(KeyCode::Enter), Command::SearchResultsOpenSelected);
+    bindings.insert(
+        Key::simple(KeyCode::Enter),
+        Command::SearchResultsOpenSelected,
+    );
     bindings.insert(
         Key::simple(KeyCode::Char(' ')),
         Command::SearchResultsToggleExpand,
     );
     bindings.insert(Key::simple(KeyCode::PageUp), Command::SearchResultsScrollUp);
-    bindings.insert(Key::simple(KeyCode::PageDown), Command::SearchResultsScrollDown);
+    bindings.insert(
+        Key::simple(KeyCode::PageDown),
+        Command::SearchResultsScrollDown,
+    );
 
     bindings
 }

@@ -1,9 +1,11 @@
 use crate::app::theme::UiTheme;
-use crate::kernel::editor::{EditorPaneState, SearchBarField, SearchBarMode, SearchBarState};
-use crate::models::slice_to_cow;
+use crate::kernel::editor::{
+    EditorPaneState, HighlightKind, HighlightSpan, SearchBarField, SearchBarMode, SearchBarState,
+};
 use crate::kernel::services::ports::EditorConfig;
+use crate::models::slice_to_cow;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs};
 use ratatui::Frame;
@@ -256,8 +258,15 @@ fn render_editor(
     let start = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
     let end = (start + height).min(total_lines);
 
+    let syntax = tab.highlight_lines(start, end);
+
     let mut lines = Vec::with_capacity(end.saturating_sub(start));
-    for row in start..end {
+    for (idx, row) in (start..end).enumerate() {
+        let line_spans = syntax
+            .as_ref()
+            .and_then(|spans| spans.get(idx))
+            .map(|spans| spans.as_slice());
+
         if let Some(slice) = tab.buffer.line_slice(row) {
             let line_str = slice_to_cow(slice);
             lines.push(render_line(
@@ -265,6 +274,7 @@ fn render_editor(
                 row,
                 tab.viewport.horiz_offset,
                 tab.buffer.selection(),
+                line_spans,
                 config.tab_size,
                 theme,
             ));
@@ -273,7 +283,10 @@ fn render_editor(
         }
     }
 
-    frame.render_widget(Paragraph::new(lines).block(Block::default()), layout.content_area);
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::default()),
+        layout.content_area,
+    );
 }
 
 fn render_line(
@@ -281,110 +294,136 @@ fn render_line(
     row: usize,
     horiz_offset: u32,
     selection: Option<&crate::models::Selection>,
+    highlight_spans: Option<&[HighlightSpan]>,
     tab_size: u8,
     theme: &UiTheme,
 ) -> Line<'static> {
-    let expanded = expand_tabs(line, tab_size);
-    let graphemes: Vec<&str> = expanded.graphemes(true).collect();
-
-    let (sel_start, sel_end) = match selection.map(|s| s.range()) {
-        None => return render_line_plain(&graphemes, horiz_offset),
-        Some(((start_row, start_col), (end_row, end_col))) => {
-            if row < start_row || row > end_row {
-                return render_line_plain(&graphemes, horiz_offset);
-            }
-
-            if row == start_row && row == end_row {
-                (start_col, end_col)
-            } else if row == start_row {
-                (start_col, graphemes.len())
-            } else if row == end_row {
-                (0, end_col)
-            } else {
-                (0, graphemes.len())
-            }
-        }
-    };
-
-    render_line_with_selection(&graphemes, horiz_offset, sel_start, sel_end, theme)
-}
-
-fn render_line_plain(graphemes: &[&str], horiz_offset: u32) -> Line<'static> {
-    let horiz = horiz_offset as usize;
-    let mut skip = 0usize;
-    let mut acc = 0usize;
-
-    for g in graphemes.iter() {
-        if acc >= horiz {
-            break;
-        }
-        acc += g.width();
-        skip += 1;
+    let line = line.strip_suffix('\n').unwrap_or(line);
+    if line.is_empty() {
+        return Line::default();
     }
 
-    let visible: String = graphemes.iter().skip(skip).copied().collect();
-    Line::from(visible)
-}
-
-fn render_line_with_selection(
-    graphemes: &[&str],
-    horiz_offset: u32,
-    sel_start: usize,
-    sel_end: usize,
-    theme: &UiTheme,
-) -> Line<'static> {
-    let horiz = horiz_offset as usize;
-    let mut skip = 0usize;
-    let mut acc = 0usize;
-
-    for g in graphemes.iter() {
-        if acc >= horiz {
-            break;
+    let selection_range = selection.and_then(|s| {
+        let ((start_row, start_col), (end_row, end_col)) = s.range();
+        if row < start_row || row > end_row {
+            return None;
         }
-        acc += g.width();
-        skip += 1;
-    }
+
+        let (sel_start, sel_end) = if row == start_row && row == end_row {
+            (start_col, end_col)
+        } else if row == start_row {
+            (start_col, usize::MAX)
+        } else if row == end_row {
+            (0, end_col)
+        } else {
+            (0, usize::MAX)
+        };
+
+        Some((sel_start, sel_end))
+    });
+
+    let tab_size = tab_size.max(1) as u32;
+    let selection_style = Style::default()
+        .bg(theme.palette_selected_bg)
+        .fg(theme.palette_selected_fg);
 
     let mut spans = Vec::new();
     let mut current = String::new();
-    let mut in_sel = false;
+    let mut current_style: Option<Style> = None;
+    let mut display_col: u32 = 0;
+    let mut byte_offset: usize = 0;
+    let mut highlight_idx: usize = 0;
 
-    for (idx, g) in graphemes.iter().enumerate().skip(skip) {
-        let should_highlight = idx >= sel_start && idx < sel_end;
+    for (g_idx, g) in line.graphemes(true).enumerate() {
+        let g_start = byte_offset;
+        let g_end = g_start + g.len();
+        byte_offset = g_end;
 
-        if should_highlight != in_sel {
-            if !current.is_empty() {
-                if in_sel {
-                    spans.push(Span::styled(
-                        current.clone(),
-                        Style::default()
-                            .bg(theme.palette_selected_bg)
-                            .fg(theme.palette_selected_fg),
-                    ));
-                } else {
-                    spans.push(Span::raw(current.clone()));
-                }
-                current.clear();
+        let width = if g == "\t" {
+            let rem = display_col % tab_size;
+            if rem == 0 {
+                tab_size
+            } else {
+                tab_size - rem
             }
-            in_sel = should_highlight;
-        }
-        current.push_str(g);
-    }
-
-    if !current.is_empty() {
-        if in_sel {
-            spans.push(Span::styled(
-                current,
-                Style::default()
-                    .bg(theme.palette_selected_bg)
-                    .fg(theme.palette_selected_fg),
-            ));
         } else {
-            spans.push(Span::raw(current));
+            g.width() as u32
+        };
+
+        if display_col < horiz_offset {
+            display_col = display_col.saturating_add(width);
+            continue;
         }
+
+        let in_selection = selection_range
+            .is_some_and(|(sel_start, sel_end)| g_idx >= sel_start && g_idx < sel_end);
+
+        let style = if in_selection {
+            Some(selection_style)
+        } else {
+            style_for_highlight(highlight_spans, &mut highlight_idx, g_start, theme)
+        };
+
+        if style != current_style && !current.is_empty() {
+            push_span(&mut spans, &mut current, current_style);
+        }
+        current_style = style;
+
+        if g == "\t" {
+            current.extend(std::iter::repeat(' ').take(width as usize));
+        } else {
+            current.push_str(g);
+        }
+
+        display_col = display_col.saturating_add(width);
     }
 
+    push_span(&mut spans, &mut current, current_style);
     Line::from(spans)
+}
+
+fn style_for_highlight(
+    highlight_spans: Option<&[HighlightSpan]>,
+    highlight_idx: &mut usize,
+    byte_offset: usize,
+    theme: &UiTheme,
+) -> Option<Style> {
+    let spans = highlight_spans?;
+
+    while *highlight_idx < spans.len() && spans[*highlight_idx].end <= byte_offset {
+        *highlight_idx += 1;
+    }
+
+    let span = spans.get(*highlight_idx)?;
+    if byte_offset < span.start || byte_offset >= span.end {
+        return None;
+    }
+
+    let style = match span.kind {
+        HighlightKind::Comment => Style::default().fg(theme.palette_muted_fg),
+        HighlightKind::String => Style::default().fg(Color::Green),
+        HighlightKind::Keyword => Style::default()
+            .fg(theme.accent_fg)
+            .add_modifier(Modifier::BOLD),
+        HighlightKind::Type => Style::default().fg(theme.header_fg),
+        HighlightKind::Number => Style::default().fg(Color::Magenta),
+        HighlightKind::Attribute => Style::default().fg(Color::Blue),
+        HighlightKind::Lifetime => Style::default().fg(Color::Magenta),
+    };
+
+    Some(style)
+}
+
+fn push_span(spans: &mut Vec<Span<'static>>, current: &mut String, style: Option<Style>) {
+    if current.is_empty() {
+        return;
+    }
+
+    let text = std::mem::take(current);
+    match style {
+        Some(style) => spans.push(Span::styled(text, style)),
+        None => spans.push(Span::raw(text)),
+    }
 }
 
 fn cursor_position_search_bar(area: Rect, state: &SearchBarState) -> Option<(u16, u16)> {
@@ -431,32 +470,4 @@ fn cursor_display_x_abs(buffer: &crate::models::TextBuffer, tab_size: u8) -> u32
     }
 
     display_col
-}
-
-fn expand_tabs(line: &str, tab_size: u8) -> String {
-    let mut expanded = String::new();
-    let mut display_col = 0u32;
-    let tab_size = tab_size as u32;
-
-    for ch in line.chars() {
-        if ch == '\t' {
-            let remainder = display_col % tab_size;
-            let spaces = if remainder == 0 {
-                tab_size
-            } else {
-                tab_size - remainder
-            };
-            for _ in 0..spaces {
-                expanded.push(' ');
-            }
-            display_col += spaces;
-        } else if ch == '\n' {
-            break;
-        } else {
-            expanded.push(ch);
-            display_col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
-        }
-    }
-
-    expanded
 }

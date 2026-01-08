@@ -76,7 +76,12 @@ fn compute_gutter(
         return (
             0,
             Rect::default(),
-            Rect::new(editor_area.x, editor_area.y, editor_area.width, editor_area.height),
+            Rect::new(
+                editor_area.x,
+                editor_area.y,
+                editor_area.width,
+                editor_area.height,
+            ),
         );
     }
 
@@ -84,7 +89,12 @@ fn compute_gutter(
         return (
             0,
             Rect::default(),
-            Rect::new(editor_area.x, editor_area.y, editor_area.width, editor_area.height),
+            Rect::new(
+                editor_area.x,
+                editor_area.y,
+                editor_area.width,
+                editor_area.height,
+            ),
         );
     };
 
@@ -95,12 +105,22 @@ fn compute_gutter(
     if gutter_width == 0 || gutter_width >= editor_area.width {
         return (
             gutter_width,
-            Rect::new(editor_area.x, editor_area.y, gutter_width, editor_area.height),
+            Rect::new(
+                editor_area.x,
+                editor_area.y,
+                gutter_width,
+                editor_area.height,
+            ),
             Rect::default(),
         );
     }
 
-    let gutter_area = Rect::new(editor_area.x, editor_area.y, gutter_width, editor_area.height);
+    let gutter_area = Rect::new(
+        editor_area.x,
+        editor_area.y,
+        gutter_width,
+        editor_area.height,
+    );
     let content_area = Rect::new(
         editor_area.x + gutter_width,
         editor_area.y,

@@ -1,5 +1,5 @@
-use crate::kernel::Effect;
 use crate::kernel::services::ports::SearchMessage;
+use crate::kernel::Effect;
 
 use super::state::{EditorPaneState, SearchBarField, SearchBarMode};
 

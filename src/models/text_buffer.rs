@@ -232,6 +232,29 @@ impl TextBuffer {
         )
     }
 
+    pub fn insert_str_op_with_cursor_after_char_offset(
+        &mut self,
+        s: &str,
+        cursor_after: (usize, usize),
+        cursor_after_char_offset: usize,
+        parent: OpId,
+    ) -> EditOp {
+        let cursor_before = self.cursor;
+        let char_offset = self.cursor_char_offset();
+
+        self.rope.insert(char_offset, s);
+        self.cursor = cursor_after;
+        self.cached_char_pos = Some(cursor_after_char_offset);
+
+        EditOp::insert(
+            parent,
+            char_offset,
+            s.to_string(),
+            cursor_before,
+            cursor_after,
+        )
+    }
+
     /// 向后删除（Backspace），返回 EditOp
     pub fn delete_backward_op(&mut self, parent: OpId) -> Option<EditOp> {
         let (row, col) = self.cursor;
@@ -367,6 +390,36 @@ impl TextBuffer {
         self.rope.remove(start_char..end_char);
         self.rope.insert(start_char, text);
         self.invalidate_char_pos_cache();
+    }
+
+    pub fn replace_range_op(
+        &mut self,
+        start_char: usize,
+        end_char: usize,
+        inserted: &str,
+        cursor_after: (usize, usize),
+        cursor_after_char_offset: usize,
+        parent: OpId,
+    ) -> EditOp {
+        let cursor_before = self.cursor;
+        let deleted: String = self.rope.slice(start_char..end_char).to_string();
+
+        self.rope.remove(start_char..end_char);
+        self.rope.insert(start_char, inserted);
+
+        self.cursor = cursor_after;
+        self.selection = None;
+        self.cached_char_pos = Some(cursor_after_char_offset);
+
+        EditOp::replace(
+            parent,
+            start_char,
+            end_char,
+            deleted,
+            inserted.to_string(),
+            cursor_before,
+            cursor_after,
+        )
     }
 
     fn invalidate_char_pos_cache(&mut self) {

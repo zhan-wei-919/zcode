@@ -1,7 +1,7 @@
 use crate::core::Command;
 
 use super::{
-    Action, AppState, BottomPanelTab, Effect, EditorAction, FocusTarget, SearchResultItem,
+    Action, AppState, BottomPanelTab, EditorAction, Effect, FocusTarget, SearchResultItem,
     SearchViewport, SidebarTab, SplitDirection,
 };
 
@@ -40,15 +40,18 @@ impl Store {
                         .filter(|p| p.pane == pane && p.path == path)
                         .map(|p| p.byte_offset);
 
-                    let (mut state_changed, mut effects) = self
-                        .state
-                        .editor
-                        .dispatch_action(EditorAction::OpenFile { pane, path, content });
+                    let (mut state_changed, mut effects) =
+                        self.state.editor.dispatch_action(EditorAction::OpenFile {
+                            pane,
+                            path,
+                            content,
+                        });
 
                     if let Some(byte_offset) = pending {
-                        let (changed, cmd_effects) = self.state.editor.dispatch_action(
-                            EditorAction::GotoByteOffset { pane, byte_offset },
-                        );
+                        let (changed, cmd_effects) = self
+                            .state
+                            .editor
+                            .dispatch_action(EditorAction::GotoByteOffset { pane, byte_offset });
                         state_changed |= changed;
                         effects.extend(cmd_effects);
                         self.state.ui.pending_editor_nav = None;
@@ -142,10 +145,7 @@ impl Store {
                 effects: Vec::new(),
                 state_changed: self.state.explorer.collapse_selected(),
             },
-            Action::ExplorerClickRow {
-                row,
-                now,
-            } => {
+            Action::ExplorerClickRow { row, now } => {
                 let (state_changed, effects) = self.state.explorer.click_row(row, now);
                 DispatchResult {
                     effects,
@@ -329,7 +329,10 @@ impl Store {
                     state_changed: prev.is_some(),
                 }
             }
-            Action::ShowConfirmDialog { message, on_confirm } => {
+            Action::ShowConfirmDialog {
+                message,
+                on_confirm,
+            } => {
                 self.state.ui.confirm_dialog.visible = true;
                 self.state.ui.confirm_dialog.message = message;
                 self.state.ui.confirm_dialog.on_confirm = Some(on_confirm);
@@ -422,8 +425,10 @@ impl Store {
                     .pane(pane)
                     .is_some_and(|p| p.search_bar.visible);
                 if search_bar_visible {
-                    let (changed, eff) =
-                        self.state.editor.apply_command(pane, Command::EditorSearchBarClose);
+                    let (changed, eff) = self
+                        .state
+                        .editor
+                        .apply_command(pane, Command::EditorSearchBarClose);
                     return DispatchResult {
                         effects: eff,
                         state_changed: changed,
@@ -437,8 +442,10 @@ impl Store {
                     .and_then(|p| p.active_tab())
                     .is_some_and(|t| t.buffer.selection().is_some());
                 if has_selection {
-                    let (changed, eff) =
-                        self.state.editor.apply_command(pane, Command::ClearSelection);
+                    let (changed, eff) = self
+                        .state
+                        .editor
+                        .apply_command(pane, Command::ClearSelection);
                     return DispatchResult {
                         effects: eff,
                         state_changed: changed,
@@ -512,7 +519,8 @@ impl Store {
                     state_changed = true;
                 } else {
                     self.state.ui.focus = FocusTarget::Editor;
-                    state_changed = prev_dir != SplitDirection::Vertical || prev_focus != FocusTarget::Editor;
+                    state_changed =
+                        prev_dir != SplitDirection::Vertical || prev_focus != FocusTarget::Editor;
                 }
             }
             Command::SplitEditorHorizontal => {
@@ -529,7 +537,8 @@ impl Store {
                     state_changed = true;
                 } else {
                     self.state.ui.focus = FocusTarget::Editor;
-                    state_changed = prev_dir != SplitDirection::Horizontal || prev_focus != FocusTarget::Editor;
+                    state_changed =
+                        prev_dir != SplitDirection::Horizontal || prev_focus != FocusTarget::Editor;
                 }
             }
             Command::CloseEditorSplit => {
@@ -842,13 +851,17 @@ impl Store {
                         self.state.ui.editor_layout.active_pane = pane;
                         self.state.ui.focus = FocusTarget::Editor;
 
-                        let (changed1, mut eff1) = self
+                        let (changed1, mut eff1) =
+                            self.state
+                                .editor
+                                .dispatch_action(EditorAction::SetActiveTab {
+                                    pane,
+                                    index: tab_index,
+                                });
+                        let (changed2, eff2) = self
                             .state
                             .editor
-                            .dispatch_action(EditorAction::SetActiveTab { pane, index: tab_index });
-                        let (changed2, eff2) = self.state.editor.dispatch_action(
-                            EditorAction::GotoByteOffset { pane, byte_offset },
-                        );
+                            .dispatch_action(EditorAction::GotoByteOffset { pane, byte_offset });
                         eff1.extend(eff2);
 
                         let ui_changed = prev_focus != FocusTarget::Editor
@@ -905,17 +918,20 @@ impl Store {
 
 fn search_viewport_for_focus(ui: &super::UiState) -> Option<SearchViewport> {
     match ui.focus {
-        FocusTarget::Explorer if ui.sidebar_tab == SidebarTab::Search => Some(SearchViewport::Sidebar),
-        FocusTarget::BottomPanel
-            if ui.bottom_panel.active_tab == BottomPanelTab::SearchResults =>
-        {
+        FocusTarget::Explorer if ui.sidebar_tab == SidebarTab::Search => {
+            Some(SearchViewport::Sidebar)
+        }
+        FocusTarget::BottomPanel if ui.bottom_panel.active_tab == BottomPanelTab::SearchResults => {
             Some(SearchViewport::BottomPanel)
         }
         _ => None,
     }
 }
 
-fn search_open_target(search: &super::SearchState, item: SearchResultItem) -> Option<(std::path::PathBuf, usize)> {
+fn search_open_target(
+    search: &super::SearchState,
+    item: SearchResultItem,
+) -> Option<(std::path::PathBuf, usize)> {
     match item {
         SearchResultItem::FileHeader { file_index } => {
             let file = search.files.get(file_index)?;
@@ -939,7 +955,11 @@ fn find_open_tab(
     path: &std::path::PathBuf,
 ) -> Option<(usize, usize)> {
     if let Some(pane_state) = editor.panes.get(preferred_pane) {
-        if let Some(index) = pane_state.tabs.iter().position(|t| t.path.as_ref() == Some(path)) {
+        if let Some(index) = pane_state
+            .tabs
+            .iter()
+            .position(|t| t.path.as_ref() == Some(path))
+        {
             return Some((preferred_pane, index));
         }
     }
@@ -948,7 +968,11 @@ fn find_open_tab(
         if pane == preferred_pane {
             continue;
         }
-        if let Some(index) = pane_state.tabs.iter().position(|t| t.path.as_ref() == Some(path)) {
+        if let Some(index) = pane_state
+            .tabs
+            .iter()
+            .position(|t| t.path.as_ref() == Some(path))
+        {
             return Some((pane, index));
         }
     }
@@ -1014,13 +1038,7 @@ mod tests {
     fn escape_closes_editor_search_bar() {
         let mut store = new_store();
         store.state.ui.focus = FocusTarget::Editor;
-        store
-            .state
-            .editor
-            .pane_mut(0)
-            .unwrap()
-            .search_bar
-            .visible = true;
+        store.state.editor.pane_mut(0).unwrap().search_bar.visible = true;
 
         let result = store.dispatch(Action::RunCommand(Command::Escape));
 
@@ -1029,13 +1047,7 @@ mod tests {
             [Effect::CancelEditorSearch { pane: 0 }]
         ));
         assert!(result.state_changed);
-        assert!(!store
-            .state
-            .editor
-            .pane(0)
-            .unwrap()
-            .search_bar
-            .visible);
+        assert!(!store.state.editor.pane(0).unwrap().search_bar.visible);
     }
 
     #[test]

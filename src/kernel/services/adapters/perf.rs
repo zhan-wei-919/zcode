@@ -115,11 +115,7 @@ pub fn report_and_reset() -> String {
         let max_us = sample.max.as_secs_f64() * 1_000_000.0;
         out.push_str(&format!(
             "{:<28} count={:<8} total_ms={:>10.3} avg_us={:>10.3} max_us={:>10.3}\n",
-            sample.label,
-            sample.count,
-            total_ms,
-            avg,
-            max_us
+            sample.label, sample.count, total_ms, avg, max_us
         ));
     }
 

@@ -3,11 +3,11 @@ use std::time::Instant;
 
 use crate::core::Command;
 use crate::kernel::editor::EditorAction;
-use crate::kernel::state::BottomPanelTab;
+use crate::kernel::search::SearchViewport;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::GlobalSearchMessage;
-use crate::kernel::search::SearchViewport;
+use crate::kernel::state::BottomPanelTab;
 
 #[derive(Debug, Clone)]
 pub enum Action {

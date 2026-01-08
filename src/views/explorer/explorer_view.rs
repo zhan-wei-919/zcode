@@ -1,7 +1,7 @@
 //! 文件浏览器视图（纯渲染 + 命中测试）
 
-use crate::models::{FileTreeRow, NodeId};
 use crate::app::theme::UiTheme;
+use crate::models::{FileTreeRow, NodeId};
 use crossterm::event::MouseEvent;
 use ratatui::layout::Rect;
 use ratatui::style::Style;

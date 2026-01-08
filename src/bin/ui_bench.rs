@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use zcode::app::Workbench;
 use zcode::core::event::InputEvent;
 use zcode::core::View;
-use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use zcode::kernel::services::adapters::perf;
+use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
 
 fn main() -> std::io::Result<()> {
     let mut frames: usize = 300;
@@ -36,7 +36,10 @@ fn main() -> std::io::Result<()> {
     let file_path = root.join("big.txt");
     let content = generate_text(2000, 80);
     std::fs::write(&file_path, &content)?;
-    workbench.handle_message(AppMessage::FileLoaded { path: file_path, content });
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: file_path,
+        content,
+    });
 
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend)?;
@@ -104,7 +107,10 @@ fn create_fixture_dir() -> std::io::Result<PathBuf> {
     std::fs::write(root.join("README.md"), "# bench\n")?;
 
     for i in 0..200 {
-        std::fs::write(root.join("src").join(format!("file_{i}.rs")), "fn main() {}\n")?;
+        std::fs::write(
+            root.join("src").join(format!("file_{i}.rs")),
+            "fn main() {}\n",
+        )?;
     }
 
     Ok(root)
@@ -122,7 +128,11 @@ fn generate_text(lines: usize, cols: usize) -> String {
 
 fn print_render_summary(frames: usize, elapsed: Duration) {
     let per_frame = elapsed.as_secs_f64() / frames.max(1) as f64;
-    let fps = if per_frame > 0.0 { 1.0 / per_frame } else { 0.0 };
+    let fps = if per_frame > 0.0 {
+        1.0 / per_frame
+    } else {
+        0.0
+    };
     println!(
         "render: frames={frames} total={:?} us/frame={:.2} fps={:.1}",
         elapsed,
@@ -133,7 +143,11 @@ fn print_render_summary(frames: usize, elapsed: Duration) {
 
 fn print_input_summary(events: usize, elapsed: Duration) {
     let per_event = elapsed.as_secs_f64() / events.max(1) as f64;
-    let eps = if per_event > 0.0 { 1.0 / per_event } else { 0.0 };
+    let eps = if per_event > 0.0 {
+        1.0 / per_event
+    } else {
+        0.0
+    };
     println!(
         "input: events={events} total={:?} ns/event={:.1} events/s={:.0}",
         elapsed,

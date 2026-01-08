@@ -1,7 +1,10 @@
-use crate::models::{EditHistory, Granularity, TextBuffer};
 use crate::kernel::services::ports::{EditorConfig, Match};
+use crate::models::{EditHistory, EditOp, Granularity, TextBuffer};
 use std::path::PathBuf;
 use std::time::Instant;
+
+use super::syntax::SyntaxDocument;
+use super::{HighlightSpan, LanguageId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchBarMode {
@@ -106,6 +109,7 @@ pub struct EditorTabState {
     pub history: EditHistory,
     pub dirty: bool,
     pub mouse: EditorMouseState,
+    syntax: Option<SyntaxDocument>,
 }
 
 impl std::fmt::Debug for EditorTabState {
@@ -135,6 +139,7 @@ impl EditorTabState {
             history,
             dirty: false,
             mouse: EditorMouseState::new(),
+            syntax: None,
         }
     }
 
@@ -146,6 +151,7 @@ impl EditorTabState {
 
         let buffer = TextBuffer::from_text(content);
         let history = EditHistory::new(buffer.rope().clone());
+        let syntax = SyntaxDocument::for_path(&path, buffer.rope());
 
         Self {
             title,
@@ -158,6 +164,7 @@ impl EditorTabState {
             history,
             dirty: false,
             mouse: EditorMouseState::new(),
+            syntax,
         }
     }
 
@@ -167,6 +174,37 @@ impl EditorTabState {
         } else {
             self.title.clone()
         }
+    }
+
+    pub fn language(&self) -> Option<LanguageId> {
+        self.syntax.as_ref().map(|s| s.language())
+    }
+
+    pub fn highlight_lines(
+        &self,
+        start_line: usize,
+        end_line_exclusive: usize,
+    ) -> Option<Vec<Vec<HighlightSpan>>> {
+        let syntax = self.syntax.as_ref()?;
+        Some(syntax.highlight_lines(self.buffer.rope(), start_line, end_line_exclusive))
+    }
+
+    pub(super) fn syntax(&self) -> Option<&SyntaxDocument> {
+        self.syntax.as_ref()
+    }
+
+    pub(super) fn apply_syntax_edit(&mut self, op: &EditOp) {
+        let Some(syntax) = self.syntax.as_mut() else {
+            return;
+        };
+        syntax.apply_edit(self.buffer.rope(), op);
+    }
+
+    pub(super) fn reparse_syntax(&mut self) {
+        let Some(syntax) = self.syntax.as_mut() else {
+            return;
+        };
+        syntax.reparse(self.buffer.rope());
     }
 }
 
@@ -210,7 +248,8 @@ impl EditorPaneState {
             }
         }
 
-        self.tabs.push(EditorTabState::from_file(path, content, config));
+        self.tabs
+            .push(EditorTabState::from_file(path, content, config));
         self.active = self.tabs.len().saturating_sub(1);
         true
     }
@@ -261,7 +300,11 @@ impl EditorPaneState {
             return false;
         }
         let prev = self.active;
-        self.active = if self.active == 0 { len - 1 } else { self.active - 1 };
+        self.active = if self.active == 0 {
+            len - 1
+        } else {
+            self.active - 1
+        };
         self.active != prev
     }
 

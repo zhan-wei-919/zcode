@@ -3,8 +3,10 @@
 //! 根据 URI scheme 选择对应的 Provider
 
 use super::local::LocalFileProvider;
-use crate::kernel::services::ports::file::{DirEntry, FileError, FileMetadata, FileProvider, Result};
 use crate::core::Service;
+use crate::kernel::services::ports::file::{
+    DirEntry, FileError, FileMetadata, FileProvider, Result,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
