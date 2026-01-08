@@ -3,7 +3,7 @@ use super::Workbench;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::{
     Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, SearchResultItem,
-    SearchViewport, SidebarTab, SplitDirection,
+    SearchViewport, SidebarTab, SplitDirection, StatusSide,
 };
 use crate::views::{compute_editor_pane_layout, cursor_position_editor, render_editor_pane};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -11,6 +11,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
+use unicode_width::UnicodeWidthStr;
 
 pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
     let _scope = perf::scope("render.frame");
@@ -207,9 +208,61 @@ impl Workbench {
 
         let active = self.active_label();
 
-        let status_text = format!("{} | {} | {}", mode, cursor_info, active);
-        let status = Paragraph::new(status_text);
-        frame.render_widget(status, area);
+        let mut left_items: Vec<&str> = Vec::new();
+        let mut right_items: Vec<&str> = Vec::new();
+        for plugin in self.store.state().plugins.plugins_in_order() {
+            if !plugin.online {
+                continue;
+            }
+            for id in &plugin.status_order {
+                let Some(item) = plugin.status_items.get(id) else {
+                    continue;
+                };
+                let text = item.text.as_str();
+                if text.is_empty() {
+                    continue;
+                }
+                match item.side {
+                    StatusSide::Left => left_items.push(text),
+                    StatusSide::Right => right_items.push(text),
+                }
+            }
+        }
+
+        let mut left = format!("{} | {} | {}", mode, cursor_info, active);
+        for text in left_items {
+            left.push_str(" | ");
+            left.push_str(text);
+        }
+
+        if right_items.is_empty() || area.width == 0 {
+            frame.render_widget(Paragraph::new(left), area);
+            return;
+        }
+
+        let mut right = String::new();
+        for (i, text) in right_items.iter().enumerate() {
+            if i > 0 {
+                right.push_str(" | ");
+            }
+            right.push_str(text);
+        }
+
+        let left_w = left.width();
+        let right_w = right.width();
+        let total = area.width as usize;
+        let pad = total.saturating_sub(left_w + right_w);
+
+        left.reserve(pad + right.len() + 1);
+        for _ in 0..pad {
+            left.push(' ');
+        }
+        if pad == 0 {
+            left.push(' ');
+        }
+        left.push_str(&right);
+
+        frame.render_widget(Paragraph::new(left), area);
     }
 
     fn render_activity_bar(&self, frame: &mut Frame, area: Rect) {

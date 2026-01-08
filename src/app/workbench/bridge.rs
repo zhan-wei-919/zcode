@@ -172,6 +172,14 @@ impl Workbench {
                     Err(e) => tracing::warn!(error = %e, "clipboard.get_text failed"),
                 }
             }
+            KernelEffect::PluginCommandInvoked {
+                plugin_id,
+                command_id,
+            } => {
+                if let Some(host) = &self.plugin_host {
+                    host.notify_command_invoked(plugin_id, command_id);
+                }
+            }
         }
     }
 }

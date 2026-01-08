@@ -8,7 +8,7 @@ use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::kernel::services::adapters::{
     ClipboardService, GlobalSearchService, GlobalSearchTask, KeybindingContext, KeybindingService,
-    SearchService, SearchTask,
+    PluginHost, PluginHostEvent, PluginHostHandle, SearchService, SearchTask,
 };
 use crate::kernel::services::ports::{EditorConfig, GlobalSearchMessage, SearchMessage};
 use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, Store};
@@ -39,6 +39,7 @@ const SIDEBAR_WIDTH_PERCENT: u16 = 20;
 const SIDEBAR_MIN_WIDTH: u16 = 20;
 const LOG_BUFFER_CAP: usize = 2000;
 const MAX_LOG_DRAIN_PER_TICK: usize = 1024;
+const MAX_PLUGIN_DRAIN_PER_TICK: usize = 256;
 const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct Workbench {
@@ -57,6 +58,9 @@ pub struct Workbench {
     keybindings: KeybindingService,
     theme: UiTheme,
     runtime: AsyncRuntime,
+    plugin_host: Option<PluginHostHandle>,
+    plugin_high_rx: Option<Receiver<PluginHostEvent>>,
+    plugin_low_rx: Option<Receiver<PluginHostEvent>>,
     global_search_service: GlobalSearchService,
     global_search_task: Option<GlobalSearchTask>,
     global_search_rx: Option<Receiver<GlobalSearchMessage>>,
@@ -102,6 +106,15 @@ impl Workbench {
             .as_ref()
             .and_then(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
 
+        let (plugin_host, plugin_high_rx, plugin_low_rx) = if cfg!(test) {
+            (None, None, None)
+        } else {
+            let _ = crate::kernel::services::adapters::ensure_plugins_file();
+            let config = crate::kernel::services::adapters::load_plugins_config().unwrap_or_default();
+            let host = PluginHost::start(runtime.tokio_handle(), root_path.to_path_buf(), config);
+            (Some(host.handle), Some(host.high_rx), Some(host.low_rx))
+        };
+
         if !cfg!(test) {
             if let Some(settings) = crate::kernel::services::adapters::settings::load_settings() {
                 for rule in settings.keybindings {
@@ -120,8 +133,8 @@ impl Workbench {
                         }
                     }
                 }
-                theme.apply_settings(&settings.theme);
-                editor_config = settings.editor;
+            theme.apply_settings(&settings.theme);
+            editor_config = settings.editor;
             }
         }
 
@@ -148,6 +161,9 @@ impl Workbench {
             keybindings,
             theme,
             runtime,
+            plugin_host,
+            plugin_high_rx,
+            plugin_low_rx,
             global_search_service,
             global_search_task: None,
             global_search_rx: None,

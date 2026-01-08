@@ -6,6 +6,8 @@ pub mod config;
 pub mod file;
 pub mod keybinding;
 pub mod perf;
+pub mod plugin_host;
+pub mod plugins;
 pub mod runtime;
 pub mod search;
 pub mod settings;
@@ -17,6 +19,8 @@ pub use clipboard::{ClipboardError, ClipboardService};
 pub use config::ConfigService;
 pub use file::{FileService, LocalFileProvider};
 pub use keybinding::{KeybindingContext, KeybindingService};
+pub use plugin_host::{PluginHost, PluginHostEvent, PluginHostHandle};
+pub use plugins::{ensure_plugins_file, get_plugins_path, load_plugins_config, PluginConfigEntry, PluginsConfig};
 pub use runtime::{AppMessage, AsyncRuntime};
 pub use search::{
     search_regex_in_slice, GlobalSearchService, GlobalSearchTask, RopeReader, SearchConfig,

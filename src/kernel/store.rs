@@ -70,6 +70,10 @@ impl Store {
                     }
                 }
             },
+            Action::Plugin(plugin_action) => DispatchResult {
+                effects: Vec::new(),
+                state_changed: self.state.plugins.dispatch(plugin_action),
+            },
             Action::OpenPath(path) => DispatchResult {
                 effects: vec![Effect::LoadFile(path)],
                 state_changed: false,
@@ -665,7 +669,8 @@ impl Store {
 
                 let query = self.state.ui.command_palette.query.clone();
                 let selected_raw = self.state.ui.command_palette.selected;
-                let matches = crate::kernel::palette::match_indices(&query);
+                let matches =
+                    crate::kernel::palette::match_items(&query, self.state.plugins.palette_items());
 
                 let palette_closed = true;
                 self.state.ui.command_palette.visible = false;
@@ -683,9 +688,7 @@ impl Store {
                 }
 
                 let selected = selected_raw.min(matches.len().saturating_sub(1));
-                let cmd = crate::kernel::palette::PALETTE_ITEMS[matches[selected]]
-                    .command
-                    .clone();
+                let cmd = matches[selected].command.clone();
 
                 let mut result = self.dispatch_command(cmd);
                 result.state_changed |= palette_closed;
@@ -892,6 +895,31 @@ impl Store {
             }
             Command::OpenFile => {
                 // UI should translate selection -> path and dispatch Action::OpenPath.
+            }
+            Command::Custom(name) => {
+                if let Some((plugin_id, command_id)) =
+                    crate::kernel::plugins::parse_plugin_command_name(&name)
+                {
+                    return DispatchResult {
+                        effects: vec![Effect::PluginCommandInvoked {
+                            plugin_id: plugin_id.to_string(),
+                            command_id: command_id.to_string(),
+                        }],
+                        state_changed: false,
+                    };
+                }
+
+                let pane = self.state.ui.editor_layout.active_pane;
+                let (changed, cmd_effects) = self.state.editor.apply_command(pane, Command::Custom(name));
+                if changed {
+                    state_changed = true;
+                }
+                let mut effects = effects;
+                effects.extend(cmd_effects);
+                return DispatchResult {
+                    effects,
+                    state_changed,
+                };
             }
             other => {
                 let pane = self.state.ui.editor_layout.active_pane;

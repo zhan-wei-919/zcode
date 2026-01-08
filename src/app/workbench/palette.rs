@@ -1,6 +1,6 @@
 use super::util;
 use super::Workbench;
-use crate::kernel::palette::{match_indices, PALETTE_ITEMS};
+use crate::kernel::palette::match_items;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -22,7 +22,7 @@ pub(super) fn render(workbench: &Workbench, frame: &mut Frame, area: Rect) {
         .fg(workbench.theme.palette_selected_fg);
 
     let query = &workbench.store.state().ui.command_palette.query;
-    let matches = match_indices(query);
+    let matches = match_items(query, workbench.store.state().plugins.palette_items());
     let selected = workbench
         .store
         .state()
@@ -42,8 +42,7 @@ pub(super) fn render(workbench: &Workbench, frame: &mut Frame, area: Rect) {
     if matches.is_empty() {
         lines.push(Line::from(Span::styled("No matches", muted_style)));
     } else {
-        for (pos, &idx) in matches.iter().take(max_items).enumerate() {
-            let item = &PALETTE_ITEMS[idx];
+        for (pos, item) in matches.iter().take(max_items).enumerate() {
             let is_selected = pos == selected;
             let style = if is_selected {
                 selected_style

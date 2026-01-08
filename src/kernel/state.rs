@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
+use crate::kernel::PluginsState;
 use crate::models::{FileTree, FileTreeRow, LoadState, NodeId, NodeKind};
 
 use super::editor::EditorState;
@@ -133,6 +134,7 @@ pub struct AppState {
     pub explorer: ExplorerState,
     pub search: SearchState,
     pub editor: EditorState,
+    pub plugins: PluginsState,
 }
 
 impl AppState {
@@ -144,6 +146,7 @@ impl AppState {
             explorer: ExplorerState::new(file_tree),
             search: SearchState::default(),
             editor,
+            plugins: PluginsState::default(),
         }
     }
 }

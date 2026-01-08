@@ -31,4 +31,8 @@ pub enum Effect {
     RequestClipboardText {
         pane: usize,
     },
+    PluginCommandInvoked {
+        plugin_id: String,
+        command_id: String,
+    },
 }
