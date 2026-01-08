@@ -77,6 +77,18 @@ pub struct PendingEditorNavigation {
 }
 
 #[derive(Debug, Clone)]
+pub enum PendingAction {
+    CloseTab { pane: usize, index: usize },
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ConfirmDialogState {
+    pub visible: bool,
+    pub message: String,
+    pub on_confirm: Option<PendingAction>,
+}
+
+#[derive(Debug, Clone)]
 pub struct UiState {
     pub sidebar_visible: bool,
     pub sidebar_tab: SidebarTab,
@@ -86,6 +98,8 @@ pub struct UiState {
     pub command_palette: CommandPaletteState,
     pub pending_editor_nav: Option<PendingEditorNavigation>,
     pub should_quit: bool,
+    pub hovered_tab: Option<(usize, usize)>,
+    pub confirm_dialog: ConfirmDialogState,
 }
 
 impl Default for UiState {
@@ -106,6 +120,8 @@ impl Default for UiState {
             },
             pending_editor_nav: None,
             should_quit: false,
+            hovered_tab: None,
+            confirm_dialog: ConfirmDialogState::default(),
         }
     }
 }
@@ -120,8 +136,8 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(workspace_root: PathBuf, file_tree: FileTree) -> Self {
-        let editor = EditorState::new(EditorConfig::default());
+    pub fn new(workspace_root: PathBuf, file_tree: FileTree, editor_config: EditorConfig) -> Self {
+        let editor = EditorState::new(editor_config);
         Self {
             workspace_root,
             ui: UiState::default(),

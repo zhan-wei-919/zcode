@@ -6,6 +6,7 @@ pub enum Effect {
     LoadFile(PathBuf),
     LoadDir(PathBuf),
     ReloadSettings,
+    OpenSettings,
     StartGlobalSearch {
         root: PathBuf,
         pattern: String,

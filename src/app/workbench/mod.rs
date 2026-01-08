@@ -10,7 +10,7 @@ use crate::kernel::services::adapters::{
     SearchService, SearchTask,
 };
 use crate::kernel::services::adapters::perf;
-use crate::kernel::services::ports::{GlobalSearchMessage, SearchMessage};
+use crate::kernel::services::ports::{EditorConfig, GlobalSearchMessage, SearchMessage};
 use crate::models::build_file_tree;
 use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::views::{ExplorerView, SearchView};
@@ -89,6 +89,19 @@ impl Workbench {
 
         let mut keybindings = KeybindingService::new();
         let mut theme = UiTheme::default();
+        let mut editor_config = EditorConfig::default();
+
+        let settings_path = if cfg!(test) {
+            None
+        } else {
+            crate::kernel::services::adapters::ensure_settings_file()
+                .ok()
+                .or_else(crate::kernel::services::adapters::get_settings_path)
+        };
+        let last_settings_modified = settings_path
+            .as_ref()
+            .and_then(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
+
         if !cfg!(test) {
             if let Some(settings) = crate::kernel::services::adapters::settings::load_settings() {
                 for rule in settings.keybindings {
@@ -108,19 +121,15 @@ impl Workbench {
                     }
                 }
                 theme.apply_settings(&settings.theme);
+                editor_config = settings.editor;
             }
         }
 
-        let settings_path = if cfg!(test) {
-            None
-        } else {
-            crate::kernel::services::adapters::get_settings_path()
-        };
-        let last_settings_modified = settings_path
-            .as_ref()
-            .and_then(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
-
-        let store = Store::new(crate::kernel::AppState::new(root_path.to_path_buf(), file_tree));
+        let store = Store::new(crate::kernel::AppState::new(
+            root_path.to_path_buf(),
+            file_tree,
+            editor_config,
+        ));
         let panes = store.state().ui.editor_layout.panes.max(1);
 
         Ok(Self {
@@ -158,6 +167,24 @@ impl Workbench {
             last_editor_splitter_area: None,
             editor_split_dragging: false,
         })
+    }
+
+    pub(super) fn open_settings(&mut self) {
+        if cfg!(test) {
+            return;
+        }
+
+        let path = match crate::kernel::services::adapters::ensure_settings_file() {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::error!(error = %e, "ensure_settings_file failed");
+                return;
+            }
+        };
+
+        self.settings_path = Some(path.clone());
+        self.last_settings_modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        self.runtime.load_file(path);
     }
 
     pub fn handle_message(&mut self, msg: AppMessage) {

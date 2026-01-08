@@ -125,6 +125,8 @@ fn default_global_keybindings() -> FxHashMap<Key, Command> {
     let mut bindings = FxHashMap::default();
     bindings.reserve(32);
 
+    bindings.insert(Key::simple(KeyCode::Esc), Command::Escape);
+
     bindings.insert(Key::ctrl(KeyCode::Char('q')), Command::Quit);
     bindings.insert(Key::ctrl(KeyCode::Char('s')), Command::Save);
     bindings.insert(Key::ctrl(KeyCode::Char('w')), Command::CloseTab);
@@ -156,6 +158,7 @@ fn default_global_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::ctrl_shift(KeyCode::Char('j')), Command::FocusBottomPanel);
     bindings.insert(Key::ctrl(KeyCode::Char('\\')), Command::SplitEditorVertical);
     bindings.insert(Key::ctrl_shift(KeyCode::Char('\\')), Command::CloseEditorSplit);
+    bindings.insert(Key::ctrl(KeyCode::Char(',')), Command::OpenSettings);
 
     bindings
 }
@@ -182,7 +185,6 @@ fn default_editor_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::ctrl(KeyCode::Char('d')), Command::DeleteLine);
     bindings.insert(Key::ctrl(KeyCode::Char('k')), Command::DeleteToLineEnd);
 
-    bindings.insert(Key::simple(KeyCode::Esc), Command::ClearSelection);
     bindings.insert(Key::shift(KeyCode::Left), Command::ExtendSelectionLeft);
     bindings.insert(Key::shift(KeyCode::Right), Command::ExtendSelectionRight);
     bindings.insert(Key::shift(KeyCode::Up), Command::ExtendSelectionUp);
@@ -205,7 +207,6 @@ fn default_editor_search_bar_keybindings() -> FxHashMap<Key, Command> {
     let mut bindings = FxHashMap::default();
     bindings.reserve(24);
 
-    bindings.insert(Key::simple(KeyCode::Esc), Command::EditorSearchBarClose);
     bindings.insert(Key::simple(KeyCode::Enter), Command::FindNext);
     bindings.insert(Key::shift(KeyCode::Enter), Command::FindPrev);
     bindings.insert(
@@ -267,7 +268,6 @@ fn default_sidebar_search_keybindings() -> FxHashMap<Key, Command> {
     let mut bindings = FxHashMap::default();
     bindings.reserve(20);
 
-    bindings.insert(Key::simple(KeyCode::Esc), Command::FocusEditor);
     bindings.insert(Key::simple(KeyCode::Enter), Command::GlobalSearchStart);
     bindings.insert(Key::simple(KeyCode::Left), Command::GlobalSearchCursorLeft);
     bindings.insert(Key::simple(KeyCode::Right), Command::GlobalSearchCursorRight);
@@ -299,7 +299,6 @@ fn default_command_palette_keybindings() -> FxHashMap<Key, Command> {
     let mut bindings = FxHashMap::default();
     bindings.reserve(16);
 
-    bindings.insert(Key::simple(KeyCode::Esc), Command::PaletteClose);
     bindings.insert(Key::simple(KeyCode::Backspace), Command::PaletteBackspace);
     bindings.insert(Key::simple(KeyCode::Up), Command::PaletteMoveUp);
     bindings.insert(Key::simple(KeyCode::Down), Command::PaletteMoveDown);
@@ -312,7 +311,6 @@ fn default_bottom_panel_keybindings() -> FxHashMap<Key, Command> {
     let mut bindings = FxHashMap::default();
     bindings.reserve(20);
 
-    bindings.insert(Key::simple(KeyCode::Esc), Command::FocusEditor);
     bindings.insert(Key::simple(KeyCode::Tab), Command::NextBottomPanelTab);
     bindings.insert(Key::simple(KeyCode::BackTab), Command::PrevBottomPanelTab);
     bindings.insert(Key::simple(KeyCode::Up), Command::SearchResultsMoveUp);
@@ -347,6 +345,32 @@ mod tests {
         assert_eq!(
             service.resolve(KeybindingContext::Editor, &Key::ctrl(KeyCode::Char('b'))),
             Some(&Command::ToggleSidebar)
+        );
+    }
+
+    #[test]
+    fn esc_resolves_to_escape_in_all_contexts() {
+        let service = KeybindingService::new();
+        let esc = Key::simple(KeyCode::Esc);
+        assert_eq!(
+            service.resolve(KeybindingContext::Editor, &esc),
+            Some(&Command::Escape)
+        );
+        assert_eq!(
+            service.resolve(KeybindingContext::CommandPalette, &esc),
+            Some(&Command::Escape)
+        );
+        assert_eq!(
+            service.resolve(KeybindingContext::EditorSearchBar, &esc),
+            Some(&Command::Escape)
+        );
+        assert_eq!(
+            service.resolve(KeybindingContext::SidebarSearch, &esc),
+            Some(&Command::Escape)
+        );
+        assert_eq!(
+            service.resolve(KeybindingContext::BottomPanel, &esc),
+            Some(&Command::Escape)
         );
     }
 

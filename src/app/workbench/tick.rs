@@ -184,6 +184,7 @@ impl Workbench {
             return false;
         };
 
+        let editor_config = settings.editor.clone();
         let mut keybindings = KeybindingService::new();
         for rule in settings.keybindings {
             if let Some(key) =
@@ -204,6 +205,10 @@ impl Workbench {
 
         let mut theme = UiTheme::default();
         theme.apply_settings(&settings.theme);
+
+        let _ = self.store.dispatch(KernelAction::EditorConfigUpdated {
+            config: editor_config,
+        });
 
         self.keybindings = keybindings;
         self.theme = theme;

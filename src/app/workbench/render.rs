@@ -108,6 +108,10 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
         palette::render(workbench, frame, area);
     }
 
+    if workbench.store.state().ui.confirm_dialog.visible {
+        render_confirm_dialog(workbench, frame, area);
+    }
+
     let cursor = {
         let _scope = perf::scope("render.cursor");
         cursor_position(workbench)
@@ -550,6 +554,7 @@ impl Workbench {
 
     fn render_editor_panes(&mut self, frame: &mut Frame, area: Rect) {
         let panes = self.store.state().ui.editor_layout.panes.max(1);
+        let hovered = self.store.state().ui.hovered_tab;
         self.last_editor_areas.clear();
         self.last_editor_areas.reserve(panes.min(2));
         self.last_editor_inner_areas.clear();
@@ -557,6 +562,7 @@ impl Workbench {
         self.last_editor_content_sizes.resize_with(panes, || (0, 0));
         self.last_editor_container_area = (area.width > 0 && area.height > 0).then_some(area);
         self.last_editor_splitter_area = None;
+        let hovered_for_pane = |p: usize| hovered.filter(|(hp, _)| *hp == p).map(|(_, i)| i);
 
         match panes {
             1 => {
@@ -574,7 +580,7 @@ impl Workbench {
                 self.sync_editor_viewport_size(0, &layout);
                 if let Some(pane_state) = self.store.state().editor.pane(0) {
                     let config = &self.store.state().editor.config;
-                    render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                    render_editor_pane(frame, &layout, pane_state, config, &self.theme, hovered_for_pane(0));
                 }
             }
             2 => {
@@ -598,7 +604,7 @@ impl Workbench {
                             self.sync_editor_viewport_size(active, &layout);
                             if let Some(pane_state) = self.store.state().editor.pane(active) {
                                 let config = &self.store.state().editor.config;
-                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme, hovered_for_pane(active));
                             }
                             return;
                         }
@@ -665,7 +671,7 @@ impl Workbench {
                             self.sync_editor_viewport_size(0, &layout);
                             if let Some(pane_state) = self.store.state().editor.pane(0) {
                                 let config = &self.store.state().editor.config;
-                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme, hovered_for_pane(0));
                             }
                         }
 
@@ -686,7 +692,7 @@ impl Workbench {
                             self.sync_editor_viewport_size(1, &layout);
                             if let Some(pane_state) = self.store.state().editor.pane(1) {
                                 let config = &self.store.state().editor.config;
-                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme, hovered_for_pane(1));
                             }
                         }
                     }
@@ -708,7 +714,7 @@ impl Workbench {
                             self.sync_editor_viewport_size(active, &layout);
                             if let Some(pane_state) = self.store.state().editor.pane(active) {
                                 let config = &self.store.state().editor.config;
-                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme, hovered_for_pane(active));
                             }
                             return;
                         }
@@ -779,7 +785,7 @@ impl Workbench {
                             self.sync_editor_viewport_size(0, &layout);
                             if let Some(pane_state) = self.store.state().editor.pane(0) {
                                 let config = &self.store.state().editor.config;
-                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme, hovered_for_pane(0));
                             }
                         }
 
@@ -800,7 +806,7 @@ impl Workbench {
                             self.sync_editor_viewport_size(1, &layout);
                             if let Some(pane_state) = self.store.state().editor.pane(1) {
                                 let config = &self.store.state().editor.config;
-                                render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                                render_editor_pane(frame, &layout, pane_state, config, &self.theme, hovered_for_pane(1));
                             }
                         }
                     }
@@ -822,7 +828,7 @@ impl Workbench {
                 self.sync_editor_viewport_size(active, &layout);
                 if let Some(pane_state) = self.store.state().editor.pane(active) {
                     let config = &self.store.state().editor.config;
-                    render_editor_pane(frame, &layout, pane_state, config, &self.theme);
+                    render_editor_pane(frame, &layout, pane_state, config, &self.theme, hovered_for_pane(active));
                 }
             }
         }
@@ -887,4 +893,47 @@ impl Workbench {
             height: height as usize,
         });
     }
+}
+
+fn render_confirm_dialog(workbench: &Workbench, frame: &mut Frame, area: Rect) {
+    use ratatui::widgets::Clear;
+
+    let dialog = &workbench.store.state().ui.confirm_dialog;
+    if !dialog.visible {
+        return;
+    }
+
+    let width = 50.min(area.width.saturating_sub(4));
+    let height = 5.min(area.height.saturating_sub(2));
+    if width < 20 || height < 3 {
+        return;
+    }
+
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let dialog_area = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, dialog_area);
+
+    let block = Block::default()
+        .title(" Confirm ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(workbench.theme.palette_border));
+    let inner = block.inner(dialog_area);
+    frame.render_widget(block, dialog_area);
+
+    if inner.height < 2 || inner.width < 10 {
+        return;
+    }
+
+    let msg_line = Line::from(dialog.message.as_str());
+    let hint_line = Line::from(vec![
+        Span::styled("[Enter]", Style::default().fg(workbench.theme.accent_fg)),
+        Span::raw(" Close  "),
+        Span::styled("[Esc]", Style::default().fg(workbench.theme.palette_muted_fg)),
+        Span::raw(" Cancel"),
+    ]);
+
+    let content = Paragraph::new(vec![msg_line, Line::raw(""), hint_line]);
+    frame.render_widget(content, inner);
 }

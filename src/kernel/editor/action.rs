@@ -97,4 +97,8 @@ pub enum EditorAction {
         path: PathBuf,
         success: bool,
     },
+    CloseTabAt {
+        pane: usize,
+        index: usize,
+    },
 }

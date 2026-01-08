@@ -50,6 +50,7 @@ impl EditorState {
             }
             EditorAction::SearchMessage { pane, message } => self.search_message(pane, message),
             EditorAction::Saved { pane, path, success } => self.saved(pane, path, success),
+            EditorAction::CloseTabAt { pane, index } => self.close_tab_at(pane, index),
         }
     }
 
@@ -236,6 +237,25 @@ impl EditorState {
             return (false, Vec::new());
         };
         let changed = pane_state.close_active_tab();
+        if !changed {
+            return (false, Vec::new());
+        }
+        let mut effects = Vec::new();
+        if pane_state.search_bar.visible {
+            if pane_state.search_bar.begin_search() {
+                if let Some(effect) = pane_state.trigger_search(pane) {
+                    effects.push(effect);
+                }
+            }
+        }
+        (true, effects)
+    }
+
+    pub fn close_tab_at(&mut self, pane: usize, index: usize) -> (bool, Vec<Effect>) {
+        let Some(pane_state) = self.panes.get_mut(pane) else {
+            return (false, Vec::new());
+        };
+        let changed = pane_state.close_tab_at(index);
         if !changed {
             return (false, Vec::new());
         }

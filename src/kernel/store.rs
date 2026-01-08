@@ -75,6 +75,20 @@ impl Store {
                 effects: Vec::new(),
                 state_changed: false,
             },
+            Action::EditorConfigUpdated { config } => {
+                if self.state.editor.config == config {
+                    DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    }
+                } else {
+                    self.state.editor.config = config;
+                    DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: true,
+                    }
+                }
+            }
             Action::EditorSetActivePane { pane } => {
                 let panes = self.state.ui.editor_layout.panes.max(1);
                 let pane = pane.min(panes - 1);
@@ -300,6 +314,76 @@ impl Store {
                     state_changed: true,
                 }
             }
+            Action::SetHoveredTab { pane, index } => {
+                let prev = self.state.ui.hovered_tab;
+                self.state.ui.hovered_tab = Some((pane, index));
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: prev != self.state.ui.hovered_tab,
+                }
+            }
+            Action::ClearHoveredTab => {
+                let prev = self.state.ui.hovered_tab.take();
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: prev.is_some(),
+                }
+            }
+            Action::ShowConfirmDialog { message, on_confirm } => {
+                self.state.ui.confirm_dialog.visible = true;
+                self.state.ui.confirm_dialog.message = message;
+                self.state.ui.confirm_dialog.on_confirm = Some(on_confirm);
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
+                }
+            }
+            Action::ConfirmDialogAccept => {
+                if !self.state.ui.confirm_dialog.visible {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                let pending = self.state.ui.confirm_dialog.on_confirm.take();
+                self.state.ui.confirm_dialog.visible = false;
+                self.state.ui.confirm_dialog.message.clear();
+
+                if let Some(action) = pending {
+                    match action {
+                        super::PendingAction::CloseTab { pane, index } => {
+                            let (changed, effects) = self.state.editor.close_tab_at(pane, index);
+                            return DispatchResult {
+                                effects,
+                                state_changed: changed || true,
+                            };
+                        }
+                    }
+                }
+
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
+                }
+            }
+            Action::ConfirmDialogCancel => {
+                if !self.state.ui.confirm_dialog.visible {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                self.state.ui.confirm_dialog.visible = false;
+                self.state.ui.confirm_dialog.message.clear();
+                self.state.ui.confirm_dialog.on_confirm = None;
+
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
+                }
+            }
         }
     }
 
@@ -308,6 +392,64 @@ impl Store {
         let effects = Vec::new();
 
         match command {
+            Command::Escape => {
+                if self.state.ui.command_palette.visible {
+                    self.state.ui.command_palette.visible = false;
+                    self.state.ui.command_palette.query.clear();
+                    self.state.ui.command_palette.selected = 0;
+                    if self.state.ui.focus == FocusTarget::CommandPalette {
+                        self.state.ui.focus = FocusTarget::Editor;
+                    }
+
+                    return DispatchResult {
+                        effects,
+                        state_changed: true,
+                    };
+                }
+
+                if self.state.ui.focus != FocusTarget::Editor {
+                    self.state.ui.focus = FocusTarget::Editor;
+                    return DispatchResult {
+                        effects,
+                        state_changed: true,
+                    };
+                }
+
+                let pane = self.state.ui.editor_layout.active_pane;
+                let search_bar_visible = self
+                    .state
+                    .editor
+                    .pane(pane)
+                    .is_some_and(|p| p.search_bar.visible);
+                if search_bar_visible {
+                    let (changed, eff) =
+                        self.state.editor.apply_command(pane, Command::EditorSearchBarClose);
+                    return DispatchResult {
+                        effects: eff,
+                        state_changed: changed,
+                    };
+                }
+
+                let has_selection = self
+                    .state
+                    .editor
+                    .pane(pane)
+                    .and_then(|p| p.active_tab())
+                    .is_some_and(|t| t.buffer.selection().is_some());
+                if has_selection {
+                    let (changed, eff) =
+                        self.state.editor.apply_command(pane, Command::ClearSelection);
+                    return DispatchResult {
+                        effects: eff,
+                        state_changed: changed,
+                    };
+                }
+
+                return DispatchResult {
+                    effects: vec![Effect::OpenSettings],
+                    state_changed: false,
+                };
+            }
             Command::Quit => {
                 self.state.ui.should_quit = true;
                 state_changed = true;
@@ -315,6 +457,12 @@ impl Store {
             Command::ReloadSettings => {
                 return DispatchResult {
                     effects: vec![Effect::ReloadSettings],
+                    state_changed: false,
+                };
+            }
+            Command::OpenSettings => {
+                return DispatchResult {
+                    effects: vec![Effect::OpenSettings],
                     state_changed: false,
                 };
             }
@@ -806,4 +954,117 @@ fn find_open_tab(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::services::ports::EditorConfig;
+    use crate::models::{FileTree, Granularity, Selection};
+    use std::ffi::OsString;
+
+    fn new_store() -> Store {
+        let root = std::env::temp_dir();
+        let tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
+        Store::new(AppState::new(root, tree, EditorConfig::default()))
+    }
+
+    #[test]
+    fn escape_opens_settings_when_idle_in_editor() {
+        let mut store = new_store();
+        store.state.ui.focus = FocusTarget::Editor;
+
+        let result = store.dispatch(Action::RunCommand(Command::Escape));
+
+        assert!(matches!(result.effects.as_slice(), [Effect::OpenSettings]));
+        assert!(!result.state_changed);
+    }
+
+    #[test]
+    fn escape_closes_palette_first() {
+        let mut store = new_store();
+        store.state.ui.command_palette.visible = true;
+        store.state.ui.command_palette.query = "x".to_string();
+        store.state.ui.command_palette.selected = 1;
+        store.state.ui.focus = FocusTarget::CommandPalette;
+
+        let result = store.dispatch(Action::RunCommand(Command::Escape));
+
+        assert!(result.effects.is_empty());
+        assert!(result.state_changed);
+        assert!(!store.state.ui.command_palette.visible);
+        assert!(store.state.ui.command_palette.query.is_empty());
+        assert_eq!(store.state.ui.command_palette.selected, 0);
+        assert_eq!(store.state.ui.focus, FocusTarget::Editor);
+    }
+
+    #[test]
+    fn escape_focuses_editor_when_in_other_panel() {
+        let mut store = new_store();
+        store.state.ui.focus = FocusTarget::Explorer;
+
+        let result = store.dispatch(Action::RunCommand(Command::Escape));
+
+        assert!(result.effects.is_empty());
+        assert!(result.state_changed);
+        assert_eq!(store.state.ui.focus, FocusTarget::Editor);
+    }
+
+    #[test]
+    fn escape_closes_editor_search_bar() {
+        let mut store = new_store();
+        store.state.ui.focus = FocusTarget::Editor;
+        store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .search_bar
+            .visible = true;
+
+        let result = store.dispatch(Action::RunCommand(Command::Escape));
+
+        assert!(matches!(
+            result.effects.as_slice(),
+            [Effect::CancelEditorSearch { pane: 0 }]
+        ));
+        assert!(result.state_changed);
+        assert!(!store
+            .state
+            .editor
+            .pane(0)
+            .unwrap()
+            .search_bar
+            .visible);
+    }
+
+    #[test]
+    fn escape_clears_editor_selection_before_opening_settings() {
+        let mut store = new_store();
+        store.state.ui.focus = FocusTarget::Editor;
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer
+            .set_selection(Some(Selection::new((0, 0), Granularity::Char)));
+
+        let result = store.dispatch(Action::RunCommand(Command::Escape));
+
+        assert!(result.effects.is_empty());
+        assert!(result.state_changed);
+        assert!(store
+            .state
+            .editor
+            .pane(0)
+            .unwrap()
+            .active_tab()
+            .unwrap()
+            .buffer
+            .selection()
+            .is_none());
+    }
 }

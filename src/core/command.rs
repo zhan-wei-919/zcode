@@ -8,6 +8,8 @@
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Command {
+    Escape,
+
     // ==================== 光标移动 ====================
     CursorLeft,
     CursorRight,
@@ -135,6 +137,7 @@ pub enum Command {
     PrevBottomPanelTab,
     CommandPalette,
     ReloadSettings,
+    OpenSettings,
 
     // ==================== 扩展点 ====================
     Custom(String),
@@ -245,12 +248,15 @@ impl Command {
             Command::PrevBottomPanelTab => "prevBottomPanelTab",
             Command::CommandPalette => "commandPalette",
             Command::ReloadSettings => "reloadSettings",
+            Command::OpenSettings => "openSettings",
+            Command::Escape => "escape",
             Command::Custom(name) => name,
         }
     }
 
     pub fn from_name(name: &str) -> Self {
         match name {
+            "escape" => Command::Escape,
             "cursorLeft" => Command::CursorLeft,
             "cursorRight" => Command::CursorRight,
             "cursorUp" => Command::CursorUp,
@@ -352,6 +358,7 @@ impl Command {
             "prevBottomPanelTab" => Command::PrevBottomPanelTab,
             "commandPalette" => Command::CommandPalette,
             "reloadSettings" => Command::ReloadSettings,
+            "openSettings" => Command::OpenSettings,
             other => Command::Custom(other.to_string()),
         }
     }

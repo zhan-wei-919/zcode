@@ -57,6 +57,10 @@ impl Workbench {
                 let _scope = perf::scope("effect.reload_settings");
                 self.reload_settings();
             }
+            KernelEffect::OpenSettings => {
+                let _scope = perf::scope("effect.open_settings");
+                self.open_settings();
+            }
             KernelEffect::StartGlobalSearch {
                 root,
                 pattern,
@@ -133,6 +137,14 @@ impl Workbench {
                 let success = write_file_from_state(&self.store, pane, &path);
                 if !success {
                     tracing::error!(path = %path.display(), "write_file failed");
+                }
+                if success
+                    && self
+                        .settings_path
+                        .as_ref()
+                        .is_some_and(|settings_path| settings_path.as_path() == path.as_path())
+                {
+                    self.reload_settings();
                 }
                 let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::Saved {
                     pane,

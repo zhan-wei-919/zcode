@@ -228,6 +228,23 @@ impl EditorPaneState {
         true
     }
 
+    pub fn close_tab_at(&mut self, index: usize) -> bool {
+        if self.tabs.len() <= 1 || index >= self.tabs.len() {
+            return false;
+        }
+        self.tabs.remove(index);
+        if self.active >= self.tabs.len() {
+            self.active = self.tabs.len().saturating_sub(1);
+        } else if self.active > index {
+            self.active = self.active.saturating_sub(1);
+        }
+        true
+    }
+
+    pub fn is_tab_dirty(&self, index: usize) -> bool {
+        self.tabs.get(index).is_some_and(|t| t.dirty)
+    }
+
     pub fn next_tab(&mut self) -> bool {
         let len = self.tabs.len();
         if len <= 1 {

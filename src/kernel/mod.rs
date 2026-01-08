@@ -14,7 +14,7 @@ pub use editor::{EditorAction, EditorState};
 pub use effect::Effect;
 pub use search::{SearchResultItem, SearchResultsSnapshot, SearchState, SearchViewport};
 pub use state::{
-    AppState, BottomPanelTab, EditorLayoutState, ExplorerState, FocusTarget, SidebarTab,
-    SplitDirection, UiState,
+    AppState, BottomPanelTab, ConfirmDialogState, EditorLayoutState, ExplorerState, FocusTarget,
+    PendingAction, SidebarTab, SplitDirection, UiState,
 };
 pub use store::{DispatchResult, Store};

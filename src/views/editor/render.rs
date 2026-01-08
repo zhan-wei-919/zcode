@@ -18,12 +18,13 @@ pub fn render_editor_pane(
     pane: &EditorPaneState,
     config: &EditorConfig,
     theme: &UiTheme,
+    hovered_tab: Option<usize>,
 ) {
     if layout.area.width == 0 || layout.area.height == 0 {
         return;
     }
 
-    render_tabs(frame, layout.tab_area, pane, theme);
+    render_tabs(frame, layout.tab_area, pane, theme, hovered_tab);
 
     if let Some(search_area) = layout.search_area {
         render_search_bar(frame, search_area, &pane.search_bar, theme);
@@ -63,7 +64,13 @@ pub fn cursor_position_editor(
     Some((x, y))
 }
 
-fn render_tabs(frame: &mut Frame, area: Rect, pane: &EditorPaneState, theme: &UiTheme) {
+fn render_tabs(
+    frame: &mut Frame,
+    area: Rect,
+    pane: &EditorPaneState,
+    theme: &UiTheme,
+    hovered_tab: Option<usize>,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -74,12 +81,13 @@ fn render_tabs(frame: &mut Frame, area: Rect, pane: &EditorPaneState, theme: &Ui
         .enumerate()
         .map(|(i, tab)| {
             let active = i == pane.active;
+            let is_hovered = hovered_tab == Some(i);
             let fg = if active {
                 theme.sidebar_tab_active_fg
             } else {
                 theme.sidebar_tab_inactive_fg
             };
-            let mut spans = Vec::with_capacity(3);
+            let mut spans = Vec::with_capacity(5);
             spans.push(Span::raw(" "));
             if tab.dirty {
                 spans.push(Span::styled("● ", Style::default().fg(fg)));
@@ -93,6 +101,10 @@ fn render_tabs(frame: &mut Frame, area: Rect, pane: &EditorPaneState, theme: &Ui
                 }),
             ));
             spans.push(Span::raw(" "));
+            if is_hovered {
+                spans.push(Span::styled("×", Style::default().fg(theme.accent_fg)));
+                spans.push(Span::raw(" "));
+            }
             Line::from(spans)
         })
         .collect();

@@ -1,4 +1,7 @@
-#[derive(Clone, Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct EditorConfig {
     pub tab_size: u8,
     pub default_viewport_height: usize,
@@ -50,4 +53,3 @@ mod tests {
         assert_eq!(config.scroll_step(), 1);
     }
 }
-

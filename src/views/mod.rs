@@ -9,6 +9,9 @@ pub mod editor;
 pub mod explorer;
 pub mod search;
 
-pub use editor::{compute_editor_pane_layout, cursor_position_editor, hit_test_editor_mouse, hit_test_editor_tab, render_editor_pane, EditorPaneLayout};
+pub use editor::{
+    compute_editor_pane_layout, cursor_position_editor, hit_test_editor_mouse,
+    hit_test_editor_tab, hit_test_tab_hover, render_editor_pane, EditorPaneLayout, TabHitResult,
+};
 pub use explorer::ExplorerView;
 pub use search::SearchView;

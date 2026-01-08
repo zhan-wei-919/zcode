@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+use super::config::EditorConfig;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
     pub keybindings: Vec<KeybindingRule>,
     #[serde(default)]
     pub theme: ThemeSettings,
+    #[serde(default)]
+    pub editor: EditorConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +90,7 @@ impl Default for Settings {
         Self {
             keybindings: Vec::new(),
             theme: ThemeSettings::default(),
+            editor: EditorConfig::default(),
         }
     }
 }
-

@@ -84,6 +84,11 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::ReloadSettings,
     },
     PaletteItem {
+        label: "Preferences: Open Settings (JSON)",
+        label_lc: "preferences: open settings (json)",
+        command: Command::OpenSettings,
+    },
+    PaletteItem {
         label: "Quit",
         label_lc: "quit",
         command: Command::Quit,
