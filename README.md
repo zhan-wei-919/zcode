@@ -20,6 +20,9 @@
 - [Modules](#modules)
 - [Plugin System](#plugin-system)
 
+<img width="3420" height="2082" alt="image" src="https://github.com/user-attachments/assets/1747bac1-78f5-4f96-b6c5-7a5c5bc023fe" />
+
+
 ## Quick Start
 
 ### Prerequisites
