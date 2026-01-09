@@ -232,6 +232,19 @@ impl Workbench {
             AppMessage::FileError { path, error } => {
                 tracing::error!(path = %path.display(), error = %error, "load_file failed");
             }
+            AppMessage::PathCreated { path, is_dir } => {
+                let _ = self.dispatch_kernel(KernelAction::ExplorerPathCreated { path, is_dir });
+            }
+            AppMessage::PathDeleted { path } => {
+                let _ = self.dispatch_kernel(KernelAction::ExplorerPathDeleted { path });
+            }
+            AppMessage::FsOpError { op, path, error } => {
+                self.logs
+                    .push_back(format!("[fs:{op}] {}: {error}", path.display()));
+                while self.logs.len() > LOG_BUFFER_CAP {
+                    self.logs.pop_front();
+                }
+            }
         }
     }
 

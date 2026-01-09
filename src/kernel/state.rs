@@ -5,7 +5,7 @@ use std::time::Instant;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::PluginsState;
-use crate::models::{FileTree, FileTreeRow, LoadState, NodeId, NodeKind};
+use crate::models::{should_ignore, FileTree, FileTreeRow, LoadState, NodeId, NodeKind};
 
 use super::editor::EditorState;
 use super::effect::Effect;
@@ -65,6 +65,22 @@ pub struct CommandPaletteState {
 }
 
 #[derive(Debug, Clone)]
+pub enum InputDialogKind {
+    NewFile { parent_dir: PathBuf },
+    NewFolder { parent_dir: PathBuf },
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct InputDialogState {
+    pub visible: bool,
+    pub title: String,
+    pub value: String,
+    pub cursor: usize,
+    pub error: Option<String>,
+    pub kind: Option<InputDialogKind>,
+}
+
+#[derive(Debug, Clone)]
 pub struct BottomPanelState {
     pub visible: bool,
     pub active_tab: BottomPanelTab,
@@ -80,6 +96,7 @@ pub struct PendingEditorNavigation {
 #[derive(Debug, Clone)]
 pub enum PendingAction {
     CloseTab { pane: usize, index: usize },
+    DeletePath { path: PathBuf, is_dir: bool },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -97,6 +114,7 @@ pub struct UiState {
     pub focus: FocusTarget,
     pub editor_layout: EditorLayoutState,
     pub command_palette: CommandPaletteState,
+    pub input_dialog: InputDialogState,
     pub pending_editor_nav: Option<PendingEditorNavigation>,
     pub should_quit: bool,
     pub hovered_tab: Option<(usize, usize)>,
@@ -119,6 +137,7 @@ impl Default for UiState {
                 query: String::new(),
                 selected: 0,
             },
+            input_dialog: InputDialogState::default(),
             pending_editor_nav: None,
             should_quit: false,
             hovered_tab: None,
@@ -309,6 +328,67 @@ impl ExplorerState {
         }
 
         (prev_selected != Some(node_id), Vec::new())
+    }
+
+    pub fn selected_create_parent_dir(&mut self) -> PathBuf {
+        let root = self.tree.absolute_root().to_path_buf();
+        let Some(id) = self.tree.selected() else {
+            return root;
+        };
+
+        let path = self.tree.full_path(id);
+        if self.tree.is_dir(id) {
+            return path;
+        }
+        path.parent().unwrap_or(&root).to_path_buf()
+    }
+
+    pub fn selected_path_and_kind(&mut self) -> Option<(PathBuf, bool)> {
+        let id = self.tree.selected()?;
+        let path = self.tree.full_path(id);
+        Some((path, self.tree.is_dir(id)))
+    }
+
+    pub fn apply_path_created(&mut self, path: PathBuf, is_dir: bool) -> bool {
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        let Some(name) = path.file_name() else {
+            return false;
+        };
+        if should_ignore(&name.to_string_lossy()) {
+            return false;
+        }
+
+        let Some(parent_id) = self.tree.find_node_by_path(parent) else {
+            return false;
+        };
+        if !self.tree.is_dir(parent_id) {
+            return false;
+        }
+
+        let kind = if is_dir { NodeKind::Dir } else { NodeKind::File };
+        if self
+            .tree
+            .insert_child(parent_id, name.to_os_string(), kind)
+            .is_ok()
+        {
+            self.refresh_rows();
+            return true;
+        }
+
+        false
+    }
+
+    pub fn apply_path_deleted(&mut self, path: PathBuf) -> bool {
+        let Some(id) = self.tree.find_node_by_path(&path) else {
+            return false;
+        };
+        if self.tree.delete(id).is_ok() {
+            self.refresh_rows();
+            return true;
+        }
+        false
     }
 
     pub fn apply_dir_loaded(&mut self, path: PathBuf, entries: Vec<DirEntryInfo>) -> bool {

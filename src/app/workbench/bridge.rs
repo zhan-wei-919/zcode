@@ -53,6 +53,18 @@ impl Workbench {
                 let _scope = perf::scope("effect.load_dir");
                 self.runtime.load_dir(path)
             }
+            KernelEffect::CreateFile(path) => {
+                let _scope = perf::scope("effect.create_file");
+                self.runtime.create_file(path)
+            }
+            KernelEffect::CreateDir(path) => {
+                let _scope = perf::scope("effect.create_dir");
+                self.runtime.create_dir(path)
+            }
+            KernelEffect::DeletePath { path, is_dir } => {
+                let _scope = perf::scope("effect.delete_path");
+                self.runtime.delete_path(path, is_dir)
+            }
             KernelEffect::ReloadSettings => {
                 let _scope = perf::scope("effect.reload_settings");
                 self.reload_settings();

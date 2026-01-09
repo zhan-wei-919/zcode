@@ -4,12 +4,17 @@
 //! TODO: 大文本粘贴优化（>10MB 时考虑分块处理或警告）
 
 use crate::core::Service;
+
+#[cfg(not(target_os = "android"))]
 use arboard::Clipboard;
 
 const PASTE_MAX_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
 pub struct ClipboardService {
+    #[cfg(not(target_os = "android"))]
     clipboard: Option<Clipboard>,
+    #[cfg(target_os = "android")]
+    _dummy: (),
 }
 
 #[derive(Debug)]
@@ -35,40 +40,68 @@ impl std::fmt::Display for ClipboardError {
 
 impl ClipboardService {
     pub fn new() -> Self {
-        let clipboard = Clipboard::new().ok();
-        Self { clipboard }
+        #[cfg(not(target_os = "android"))]
+        {
+            let clipboard = Clipboard::new().ok();
+            Self { clipboard }
+        }
+        #[cfg(target_os = "android")]
+        {
+            Self { _dummy: () }
+        }
     }
 
     pub fn is_available(&self) -> bool {
-        self.clipboard.is_some()
+        #[cfg(not(target_os = "android"))]
+        {
+            self.clipboard.is_some()
+        }
+        #[cfg(target_os = "android")]
+        {
+            false
+        }
     }
 
     pub fn get_text(&mut self) -> Result<String, ClipboardError> {
-        let clipboard = self
-            .clipboard
-            .as_mut()
-            .ok_or(ClipboardError::NotAvailable)?;
+        #[cfg(not(target_os = "android"))]
+        {
+            let clipboard = self
+                .clipboard
+                .as_mut()
+                .ok_or(ClipboardError::NotAvailable)?;
 
-        let text = clipboard
-            .get_text()
-            .map_err(|e| ClipboardError::GetFailed(e.to_string()))?;
+            let text = clipboard
+                .get_text()
+                .map_err(|e| ClipboardError::GetFailed(e.to_string()))?;
 
-        if text.len() > PASTE_MAX_SIZE {
-            return Err(ClipboardError::TooLarge(text.len()));
+            if text.len() > PASTE_MAX_SIZE {
+                return Err(ClipboardError::TooLarge(text.len()));
+            }
+
+            Ok(text)
         }
-
-        Ok(text)
+        #[cfg(target_os = "android")]
+        {
+            Err(ClipboardError::NotAvailable)
+        }
     }
 
     pub fn set_text(&mut self, text: &str) -> Result<(), ClipboardError> {
-        let clipboard = self
-            .clipboard
-            .as_mut()
-            .ok_or(ClipboardError::NotAvailable)?;
+        #[cfg(not(target_os = "android"))]
+        {
+            let clipboard = self
+                .clipboard
+                .as_mut()
+                .ok_or(ClipboardError::NotAvailable)?;
 
-        clipboard
-            .set_text(text.to_string())
-            .map_err(|e| ClipboardError::SetFailed(e.to_string()))
+            clipboard
+                .set_text(text.to_string())
+                .map_err(|e| ClipboardError::SetFailed(e.to_string()))
+        }
+        #[cfg(target_os = "android")]
+        {
+            Err(ClipboardError::NotAvailable)
+        }
     }
 }
 

@@ -20,6 +20,12 @@ pub enum Action {
     EditorConfigUpdated {
         config: EditorConfig,
     },
+    InputDialogAppend(char),
+    InputDialogBackspace,
+    InputDialogCursorLeft,
+    InputDialogCursorRight,
+    InputDialogAccept,
+    InputDialogCancel,
     PaletteAppend(char),
     PaletteBackspace,
     PaletteMoveSelection(isize),
@@ -93,4 +99,11 @@ pub enum Action {
     },
     ConfirmDialogAccept,
     ConfirmDialogCancel,
+    ExplorerPathCreated {
+        path: PathBuf,
+        is_dir: bool,
+    },
+    ExplorerPathDeleted {
+        path: PathBuf,
+    },
 }

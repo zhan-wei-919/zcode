@@ -18,4 +18,16 @@ pub enum AppMessage {
         path: PathBuf,
         error: String,
     },
+    PathCreated {
+        path: PathBuf,
+        is_dir: bool,
+    },
+    PathDeleted {
+        path: PathBuf,
+    },
+    FsOpError {
+        op: &'static str,
+        path: PathBuf,
+        error: String,
+    },
 }

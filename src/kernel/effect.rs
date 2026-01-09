@@ -5,6 +5,9 @@ use std::path::PathBuf;
 pub enum Effect {
     LoadFile(PathBuf),
     LoadDir(PathBuf),
+    CreateFile(PathBuf),
+    CreateDir(PathBuf),
+    DeletePath { path: PathBuf, is_dir: bool },
     ReloadSettings,
     OpenSettings,
     StartGlobalSearch {

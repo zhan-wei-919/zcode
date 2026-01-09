@@ -17,6 +17,6 @@ pub use search::{SearchResultItem, SearchResultsSnapshot, SearchState, SearchVie
 pub use plugins::{parse_plugin_command_name, PluginAction, PluginPriority, PluginsState, StatusSide};
 pub use state::{
     AppState, BottomPanelTab, ConfirmDialogState, EditorLayoutState, ExplorerState, FocusTarget,
-    PendingAction, SidebarTab, SplitDirection, UiState,
+    InputDialogKind, InputDialogState, PendingAction, SidebarTab, SplitDirection, UiState,
 };
 pub use store::{DispatchResult, Store};

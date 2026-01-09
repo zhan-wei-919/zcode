@@ -282,6 +282,9 @@ fn default_sidebar_explorer_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::simple(KeyCode::Left), Command::ExplorerCollapse);
     bindings.insert(Key::simple(KeyCode::PageUp), Command::ExplorerScrollUp);
     bindings.insert(Key::simple(KeyCode::PageDown), Command::ExplorerScrollDown);
+    bindings.insert(Key::simple(KeyCode::Char('a')), Command::ExplorerNewFile);
+    bindings.insert(Key::shift(KeyCode::Char('a')), Command::ExplorerNewFolder);
+    bindings.insert(Key::simple(KeyCode::Char('d')), Command::ExplorerDelete);
 
     bindings
 }

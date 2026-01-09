@@ -1,8 +1,8 @@
 use crate::core::Command;
 
 use super::{
-    Action, AppState, BottomPanelTab, EditorAction, Effect, FocusTarget, SearchResultItem,
-    SearchViewport, SidebarTab, SplitDirection,
+    Action, AppState, BottomPanelTab, EditorAction, Effect, FocusTarget, InputDialogKind,
+    SearchResultItem, SearchViewport, SidebarTab, SplitDirection,
 };
 
 pub struct DispatchResult {
@@ -94,6 +94,163 @@ impl Store {
                         effects: Vec::new(),
                         state_changed: true,
                     }
+                }
+            }
+            Action::InputDialogAppend(ch) => {
+                let dialog = &mut self.state.ui.input_dialog;
+                if !dialog.visible {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                dialog.error = None;
+                if dialog.cursor > dialog.value.len() {
+                    dialog.cursor = dialog.value.len();
+                }
+                dialog.value.insert(dialog.cursor, ch);
+                dialog.cursor += ch.len_utf8();
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
+                }
+            }
+            Action::InputDialogBackspace => {
+                let dialog = &mut self.state.ui.input_dialog;
+                if !dialog.visible || dialog.cursor == 0 {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                dialog.error = None;
+                let prev = dialog.value[..dialog.cursor]
+                    .char_indices()
+                    .last()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                dialog.value.drain(prev..dialog.cursor);
+                dialog.cursor = prev;
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
+                }
+            }
+            Action::InputDialogCursorLeft => {
+                let dialog = &mut self.state.ui.input_dialog;
+                if !dialog.visible || dialog.cursor == 0 {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                let prev = dialog.value[..dialog.cursor]
+                    .char_indices()
+                    .last()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                let changed = prev != dialog.cursor;
+                dialog.cursor = prev;
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: changed,
+                }
+            }
+            Action::InputDialogCursorRight => {
+                let dialog = &mut self.state.ui.input_dialog;
+                if !dialog.visible || dialog.cursor >= dialog.value.len() {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                let next = dialog.value[dialog.cursor..]
+                    .chars()
+                    .next()
+                    .map(|ch| dialog.cursor + ch.len_utf8())
+                    .unwrap_or(dialog.value.len());
+                let changed = next != dialog.cursor;
+                dialog.cursor = next;
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: changed,
+                }
+            }
+            Action::InputDialogAccept => {
+                let dialog = &mut self.state.ui.input_dialog;
+                if !dialog.visible {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                let name = dialog.value.trim();
+                if name.is_empty() {
+                    let prev = dialog.error.replace("Name required".to_string());
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: prev.as_deref() != dialog.error.as_deref(),
+                    };
+                }
+                if name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+                    let prev = dialog.error.replace("Invalid name".to_string());
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: prev.as_deref() != dialog.error.as_deref(),
+                    };
+                }
+
+                let name = name.to_string();
+                let kind = dialog.kind.take();
+                dialog.visible = false;
+                dialog.title.clear();
+                dialog.value.clear();
+                dialog.cursor = 0;
+                dialog.error = None;
+
+                let Some(kind) = kind else {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: true,
+                    };
+                };
+
+                let effect = match kind {
+                    InputDialogKind::NewFile { parent_dir } => {
+                        Effect::CreateFile(parent_dir.join(&name))
+                    }
+                    InputDialogKind::NewFolder { parent_dir } => {
+                        Effect::CreateDir(parent_dir.join(&name))
+                    }
+                };
+
+                DispatchResult {
+                    effects: vec![effect],
+                    state_changed: true,
+                }
+            }
+            Action::InputDialogCancel => {
+                let dialog = &mut self.state.ui.input_dialog;
+                if !dialog.visible {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+                dialog.visible = false;
+                dialog.title.clear();
+                dialog.value.clear();
+                dialog.cursor = 0;
+                dialog.error = None;
+                dialog.kind = None;
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
                 }
             }
             Action::EditorSetActivePane { pane } => {
@@ -246,6 +403,14 @@ impl Store {
                 effects: Vec::new(),
                 state_changed: self.state.explorer.apply_dir_load_error(path),
             },
+            Action::ExplorerPathCreated { path, is_dir } => DispatchResult {
+                effects: Vec::new(),
+                state_changed: self.state.explorer.apply_path_created(path, is_dir),
+            },
+            Action::ExplorerPathDeleted { path } => DispatchResult {
+                effects: Vec::new(),
+                state_changed: self.state.explorer.apply_path_deleted(path),
+            },
             Action::PaletteAppend(ch) => {
                 if !self.state.ui.command_palette.visible {
                     return DispatchResult {
@@ -364,6 +529,12 @@ impl Store {
                             return DispatchResult {
                                 effects,
                                 state_changed: changed || true,
+                            };
+                        }
+                        super::PendingAction::DeletePath { path, is_dir } => {
+                            return DispatchResult {
+                                effects: vec![Effect::DeletePath { path, is_dir }],
+                                state_changed: true,
                             };
                         }
                     }
@@ -740,6 +911,78 @@ impl Store {
                     state_changed = self.state.explorer.scroll(3);
                 }
             }
+            Command::ExplorerNewFile => {
+                if self.state.ui.input_dialog.visible {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                }
+
+                let parent_dir = self.state.explorer.selected_create_parent_dir();
+                self.state.ui.input_dialog.visible = true;
+                self.state.ui.input_dialog.title = "New File".to_string();
+                self.state.ui.input_dialog.value.clear();
+                self.state.ui.input_dialog.cursor = 0;
+                self.state.ui.input_dialog.error = None;
+                self.state.ui.input_dialog.kind = Some(InputDialogKind::NewFile { parent_dir });
+                state_changed = true;
+            }
+            Command::ExplorerNewFolder => {
+                if self.state.ui.input_dialog.visible {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                }
+
+                let parent_dir = self.state.explorer.selected_create_parent_dir();
+                self.state.ui.input_dialog.visible = true;
+                self.state.ui.input_dialog.title = "New Folder".to_string();
+                self.state.ui.input_dialog.value.clear();
+                self.state.ui.input_dialog.cursor = 0;
+                self.state.ui.input_dialog.error = None;
+                self.state.ui.input_dialog.kind = Some(InputDialogKind::NewFolder { parent_dir });
+                state_changed = true;
+            }
+            Command::ExplorerDelete => {
+                if self.state.ui.confirm_dialog.visible {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                }
+
+                let Some((path, is_dir)) = self.state.explorer.selected_path_and_kind() else {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                };
+                if path == self.state.workspace_root {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                }
+
+                let rel = path
+                    .strip_prefix(&self.state.workspace_root)
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.to_string_lossy().to_string());
+                let message = if is_dir {
+                    format!("Delete folder \"{}\" and all contents?", rel)
+                } else {
+                    format!("Delete file \"{}\"?", rel)
+                };
+
+                self.state.ui.confirm_dialog.visible = true;
+                self.state.ui.confirm_dialog.message = message;
+                self.state.ui.confirm_dialog.on_confirm =
+                    Some(super::PendingAction::DeletePath { path, is_dir });
+                state_changed = true;
+            }
             Command::GlobalSearchStart => {
                 if self.state.ui.focus == FocusTarget::Explorer
                     && self.state.ui.sidebar_tab == SidebarTab::Search
@@ -1106,5 +1349,42 @@ mod tests {
             .buffer
             .selection()
             .is_none());
+    }
+
+    #[test]
+    fn explorer_new_file_flow_creates_effect() {
+        let mut store = new_store();
+        let result = store.dispatch(Action::RunCommand(Command::ExplorerNewFile));
+        assert!(result.effects.is_empty());
+        assert!(store.state.ui.input_dialog.visible);
+
+        let _ = store.dispatch(Action::InputDialogAppend('x'));
+        let result = store.dispatch(Action::InputDialogAccept);
+        assert!(matches!(
+            result.effects.as_slice(),
+            [Effect::CreateFile(path)] if path.ends_with("x")
+        ));
+        assert!(!store.state.ui.input_dialog.visible);
+    }
+
+    #[test]
+    fn explorer_delete_confirm_produces_delete_effect() {
+        let root = std::env::temp_dir();
+        let mut tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
+        let file_id = tree
+            .insert_child(tree.root(), OsString::from("to_delete.txt"), crate::models::NodeKind::File)
+            .unwrap();
+        tree.set_selected(Some(file_id));
+
+        let mut store = Store::new(AppState::new(root.clone(), tree, EditorConfig::default()));
+        let result = store.dispatch(Action::RunCommand(Command::ExplorerDelete));
+        assert!(result.effects.is_empty());
+        assert!(store.state.ui.confirm_dialog.visible);
+
+        let result = store.dispatch(Action::ConfirmDialogAccept);
+        assert!(matches!(
+            result.effects.as_slice(),
+            [Effect::DeletePath { path, is_dir: false }] if path.ends_with("to_delete.txt")
+        ));
     }
 }

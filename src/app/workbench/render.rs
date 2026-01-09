@@ -7,7 +7,7 @@ use crate::kernel::{
 };
 use crate::views::{compute_editor_pane_layout, cursor_position_editor, render_editor_pane};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
@@ -109,6 +109,10 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
         palette::render(workbench, frame, area);
     }
 
+    if workbench.store.state().ui.input_dialog.visible {
+        render_input_dialog(workbench, frame, area);
+    }
+
     if workbench.store.state().ui.confirm_dialog.visible {
         render_confirm_dialog(workbench, frame, area);
     }
@@ -123,6 +127,10 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
 }
 
 pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
+    if workbench.store.state().ui.input_dialog.visible {
+        return input_dialog_cursor(workbench);
+    }
+
     if workbench.store.state().ui.command_palette.visible
         && workbench.store.state().ui.focus == FocusTarget::CommandPalette
     {
@@ -1056,4 +1064,98 @@ fn render_confirm_dialog(workbench: &Workbench, frame: &mut Frame, area: Rect) {
 
     let content = Paragraph::new(vec![msg_line, Line::raw(""), hint_line]);
     frame.render_widget(content, inner);
+}
+
+fn input_dialog_area(area: Rect) -> Rect {
+    super::util::centered_rect(60, 7, area)
+}
+
+fn render_input_dialog(workbench: &Workbench, frame: &mut Frame, area: Rect) {
+    use ratatui::widgets::Clear;
+
+    let dialog = &workbench.store.state().ui.input_dialog;
+    if !dialog.visible {
+        return;
+    }
+
+    let popup_area = input_dialog_area(area);
+    if popup_area.width < 20 || popup_area.height < 5 {
+        return;
+    }
+
+    frame.render_widget(Clear, popup_area);
+
+    let title = if dialog.title.is_empty() {
+        " Input ".to_string()
+    } else {
+        format!(" {} ", dialog.title)
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(workbench.theme.palette_border));
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let base_style = Style::default()
+        .bg(workbench.theme.palette_bg)
+        .fg(workbench.theme.palette_fg);
+    let muted_style = Style::default().fg(workbench.theme.palette_muted_fg);
+
+    let mut lines = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled("> ", base_style),
+        Span::styled(dialog.value.as_str(), base_style),
+    ]));
+
+    if let Some(err) = dialog.error.as_deref() {
+        lines.push(Line::from(Span::styled(
+            err,
+            Style::default().fg(Color::Red),
+        )));
+    } else {
+        lines.push(Line::from(Span::raw("")));
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled("[Enter]", Style::default().fg(workbench.theme.accent_fg)),
+        Span::raw(" Create  "),
+        Span::styled("[Esc]", muted_style),
+        Span::raw(" Cancel"),
+    ]));
+
+    frame.render_widget(Paragraph::new(lines).style(base_style), inner);
+}
+
+fn input_dialog_cursor(workbench: &Workbench) -> Option<(u16, u16)> {
+    let area = workbench.last_render_area?;
+    let dialog = &workbench.store.state().ui.input_dialog;
+    if !dialog.visible {
+        return None;
+    }
+
+    let popup_area = input_dialog_area(area);
+    let inner_x = popup_area.x.saturating_add(1);
+    let inner_y = popup_area.y.saturating_add(1);
+    if popup_area.width < 4 || popup_area.height < 3 {
+        return None;
+    }
+
+    let cursor = dialog.cursor.min(dialog.value.len());
+    let prefix_w = 2u16;
+    let before = dialog.value.get(..cursor).unwrap_or_default();
+    let before_w = before.width() as u16;
+
+    let x = inner_x
+        .saturating_add(prefix_w)
+        .saturating_add(before_w)
+        .min(popup_area.x + popup_area.width.saturating_sub(2));
+    let y = inner_y;
+
+    Some((x, y))
 }

@@ -25,6 +25,21 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::FocusExplorer,
     },
     PaletteItem {
+        label: "Explorer: New File",
+        label_lc: "explorer: new file",
+        command: Command::ExplorerNewFile,
+    },
+    PaletteItem {
+        label: "Explorer: New Folder",
+        label_lc: "explorer: new folder",
+        command: Command::ExplorerNewFolder,
+    },
+    PaletteItem {
+        label: "Explorer: Delete",
+        label_lc: "explorer: delete",
+        command: Command::ExplorerDelete,
+    },
+    PaletteItem {
         label: "View: Focus Search",
         label_lc: "view: focus search",
         command: Command::FocusSearch,

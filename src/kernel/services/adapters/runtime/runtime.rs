@@ -73,4 +73,63 @@ impl AsyncRuntime {
             }
         });
     }
+
+    pub fn create_file(&self, path: PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            match tokio::fs::write(&path, "").await {
+                Ok(_) => {
+                    let _ = tx.send(AppMessage::PathCreated { path, is_dir: false });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppMessage::FsOpError {
+                        op: "create_file",
+                        path,
+                        error: e.to_string(),
+                    });
+                }
+            }
+        });
+    }
+
+    pub fn create_dir(&self, path: PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            match tokio::fs::create_dir(&path).await {
+                Ok(_) => {
+                    let _ = tx.send(AppMessage::PathCreated { path, is_dir: true });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppMessage::FsOpError {
+                        op: "create_dir",
+                        path,
+                        error: e.to_string(),
+                    });
+                }
+            }
+        });
+    }
+
+    pub fn delete_path(&self, path: PathBuf, is_dir: bool) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let result = if is_dir {
+                tokio::fs::remove_dir_all(&path).await
+            } else {
+                tokio::fs::remove_file(&path).await
+            };
+            match result {
+                Ok(_) => {
+                    let _ = tx.send(AppMessage::PathDeleted { path });
+                }
+                Err(e) => {
+                    let _ = tx.send(AppMessage::FsOpError {
+                        op: "delete_path",
+                        path,
+                        error: e.to_string(),
+                    });
+                }
+            }
+        });
+    }
 }

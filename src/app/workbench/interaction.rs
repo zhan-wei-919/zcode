@@ -22,6 +22,36 @@ impl Workbench {
     pub(super) fn handle_key_event(&mut self, key_event: &KeyEvent) -> EventResult {
         let _scope = perf::scope("input.key");
 
+        if self.store.state().ui.input_dialog.visible {
+            match (key_event.code, key_event.modifiers) {
+                (KeyCode::Enter, _) => {
+                    let _ = self.dispatch_kernel(KernelAction::InputDialogAccept);
+                    return EventResult::Consumed;
+                }
+                (KeyCode::Esc, _) => {
+                    let _ = self.dispatch_kernel(KernelAction::InputDialogCancel);
+                    return EventResult::Consumed;
+                }
+                (KeyCode::Backspace, _) => {
+                    let _ = self.dispatch_kernel(KernelAction::InputDialogBackspace);
+                    return EventResult::Consumed;
+                }
+                (KeyCode::Left, _) => {
+                    let _ = self.dispatch_kernel(KernelAction::InputDialogCursorLeft);
+                    return EventResult::Consumed;
+                }
+                (KeyCode::Right, _) => {
+                    let _ = self.dispatch_kernel(KernelAction::InputDialogCursorRight);
+                    return EventResult::Consumed;
+                }
+                (KeyCode::Char(ch), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
+                    let _ = self.dispatch_kernel(KernelAction::InputDialogAppend(ch));
+                    return EventResult::Consumed;
+                }
+                _ => return EventResult::Consumed,
+            }
+        }
+
         if self.store.state().ui.confirm_dialog.visible {
             match key_event.code {
                 KeyCode::Enter => {
