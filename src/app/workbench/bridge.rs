@@ -1,6 +1,7 @@
 use super::Workbench;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::{Action as KernelAction, EditorAction, Effect as KernelEffect};
+use crate::kernel::services::adapters::{ClipboardService, GlobalSearchService, SearchService};
 use std::fs::File;
 use std::io::BufWriter;
 use std::sync::mpsc;
@@ -87,16 +88,18 @@ impl Workbench {
                 let (tx, rx) = mpsc::channel();
                 self.global_search_rx = Some(rx);
 
-                let task = self.global_search_service.search_in_dir(
-                    root,
-                    pattern,
-                    case_sensitive,
-                    use_regex,
-                    tx,
-                );
-                let search_id = task.id();
-                self.global_search_task = Some(task);
-                let _ = self.dispatch_kernel(KernelAction::SearchStarted { search_id });
+                if let Some(service) = self.kernel_services.get::<GlobalSearchService>() {
+                    let task = service.search_in_dir(
+                        root,
+                        pattern,
+                        case_sensitive,
+                        use_regex,
+                        tx,
+                    );
+                    let search_id = task.id();
+                    self.global_search_task = Some(task);
+                    let _ = self.dispatch_kernel(KernelAction::SearchStarted { search_id });
+                }
             }
             KernelEffect::StartEditorSearch {
                 pane,
@@ -119,19 +122,21 @@ impl Workbench {
                 let (tx, rx) = mpsc::channel();
                 self.editor_search_rx[pane] = Some(rx);
 
-                let task = self.editor_search_service.search_in_rope(
-                    rope,
-                    pattern,
-                    case_sensitive,
-                    use_regex,
-                    tx,
-                );
-                let search_id = task.id();
-                self.editor_search_tasks[pane] = Some(task);
-                let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::SearchStarted {
-                    pane,
-                    search_id,
-                }));
+                if let Some(service) = self.kernel_services.get::<SearchService>() {
+                    let task = service.search_in_rope(
+                        rope,
+                        pattern,
+                        case_sensitive,
+                        use_regex,
+                        tx,
+                    );
+                    let search_id = task.id();
+                    self.editor_search_tasks[pane] = Some(task);
+                    let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::SearchStarted {
+                        pane,
+                        search_id,
+                    }));
+                }
             }
             KernelEffect::CancelEditorSearch { pane } => {
                 let _scope = perf::scope("effect.cancel_search");
@@ -166,30 +171,24 @@ impl Workbench {
             }
             KernelEffect::SetClipboardText(text) => {
                 let _scope = perf::scope("effect.clipboard_set");
-                if let Err(e) = self.clipboard.set_text(&text) {
-                    tracing::warn!(error = %e, "clipboard.set_text failed");
+                if let Some(service) = self.kernel_services.get_mut::<ClipboardService>() {
+                    if let Err(e) = service.set_text(&text) {
+                        tracing::warn!(error = %e, "clipboard.set_text failed");
+                    }
                 }
             }
             KernelEffect::RequestClipboardText { pane } => {
                 let _scope = perf::scope("effect.clipboard_get");
-                match self.clipboard.get_text() {
-                    Ok(text) if !text.is_empty() => {
-                        let _ =
-                            self.dispatch_kernel(KernelAction::Editor(EditorAction::InsertText {
-                                pane,
-                                text,
-                            }));
+                if let Some(service) = self.kernel_services.get_mut::<ClipboardService>() {
+                    match service.get_text() {
+                        Ok(text) if !text.is_empty() => {
+                            let _ = self.dispatch_kernel(KernelAction::Editor(
+                                EditorAction::InsertText { pane, text },
+                            ));
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!(error = %e, "clipboard.get_text failed"),
                     }
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!(error = %e, "clipboard.get_text failed"),
-                }
-            }
-            KernelEffect::PluginCommandInvoked {
-                plugin_id,
-                command_id,
-            } => {
-                if let Some(host) = &self.plugin_host {
-                    host.notify_command_invoked(plugin_id, command_id);
                 }
             }
         }

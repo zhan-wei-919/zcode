@@ -1,8 +1,8 @@
 use super::super::theme::UiTheme;
 use super::Workbench;
 use crate::core::Command;
-use crate::kernel::services::adapters::PluginHostEvent;
-use crate::kernel::services::adapters::{KeybindingContext, KeybindingService};
+use crate::kernel::services::adapters::{ConfigService, KeybindingContext, KeybindingService};
+use crate::kernel::services::KernelMessage;
 use crate::kernel::services::ports::{GlobalSearchMessage, SearchMessage};
 use crate::kernel::{Action as KernelAction, EditorAction};
 use std::sync::mpsc;
@@ -14,7 +14,7 @@ impl Workbench {
         let mut changed = false;
         changed |= self.poll_editor_search();
         changed |= self.poll_global_search();
-        changed |= self.poll_plugins();
+        changed |= self.poll_kernel_bus();
         changed |= self.poll_logs();
         changed |= self.poll_settings();
 
@@ -114,6 +114,22 @@ impl Workbench {
         changed
     }
 
+    fn poll_kernel_bus(&mut self) -> bool {
+        let mut changed = false;
+        loop {
+            match self.kernel_services.try_recv() {
+                Ok(msg) => match msg {
+                    KernelMessage::Action(action) => {
+                        changed |= self.dispatch_kernel(action);
+                    }
+                },
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+        changed
+    }
+
     fn poll_logs(&mut self) -> bool {
         let Some(rx) = self.log_rx.take() else {
             return false;
@@ -146,67 +162,6 @@ impl Workbench {
 
         if !disconnected {
             self.log_rx = Some(rx);
-        }
-
-        changed
-    }
-
-    fn poll_plugins(&mut self) -> bool {
-        let mut changed = false;
-        changed |= self.poll_plugin_rx(true);
-        changed |= self.poll_plugin_rx(false);
-        changed
-    }
-
-    fn poll_plugin_rx(&mut self, high: bool) -> bool {
-        let rx_opt = if high {
-            self.plugin_high_rx.take()
-        } else {
-            self.plugin_low_rx.take()
-        };
-
-        let Some(rx) = rx_opt else {
-            return false;
-        };
-
-        let mut changed = false;
-        let mut drained = 0usize;
-        let mut disconnected = false;
-
-        loop {
-            match rx.try_recv() {
-                Ok(ev) => {
-                    drained += 1;
-                    match ev {
-                        PluginHostEvent::Action(action) => {
-                            changed |= self.dispatch_kernel(action);
-                        }
-                        PluginHostEvent::Log(line) => {
-                            changed = true;
-                            self.logs.push_back(line);
-                            while self.logs.len() > super::LOG_BUFFER_CAP {
-                                self.logs.pop_front();
-                            }
-                        }
-                    }
-                    if drained >= super::MAX_PLUGIN_DRAIN_PER_TICK {
-                        break;
-                    }
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    disconnected = true;
-                    break;
-                }
-            }
-        }
-
-        if !disconnected {
-            if high {
-                self.plugin_high_rx = Some(rx);
-            } else {
-                self.plugin_low_rx = Some(rx);
-            }
         }
 
         changed
@@ -267,10 +222,21 @@ impl Workbench {
         theme.apply_settings(&settings.theme);
 
         let _ = self.store.dispatch(KernelAction::EditorConfigUpdated {
-            config: editor_config,
+            config: editor_config.clone(),
         });
 
-        self.keybindings = keybindings;
+        if let Some(service) = self.kernel_services.get_mut::<KeybindingService>() {
+            *service = keybindings;
+        } else {
+            let _ = self.kernel_services.register(keybindings);
+        }
+        if let Some(service) = self.kernel_services.get_mut::<ConfigService>() {
+            *service.editor_mut() = editor_config.clone();
+        } else {
+            let _ = self
+                .kernel_services
+                .register(ConfigService::with_editor_config(editor_config));
+        }
         self.theme = theme;
         self.last_settings_modified = self
             .settings_path

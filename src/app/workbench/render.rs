@@ -3,7 +3,7 @@ use super::Workbench;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::{
     Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, SearchResultItem,
-    SearchViewport, SidebarTab, SplitDirection, StatusSide,
+    SearchViewport, SidebarTab, SplitDirection,
 };
 use crate::views::{compute_editor_pane_layout, cursor_position_editor, render_editor_pane};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -216,61 +216,8 @@ impl Workbench {
 
         let active = self.active_label();
 
-        let mut left_items: Vec<&str> = Vec::new();
-        let mut right_items: Vec<&str> = Vec::new();
-        for plugin in self.store.state().plugins.plugins_in_order() {
-            if !plugin.online {
-                continue;
-            }
-            for id in &plugin.status_order {
-                let Some(item) = plugin.status_items.get(id) else {
-                    continue;
-                };
-                let text = item.text.as_str();
-                if text.is_empty() {
-                    continue;
-                }
-                match item.side {
-                    StatusSide::Left => left_items.push(text),
-                    StatusSide::Right => right_items.push(text),
-                }
-            }
-        }
-
-        let mut left = format!("{} | {} | {}", mode, cursor_info, active);
-        for text in left_items {
-            left.push_str(" | ");
-            left.push_str(text);
-        }
-
-        if right_items.is_empty() || area.width == 0 {
-            frame.render_widget(Paragraph::new(left), area);
-            return;
-        }
-
-        let mut right = String::new();
-        for (i, text) in right_items.iter().enumerate() {
-            if i > 0 {
-                right.push_str(" | ");
-            }
-            right.push_str(text);
-        }
-
-        let left_w = left.width();
-        let right_w = right.width();
-        let total = area.width as usize;
-        let pad = total.saturating_sub(left_w + right_w);
-
-        left.reserve(pad + right.len() + 1);
-        for _ in 0..pad {
-            left.push(' ');
-        }
-        if pad == 0 {
-            left.push(' ');
-        }
-        left.push_str(&right);
-
-        frame.render_widget(Paragraph::new(left), area);
+        let text = format!("{} | {} | {}", mode, cursor_info, active);
+        frame.render_widget(Paragraph::new(text), area);
     }
 
     fn render_activity_bar(&self, frame: &mut Frame, area: Rect) {
@@ -392,7 +339,7 @@ impl Workbench {
     }
 
     fn render_bottom_panel(&mut self, frame: &mut Frame, area: Rect) {
-        let tab = self.store.state().ui.bottom_panel.active_tab;
+        let tab = self.store.state().ui.bottom_panel.active_tab.clone();
         let is_focused = self.store.state().ui.focus == FocusTarget::BottomPanel;
         let border_style = if is_focused {
             Style::default().fg(self.theme.focus_border)
@@ -417,7 +364,7 @@ impl Workbench {
         let tabs_area = rows[0];
         let content_area = rows[1];
 
-        self.render_bottom_panel_tabs(frame, tabs_area, tab);
+        self.render_bottom_panel_tabs(frame, tabs_area, &tab);
 
         match tab {
             BottomPanelTab::Problems => self.render_bottom_panel_problems(frame, content_area),
@@ -428,33 +375,23 @@ impl Workbench {
         }
     }
 
-    fn render_bottom_panel_tabs(&self, frame: &mut Frame, area: Rect, active: BottomPanelTab) {
+    fn render_bottom_panel_tabs(&self, frame: &mut Frame, area: Rect, active: &BottomPanelTab) {
         let tab_active = Style::default()
             .fg(self.theme.sidebar_tab_active_fg)
             .bg(self.theme.sidebar_tab_active_bg);
         let tab_inactive = Style::default().fg(self.theme.sidebar_tab_inactive_fg);
 
-        let problems_style = if active == BottomPanelTab::Problems {
-            tab_active
-        } else {
-            tab_inactive
-        };
-        let search_style = if active == BottomPanelTab::SearchResults {
-            tab_active
-        } else {
-            tab_inactive
-        };
-        let logs_style = if active == BottomPanelTab::Logs {
-            tab_active
-        } else {
-            tab_inactive
-        };
+        let mut spans = Vec::new();
+        for (tab, label) in self.bottom_panel_tabs() {
+            let style = if &tab == active {
+                tab_active
+            } else {
+                tab_inactive
+            };
+            spans.push(Span::styled(label, style));
+        }
 
-        let line = Line::from(vec![
-            Span::styled(" PROBLEMS ", problems_style),
-            Span::styled(" SEARCH RESULTS ", search_style),
-            Span::styled(" LOGS ", logs_style),
-        ]);
+        let line = Line::from(spans);
         frame.render_widget(Paragraph::new(line), area);
     }
 

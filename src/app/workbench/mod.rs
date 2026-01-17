@@ -7,17 +7,19 @@ use crate::core::Command;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::kernel::services::adapters::{
-    ClipboardService, GlobalSearchService, GlobalSearchTask, KeybindingContext, KeybindingService,
-    PluginHost, PluginHostEvent, PluginHostHandle, SearchService, SearchTask,
+    ClipboardService, ConfigService, FileService, GlobalSearchService, GlobalSearchTask,
+    KeybindingContext, KeybindingService, SearchService, SearchTask,
 };
+use crate::kernel::services::KernelServiceHost;
 use crate::kernel::services::ports::{EditorConfig, GlobalSearchMessage, SearchMessage};
-use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, Store};
+use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, Store};
 use crate::models::build_file_tree;
 use crate::views::{ExplorerView, SearchView};
 use ratatui::layout::Rect;
 use ratatui::Frame;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -39,15 +41,12 @@ const SIDEBAR_WIDTH_PERCENT: u16 = 20;
 const SIDEBAR_MIN_WIDTH: u16 = 20;
 const LOG_BUFFER_CAP: usize = 2000;
 const MAX_LOG_DRAIN_PER_TICK: usize = 1024;
-const MAX_PLUGIN_DRAIN_PER_TICK: usize = 256;
 const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct Workbench {
     store: Store,
     explorer: ExplorerView,
     search_view: SearchView,
-    clipboard: ClipboardService,
-    editor_search_service: SearchService,
     editor_search_tasks: Vec<Option<SearchTask>>,
     editor_search_rx: Vec<Option<Receiver<SearchMessage>>>,
     log_rx: Option<Receiver<String>>,
@@ -55,13 +54,9 @@ pub struct Workbench {
     settings_path: Option<PathBuf>,
     last_settings_check: Instant,
     last_settings_modified: Option<SystemTime>,
-    keybindings: KeybindingService,
     theme: UiTheme,
     runtime: AsyncRuntime,
-    plugin_host: Option<PluginHostHandle>,
-    plugin_high_rx: Option<Receiver<PluginHostEvent>>,
-    plugin_low_rx: Option<Receiver<PluginHostEvent>>,
-    global_search_service: GlobalSearchService,
+    kernel_services: KernelServiceHost,
     global_search_task: Option<GlobalSearchTask>,
     global_search_rx: Option<Receiver<GlobalSearchMessage>>,
     last_render_area: Option<Rect>,
@@ -88,9 +83,6 @@ impl Workbench {
         log_rx: Option<Receiver<String>>,
     ) -> std::io::Result<Self> {
         let file_tree = build_file_tree(root_path)?;
-        let global_search_service = GlobalSearchService::new(runtime.tokio_handle().clone());
-        let editor_search_service = SearchService::new(runtime.tokio_handle().clone());
-
         let mut keybindings = KeybindingService::new();
         let mut theme = UiTheme::default();
         let mut editor_config = EditorConfig::default();
@@ -105,15 +97,6 @@ impl Workbench {
         let last_settings_modified = settings_path
             .as_ref()
             .and_then(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
-
-        let (plugin_host, plugin_high_rx, plugin_low_rx) = if cfg!(test) {
-            (None, None, None)
-        } else {
-            let _ = crate::kernel::services::adapters::ensure_plugins_file();
-            let config = crate::kernel::services::adapters::load_plugins_config().unwrap_or_default();
-            let host = PluginHost::start(runtime.tokio_handle(), root_path.to_path_buf(), config);
-            (Some(host.handle), Some(host.high_rx), Some(host.low_rx))
-        };
 
         if !cfg!(test) {
             if let Some(settings) = crate::kernel::services::adapters::settings::load_settings() {
@@ -138,6 +121,16 @@ impl Workbench {
             }
         }
 
+        let executor: Arc<dyn crate::kernel::services::ports::AsyncExecutor> =
+            Arc::new(runtime.tokio_handle());
+        let mut kernel_services = KernelServiceHost::new(executor);
+        let _ = kernel_services.register(ClipboardService::new());
+        let _ = kernel_services.register(SearchService::new(runtime.tokio_handle().clone()));
+        let _ = kernel_services.register(GlobalSearchService::new(runtime.tokio_handle().clone()));
+        let _ = kernel_services.register(ConfigService::with_editor_config(editor_config.clone()));
+        let _ = kernel_services.register(FileService::new());
+        let _ = kernel_services.register(keybindings);
+
         let store = Store::new(crate::kernel::AppState::new(
             root_path.to_path_buf(),
             file_tree,
@@ -149,8 +142,6 @@ impl Workbench {
             store,
             explorer: ExplorerView::new(),
             search_view: SearchView::new(),
-            clipboard: ClipboardService::new(),
-            editor_search_service,
             editor_search_tasks: std::iter::repeat_with(|| None).take(panes).collect(),
             editor_search_rx: std::iter::repeat_with(|| None).take(panes).collect(),
             log_rx,
@@ -158,13 +149,9 @@ impl Workbench {
             settings_path,
             last_settings_check: Instant::now(),
             last_settings_modified,
-            keybindings,
             theme,
             runtime,
-            plugin_host,
-            plugin_high_rx,
-            plugin_low_rx,
-            global_search_service,
+            kernel_services,
             global_search_task: None,
             global_search_rx: None,
             last_render_area: None,
@@ -262,6 +249,17 @@ impl Workbench {
 
     pub fn bottom_panel_visible(&self) -> bool {
         self.store.state().ui.bottom_panel.visible
+    }
+
+    fn bottom_panel_tabs(&self) -> Vec<(BottomPanelTab, String)> {
+        vec![
+            (BottomPanelTab::Problems, " PROBLEMS ".to_string()),
+            (
+                BottomPanelTab::SearchResults,
+                " SEARCH RESULTS ".to_string(),
+            ),
+            (BottomPanelTab::Logs, " LOGS ".to_string()),
+        ]
     }
 
     fn active_editor_pane(&self) -> usize {

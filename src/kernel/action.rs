@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use crate::core::Command;
 use crate::kernel::editor::EditorAction;
-use crate::kernel::plugins::PluginAction;
 use crate::kernel::search::SearchViewport;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
@@ -14,7 +13,6 @@ use crate::kernel::state::BottomPanelTab;
 pub enum Action {
     RunCommand(Command),
     Editor(EditorAction),
-    Plugin(PluginAction),
     OpenPath(PathBuf),
     Tick,
     EditorConfigUpdated {

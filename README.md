@@ -9,7 +9,7 @@
 
 </div>
 
-`zcode` is a high-performance, modern TUI (Terminal User Interface) text editor written in Rust. It features a Flux/Redux-like state management architecture combined with the Tokio asynchronous runtime, delivering efficient I/O handling and plugin extensibility for a smooth terminal coding experience.
+`zcode` is a high-performance, modern TUI (Terminal User Interface) text editor written in Rust. It features a Flux/Redux-like state management architecture combined with the Tokio asynchronous runtime, delivering efficient I/O handling for a smooth terminal coding experience.
 
 ## Table of Contents
 
@@ -18,7 +18,6 @@
 - [Core Features](#core-features)
 - [Architecture](#architecture)
 - [Modules](#modules)
-- [Plugin System](#plugin-system)
 
 ## Quick Start
 
@@ -93,10 +92,9 @@ Default key mappings are as follows:
 
 ## Core Features
 
-*   **⚡️ High-Performance Async Architecture**: Powered by `tokio`, handling file I/O, global search, and external process communication asynchronously. This ensures the main UI thread remains buttery smooth, never blocking on large file loads or heavy searches.
+*   **⚡️ High-Performance Async Architecture**: Powered by `tokio`, handling file I/O and global search asynchronously. This ensures the main UI thread remains buttery smooth, never blocking on large file loads or heavy searches.
 *   **🎨 Modern UI**: Built on `ratatui` and `crossterm`, featuring a Sidebar, Activity Bar, Bottom Panel, Tabs, and flexible Split Panes.
 *   **🔍 Powerful Search**: Built-in `ripgrep`-based engine for high-performance global search and real-time in-file finding.
-*   **🧩 Plugin System**: Supports loading external plugins via stdio (JSON-RPC), enabling language services or other extensions (language-agnostic plugin architecture).
 *   **⌨️ Key Mapping**: Flexible keybinding configuration support.
 *   **📋 Clipboard Integration**: Seamless system clipboard support.
 
@@ -147,7 +145,6 @@ Responsible for specific UI component rendering logic.
 Handles interactions with the OS and the external world, typically involving I/O and async tasks.
 
 *   **AsyncRuntime**: Wraps the `tokio` runtime, allowing expensive tasks to run outside the synchronous TUI render loop.
-*   **PluginHost**: Manages the lifecycle and communication of external plugin subprocesses.
 *   **GlobalSearchService**: Wraps underlying search tools (like `ignore` and `grep` crates) to provide async search capabilities.
 *   **Clipboard**: Wraps `arboard` for cross-platform clipboard access.
 
@@ -156,14 +153,3 @@ Handles interactions with the OS and the external world, typically involving I/O
 *   **TextBuffer**: Implemented using `ropey` (Rope data structure). Critical for high-performance editing of large files (O(log N) complexity for inserts/deletes), avoiding massive memory copies associated with standard Strings.
 *   **EditHistory**: Manages the Undo and Redo stacks.
 *   **FileTree**: Recursive file tree structure for the Explorer.
-
-## Plugin System
-
-The plugin system in `zcode` is inspired by the Language Server Protocol (LSP).
-
-*   **Process Isolation**: Each plugin runs in its own independent subprocess, ensuring editor stability (a crashing plugin won't crash the editor).
-*   **Protocol**:
-    *   Standard Input/Output (Stdio) pipes.
-    *   LSP-style Framing: `Content-Length: <len>\r\n\r\n<JSON-RPC Body>`.
-*   **Dual-Channel Mechanism**:
-    *   To prevent logs or low-priority messages from blocking UI responsiveness, internal communication uses two channels: `High` (for commands/UI updates) and `Low` (for logs/background tasks).

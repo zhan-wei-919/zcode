@@ -4,7 +4,7 @@ use crate::core::event::Key;
 use crate::core::view::EventResult;
 use crate::core::Command;
 use crate::kernel::services::adapters::perf;
-use crate::kernel::services::adapters::KeybindingContext;
+use crate::kernel::services::adapters::{KeybindingContext, KeybindingService};
 use crate::kernel::{
     Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, PendingAction,
     SearchResultItem, SearchViewport, SidebarTab,
@@ -17,6 +17,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventK
 use ratatui::layout::Rect;
 use ratatui::widgets::{Block, Borders};
 use std::time::Instant;
+use unicode_width::UnicodeWidthStr;
 
 impl Workbench {
     pub(super) fn handle_key_event(&mut self, key_event: &KeyEvent) -> EventResult {
@@ -69,7 +70,11 @@ impl Workbench {
         let context = self.keybinding_context();
         let key: Key = (*key_event).into();
 
-        if let Some(cmd) = self.keybindings.resolve(context, &key).cloned() {
+        let cmd = self
+            .kernel_services
+            .get::<KeybindingService>()
+            .and_then(|service| service.resolve(context, &key).cloned());
+        if let Some(cmd) = cmd {
             let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd));
             if self.store.state().ui.should_quit {
                 return EventResult::Quit;
@@ -459,80 +464,84 @@ impl Workbench {
                         return EventResult::Consumed;
                     }
                     let rel = event.column.saturating_sub(tabs_area.x);
-                    let idx = ((rel as u32) * 3 / (tabs_area.width as u32)).min(2) as u8;
-                    let tab = match idx {
-                        0 => BottomPanelTab::Problems,
-                        1 => BottomPanelTab::SearchResults,
-                        _ => BottomPanelTab::Logs,
-                    };
-                    let _ = self.dispatch_kernel(KernelAction::BottomPanelSetActiveTab { tab });
+                    let mut offset = 0u16;
+                    for (tab, label) in self.bottom_panel_tabs() {
+                        let width = UnicodeWidthStr::width(label.as_str()) as u16;
+                        if rel < offset.saturating_add(width) {
+                            let _ =
+                                self.dispatch_kernel(KernelAction::BottomPanelSetActiveTab { tab });
+                            return EventResult::Consumed;
+                        }
+                        offset = offset.saturating_add(width);
+                    }
                     return EventResult::Consumed;
                 }
 
-                if self.store.state().ui.bottom_panel.active_tab != BottomPanelTab::SearchResults {
-                    return EventResult::Ignored;
-                }
-
-                if content_area.width == 0 || content_area.height == 0 {
-                    return EventResult::Ignored;
-                }
-
-                let list_area = Rect::new(
-                    content_area.x,
-                    content_area.y.saturating_add(1),
-                    content_area.width,
-                    content_area.height.saturating_sub(1),
-                );
-
-                if !util::rect_contains(list_area, event.column, event.row) {
-                    return EventResult::Ignored;
-                }
-
-                let viewport = SearchViewport::BottomPanel;
-                let scroll_offset = self.store.state().search.panel_view.scroll_offset;
-                let items_len = self.store.state().search.items.len();
-                let row = (event.row.saturating_sub(list_area.y) as usize) + scroll_offset;
-                if row >= items_len {
-                    return EventResult::Ignored;
-                }
-
-                let item = self.store.state().search.items.get(row).copied();
-                let _ = self.dispatch_kernel(KernelAction::SearchClickRow { row, viewport });
-                match item {
-                    Some(SearchResultItem::FileHeader { .. }) => {
-                        let _ = self.dispatch_kernel(KernelAction::RunCommand(
-                            Command::SearchResultsToggleExpand,
-                        ));
+                let active_tab = self.store.state().ui.bottom_panel.active_tab.clone();
+                if active_tab == BottomPanelTab::SearchResults {
+                    if content_area.width == 0 || content_area.height == 0 {
+                        return EventResult::Ignored;
                     }
-                    Some(SearchResultItem::MatchLine { .. }) => {
-                        let _ = self.dispatch_kernel(KernelAction::RunCommand(
-                            Command::SearchResultsOpenSelected,
-                        ));
+
+                    let list_area = Rect::new(
+                        content_area.x,
+                        content_area.y.saturating_add(1),
+                        content_area.width,
+                        content_area.height.saturating_sub(1),
+                    );
+
+                    if !util::rect_contains(list_area, event.column, event.row) {
+                        return EventResult::Ignored;
                     }
-                    None => {}
+
+                    let viewport = SearchViewport::BottomPanel;
+                    let scroll_offset = self.store.state().search.panel_view.scroll_offset;
+                    let items_len = self.store.state().search.items.len();
+                    let row = (event.row.saturating_sub(list_area.y) as usize) + scroll_offset;
+                    if row >= items_len {
+                        return EventResult::Ignored;
+                    }
+
+                    let item = self.store.state().search.items.get(row).copied();
+                    let _ = self.dispatch_kernel(KernelAction::SearchClickRow { row, viewport });
+                    match item {
+                        Some(SearchResultItem::FileHeader { .. }) => {
+                            let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                                Command::SearchResultsToggleExpand,
+                            ));
+                        }
+                        Some(SearchResultItem::MatchLine { .. }) => {
+                            let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                                Command::SearchResultsOpenSelected,
+                            ));
+                        }
+                        None => {}
+                    }
+
+                    return EventResult::Consumed;
                 }
 
-                EventResult::Consumed
+                EventResult::Ignored
             }
             MouseEventKind::ScrollUp => {
-                if self.store.state().ui.bottom_panel.active_tab != BottomPanelTab::SearchResults {
-                    return EventResult::Ignored;
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::SearchResults {
+                    let _ = self.dispatch_kernel(KernelAction::SearchScroll {
+                        delta: -3,
+                        viewport: SearchViewport::BottomPanel,
+                    });
+                    return EventResult::Consumed;
                 }
-                let _ = self.dispatch_kernel(KernelAction::SearchScroll {
-                    delta: -3,
-                    viewport: SearchViewport::BottomPanel,
-                });
-                EventResult::Consumed
+                EventResult::Ignored
             }
             MouseEventKind::ScrollDown => {
-                if self.store.state().ui.bottom_panel.active_tab != BottomPanelTab::SearchResults {
-                    return EventResult::Ignored;
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::SearchResults {
+                    let _ = self.dispatch_kernel(KernelAction::SearchScroll {
+                        delta: 3,
+                        viewport: SearchViewport::BottomPanel,
+                    });
+                    return EventResult::Consumed;
                 }
-                let _ = self.dispatch_kernel(KernelAction::SearchScroll {
-                    delta: 3,
-                    viewport: SearchViewport::BottomPanel,
-                });
-                EventResult::Consumed
+                EventResult::Ignored
             }
             _ => EventResult::Ignored,
         }

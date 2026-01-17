@@ -5,6 +5,7 @@
 //! - 使用 ignore crate 的并行遍历，自动利用多核
 
 use super::searcher::{search_regex_in_slice, SearchConfig, StreamSearcher};
+use crate::core::Service;
 use crate::kernel::services::ports::search::{FileMatches, GlobalSearchMessage, Match};
 use ignore::{WalkBuilder, WalkState};
 use memmap2::Mmap;
@@ -110,6 +111,12 @@ impl GlobalSearchService {
         });
 
         task
+    }
+}
+
+impl Service for GlobalSearchService {
+    fn name(&self) -> &'static str {
+        "GlobalSearchService"
     }
 }
 

@@ -3,6 +3,7 @@
 //! 用于编辑器内搜索（Rope 已存在于内存中）
 
 use super::searcher::{search_regex_in_slice, RopeReader, SearchConfig, StreamSearcher};
+use crate::core::Service;
 use crate::kernel::services::ports::search::{Match, SearchMessage};
 use ropey::Rope;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -175,6 +176,12 @@ impl SearchService {
     ) -> Result<Option<Match>, String> {
         let matches = Self::search_sync(rope, pattern, case_sensitive, is_regex)?;
         Ok(matches.into_iter().filter(|m| m.start < from_byte).last())
+    }
+}
+
+impl Service for SearchService {
+    fn name(&self) -> &'static str {
+        "SearchService"
     }
 }
 

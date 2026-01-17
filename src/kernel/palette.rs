@@ -1,5 +1,4 @@
 use crate::core::Command;
-use crate::kernel::plugins::PluginPaletteItem;
 
 pub struct PaletteMatch<'a> {
     pub label: &'a str,
@@ -133,19 +132,13 @@ pub fn match_indices(query: &str) -> Vec<usize> {
     matches
 }
 
-pub fn match_items<'a>(query: &str, plugin_items: &'a [PluginPaletteItem]) -> Vec<PaletteMatch<'a>> {
+pub fn match_items(query: &str) -> Vec<PaletteMatch<'static>> {
     let query = query.trim();
     if query.is_empty() {
-        let mut items = Vec::with_capacity(PALETTE_ITEMS.len() + plugin_items.len());
+        let mut items = Vec::with_capacity(PALETTE_ITEMS.len());
         for item in PALETTE_ITEMS {
             items.push(PaletteMatch {
                 label: item.label,
-                command: &item.command,
-            });
-        }
-        for item in plugin_items {
-            items.push(PaletteMatch {
-                label: item.label.as_str(),
                 command: &item.command,
             });
         }
@@ -154,20 +147,12 @@ pub fn match_items<'a>(query: &str, plugin_items: &'a [PluginPaletteItem]) -> Ve
 
     let query_lc = query.to_ascii_lowercase();
     let mut matches = Vec::new();
-    matches.reserve(PALETTE_ITEMS.len() + plugin_items.len());
+    matches.reserve(PALETTE_ITEMS.len());
 
     for item in PALETTE_ITEMS {
         if item.label_lc.contains(&query_lc) {
             matches.push(PaletteMatch {
                 label: item.label,
-                command: &item.command,
-            });
-        }
-    }
-    for item in plugin_items {
-        if item.label_lc.contains(&query_lc) {
-            matches.push(PaletteMatch {
-                label: item.label.as_str(),
                 command: &item.command,
             });
         }

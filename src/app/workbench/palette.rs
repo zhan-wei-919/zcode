@@ -22,7 +22,7 @@ pub(super) fn render(workbench: &Workbench, frame: &mut Frame, area: Rect) {
         .fg(workbench.theme.palette_selected_fg);
 
     let query = &workbench.store.state().ui.command_palette.query;
-    let matches = match_items(query, workbench.store.state().plugins.palette_items());
+    let matches = match_items(query);
     let selected = workbench
         .store
         .state()

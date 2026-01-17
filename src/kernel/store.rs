@@ -70,10 +70,6 @@ impl Store {
                     }
                 }
             },
-            Action::Plugin(plugin_action) => DispatchResult {
-                effects: Vec::new(),
-                state_changed: self.state.plugins.dispatch(plugin_action),
-            },
             Action::OpenPath(path) => DispatchResult {
                 effects: vec![Effect::LoadFile(path)],
                 state_changed: false,
@@ -315,12 +311,13 @@ impl Store {
             }
             Action::BottomPanelSetActiveTab { tab } => {
                 let prev_visible = self.state.ui.bottom_panel.visible;
-                let prev = self.state.ui.bottom_panel.active_tab;
+                let prev = self.state.ui.bottom_panel.active_tab.clone();
+                let next = tab.clone();
                 self.state.ui.bottom_panel.visible = true;
                 self.state.ui.bottom_panel.active_tab = tab;
                 DispatchResult {
                     effects: Vec::new(),
-                    state_changed: !prev_visible || prev != tab,
+                    state_changed: !prev_visible || prev != next,
                 }
             }
             Action::SearchSetViewHeight { viewport, height } => DispatchResult {
@@ -764,23 +761,25 @@ impl Store {
             }
             Command::NextBottomPanelTab => {
                 self.state.ui.bottom_panel.visible = true;
-                self.state.ui.bottom_panel.active_tab = match self.state.ui.bottom_panel.active_tab
+                let tabs = bottom_panel_tabs();
+                if let Some(next) = next_bottom_panel_tab(&tabs, &self.state.ui.bottom_panel.active_tab)
                 {
-                    BottomPanelTab::Problems => BottomPanelTab::SearchResults,
-                    BottomPanelTab::SearchResults => BottomPanelTab::Logs,
-                    BottomPanelTab::Logs => BottomPanelTab::Problems,
-                };
-                state_changed = true;
+                    if self.state.ui.bottom_panel.active_tab != next {
+                        self.state.ui.bottom_panel.active_tab = next;
+                        state_changed = true;
+                    }
+                }
             }
             Command::PrevBottomPanelTab => {
                 self.state.ui.bottom_panel.visible = true;
-                self.state.ui.bottom_panel.active_tab = match self.state.ui.bottom_panel.active_tab
+                let tabs = bottom_panel_tabs();
+                if let Some(prev) = prev_bottom_panel_tab(&tabs, &self.state.ui.bottom_panel.active_tab)
                 {
-                    BottomPanelTab::Problems => BottomPanelTab::Logs,
-                    BottomPanelTab::SearchResults => BottomPanelTab::Problems,
-                    BottomPanelTab::Logs => BottomPanelTab::SearchResults,
-                };
-                state_changed = true;
+                    if self.state.ui.bottom_panel.active_tab != prev {
+                        self.state.ui.bottom_panel.active_tab = prev;
+                        state_changed = true;
+                    }
+                }
             }
             Command::CommandPalette => {
                 let visible = !self.state.ui.command_palette.visible;
@@ -840,8 +839,7 @@ impl Store {
 
                 let query = self.state.ui.command_palette.query.clone();
                 let selected_raw = self.state.ui.command_palette.selected;
-                let matches =
-                    crate::kernel::palette::match_items(&query, self.state.plugins.palette_items());
+                let matches = crate::kernel::palette::match_items(&query);
 
                 let palette_closed = true;
                 self.state.ui.command_palette.visible = false;
@@ -1140,20 +1138,9 @@ impl Store {
                 // UI should translate selection -> path and dispatch Action::OpenPath.
             }
             Command::Custom(name) => {
-                if let Some((plugin_id, command_id)) =
-                    crate::kernel::plugins::parse_plugin_command_name(&name)
-                {
-                    return DispatchResult {
-                        effects: vec![Effect::PluginCommandInvoked {
-                            plugin_id: plugin_id.to_string(),
-                            command_id: command_id.to_string(),
-                        }],
-                        state_changed: false,
-                    };
-                }
-
                 let pane = self.state.ui.editor_layout.active_pane;
-                let (changed, cmd_effects) = self.state.editor.apply_command(pane, Command::Custom(name));
+                let (changed, cmd_effects) =
+                    self.state.editor.apply_command(pane, Command::Custom(name));
                 if changed {
                     state_changed = true;
                 }
@@ -1197,6 +1184,37 @@ fn search_viewport_for_focus(ui: &super::UiState) -> Option<SearchViewport> {
         }
         _ => None,
     }
+}
+
+fn bottom_panel_tabs() -> Vec<BottomPanelTab> {
+    vec![
+        BottomPanelTab::Problems,
+        BottomPanelTab::SearchResults,
+        BottomPanelTab::Logs,
+    ]
+}
+
+fn next_bottom_panel_tab(
+    tabs: &[BottomPanelTab],
+    current: &BottomPanelTab,
+) -> Option<BottomPanelTab> {
+    if tabs.is_empty() {
+        return None;
+    }
+    let idx = tabs.iter().position(|tab| tab == current).unwrap_or(0);
+    Some(tabs[(idx + 1) % tabs.len()].clone())
+}
+
+fn prev_bottom_panel_tab(
+    tabs: &[BottomPanelTab],
+    current: &BottomPanelTab,
+) -> Option<BottomPanelTab> {
+    if tabs.is_empty() {
+        return None;
+    }
+    let idx = tabs.iter().position(|tab| tab == current).unwrap_or(0);
+    let prev = if idx == 0 { tabs.len() - 1 } else { idx - 1 };
+    Some(tabs[prev].clone())
 }
 
 fn search_open_target(
