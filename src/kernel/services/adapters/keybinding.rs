@@ -191,6 +191,8 @@ fn default_editor_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::simple(KeyCode::Delete), Command::DeleteForward);
     bindings.insert(Key::ctrl(KeyCode::Char('d')), Command::DeleteLine);
     bindings.insert(Key::ctrl(KeyCode::Char('k')), Command::DeleteToLineEnd);
+    bindings.insert(Key::simple(KeyCode::F(2)), Command::LspHover);
+    bindings.insert(Key::simple(KeyCode::F(12)), Command::LspDefinition);
 
     bindings.insert(Key::shift(KeyCode::Left), Command::ExtendSelectionLeft);
     bindings.insert(Key::shift(KeyCode::Right), Command::ExtendSelectionRight);

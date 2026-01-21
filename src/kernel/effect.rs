@@ -34,4 +34,14 @@ pub enum Effect {
     RequestClipboardText {
         pane: usize,
     },
+    LspHoverRequest {
+        path: PathBuf,
+        line: u32,
+        column: u32,
+    },
+    LspDefinitionRequest {
+        path: PathBuf,
+        line: u32,
+        column: u32,
+    },
 }

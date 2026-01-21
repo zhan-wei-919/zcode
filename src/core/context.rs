@@ -1,7 +1,3 @@
-//! 应用上下文：服务访问入口
-//!
-//! 提供对 ServiceRegistry 的访问，作为依赖注入的容器
-
 use super::service::{Service, ServiceRegistry};
 
 pub struct AppContext {

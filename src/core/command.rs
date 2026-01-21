@@ -116,6 +116,10 @@ pub enum Command {
     SearchResultsToggleExpand,
     SearchResultsOpenSelected,
 
+    // ==================== LSP ====================
+    LspHover,
+    LspDefinition,
+
     // ==================== Command Palette（面板内部） ====================
     PaletteClose,
     PaletteMoveUp,
@@ -233,6 +237,8 @@ impl Command {
             Command::SearchResultsScrollDown => "searchResultsScrollDown",
             Command::SearchResultsToggleExpand => "searchResultsToggleExpand",
             Command::SearchResultsOpenSelected => "searchResultsOpenSelected",
+            Command::LspHover => "lspHover",
+            Command::LspDefinition => "lspDefinition",
             Command::PaletteClose => "paletteClose",
             Command::PaletteMoveUp => "paletteMoveUp",
             Command::PaletteMoveDown => "paletteMoveDown",
@@ -346,6 +352,8 @@ impl Command {
             "searchResultsScrollDown" => Command::SearchResultsScrollDown,
             "searchResultsToggleExpand" => Command::SearchResultsToggleExpand,
             "searchResultsOpenSelected" => Command::SearchResultsOpenSelected,
+            "lspHover" => Command::LspHover,
+            "lspDefinition" => Command::LspDefinition,
             "paletteClose" => Command::PaletteClose,
             "paletteMoveUp" => Command::PaletteMoveUp,
             "paletteMoveDown" => Command::PaletteMoveDown,

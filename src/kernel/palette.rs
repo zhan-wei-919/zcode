@@ -79,6 +79,16 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::FocusPrevEditorPane,
     },
     PaletteItem {
+        label: "LSP: Hover",
+        label_lc: "lsp: hover",
+        command: Command::LspHover,
+    },
+    PaletteItem {
+        label: "LSP: Go to Definition",
+        label_lc: "lsp: go to definition",
+        command: Command::LspDefinition,
+    },
+    PaletteItem {
         label: "View: Toggle Bottom Panel",
         label_lc: "view: toggle bottom panel",
         command: Command::ToggleBottomPanel,

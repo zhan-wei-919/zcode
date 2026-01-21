@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
+use crate::kernel::ProblemsState;
 use crate::models::{should_ignore, FileTree, FileTreeRow, LoadState, NodeId, NodeKind};
 
 use super::editor::EditorState;
@@ -86,10 +87,16 @@ pub struct BottomPanelState {
 }
 
 #[derive(Debug, Clone)]
+pub enum PendingEditorNavigationTarget {
+    ByteOffset { byte_offset: usize },
+    LineColumn { line: u32, column: u32 },
+}
+
+#[derive(Debug, Clone)]
 pub struct PendingEditorNavigation {
     pub pane: usize,
     pub path: PathBuf,
-    pub byte_offset: usize,
+    pub target: PendingEditorNavigationTarget,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +125,7 @@ pub struct UiState {
     pub should_quit: bool,
     pub hovered_tab: Option<(usize, usize)>,
     pub confirm_dialog: ConfirmDialogState,
+    pub hover_message: Option<String>,
 }
 
 impl Default for UiState {
@@ -141,6 +149,7 @@ impl Default for UiState {
             should_quit: false,
             hovered_tab: None,
             confirm_dialog: ConfirmDialogState::default(),
+            hover_message: None,
         }
     }
 }
@@ -152,6 +161,7 @@ pub struct AppState {
     pub explorer: ExplorerState,
     pub search: SearchState,
     pub editor: EditorState,
+    pub problems: ProblemsState,
 }
 
 impl AppState {
@@ -163,6 +173,7 @@ impl AppState {
             explorer: ExplorerState::new(file_tree),
             search: SearchState::default(),
             editor,
+            problems: ProblemsState::default(),
         }
     }
 }

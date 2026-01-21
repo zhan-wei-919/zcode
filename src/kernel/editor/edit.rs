@@ -140,13 +140,23 @@ impl EditorTabState {
                 true
             }
             Command::InsertChar(c) => {
+                let had_selection = self.buffer.has_selection();
                 let mut changed = self.delete_selection(tab_size);
-                if c == '{'
-                    && config.auto_indent
+                if !had_selection && self.try_skip_closing(c, tab_size) {
+                    return true;
+                }
+                if config.auto_indent
                     && self.language() == Some(LanguageId::Rust)
                     && !self.in_string_or_comment()
                 {
-                    changed |= self.insert_brace_pair(tab_size);
+                    match c {
+                        '{' => changed |= self.insert_brace_pair(tab_size),
+                        '(' => changed |= self.insert_pair('(', ')', tab_size),
+                        '[' => changed |= self.insert_pair('[', ']', tab_size),
+                        '"' => changed |= self.insert_pair('"', '"', tab_size),
+                        '\'' => changed |= self.insert_pair('\'', '\'', tab_size),
+                        _ => changed |= self.insert_char(c, tab_size),
+                    }
                 } else {
                     changed |= self.insert_char(c, tab_size);
                 }
@@ -158,12 +168,15 @@ impl EditorTabState {
                     && !self.in_string_or_comment()
                     && self.expand_empty_brace_pair(tab_size)
                 {
-                    true
-                } else {
-                    let mut changed = self.delete_selection(tab_size);
-                    changed |= self.insert_char('\n', tab_size);
-                    changed
+                    return true;
                 }
+                let mut changed = self.delete_selection(tab_size);
+                if config.auto_indent {
+                    changed |= self.insert_newline_with_indent(tab_size);
+                } else {
+                    changed |= self.insert_char('\n', tab_size);
+                }
+                changed
             }
             Command::InsertTab => {
                 let mut changed = self.delete_selection(tab_size);
@@ -605,9 +618,11 @@ impl EditorTabState {
 
     fn commit_op(&mut self, op: EditOp, tab_size: u8) {
         self.apply_syntax_edit(&op);
+        self.last_edit_op = Some(op.clone());
         self.history.push(op, self.buffer.rope());
         self.dirty = true;
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
+        self.bump_version();
     }
 
     fn insert_brace_pair(&mut self, tab_size: u8) -> bool {
@@ -622,6 +637,80 @@ impl EditorTabState {
             parent,
         );
 
+        self.commit_op(op, tab_size);
+        true
+    }
+
+    fn try_skip_closing(&mut self, c: char, tab_size: u8) -> bool {
+        if !matches!(c, ')' | ']' | '}' | '"' | '\'') {
+            return false;
+        }
+
+        let cursor_char_offset = self.buffer.cursor_char_offset();
+        let rope = self.buffer.rope();
+        if cursor_char_offset >= rope.len_chars() {
+            return false;
+        }
+
+        let next = rope.char(cursor_char_offset);
+        if next != c {
+            return false;
+        }
+
+        self.cursor_right(tab_size)
+    }
+
+    fn insert_pair(&mut self, open: char, close: char, tab_size: u8) -> bool {
+        let (row, col) = self.buffer.cursor();
+        let cursor_char_offset = self.buffer.cursor_char_offset();
+        let parent = self.history.head();
+
+        let mut text = String::with_capacity(2);
+        text.push(open);
+        text.push(close);
+
+        let op = self.buffer.insert_str_op_with_cursor_after_char_offset(
+            &text,
+            (row, col.saturating_add(1)),
+            cursor_char_offset.saturating_add(1),
+            parent,
+        );
+
+        self.commit_op(op, tab_size);
+        true
+    }
+
+    fn insert_newline_with_indent(&mut self, tab_size: u8) -> bool {
+        let row = self.buffer.cursor().0;
+        let cursor_char_offset = self.buffer.cursor_char_offset();
+        let rope = self.buffer.rope();
+        let line_start = rope.line_to_char(row);
+        let before_cursor = rope.slice(line_start..cursor_char_offset).to_string();
+
+        let mut indent = String::new();
+        for ch in before_cursor.chars() {
+            if ch == ' ' || ch == '\t' {
+                indent.push(ch);
+            } else {
+                break;
+            }
+        }
+
+        let trimmed = before_cursor
+            .trim_end_matches(|c| c == ' ' || c == '\t');
+        if trimmed.ends_with('{')
+            && self.language() == Some(LanguageId::Rust)
+            && !self.in_string_or_comment()
+        {
+            indent.push_str(&" ".repeat(tab_size as usize));
+        }
+
+        let mut text = String::with_capacity(1 + indent.len());
+        text.push('\n');
+        text.push_str(&indent);
+
+        let parent = self.history.head();
+        let op = self.buffer.insert_str_op(&text, parent);
         self.commit_op(op, tab_size);
         true
     }
@@ -764,7 +853,9 @@ impl EditorTabState {
             self.buffer.set_cursor(cursor.0, cursor.1);
             self.reparse_syntax();
             self.dirty = self.history.is_dirty();
+            self.last_edit_op = None;
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
+            self.bump_version();
             return true;
         }
         false
@@ -776,7 +867,9 @@ impl EditorTabState {
             self.buffer.set_cursor(cursor.0, cursor.1);
             self.reparse_syntax();
             self.dirty = self.history.is_dirty();
+            self.last_edit_op = None;
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
+            self.bump_version();
             return true;
         }
         false
@@ -810,6 +903,8 @@ impl EditorTabState {
         self.reparse_syntax();
         self.dirty = true;
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
+        self.last_edit_op = None;
+        self.bump_version();
         true
     }
 
@@ -857,5 +952,37 @@ mod tests {
         let _ = tab.apply_command(Command::InsertNewline, 0, &config);
         assert_eq!(tab.buffer.text(), "fn main() {\n    \n}");
         assert_eq!(tab.buffer.cursor(), (1, 4));
+    }
+
+    #[test]
+    fn test_auto_pair_and_skip_closing() {
+        let config = EditorConfig::default();
+        let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "", &config);
+
+        let _ = tab.apply_command(Command::InsertChar('('), 0, &config);
+        assert_eq!(tab.buffer.text(), "()");
+        assert_eq!(tab.buffer.cursor(), (0, 1));
+
+        let _ = tab.apply_command(Command::InsertChar(')'), 0, &config);
+        assert_eq!(tab.buffer.text(), "()");
+        assert_eq!(tab.buffer.cursor(), (0, 2));
+
+        tab = EditorTabState::from_file(PathBuf::from("test.rs"), "", &config);
+        let _ = tab.apply_command(Command::InsertChar('"'), 0, &config);
+        assert_eq!(tab.buffer.text(), "\"\"");
+        assert_eq!(tab.buffer.cursor(), (0, 1));
+
+        let _ = tab.apply_command(Command::InsertChar('"'), 0, &config);
+        assert_eq!(tab.buffer.text(), "\"\"");
+        assert_eq!(tab.buffer.cursor(), (0, 2));
+
+        tab = EditorTabState::from_file(PathBuf::from("test.rs"), "", &config);
+        let _ = tab.apply_command(Command::InsertChar('\''), 0, &config);
+        assert_eq!(tab.buffer.text(), "''");
+        assert_eq!(tab.buffer.cursor(), (0, 1));
+
+        let _ = tab.apply_command(Command::InsertChar('\''), 0, &config);
+        assert_eq!(tab.buffer.text(), "''");
+        assert_eq!(tab.buffer.cursor(), (0, 2));
     }
 }

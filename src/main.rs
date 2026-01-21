@@ -1,5 +1,3 @@
-//! zcode - TUI 文本编辑器
-
 use crossterm::{
     cursor,
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
@@ -39,9 +37,7 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     }
     let path_to_open = Path::new(&args[1]);
-
     tracing::info!(path = %path_to_open.display(), "starting");
-
     enable_raw_mode().inspect_err(|e| tracing::error!(error = ?e, "enable_raw_mode failed"))?;
     let mut stdout = io::stdout();
     execute!(
@@ -51,14 +47,11 @@ fn main() -> io::Result<()> {
         cursor::SetCursorStyle::BlinkingBar
     )
     .inspect_err(|e| tracing::error!(error = ?e, "enter alternate screen failed"))?;
-
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)
         .inspect_err(|e| tracing::error!(error = ?e, "terminal init failed"))?;
-
     let log_rx = logging_guard.as_mut().and_then(|guard| guard.take_log_rx());
     let result = run_app(&mut terminal, path_to_open, log_rx);
-
     disable_raw_mode().inspect_err(|e| tracing::error!(error = ?e, "disable_raw_mode failed"))?;
     execute!(
         terminal.backend_mut(),
@@ -67,7 +60,6 @@ fn main() -> io::Result<()> {
         cursor::SetCursorStyle::DefaultUserShape
     )
     .inspect_err(|e| tracing::error!(error = ?e, "leave alternate screen failed"))?;
-
     if let Err(e) = result {
         tracing::error!(error = ?e, "application error");
         if let Some(guard) = &logging_guard {
@@ -76,7 +68,6 @@ fn main() -> io::Result<()> {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
-
     Ok(())
 }
 

@@ -38,7 +38,7 @@ impl Store {
                         .pending_editor_nav
                         .as_ref()
                         .filter(|p| p.pane == pane && p.path == path)
-                        .map(|p| p.byte_offset);
+                        .map(|p| p.target.clone());
 
                     let (mut state_changed, mut effects) =
                         self.state.editor.dispatch_action(EditorAction::OpenFile {
@@ -47,7 +47,23 @@ impl Store {
                             content,
                         });
 
-                    if let Some(byte_offset) = pending {
+                    if let Some(target) = pending {
+                        let byte_offset = match target {
+                            super::state::PendingEditorNavigationTarget::ByteOffset {
+                                byte_offset,
+                            } => byte_offset,
+                            super::state::PendingEditorNavigationTarget::LineColumn {
+                                line,
+                                column,
+                            } => self
+                                .state
+                                .editor
+                                .pane(pane)
+                                .and_then(|pane_state| pane_state.active_tab())
+                                .map(|tab| lsp_position_to_byte_offset(tab, line, column))
+                                .unwrap_or(0),
+                        };
+
                         let (changed, cmd_effects) = self
                             .state
                             .editor
@@ -392,6 +408,94 @@ impl Store {
                 effects: Vec::new(),
                 state_changed: self.state.search.apply_message(msg),
             },
+            Action::ProblemsClickRow { row } => DispatchResult {
+                effects: Vec::new(),
+                state_changed: self.state.problems.click_row(row),
+            },
+            Action::ProblemsSetViewHeight { height } => DispatchResult {
+                effects: Vec::new(),
+                state_changed: self.state.problems.set_view_height(height),
+            },
+            Action::LspDiagnostics { path, items } => DispatchResult {
+                effects: Vec::new(),
+                state_changed: self.state.problems.update_path(path, items),
+            },
+            Action::LspHover { text } => {
+                let text = text.trim().to_string();
+                let updated = if text.is_empty() {
+                    self.state.ui.hover_message.take().is_some()
+                } else if self.state.ui.hover_message.as_deref() != Some(text.as_str()) {
+                    self.state.ui.hover_message = Some(text);
+                    true
+                } else {
+                    false
+                };
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: updated,
+                }
+            }
+            Action::LspDefinition { path, line, column } => {
+                let prev_focus = self.state.ui.focus;
+                let prev_active_pane = self.state.ui.editor_layout.active_pane;
+                let preferred_pane = self.state.ui.editor_layout.active_pane;
+
+                if let Some((pane, tab_index)) =
+                    find_open_tab(&self.state.editor, preferred_pane, &path)
+                {
+                    self.state.ui.editor_layout.active_pane = pane;
+                    self.state.ui.focus = FocusTarget::Editor;
+
+                    let (changed1, mut eff1) =
+                        self.state
+                            .editor
+                            .dispatch_action(EditorAction::SetActiveTab {
+                                pane,
+                                index: tab_index,
+                            });
+
+                    let byte_offset = self
+                        .state
+                        .editor
+                        .pane(pane)
+                        .and_then(|pane_state| pane_state.tabs.get(tab_index))
+                        .map(|tab| lsp_position_to_byte_offset(tab, line, column))
+                        .unwrap_or(0);
+
+                    let (changed2, eff2) = self
+                        .state
+                        .editor
+                        .dispatch_action(EditorAction::GotoByteOffset { pane, byte_offset });
+                    eff1.extend(eff2);
+
+                    let ui_changed = prev_focus != FocusTarget::Editor
+                        || prev_active_pane != self.state.ui.editor_layout.active_pane;
+                    let state_changed = ui_changed || changed1 || changed2;
+
+                    return DispatchResult {
+                        effects: eff1,
+                        state_changed,
+                    };
+                }
+
+                let pane = preferred_pane;
+                self.state.ui.editor_layout.active_pane = pane;
+                self.state.ui.focus = FocusTarget::Editor;
+                self.state.ui.pending_editor_nav =
+                    Some(super::state::PendingEditorNavigation {
+                        pane,
+                        path: path.clone(),
+                        target: super::state::PendingEditorNavigationTarget::LineColumn {
+                            line,
+                            column,
+                        },
+                    });
+
+                DispatchResult {
+                    effects: vec![Effect::LoadFile(path)],
+                    state_changed: true,
+                }
+            }
             Action::DirLoaded { path, entries } => DispatchResult {
                 effects: Vec::new(),
                 state_changed: self.state.explorer.apply_dir_loaded(path, entries),
@@ -1040,21 +1144,37 @@ impl Store {
             Command::SearchResultsMoveUp => {
                 if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
                     state_changed = self.state.search.move_selection(-1, viewport);
+                } else if self.state.ui.focus == FocusTarget::BottomPanel
+                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                {
+                    state_changed = self.state.problems.move_selection(-1);
                 }
             }
             Command::SearchResultsMoveDown => {
                 if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
                     state_changed = self.state.search.move_selection(1, viewport);
+                } else if self.state.ui.focus == FocusTarget::BottomPanel
+                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                {
+                    state_changed = self.state.problems.move_selection(1);
                 }
             }
             Command::SearchResultsScrollUp => {
                 if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
                     state_changed = self.state.search.scroll(-3, viewport);
+                } else if self.state.ui.focus == FocusTarget::BottomPanel
+                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                {
+                    state_changed = self.state.problems.scroll(-3);
                 }
             }
             Command::SearchResultsScrollDown => {
                 if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
                     state_changed = self.state.search.scroll(3, viewport);
+                } else if self.state.ui.focus == FocusTarget::BottomPanel
+                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                {
+                    state_changed = self.state.problems.scroll(3);
                 }
             }
             Command::SearchResultsToggleExpand => {
@@ -1125,12 +1245,108 @@ impl Store {
                         Some(super::state::PendingEditorNavigation {
                             pane,
                             path: path.clone(),
-                            byte_offset,
+                            target: super::state::PendingEditorNavigationTarget::ByteOffset {
+                                byte_offset,
+                            },
                         });
 
                     return DispatchResult {
                         effects: vec![Effect::LoadFile(path)],
                         state_changed: true,
+                    };
+                } else if self.state.ui.focus == FocusTarget::BottomPanel
+                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                {
+                    let prev_focus = self.state.ui.focus;
+                    let prev_active_pane = self.state.ui.editor_layout.active_pane;
+
+                    let Some(item) = self
+                        .state
+                        .problems
+                        .items()
+                        .get(self.state.problems.selected_index())
+                        .cloned()
+                    else {
+                        return DispatchResult {
+                            effects,
+                            state_changed,
+                        };
+                    };
+
+                    let path = item.path.clone();
+                    let range = item.range;
+                    let preferred_pane = self.state.ui.editor_layout.active_pane;
+
+                    if let Some((pane, tab_index)) =
+                        find_open_tab(&self.state.editor, preferred_pane, &path)
+                    {
+                        self.state.ui.editor_layout.active_pane = pane;
+                        self.state.ui.focus = FocusTarget::Editor;
+
+                        let (changed1, mut eff1) =
+                            self.state
+                                .editor
+                                .dispatch_action(EditorAction::SetActiveTab {
+                                    pane,
+                                    index: tab_index,
+                                });
+
+                        let byte_offset = self
+                            .state
+                            .editor
+                            .pane(pane)
+                            .and_then(|pane_state| pane_state.tabs.get(tab_index))
+                            .map(|tab| problem_byte_offset(tab, range))
+                            .unwrap_or(0);
+
+                        let (changed2, eff2) = self
+                            .state
+                            .editor
+                            .dispatch_action(EditorAction::GotoByteOffset { pane, byte_offset });
+                        eff1.extend(eff2);
+
+                        let ui_changed = prev_focus != FocusTarget::Editor
+                            || prev_active_pane != self.state.ui.editor_layout.active_pane;
+                        let state_changed = ui_changed || changed1 || changed2;
+
+                        return DispatchResult {
+                            effects: eff1,
+                            state_changed,
+                        };
+                    }
+
+                    let pane = preferred_pane;
+                    self.state.ui.editor_layout.active_pane = pane;
+                    self.state.ui.focus = FocusTarget::Editor;
+                    self.state.ui.pending_editor_nav =
+                        Some(super::state::PendingEditorNavigation {
+                            pane,
+                            path: path.clone(),
+                            target: super::state::PendingEditorNavigationTarget::LineColumn {
+                                line: range.start_line,
+                                column: range.start_col,
+                            },
+                        });
+
+                    return DispatchResult {
+                        effects: vec![Effect::LoadFile(path)],
+                        state_changed: true,
+                    };
+                }
+            }
+            Command::LspHover => {
+                if let Some((path, line, column)) = lsp_request_target(&self.state) {
+                    return DispatchResult {
+                        effects: vec![Effect::LspHoverRequest { path, line, column }],
+                        state_changed,
+                    };
+                }
+            }
+            Command::LspDefinition => {
+                if let Some((path, line, column)) = lsp_request_target(&self.state) {
+                    return DispatchResult {
+                        effects: vec![Effect::LspDefinitionRequest { path, line, column }],
+                        state_changed,
                     };
                 }
             }
@@ -1236,6 +1452,76 @@ fn search_open_target(
             Some((file.path.clone(), m.start))
         }
     }
+}
+
+fn problem_byte_offset(
+    tab: &super::editor::EditorTabState,
+    range: crate::kernel::problems::ProblemRange,
+) -> usize {
+    lsp_position_to_byte_offset(tab, range.start_line, range.start_col)
+}
+
+fn lsp_position_to_byte_offset(
+    tab: &super::editor::EditorTabState,
+    line: u32,
+    column: u32,
+) -> usize {
+    let rope = tab.buffer.rope();
+    if rope.len_chars() == 0 {
+        return 0;
+    }
+
+    let line_index = (line as usize).min(rope.len_lines().saturating_sub(1));
+    let mut line_text = rope.line(line_index).to_string();
+    if line_text.ends_with('\n') {
+        line_text.pop();
+        if line_text.ends_with('\r') {
+            line_text.pop();
+        }
+    }
+
+    let col_chars = utf16_col_to_char_offset(&line_text, column);
+    let line_start = rope.line_to_char(line_index);
+    let line_len = line_text.chars().count();
+    let char_offset = (line_start + col_chars.min(line_len)).min(rope.len_chars());
+    rope.char_to_byte(char_offset)
+}
+
+fn utf16_col_to_char_offset(text: &str, col: u32) -> usize {
+    let mut units = 0u32;
+    let mut chars = 0usize;
+    for ch in text.chars() {
+        let next = units + ch.len_utf16() as u32;
+        if next > col {
+            break;
+        }
+        units = next;
+        chars += 1;
+    }
+    chars
+}
+
+fn lsp_request_target(state: &super::AppState) -> Option<(std::path::PathBuf, u32, u32)> {
+    let pane = state.ui.editor_layout.active_pane;
+    let tab = state.editor.pane(pane)?.active_tab()?;
+    let path = tab.path.as_ref()?.clone();
+    let (line, column) = lsp_position_from_cursor(tab);
+    Some((path, line, column))
+}
+
+fn lsp_position_from_cursor(tab: &super::editor::EditorTabState) -> (u32, u32) {
+    let (row, col) = tab.buffer.cursor();
+    let char_offset = tab.buffer.pos_to_char((row, col));
+    let rope = tab.buffer.rope();
+    let line_start = rope.line_to_char(row);
+    let col_chars = char_offset.saturating_sub(line_start);
+    let line_text = rope.line(row).to_string();
+    let utf16 = line_text
+        .chars()
+        .take(col_chars)
+        .map(|ch| ch.len_utf16() as u32)
+        .sum();
+    (row as u32, utf16)
 }
 
 fn find_open_tab(

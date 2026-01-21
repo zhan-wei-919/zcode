@@ -1,7 +1,3 @@
-//! 服务系统：Service trait + ServiceRegistry
-//!
-//! 提供可扩展的服务注册和依赖注入机制
-
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
@@ -38,6 +34,10 @@ impl dyn Service {
     #[inline]
     pub fn downcast_ref<T: Service>(&self) -> Option<&T> {
         if self.type_id() == TypeId::of::<T>() {
+            // 数据地址永远放在胖指针的前8个字节 -> [数据地址 | vtable 地址]
+            // self是 dyn Service
+            // self as *const dyn Service 将胖指针转换为裸指针：本质只是编译器的视角变了，但数据地址并没有变  
+            // as *const T 将裸指针转换为 T 指针，只取前8个字节，直接放弃后面的vtable 地址
             unsafe { Some(&*(self as *const dyn Service as *const T)) }
         } else {
             None
@@ -47,6 +47,11 @@ impl dyn Service {
     #[inline]
     pub fn downcast_mut<T: Service>(&mut self) -> Option<&mut T> {
         if (*self).type_id() == TypeId::of::<T>() {
+            //阶段,表达式类型,内存宽度,含义
+            //开始,&mut dyn Service,16 字节,安全的胖引用
+            //中转,*mut dyn Service,16 字节,原始胖指针（解开枷锁）
+            //关键,*mut T,8 字节,原始瘦指针（丢弃虚表）
+            //结束,&mut T,8 字节,重生后的安全瘦引用
             unsafe { Some(&mut *(self as *mut dyn Service as *mut T)) }
         } else {
             None
@@ -68,11 +73,9 @@ impl ServiceRegistry {
     pub fn register<S: Service + 'static>(&mut self, service: S) -> Result<()> {
         let type_id = TypeId::of::<S>();
         let name = service.name();
-
         if self.services.contains_key(&type_id) {
             return Err(ServiceError::AlreadyRegistered(name.to_string()));
         }
-
         self.services.insert(type_id, Box::new(service));
         Ok(())
     }

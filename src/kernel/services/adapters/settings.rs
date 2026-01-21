@@ -1,9 +1,3 @@
-//! 用户设置（setting.json）
-//!
-//! 目标：
-//! - 跨平台放置在系统缓存目录下的 `.zcode/setting.json`
-//! - 支持配置全局快捷键、主界面配色
-
 use crate::core::event::Key;
 use crate::core::Command;
 use crate::kernel::services::ports::settings::Settings;
@@ -24,19 +18,16 @@ pub fn ensure_settings_file() -> std::io::Result<PathBuf> {
             "Cannot determine settings directory",
         )
     })?;
-
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             std::fs::create_dir_all(parent)?;
         }
     }
-
     if !path.exists() {
         let content =
             serde_json::to_string_pretty(&Settings::default()).unwrap_or_else(|_| "{}".to_string());
         std::fs::write(&path, content)?;
     }
-
     Ok(path)
 }
 
@@ -49,7 +40,6 @@ pub fn load_settings() -> Option<Settings> {
 pub fn parse_keybinding(value: &str) -> Option<Key> {
     let mut modifiers = KeyModifiers::NONE;
     let mut key_part: Option<&str> = None;
-
     for part in value.split('+').map(str::trim).filter(|p| !p.is_empty()) {
         match part.to_ascii_lowercase().as_str() {
             "ctrl" | "control" => modifiers |= KeyModifiers::CONTROL,
@@ -59,17 +49,14 @@ pub fn parse_keybinding(value: &str) -> Option<Key> {
             _ => key_part = Some(part),
         }
     }
-
     let key_part = key_part?;
     let mut code = parse_key_code(key_part)?;
-
     if let KeyCode::Char(ch) = code {
         if ch.is_ascii_uppercase() {
             code = KeyCode::Char(ch.to_ascii_lowercase());
             modifiers |= KeyModifiers::SHIFT;
         }
     }
-
     Some(Key::new(code, modifiers))
 }
 

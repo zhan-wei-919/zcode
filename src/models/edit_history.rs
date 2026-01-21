@@ -201,24 +201,20 @@ impl EditHistory {
             .unwrap_or(false)
     }
 
-    // ==================== Git 风格 API（预留）====================
+    // ==================== 预留 ====================
 
-    /// 获取操作
     pub fn get_op(&self, id: &OpId) -> Option<&EditOp> {
         self.ops.get(id)
     }
 
-    /// 获取父操作 ID
     pub fn parent(&self, id: &OpId) -> Option<OpId> {
         self.ops.get(id).map(|op| op.parent)
     }
 
-    /// 获取子操作 ID 列表
     pub fn children_of(&self, id: &OpId) -> Vec<OpId> {
         self.children.get(id).cloned().unwrap_or_default()
     }
 
-    /// 跳转到任意历史点
     pub fn checkout(&mut self, id: OpId) -> Option<(Rope, (usize, usize))> {
         if id.is_root() {
             self.head = id;
@@ -239,7 +235,6 @@ impl EditHistory {
         Some((rope, cursor))
     }
 
-    /// 从 HEAD 回溯历史
     pub fn log(&self) -> Vec<&EditOp> {
         let mut result = Vec::new();
         let mut current = self.head;
@@ -256,12 +251,10 @@ impl EditHistory {
         result
     }
 
-    /// 获取所有操作
     pub fn reflog(&self) -> impl Iterator<Item = &EditOp> {
         self.ops.values()
     }
 
-    /// 获取分叉点（有多个子节点的操作）
     pub fn branch_points(&self) -> Vec<OpId> {
         self.children
             .iter()
@@ -272,19 +265,12 @@ impl EditHistory {
 
     // ==================== 内部方法 ====================
 
-    /// 从最近的检查点重建指定位置的 Rope
     fn rebuild_rope_at(&self, target: OpId) -> Rope {
         if target.is_root() {
             return self.base_snapshot.clone();
         }
-
-        // 收集从 root 到 target 的路径
         let path = self.path_to(target);
-
-        // 找最近的检查点
         let (start_idx, mut rope) = self.find_nearest_checkpoint(&path);
-
-        // 从检查点重放到目标
         for &op_id in &path[start_idx..] {
             if let Some(op) = self.ops.get(&op_id) {
                 op.apply(&mut rope);
@@ -294,7 +280,6 @@ impl EditHistory {
         rope
     }
 
-    /// 获取从 root 到指定节点的路径
     fn path_to(&self, target: OpId) -> Vec<OpId> {
         let mut path = Vec::new();
         let mut current = target;
@@ -312,7 +297,6 @@ impl EditHistory {
         path
     }
 
-    /// 找最近的检查点，返回 (路径中的起始索引, Rope)
     fn find_nearest_checkpoint(&self, path: &[OpId]) -> (usize, Rope) {
         for (i, &op_id) in path.iter().enumerate().rev() {
             if let Some(cp) = self.checkpoints.get(&op_id) {
@@ -324,16 +308,9 @@ impl EditHistory {
 
     // ==================== 持久化 ====================
 
-    /// 保存时调用：更新基准快照，但保留历史
     pub fn on_save(&mut self, current_rope: &Rope) {
         self.force_flush();
-
-        // 更新基准快照为当前状态
-        // 注意：Git 模型下我们不清空历史，只是标记一个"保存点"
-        // 如果需要清空历史，可以调用 clear()
         self.base_snapshot = current_rope.clone();
-
-        // 可选：在 HEAD 处创建检查点
         if !self.head.is_root() {
             self.checkpoints.insert(
                 self.head,
@@ -344,7 +321,6 @@ impl EditHistory {
         }
     }
 
-    /// 清空历史（保存后可选调用）
     pub fn clear(&mut self, current_rope: &Rope) {
         self.base_snapshot = current_rope.clone();
         self.ops.clear();
@@ -353,7 +329,6 @@ impl EditHistory {
         self.checkpoints.clear();
         self.op_count = 0;
 
-        // 清空备份文件
         if let Some(path) = &self.ops_file_path {
             if let Ok(file) = File::create(path) {
                 self.ops_file = Some(file);
@@ -361,7 +336,6 @@ impl EditHistory {
         }
     }
 
-    /// 检查是否需要刷新
     fn maybe_flush(&mut self) {
         let should_flush = self.pending_ops.len() >= self.config.flush_threshold
             || self.last_flush.elapsed() > Duration::from_millis(self.config.flush_interval_ms);
@@ -371,31 +345,25 @@ impl EditHistory {
         }
     }
 
-    /// 刷新待写入的操作到磁盘
     fn flush(&mut self) {
         if self.pending_ops.is_empty() {
             return;
         }
-
         if let Some(f) = &mut self.ops_file {
             for op in &self.pending_ops {
                 let _ = writeln!(f, "{}", op.to_json_line());
             }
-            // 写入当前 HEAD
             let _ = writeln!(f, "HEAD={}", self.head);
             let _ = f.sync_data();
         }
-
         self.pending_ops.clear();
         self.last_flush = Instant::now();
     }
 
-    /// 强制刷新
     pub fn force_flush(&mut self) {
         self.flush();
     }
 
-    /// 定时检查是否需要刷新
     pub fn tick(&mut self) {
         if !self.pending_ops.is_empty()
             && self.last_flush.elapsed() > Duration::from_millis(self.config.flush_interval_ms)
@@ -404,23 +372,19 @@ impl EditHistory {
         }
     }
 
-    /// 从备份文件恢复
     pub fn recover(
         base_snapshot: Rope,
         ops_file_path: PathBuf,
     ) -> std::io::Result<(Self, Rope, (usize, usize))> {
         let file = File::open(&ops_file_path)?;
         let reader = BufReader::new(file);
-
         let mut ops = HashMap::new();
         let mut children: HashMap<OpId, Vec<OpId>> = HashMap::new();
         let mut head = OpId::root();
         let mut last_cursor = (0, 0);
-
         for line in reader.lines() {
             if let Ok(line) = line {
                 if line.starts_with("HEAD=") {
-                    // 解析 HEAD 行
                     if let Some(head_str) = line.strip_prefix("HEAD=") {
                         if let Some((ts, cnt)) = head_str.split_once(':') {
                             if let (Ok(timestamp), Ok(counter)) =
@@ -440,10 +404,7 @@ impl EditHistory {
                 }
             }
         }
-
-        // 如果没有找到 HEAD 行，使用最后一个操作
         if head.is_root() && !ops.is_empty() {
-            // 找到没有子节点的操作作为 HEAD
             for op_id in ops.keys() {
                 if !children.values().any(|c| c.contains(op_id)) {
                     head = *op_id;
@@ -451,8 +412,6 @@ impl EditHistory {
                 }
             }
         }
-
-        // 重建 Rope
         let mut history = Self {
             base_snapshot: base_snapshot.clone(),
             ops,
@@ -466,10 +425,7 @@ impl EditHistory {
             config: EditHistoryConfig::default(),
             op_count: 0,
         };
-
         let rope = history.rebuild_rope_at(head);
-
-        // 重新打开文件用于追加
         let ops_file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -479,7 +435,6 @@ impl EditHistory {
         Ok((history, rope, last_cursor))
     }
 
-    /// 检查备份文件是否存在且非空
     pub fn has_backup(ops_file_path: &PathBuf) -> bool {
         if let Ok(metadata) = std::fs::metadata(ops_file_path) {
             metadata.len() > 0
@@ -488,7 +443,6 @@ impl EditHistory {
         }
     }
 
-    /// 清除备份文件
     pub fn clear_backup(ops_file_path: &PathBuf) -> std::io::Result<()> {
         if ops_file_path.exists() {
             std::fs::remove_file(ops_file_path)?;

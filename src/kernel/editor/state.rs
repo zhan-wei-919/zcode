@@ -108,6 +108,8 @@ pub struct EditorTabState {
     pub viewport: EditorViewportState,
     pub history: EditHistory,
     pub dirty: bool,
+    pub edit_version: u64,
+    pub last_edit_op: Option<EditOp>,
     pub mouse: EditorMouseState,
     syntax: Option<SyntaxDocument>,
 }
@@ -138,6 +140,8 @@ impl EditorTabState {
             },
             history,
             dirty: false,
+            edit_version: 0,
+            last_edit_op: None,
             mouse: EditorMouseState::new(),
             syntax: None,
         }
@@ -163,6 +167,8 @@ impl EditorTabState {
             },
             history,
             dirty: false,
+            edit_version: 0,
+            last_edit_op: None,
             mouse: EditorMouseState::new(),
             syntax,
         }
@@ -198,6 +204,10 @@ impl EditorTabState {
             return;
         };
         syntax.apply_edit(self.buffer.rope(), op);
+    }
+
+    pub(super) fn bump_version(&mut self) {
+        self.edit_version = self.edit_version.saturating_add(1);
     }
 
     pub(super) fn reparse_syntax(&mut self) {

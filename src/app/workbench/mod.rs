@@ -8,7 +8,7 @@ use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::kernel::services::adapters::{
     ClipboardService, ConfigService, FileService, GlobalSearchService, GlobalSearchTask,
-    KeybindingContext, KeybindingService, SearchService, SearchTask,
+    KeybindingContext, KeybindingService, LspService, SearchService, SearchTask,
 };
 use crate::kernel::services::KernelServiceHost;
 use crate::kernel::services::ports::{EditorConfig, GlobalSearchMessage, SearchMessage};
@@ -71,9 +71,11 @@ pub struct Workbench {
     last_explorer_view_height: Option<u16>,
     last_search_sidebar_results_height: Option<u16>,
     last_search_panel_results_height: Option<u16>,
+    last_problems_panel_height: Option<u16>,
     last_editor_container_area: Option<Rect>,
     last_editor_splitter_area: Option<Rect>,
     editor_split_dragging: bool,
+    last_problems_click: Option<(Instant, usize)>,
 }
 
 impl Workbench {
@@ -83,6 +85,7 @@ impl Workbench {
         log_rx: Option<Receiver<String>>,
     ) -> std::io::Result<Self> {
         let file_tree = build_file_tree(root_path)?;
+        let absolute_root = file_tree.absolute_root().to_path_buf();
         let mut keybindings = KeybindingService::new();
         let mut theme = UiTheme::default();
         let mut editor_config = EditorConfig::default();
@@ -130,9 +133,15 @@ impl Workbench {
         let _ = kernel_services.register(ConfigService::with_editor_config(editor_config.clone()));
         let _ = kernel_services.register(FileService::new());
         let _ = kernel_services.register(keybindings);
+        let ctx = kernel_services.context();
+        let _ = kernel_services.register(LspService::new(
+            absolute_root.clone(),
+            ctx,
+            runtime.tokio_handle().clone(),
+        ));
 
         let store = Store::new(crate::kernel::AppState::new(
-            root_path.to_path_buf(),
+            absolute_root,
             file_tree,
             editor_config,
         ));
@@ -166,9 +175,11 @@ impl Workbench {
             last_explorer_view_height: None,
             last_search_sidebar_results_height: None,
             last_search_panel_results_height: None,
+            last_problems_panel_height: None,
             last_editor_container_area: None,
             last_editor_splitter_area: None,
             editor_split_dragging: false,
+            last_problems_click: None,
         })
     }
 

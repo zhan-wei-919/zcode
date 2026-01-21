@@ -1,7 +1,3 @@
-//! 视图系统：View trait 定义
-//!
-//! 所有可渲染、可交互的视图组件都实现此 trait
-
 use super::event::InputEvent;
 use ratatui::layout::Rect;
 use ratatui::Frame;

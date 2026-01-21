@@ -9,7 +9,7 @@ use crate::views::{compute_editor_pane_layout, cursor_position_editor, render_ed
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
@@ -102,6 +102,14 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
     if let Some(panel_area) = bottom_panel_area {
         let _scope = perf::scope("render.panel");
         workbench.render_bottom_panel(frame, panel_area);
+    }
+
+    if workbench.store.state().ui.hover_message.is_some()
+        && !workbench.store.state().ui.command_palette.visible
+        && !workbench.store.state().ui.input_dialog.visible
+        && !workbench.store.state().ui.confirm_dialog.visible
+    {
+        workbench.render_hover_popup(frame, area);
     }
 
     if workbench.store.state().ui.command_palette.visible {
@@ -395,12 +403,77 @@ impl Workbench {
         frame.render_widget(Paragraph::new(line), area);
     }
 
-    fn render_bottom_panel_problems(&self, frame: &mut Frame, area: Rect) {
-        let msg = Line::from(Span::styled(
-            "No problems",
-            Style::default().fg(self.theme.palette_muted_fg),
-        ));
-        frame.render_widget(Paragraph::new(msg), area);
+    fn render_bottom_panel_problems(&mut self, frame: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let height = area.height as usize;
+        self.sync_problems_view_height(area.height);
+
+        let problems_state = &self.store.state().problems;
+        let problems = problems_state.items();
+        if problems.is_empty() {
+            let msg = Line::from(Span::styled(
+                "No problems",
+                Style::default().fg(self.theme.palette_muted_fg),
+            ));
+            frame.render_widget(Paragraph::new(msg), area);
+            return;
+        }
+
+        let start = problems_state.scroll_offset().min(problems.len());
+        let end = (start + height).min(problems.len());
+        let selected = problems_state
+            .selected_index()
+            .min(problems.len().saturating_sub(1));
+
+        let mut lines = Vec::with_capacity(end.saturating_sub(start));
+        for (i, item) in problems.iter().enumerate().take(end).skip(start) {
+            let file_name = item
+                .path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| item.path.to_string_lossy().to_string());
+            let line = item.range.start_line.saturating_add(1);
+            let col = item.range.start_col.saturating_add(1);
+            let is_selected = i == selected;
+            let marker_style = if is_selected {
+                Style::default().fg(self.theme.focus_border)
+            } else {
+                Style::default().fg(self.theme.palette_muted_fg)
+            };
+            let marker = if is_selected { ">" } else { " " };
+            let severity_style = match item.severity {
+                crate::kernel::problems::ProblemSeverity::Error => {
+                    Style::default().fg(Color::Red)
+                }
+                crate::kernel::problems::ProblemSeverity::Warning => {
+                    Style::default().fg(Color::Yellow)
+                }
+                crate::kernel::problems::ProblemSeverity::Information => {
+                    Style::default().fg(self.theme.palette_muted_fg)
+                }
+                crate::kernel::problems::ProblemSeverity::Hint => {
+                    Style::default().fg(self.theme.palette_muted_fg)
+                }
+            };
+            lines.push(Line::from(vec![
+                Span::styled(marker, marker_style),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{}:{}:{} ", file_name, line, col),
+                    Style::default().fg(self.theme.accent_fg),
+                ),
+                Span::styled(
+                    format!("[{}] ", item.severity.label()),
+                    severity_style,
+                ),
+                Span::raw(item.message.as_str()),
+            ]));
+        }
+
+        frame.render_widget(Paragraph::new(lines), area);
     }
 
     fn render_bottom_panel_logs(&self, frame: &mut Frame, area: Rect) {
@@ -427,6 +500,73 @@ impl Workbench {
         }
 
         frame.render_widget(Paragraph::new(lines), area);
+    }
+
+    fn render_hover_popup(&self, frame: &mut Frame, area: Rect) {
+        let Some(text) = self.store.state().ui.hover_message.as_ref() else {
+            return;
+        };
+        if text.trim().is_empty() {
+            return;
+        }
+
+        let active_pane = self.store.state().ui.editor_layout.active_pane;
+        let pane_area = match self.last_editor_areas.get(active_pane) {
+            Some(area) => *area,
+            None => return,
+        };
+        let Some(pane_state) = self.store.state().editor.pane(active_pane) else {
+            return;
+        };
+        let config = &self.store.state().editor.config;
+        let layout = compute_editor_pane_layout(pane_area, pane_state, config);
+        let Some((cx, cy)) = cursor_position_editor(&layout, pane_state, config) else {
+            return;
+        };
+
+        let mut lines: Vec<&str> = text.lines().collect();
+        if lines.is_empty() {
+            return;
+        }
+        if lines.len() > 6 {
+            lines.truncate(6);
+        }
+
+        let max_line_width = lines
+            .iter()
+            .map(|line| UnicodeWidthStr::width(*line))
+            .max()
+            .unwrap_or(1);
+        let width = (max_line_width as u16 + 2)
+            .min(area.width.max(1))
+            .max(4);
+        let height = (lines.len() as u16 + 2).min(area.height.max(1)).max(3);
+
+        let mut x = cx;
+        if x + width > area.x + area.width {
+            x = area.x + area.width - width;
+        }
+        let below = cy.saturating_add(1);
+        let mut y = if below + height <= area.y + area.height {
+            below
+        } else {
+            cy.saturating_sub(height)
+        };
+        if y < area.y {
+            y = area.y;
+        }
+
+        let popup_area = Rect::new(x, y, width, height);
+        frame.render_widget(Clear, popup_area);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.focus_border));
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let content = lines.join("\n");
+        frame.render_widget(Paragraph::new(content).wrap(Wrap { trim: true }), inner);
     }
 
     fn render_bottom_panel_search_results(&mut self, frame: &mut Frame, area: Rect) {
@@ -952,6 +1092,19 @@ impl Workbench {
 
         let _ = self.dispatch_kernel(KernelAction::SearchSetViewHeight {
             viewport,
+            height: height as usize,
+        });
+    }
+
+    fn sync_problems_view_height(&mut self, height: u16) {
+        if height == 0 {
+            return;
+        }
+        if self.last_problems_panel_height == Some(height) {
+            return;
+        }
+        self.last_problems_panel_height = Some(height);
+        let _ = self.dispatch_kernel(KernelAction::ProblemsSetViewHeight {
             height: height as usize,
         });
     }

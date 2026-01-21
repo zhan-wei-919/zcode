@@ -5,6 +5,7 @@ pub mod clipboard;
 pub mod config;
 pub mod file;
 pub mod keybinding;
+pub mod lsp;
 pub mod perf;
 pub mod runtime;
 pub mod search;
@@ -17,6 +18,7 @@ pub use clipboard::{ClipboardError, ClipboardService};
 pub use config::ConfigService;
 pub use file::{FileService, LocalFileProvider};
 pub use keybinding::{KeybindingContext, KeybindingService};
+pub use lsp::{LspPosition, LspRange, LspService, LspTextChange};
 pub use runtime::{AppMessage, AsyncRuntime};
 pub use search::{
     search_regex_in_slice, GlobalSearchService, GlobalSearchTask, RopeReader, SearchConfig,

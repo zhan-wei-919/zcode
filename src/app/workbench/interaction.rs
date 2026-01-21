@@ -520,6 +520,45 @@ impl Workbench {
 
                     return EventResult::Consumed;
                 }
+                if active_tab == BottomPanelTab::Problems {
+                    if content_area.width == 0 || content_area.height == 0 {
+                        return EventResult::Ignored;
+                    }
+
+                    let scroll_offset = self.store.state().problems.scroll_offset();
+                    let items_len = self.store.state().problems.items().len();
+                    let row =
+                        (event.row.saturating_sub(content_area.y) as usize) + scroll_offset;
+                    if row >= items_len {
+                        return EventResult::Ignored;
+                    }
+
+                    let now = Instant::now();
+                    let double_click_ms = self.store.state().editor.config.double_click_ms;
+                    let is_double = self
+                        .last_problems_click
+                        .map(|(last_time, last_row)| {
+                            last_row == row
+                                && now.duration_since(last_time).as_millis() as u64
+                                    <= double_click_ms
+                        })
+                        .unwrap_or(false);
+
+                    if is_double {
+                        self.last_problems_click = None;
+                    } else {
+                        self.last_problems_click = Some((now, row));
+                    }
+
+                    let _ = self.dispatch_kernel(KernelAction::ProblemsClickRow { row });
+                    if is_double {
+                        let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                            Command::SearchResultsOpenSelected,
+                        ));
+                    }
+
+                    return EventResult::Consumed;
+                }
 
                 EventResult::Ignored
             }
@@ -531,6 +570,12 @@ impl Workbench {
                     });
                     return EventResult::Consumed;
                 }
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Problems {
+                    let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                        Command::SearchResultsScrollUp,
+                    ));
+                    return EventResult::Consumed;
+                }
                 EventResult::Ignored
             }
             MouseEventKind::ScrollDown => {
@@ -539,6 +584,12 @@ impl Workbench {
                         delta: 3,
                         viewport: SearchViewport::BottomPanel,
                     });
+                    return EventResult::Consumed;
+                }
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Problems {
+                    let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                        Command::SearchResultsScrollDown,
+                    ));
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored

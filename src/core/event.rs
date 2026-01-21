@@ -1,7 +1,3 @@
-//! 事件系统：统一的输入事件定义
-//!
-//! 封装 crossterm 事件，提供统一的事件接口
-
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 #[derive(Debug, Clone)]

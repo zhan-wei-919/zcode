@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use crate::core::Command;
 use crate::kernel::editor::EditorAction;
+use crate::kernel::problems::ProblemItem;
 use crate::kernel::search::SearchViewport;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
@@ -79,6 +80,24 @@ pub enum Action {
         search_id: u64,
     },
     SearchMessage(GlobalSearchMessage),
+    ProblemsClickRow {
+        row: usize,
+    },
+    ProblemsSetViewHeight {
+        height: usize,
+    },
+    LspDiagnostics {
+        path: PathBuf,
+        items: Vec<ProblemItem>,
+    },
+    LspHover {
+        text: String,
+    },
+    LspDefinition {
+        path: PathBuf,
+        line: u32,
+        column: u32,
+    },
     DirLoaded {
         path: PathBuf,
         entries: Vec<DirEntryInfo>,
