@@ -90,6 +90,11 @@ enum LspRequestKind {
     Completion,
     CompletionResolve { item_id: u64 },
     SemanticTokens { path: PathBuf, version: u64 },
+    SemanticTokensRange {
+        path: PathBuf,
+        version: u64,
+        range: LspRange,
+    },
     InlayHints {
         path: PathBuf,
         version: u64,
@@ -264,6 +269,14 @@ impl LspService {
             params,
         ));
         self.send_message(msg, true);
+    }
+
+    pub fn cancel_hover(&mut self) {
+        let prev = self.latest_hover.swap(0, Ordering::Relaxed);
+        if prev != 0 {
+            self.cancel_request(prev);
+            self.untrack_request(prev);
+        }
     }
 
     pub fn request_definition(&mut self, path: &Path, position: LspPosition) {
@@ -574,6 +587,52 @@ impl LspService {
         let msg = Message::Request(Request::new(
             RequestId::from(id),
             lsp_types::request::SemanticTokensFullRequest::METHOD.to_string(),
+            params,
+        ));
+        self.send_message(msg, true);
+    }
+
+    pub fn request_semantic_tokens_range(&mut self, path: &Path, range: LspRange, version: u64) {
+        if !self.ensure_started() {
+            return;
+        }
+
+        if !self.doc_versions.contains_key(path) {
+            return;
+        }
+
+        let Some(uri) = path_to_url(path) else {
+            return;
+        };
+
+        let id = self.next_id();
+        let prev = self.latest_semantic_tokens.swap(id, Ordering::Relaxed);
+        self.track_request(
+            id,
+            LspRequestKind::SemanticTokensRange {
+                path: path.to_path_buf(),
+                version,
+                range,
+            },
+        );
+        if prev != 0 && prev != id {
+            self.cancel_request(prev);
+            self.untrack_request(prev);
+        }
+
+        let params = lsp_types::SemanticTokensRangeParams {
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            text_document: lsp_types::TextDocumentIdentifier { uri },
+            range: lsp_types::Range::new(
+                lsp_types::Position::new(range.start.line, range.start.character),
+                lsp_types::Position::new(range.end.line, range.end.character),
+            ),
+        };
+
+        let msg = Message::Request(Request::new(
+            RequestId::from(id),
+            lsp_types::request::SemanticTokensRangeRequest::METHOD.to_string(),
             params,
         ));
         self.send_message(msg, true);
@@ -1488,7 +1547,8 @@ fn reader_loop(args: ReaderLoopArgs) {
                             resp.id
                                 == RequestId::from(latest_completion_resolve.load(Ordering::Relaxed))
                         }
-                        LspRequestKind::SemanticTokens { .. } => {
+                        LspRequestKind::SemanticTokens { .. }
+                        | LspRequestKind::SemanticTokensRange { .. } => {
                             resp.id
                                 == RequestId::from(latest_semantic_tokens.load(Ordering::Relaxed))
                         }
@@ -1683,6 +1743,30 @@ fn server_capabilities_from_lsp(caps: &lsp_types::ServerCapabilities) -> LspServ
         })
     });
 
+    let (semantic_tokens_range, semantic_tokens_full) = caps
+        .semantic_tokens_provider
+        .as_ref()
+        .map(|provider| {
+            let options = match provider {
+                lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => options,
+                lsp_types::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+                    options,
+                ) => &options.semantic_tokens_options,
+            };
+
+            let range = options.range.unwrap_or(false);
+            let full = options
+                .full
+                .as_ref()
+                .is_some_and(|full| match full {
+                    lsp_types::SemanticTokensFullOptions::Bool(enabled) => *enabled,
+                    lsp_types::SemanticTokensFullOptions::Delta { .. } => true,
+                });
+
+            (range, full)
+        })
+        .unwrap_or((false, false));
+
     LspServerCapabilities {
         position_encoding: encoding,
         hover: hover(&caps.hover_provider),
@@ -1697,6 +1781,8 @@ fn server_capabilities_from_lsp(caps: &lsp_types::ServerCapabilities) -> LspServ
         format: one_of_bool(&caps.document_formatting_provider),
         range_format: one_of_bool(&caps.document_range_formatting_provider),
         semantic_tokens: caps.semantic_tokens_provider.is_some(),
+        semantic_tokens_range,
+        semantic_tokens_full,
         semantic_tokens_legend,
         inlay_hints: one_of_bool(&caps.inlay_hint_provider),
         folding_range: folding(&caps.folding_range_provider),
@@ -1778,7 +1864,7 @@ fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceCont
                 items: Vec::new(),
                 is_incomplete: false,
             }),
-            LspRequestKind::SemanticTokens { .. } => {}
+            LspRequestKind::SemanticTokens { .. } | LspRequestKind::SemanticTokensRange { .. } => {}
             LspRequestKind::InlayHints { .. } => {}
             LspRequestKind::FoldingRange { path, version } => ctx.dispatch(Action::LspFoldingRanges {
                 path: path.clone(),
@@ -1808,7 +1894,7 @@ fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceCont
                 items: Vec::new(),
                 is_incomplete: false,
             }),
-            LspRequestKind::SemanticTokens { .. } => {}
+            LspRequestKind::SemanticTokens { .. } | LspRequestKind::SemanticTokensRange { .. } => {}
             LspRequestKind::InlayHints { .. } => {}
             LspRequestKind::FoldingRange { path, version } => ctx.dispatch(Action::LspFoldingRanges {
                 path: path.clone(),
@@ -1983,6 +2069,30 @@ fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceCont
             ctx.dispatch(Action::LspSemanticTokens {
                 path,
                 version,
+                tokens,
+            });
+        }
+        LspRequestKind::SemanticTokensRange {
+            path,
+            version,
+            range,
+        } => {
+            let resp =
+                serde_json::from_value::<Option<lsp_types::SemanticTokensRangeResult>>(result)
+                    .ok()
+                    .flatten();
+            let Some(resp) = resp else {
+                return;
+            };
+            let tokens = match resp {
+                lsp_types::SemanticTokensRangeResult::Tokens(tokens) => tokens.data,
+                lsp_types::SemanticTokensRangeResult::Partial(tokens) => tokens.data,
+            };
+            let tokens = decode_semantic_tokens(tokens);
+            ctx.dispatch(Action::LspSemanticTokensRange {
+                path,
+                version,
+                range,
                 tokens,
             });
         }
@@ -2898,7 +3008,7 @@ fn client_capabilities() -> lsp_types::ClientCapabilities {
     let semantic_tokens = lsp_types::SemanticTokensClientCapabilities {
         dynamic_registration: Some(false),
         requests: lsp_types::SemanticTokensClientCapabilitiesRequests {
-            range: Some(false),
+            range: Some(true),
             full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
         },
         token_types: vec![

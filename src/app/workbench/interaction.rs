@@ -25,9 +25,15 @@ impl Workbench {
         self.last_input_at = Instant::now();
         self.idle_hover_last_request = None;
         self.pending_completion_deadline = None;
-        self.pending_semantic_tokens_deadline = None;
         self.pending_inlay_hints_deadline = None;
         self.pending_folding_range_deadline = None;
+
+        if let Some(service) =
+            self.kernel_services
+                .get_mut::<crate::kernel::services::adapters::LspService>()
+        {
+            service.cancel_hover();
+        }
 
         if self.store.state().ui.hover_message.is_some() {
             let _ = self.dispatch_kernel(KernelAction::LspHover {
@@ -128,7 +134,28 @@ impl Workbench {
                     return EventResult::Consumed;
                 }
                 KeyCode::Enter => {
+                    let pane = self.store.state().ui.editor_layout.active_pane;
+                    let before_version = self
+                        .store
+                        .state()
+                        .editor
+                        .pane(pane)
+                        .and_then(|pane| pane.active_tab())
+                        .map(|tab| tab.edit_version);
                     let _ = self.dispatch_kernel(KernelAction::CompletionConfirm);
+                    let after_version = self
+                        .store
+                        .state()
+                        .editor
+                        .pane(pane)
+                        .and_then(|pane| pane.active_tab())
+                        .map(|tab| tab.edit_version);
+                    if before_version != after_version {
+                        let refresh = Command::Paste;
+                        self.maybe_schedule_semantic_tokens_debounce(&refresh);
+                        self.maybe_schedule_inlay_hints_debounce(&refresh);
+                        self.maybe_schedule_folding_range_debounce(&refresh);
+                    }
                     return EventResult::Consumed;
                 }
                 _ => {}
@@ -216,6 +243,10 @@ impl Workbench {
                     pane,
                     text: text.to_string(),
                 }));
+                let refresh = Command::Paste;
+                self.maybe_schedule_semantic_tokens_debounce(&refresh);
+                self.maybe_schedule_inlay_hints_debounce(&refresh);
+                self.maybe_schedule_folding_range_debounce(&refresh);
                 EventResult::Consumed
             }
             KeybindingContext::EditorSearchBar => {
@@ -341,10 +372,15 @@ impl Workbench {
             _ => false,
         };
 
-        if should_schedule {
-            self.pending_completion_deadline =
-                Some(Instant::now() + super::COMPLETION_DEBOUNCE_DELAY);
+        if !should_schedule {
+            return;
         }
+
+        if !completion_debounce_context_allowed(tab) {
+            return;
+        }
+
+        self.pending_completion_deadline = Some(Instant::now() + super::COMPLETION_DEBOUNCE_DELAY);
     }
 
     fn maybe_schedule_semantic_tokens_debounce(&mut self, cmd: &Command) {
@@ -378,7 +414,7 @@ impl Workbench {
             return;
         }
 
-        let should_schedule = matches!(
+        let edit_should_schedule = matches!(
             cmd,
             Command::InsertChar(_)
                 | Command::InsertNewline
@@ -394,7 +430,24 @@ impl Workbench {
                 | Command::Cut
         );
 
-        if should_schedule {
+        let move_should_schedule = matches!(
+            cmd,
+            Command::CursorUp
+                | Command::CursorDown
+                | Command::ScrollUp
+                | Command::ScrollDown
+                | Command::PageUp
+                | Command::PageDown
+        ) && self
+            .store
+            .state()
+            .lsp
+            .server_capabilities
+            .as_ref()
+            .is_some_and(|c| c.semantic_tokens_range)
+            && tab.buffer.len_lines().max(1) >= 2000;
+
+        if edit_should_schedule || move_should_schedule {
             self.pending_semantic_tokens_deadline =
                 Some(Instant::now() + super::SEMANTIC_TOKENS_DEBOUNCE_DELAY);
         }
@@ -1116,4 +1169,41 @@ impl Workbench {
 
 fn completion_debounce_triggered_by_inserted_char(inserted: char) -> bool {
     inserted.is_alphanumeric() || inserted == '_'
+}
+
+fn completion_debounce_context_allowed(tab: &crate::kernel::editor::EditorTabState) -> bool {
+    if tab.is_in_string_or_comment_at_cursor() {
+        return false;
+    }
+
+    let (row, col) = tab.buffer.cursor();
+    let cursor_char_offset = tab.buffer.pos_to_char((row, col));
+    let rope = tab.buffer.rope();
+    let end_char = cursor_char_offset.min(rope.len_chars());
+
+    let mut start_char = end_char;
+    while start_char > 0 {
+        let ch = rope.char(start_char - 1);
+        if ch == '_' || unicode_xid::UnicodeXID::is_xid_continue(ch) {
+            start_char = start_char.saturating_sub(1);
+        } else {
+            break;
+        }
+    }
+
+    if start_char != end_char {
+        let first = rope.char(start_char);
+        if first == '_' || unicode_xid::UnicodeXID::is_xid_start(first) {
+            return true;
+        }
+    }
+
+    if start_char > 0 && rope.char(start_char - 1) == '.' {
+        return true;
+    }
+    if start_char >= 2 && rope.char(start_char - 1) == ':' && rope.char(start_char - 2) == ':' {
+        return true;
+    }
+
+    false
 }

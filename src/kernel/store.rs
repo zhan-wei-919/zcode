@@ -168,11 +168,49 @@ impl Store {
                                 };
                                 let version = tab.edit_version;
 
-                                if supports_semantic_tokens {
-                                    effects.push(Effect::LspSemanticTokensRequest {
-                                        path: opened_path.clone(),
-                                        version,
-                                    });
+	                                if supports_semantic_tokens {
+	                                    let use_range = self
+	                                        .state
+	                                        .lsp
+	                                        .server_capabilities
+	                                        .as_ref()
+	                                        .is_none_or(|c| c.semantic_tokens_range)
+	                                        && tab.buffer.len_lines().max(1) >= 2000;
+
+                                    if use_range {
+                                        let total_lines = tab.buffer.len_lines().max(1);
+                                        let viewport_top = tab
+                                            .viewport
+                                            .line_offset
+                                            .min(total_lines.saturating_sub(1));
+                                        let height = tab.viewport.height.max(1);
+                                        let overscan = 40usize.min(total_lines);
+                                        let start_line = viewport_top.saturating_sub(overscan);
+                                        let end_line_exclusive =
+                                            (viewport_top + height + overscan).min(total_lines);
+
+                                        let range = LspRange {
+                                            start: LspPosition {
+                                                line: start_line as u32,
+                                                character: 0,
+                                            },
+                                            end: LspPosition {
+                                                line: end_line_exclusive as u32,
+                                                character: 0,
+                                            },
+                                        };
+
+                                        effects.push(Effect::LspSemanticTokensRangeRequest {
+                                            path: opened_path.clone(),
+                                            version,
+                                            range,
+                                        });
+                                    } else {
+                                        effects.push(Effect::LspSemanticTokensRequest {
+                                            path: opened_path.clone(),
+                                            version,
+                                        });
+                                    }
                                 }
 
                                 if supports_inlay_hints {
@@ -1018,6 +1056,71 @@ impl Store {
                         };
 
                         changed |= tab.set_semantic_highlight(version, lines);
+                    }
+                }
+
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: changed,
+                }
+            }
+            Action::LspSemanticTokensRange {
+                path,
+                version,
+                range,
+                tokens,
+            } => {
+                let Some(legend) = self
+                    .state
+                    .lsp
+                    .server_capabilities
+                    .as_ref()
+                    .and_then(|c| c.semantic_tokens_legend.as_ref())
+                else {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                };
+
+                let start_line = range.start.line as usize;
+                let end_line_exclusive = range.end.line as usize;
+                if end_line_exclusive <= start_line {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                let encoding = lsp_position_encoding(&self.state);
+
+                let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::HighlightSpan>>> =
+                    None;
+                let mut changed = false;
+
+                for pane in &mut self.state.editor.panes {
+                    for tab in &mut pane.tabs {
+                        if tab.path.as_ref() != Some(&path) || tab.edit_version != version {
+                            continue;
+                        }
+
+                        let lines = match snapshot_lines.as_ref() {
+                            Some(lines) => lines.clone(),
+                            None => {
+                                let lines = semantic_highlight_lines_from_tokens_range(
+                                    tab.buffer.rope(),
+                                    &tokens,
+                                    legend,
+                                    encoding,
+                                    start_line,
+                                    end_line_exclusive,
+                                );
+                                snapshot_lines = Some(lines.clone());
+                                lines
+                            }
+                        };
+
+                        changed |= tab.set_semantic_highlight_range(version, start_line, lines);
                     }
                 }
 
@@ -2908,13 +3011,47 @@ impl Store {
                         state_changed: false,
                     };
                 }
-                if let Some((_pane, path, line, column, _version)) = lsp_request_target(&self.state)
-                {
+                let pane = self.state.ui.editor_layout.active_pane;
+                let Some(tab) = self
+                    .state
+                    .editor
+                    .pane(pane)
+                    .and_then(|pane| pane.active_tab())
+                else {
                     return DispatchResult {
-                        effects: vec![Effect::LspHoverRequest { path, line, column }],
+                        effects,
+                        state_changed,
+                    };
+                };
+                let Some(path) = tab.path.as_ref() else {
+                    return DispatchResult {
+                        effects,
+                        state_changed,
+                    };
+                };
+                if !is_rust_source_path(path) {
+                    return DispatchResult {
+                        effects,
                         state_changed,
                     };
                 }
+                if tab.is_in_string_or_comment_at_cursor() || !cursor_is_identifier(tab) {
+                    return DispatchResult {
+                        effects,
+                        state_changed,
+                    };
+                }
+
+                let encoding = lsp_position_encoding(&self.state);
+                let (line, column) = lsp_position_from_cursor(tab, encoding);
+                return DispatchResult {
+                    effects: vec![Effect::LspHoverRequest {
+                        path: path.clone(),
+                        line,
+                        column,
+                    }],
+                    state_changed,
+                };
             }
             Command::LspDefinition => {
                 if !self
@@ -3338,13 +3475,61 @@ impl Store {
                     };
                 }
 
-                if let Some((_pane, path, _line, _column, version)) = lsp_request_target(&self.state)
-                {
+                let pane = self.state.ui.editor_layout.active_pane;
+                let Some(tab) = self.state.editor.pane(pane).and_then(|p| p.active_tab()) else {
+                    return DispatchResult { effects, state_changed };
+                };
+                let Some(path) = tab.path.as_ref().cloned() else {
+                    return DispatchResult { effects, state_changed };
+                };
+                if !is_rust_source_path(&path) {
+                    return DispatchResult { effects, state_changed };
+                }
+
+                let version = tab.edit_version;
+
+	                let use_range = self
+	                    .state
+	                    .lsp
+	                    .server_capabilities
+	                    .as_ref()
+	                    .is_none_or(|c| c.semantic_tokens_range)
+	                    && tab.buffer.len_lines().max(1) >= 2000;
+
+                if use_range {
+                    let total_lines = tab.buffer.len_lines().max(1);
+                    let viewport_top = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
+                    let height = tab.viewport.height.max(1);
+                    let overscan = 40usize.min(total_lines);
+                    let start_line = viewport_top.saturating_sub(overscan);
+                    let end_line_exclusive =
+                        (viewport_top + height + overscan).min(total_lines);
+
+                    let range = LspRange {
+                        start: LspPosition {
+                            line: start_line as u32,
+                            character: 0,
+                        },
+                        end: LspPosition {
+                            line: end_line_exclusive as u32,
+                            character: 0,
+                        },
+                    };
+
                     return DispatchResult {
-                        effects: vec![Effect::LspSemanticTokensRequest { path, version }],
+                        effects: vec![Effect::LspSemanticTokensRangeRequest {
+                            path,
+                            version,
+                            range,
+                        }],
                         state_changed,
                     };
                 }
+
+                return DispatchResult {
+                    effects: vec![Effect::LspSemanticTokensRequest { path, version }],
+                    state_changed,
+                };
             }
             Command::LspInlayHints => {
                 if !self
@@ -3576,26 +3761,40 @@ impl Store {
                 let mut effects = effects;
                 effects.extend(cmd_effects);
 
-                if self.state.ui.completion.visible
-                    && !self.state.ui.completion.all_items.is_empty()
-                    && self
+                if let Some(tab) = self.state.editor.pane(pane).and_then(|p| p.active_tab()) {
+                    let session = self
                         .state
-                        .editor
-                        .pane(pane)
-                        .and_then(|pane| pane.active_tab())
-                        .is_some_and(|tab| {
-                            self.state
-                                .ui
-                                .completion
-                                .request
-                                .as_ref()
-                                .is_some_and(|session| {
-                                    session.pane == pane
-                                        && tab.path.as_ref() == Some(&session.path)
-                                })
-                        })
-                {
-                    if let Some(tab) = self.state.editor.pane(pane).and_then(|p| p.active_tab()) {
+                        .ui
+                        .completion
+                        .request
+                        .as_ref()
+                        .or(self.state.ui.completion.pending_request.as_ref());
+
+                    let session_ok = session.is_some_and(|session| {
+                        session.pane == pane && tab.path.as_ref() == Some(&session.path)
+                    });
+
+                    if session_ok && !completion_should_keep_open(tab) {
+                        let has_completion = self.state.ui.completion.visible
+                            || self.state.ui.completion.request.is_some()
+                            || self.state.ui.completion.pending_request.is_some()
+                            || !self.state.ui.completion.all_items.is_empty()
+                            || !self.state.ui.completion.items.is_empty();
+                        if has_completion {
+                            self.state.ui.completion =
+                                super::state::CompletionPopupState::default();
+                            state_changed = true;
+                        }
+                        return DispatchResult {
+                            effects,
+                            state_changed,
+                        };
+                    }
+
+                    if session_ok
+                        && self.state.ui.completion.visible
+                        && !self.state.ui.completion.all_items.is_empty()
+                    {
                         let mut changed =
                             sync_completion_items_from_cache(&mut self.state.ui.completion, tab);
 
@@ -3997,6 +4196,71 @@ fn semantic_highlight_lines_from_tokens(
     lines
 }
 
+fn semantic_highlight_lines_from_tokens_range(
+    rope: &ropey::Rope,
+    tokens: &[crate::kernel::services::ports::LspSemanticToken],
+    legend: &crate::kernel::services::ports::LspSemanticTokensLegend,
+    encoding: LspPositionEncoding,
+    start_line: usize,
+    end_line_exclusive: usize,
+) -> Vec<Vec<crate::kernel::editor::HighlightSpan>> {
+    if start_line >= end_line_exclusive {
+        return Vec::new();
+    }
+
+    let total_lines = rope.len_lines().max(1);
+    let start_line = start_line.min(total_lines.saturating_sub(1));
+    let end_line_exclusive = end_line_exclusive.min(total_lines);
+    if end_line_exclusive <= start_line {
+        return Vec::new();
+    }
+
+    let mut lines = vec![Vec::new(); end_line_exclusive.saturating_sub(start_line)];
+
+    for token in tokens {
+        let Some(token_type) = legend.token_types.get(token.token_type as usize) else {
+            continue;
+        };
+        let Some(kind) = highlight_kind_for_semantic_token(token_type.as_str()) else {
+            continue;
+        };
+
+        let line_index = token.line as usize;
+        if line_index < start_line || line_index >= end_line_exclusive {
+            continue;
+        }
+
+        let line_slice = rope.line(line_index);
+        let start_chars = lsp_col_to_char_offset_in_line(line_slice, token.start, encoding);
+        let end_units = token.start.saturating_add(token.length);
+        let end_chars = lsp_col_to_char_offset_in_line(line_slice, end_units, encoding);
+
+        let line_start_char = rope.line_to_char(line_index);
+        let start_char = (line_start_char + start_chars).min(rope.len_chars());
+        let end_char = (line_start_char + end_chars).min(rope.len_chars());
+
+        let line_start_byte = rope.line_to_byte(line_index);
+        let start_byte = rope.char_to_byte(start_char);
+        let end_byte = rope.char_to_byte(end_char);
+
+        let start = start_byte.saturating_sub(line_start_byte);
+        let end = end_byte.saturating_sub(line_start_byte);
+        if end <= start {
+            continue;
+        }
+
+        lines[line_index.saturating_sub(start_line)]
+            .push(crate::kernel::editor::HighlightSpan { start, end, kind });
+    }
+
+    for line_spans in &mut lines {
+        line_spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+        merge_adjacent_highlight_spans(line_spans);
+    }
+
+    lines
+}
+
 fn highlight_kind_for_semantic_token(
     token_type: &str,
 ) -> Option<crate::kernel::editor::HighlightKind> {
@@ -4153,6 +4417,12 @@ fn starts_with_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
 }
 
 fn completion_prefix_at_cursor(tab: &super::editor::EditorTabState) -> String {
+    let rope = tab.buffer.rope();
+    let (start_char, end_char) = completion_prefix_bounds_at_cursor(tab);
+    rope.slice(start_char..end_char).to_string()
+}
+
+fn completion_prefix_bounds_at_cursor(tab: &super::editor::EditorTabState) -> (usize, usize) {
     let (row, col) = tab.buffer.cursor();
     let cursor_char_offset = tab.buffer.pos_to_char((row, col));
     let rope = tab.buffer.rope();
@@ -4168,7 +4438,28 @@ fn completion_prefix_at_cursor(tab: &super::editor::EditorTabState) -> String {
         }
     }
 
-    rope.slice(start_char..end_char).to_string()
+    (start_char, end_char)
+}
+
+fn completion_should_keep_open(tab: &super::editor::EditorTabState) -> bool {
+    if tab.is_in_string_or_comment_at_cursor() {
+        return false;
+    }
+
+    let (start_char, end_char) = completion_prefix_bounds_at_cursor(tab);
+    if start_char != end_char {
+        return true;
+    }
+
+    let rope = tab.buffer.rope();
+    if start_char > 0 && rope.char(start_char - 1) == '.' {
+        return true;
+    }
+    if start_char >= 2 && rope.char(start_char - 1) == ':' && rope.char(start_char - 2) == ':' {
+        return true;
+    }
+
+    false
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4486,6 +4777,18 @@ fn lsp_position_from_cursor(
     encoding: LspPositionEncoding,
 ) -> (u32, u32) {
     lsp_position_from_buffer_pos(tab, tab.buffer.cursor(), encoding)
+}
+
+fn cursor_is_identifier(tab: &super::editor::EditorTabState) -> bool {
+    let (row, col) = tab.buffer.cursor();
+    let char_offset = tab.buffer.pos_to_char((row, col));
+    let rope = tab.buffer.rope();
+    let char_offset = char_offset.min(rope.len_chars());
+    if char_offset >= rope.len_chars() {
+        return false;
+    }
+    let ch = rope.char(char_offset);
+    ch == '_' || unicode_xid::UnicodeXID::is_xid_continue(ch)
 }
 
 fn lsp_position_from_buffer_pos(

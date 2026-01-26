@@ -191,7 +191,7 @@ fn handle_request(
                                 ],
                                 token_modifiers: Vec::new(),
                             },
-                            range: Some(false),
+                            range: Some(true),
                             full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
                         },
                     ),
@@ -224,6 +224,14 @@ fn handle_request(
                     },
                     work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
                 });
+
+            if let Ok(delay) = std::env::var("ZCODE_LSP_STUB_HOVER_DELAY_MS") {
+                if let Ok(delay) = delay.trim().parse::<u64>() {
+                    if delay > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(delay));
+                    }
+                }
+            }
 
             let pos = params.text_document_position_params.position;
             let text = format!("stub hover @{}:{}", pos.line, pos.character);
@@ -392,6 +400,62 @@ fn handle_request(
                 Response::new_ok(
                     req.id,
                     Some(lsp_types::SemanticTokensResult::Tokens(tokens)),
+                ),
+                params
+                    .text_document
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.parent().map(|dir| dir.to_path_buf())),
+                Vec::new(),
+            )
+        }
+        m if m == lsp_types::request::SemanticTokensRangeRequest::METHOD => {
+            let params =
+                serde_json::from_value::<lsp_types::SemanticTokensRangeParams>(req.params)
+                    .unwrap_or_else(|_| lsp_types::SemanticTokensRangeParams {
+                        work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+                        partial_result_params: lsp_types::PartialResultParams::default(),
+                        text_document: lsp_types::TextDocumentIdentifier {
+                            uri: lsp_types::Url::parse("file:///").unwrap(),
+                        },
+                        range: lsp_types::Range::new(
+                            lsp_types::Position::new(0, 0),
+                            lsp_types::Position::new(1, 0),
+                        ),
+                    });
+
+            let target_line = params.range.start.line;
+            let keyword_len = position_encoding.col_units_for_str("fn");
+            let fn_name_start = position_encoding.col_units_for_str("fn ");
+            let fn_name_len = position_encoding.col_units_for_str("main");
+
+            let data = vec![
+                lsp_types::SemanticToken {
+                    delta_line: target_line,
+                    delta_start: 0,
+                    length: keyword_len,
+                    token_type: 0,
+                    token_modifiers_bitset: 0,
+                },
+                lsp_types::SemanticToken {
+                    delta_line: 0,
+                    delta_start: fn_name_start,
+                    length: fn_name_len,
+                    token_type: 1,
+                    token_modifiers_bitset: 0,
+                },
+            ];
+
+            let tokens = lsp_types::SemanticTokens {
+                result_id: None,
+                data,
+            };
+
+            (
+                Response::new_ok(
+                    req.id,
+                    Some(lsp_types::SemanticTokensRangeResult::Tokens(tokens)),
                 ),
                 params
                     .text_document

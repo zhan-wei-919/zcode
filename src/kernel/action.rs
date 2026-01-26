@@ -157,6 +157,12 @@ pub enum Action {
         version: u64,
         tokens: Vec<LspSemanticToken>,
     },
+    LspSemanticTokensRange {
+        path: PathBuf,
+        version: u64,
+        range: crate::kernel::services::ports::LspRange,
+        tokens: Vec<LspSemanticToken>,
+    },
     LspInlayHints {
         path: PathBuf,
         version: u64,

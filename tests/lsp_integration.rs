@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use tempfile::tempdir;
 use zcode::app::Workbench;
 use zcode::core::event::{InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use zcode::kernel::editor::{HighlightKind, HighlightSpan};
 use zcode::kernel::{BottomPanelTab, FocusTarget};
 use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use zcode::kernel::services::ports::LspPositionEncoding;
@@ -1172,4 +1173,417 @@ fn test_completion_popup_does_not_close_on_background_lsp_requests() {
         }
         started.elapsed() >= Duration::from_millis(350)
     });
+}
+
+#[test]
+fn test_idle_hover_does_not_trigger_when_cursor_not_on_identifier() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().lsp.server_capabilities.is_some()
+    });
+
+    for ch in "let content = String::from(\"Hello\")".chars() {
+        let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+    }
+
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(2) {
+        drain_runtime_messages(&mut workbench, &rx);
+        workbench.tick();
+        assert!(
+            workbench.state().ui.hover_message.is_none(),
+            "unexpected hover message: {:?}",
+            workbench.state().ui.hover_message
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn test_hover_response_does_not_show_after_user_input() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str())
+        .set(
+            "ZCODE_LSP_STUB_HOVER_DELAY_MS",
+            std::ffi::OsStr::new("200"),
+        );
+
+    std::fs::write(&a_path, "fn main() {}\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().lsp.server_capabilities.is_some()
+    });
+
+    let hover = KeyEvent {
+        code: KeyCode::F(2),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(hover));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |_| {
+        let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/hover")
+    });
+
+    let insert = KeyEvent {
+        code: KeyCode::Char('x'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(insert));
+
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(450) {
+        drain_runtime_messages(&mut workbench, &rx);
+        workbench.tick();
+        assert!(
+            workbench.state().ui.hover_message.is_none(),
+            "unexpected hover message: {:?}",
+            workbench.state().ui.hover_message
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+    assert!(
+        trace
+            .lines()
+            .any(|line| line.trim() == "notification $/cancelRequest"),
+        "expected cancelRequest notification, trace:\n{trace}"
+    );
+}
+
+#[test]
+fn test_completion_closes_after_deleting_trigger() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().lsp.server_capabilities.is_some()
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char('.'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().ui.completion.visible
+            && w.state().ui.completion.items.iter().any(|item| item.label == "stubItem")
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Backspace,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(400) {
+        drain_runtime_messages(&mut workbench, &rx);
+        workbench.tick();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(!workbench.state().ui.completion.visible);
+    assert!(workbench.state().ui.completion.items.is_empty());
+    assert!(workbench.state().ui.completion.request.is_none());
+    assert!(workbench.state().ui.completion.pending_request.is_none());
+}
+
+#[test]
+fn test_completion_filters_items_while_typing() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().lsp.server_capabilities.is_some()
+    });
+
+    let completion = KeyEvent {
+        code: KeyCode::Char(' '),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(completion));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().ui.completion.visible
+            && w.state().ui.completion.items.iter().any(|item| item.label == "stubSnippet")
+    });
+
+    for ch in "stubI".chars() {
+        let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+    }
+
+    let labels = workbench
+        .state()
+        .ui
+        .completion
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(labels, vec!["stubItem", "stubItem2"]);
+}
+
+#[test]
+fn test_semantic_tokens_apply_expected_highlight_kinds() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "fn main() {}\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state()
+            .lsp
+            .server_capabilities
+            .as_ref()
+            .is_some_and(|c| c.semantic_tokens)
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::End,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char(' '),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
+            return false;
+        };
+        let Some(lines) = tab.semantic_highlight_lines(0, 1) else {
+            return false;
+        };
+        lines.get(0).is_some_and(|spans| {
+            spans.contains(&HighlightSpan {
+                start: 0,
+                end: 2,
+                kind: HighlightKind::Keyword,
+            }) && spans.contains(&HighlightSpan {
+                start: 3,
+                end: 7,
+                kind: HighlightKind::Function,
+            })
+        })
+    });
+}
+
+#[test]
+fn test_semantic_tokens_range_is_used_for_large_files() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    let mut content = String::new();
+    for _ in 0..2100 {
+        content.push_str("fn main() {}\n");
+    }
+    std::fs::write(&a_path, content).unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state()
+            .problems
+            .items()
+            .iter()
+            .any(|item| item.message == "didOpen")
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::End,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char(' '),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |_| {
+        let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/semanticTokens/range")
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
+            return false;
+        };
+        let Some(lines) = tab.semantic_highlight_lines(0, 1) else {
+            return false;
+        };
+        lines.get(0).is_some_and(|spans| {
+            spans.contains(&HighlightSpan {
+                start: 0,
+                end: 2,
+                kind: HighlightKind::Keyword,
+            }) && spans.contains(&HighlightSpan {
+                start: 3,
+                end: 7,
+                kind: HighlightKind::Function,
+            })
+        })
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char('x'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+    assert!(
+        workbench
+            .state()
+            .editor
+            .pane(0)
+            .and_then(|pane| pane.active_tab())
+            .and_then(|tab| tab.semantic_highlight_lines(0, 1))
+            .is_some(),
+        "semantic highlight unexpectedly cleared after edit"
+    );
 }

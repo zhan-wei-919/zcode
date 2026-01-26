@@ -50,7 +50,7 @@ const GLOBAL_SEARCH_CHANNEL_CAP: usize = 64;
 const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 const HOVER_IDLE_DELAY: Duration = Duration::from_millis(500);
 const COMPLETION_DEBOUNCE_DELAY: Duration = Duration::from_millis(60);
-const SEMANTIC_TOKENS_DEBOUNCE_DELAY: Duration = Duration::from_millis(350);
+const SEMANTIC_TOKENS_DEBOUNCE_DELAY: Duration = Duration::from_millis(200);
 const INLAY_HINTS_DEBOUNCE_DELAY: Duration = Duration::from_millis(200);
 const FOLDING_RANGE_DEBOUNCE_DELAY: Duration = Duration::from_millis(250);
 

@@ -208,6 +208,22 @@ impl EditorTabState {
         self.syntax.as_ref().map(|s| s.language())
     }
 
+    pub fn is_in_string_or_comment_at_char(&self, char_offset: usize) -> bool {
+        let Some(syntax) = self.syntax.as_ref() else {
+            return false;
+        };
+        let rope = self.buffer.rope();
+        let char_offset = char_offset.min(rope.len_chars());
+        let byte_offset = rope.char_to_byte(char_offset);
+        syntax.is_in_string_or_comment(byte_offset)
+    }
+
+    pub fn is_in_string_or_comment_at_cursor(&self) -> bool {
+        let (row, col) = self.buffer.cursor();
+        let char_offset = self.buffer.pos_to_char((row, col));
+        self.is_in_string_or_comment_at_char(char_offset)
+    }
+
     pub fn highlight_lines(
         &self,
         start_line: usize,
@@ -223,12 +239,7 @@ impl EditorTabState {
         end_line_exclusive: usize,
     ) -> Option<&[Vec<HighlightSpan>]> {
         let semantic = self.semantic_highlight.as_ref()?;
-        let start = start_line.min(semantic.lines.len());
-        let end = end_line_exclusive.min(semantic.lines.len());
-        if start >= end {
-            return None;
-        }
-        Some(&semantic.lines[start..end])
+        semantic.lines(start_line, end_line_exclusive)
     }
 
     pub fn set_semantic_highlight(
@@ -236,15 +247,46 @@ impl EditorTabState {
         version: u64,
         lines: Vec<Vec<HighlightSpan>>,
     ) -> bool {
+        let segment = SemanticHighlightSegment::new(0, lines.clone());
         let same = self
             .semantic_highlight
             .as_ref()
-            .is_some_and(|s| s.version == version && s.lines == lines);
+            .is_some_and(|s| s.version == version && s.segments == vec![segment.clone()]);
         if same {
             return false;
         }
 
-        self.semantic_highlight = Some(SemanticHighlightState { version, lines });
+        self.semantic_highlight = Some(SemanticHighlightState {
+            version,
+            segments: vec![segment],
+        });
+        true
+    }
+
+    pub fn set_semantic_highlight_range(
+        &mut self,
+        version: u64,
+        start_line: usize,
+        lines: Vec<Vec<HighlightSpan>>,
+    ) -> bool {
+        if lines.is_empty() {
+            return false;
+        }
+
+        let end_line_exclusive = start_line.saturating_add(lines.len());
+        let semantic = self
+            .semantic_highlight
+            .get_or_insert_with(|| SemanticHighlightState {
+                version,
+                segments: Vec::new(),
+            });
+
+        if semantic.version != version {
+            semantic.version = version;
+            semantic.segments.clear();
+        }
+
+        semantic.replace_range(start_line, end_line_exclusive, lines);
         true
     }
 
@@ -253,187 +295,49 @@ impl EditorTabState {
             return;
         };
 
-        fn is_word_byte(b: u8) -> bool {
-            matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
-        }
-
-        fn shift_byte_offset(value: usize, delta: isize) -> Option<usize> {
-            if delta >= 0 {
-                value.checked_add(delta as usize)
-            } else {
-                value.checked_sub(delta.wrapping_abs() as usize)
-            }
-        }
-
-        let (start_char, inserted_text, deleted_text, invalidates_following_lines) = match &op.kind {
-            OpKind::Insert { char_offset, text } => {
-                (*char_offset, text.as_str(), "", text.contains('\n'))
-            }
-            OpKind::Delete { start, deleted, .. } => (*start, "", deleted.as_str(), deleted.contains('\n')),
+        let (start_char, inserted_text, deleted_text) = match &op.kind {
+            OpKind::Insert { char_offset, text } => (*char_offset, text.as_str(), ""),
+            OpKind::Delete { start, deleted, .. } => (*start, "", deleted.as_str()),
             OpKind::Replace {
                 start,
                 deleted,
                 inserted,
                 ..
-            } => (
-                *start,
-                inserted.as_str(),
-                deleted.as_str(),
-                deleted.contains('\n') || inserted.contains('\n'),
-            ),
+            } => (*start, inserted.as_str(), deleted.as_str()),
         };
 
-        if semantic.lines.is_empty() {
+        if semantic.segments.is_empty() {
             return;
         }
 
         let rope = self.buffer.rope();
         let start_char = start_char.min(rope.len_chars());
+        let start_line = rope.char_to_line(start_char);
         let start_byte = rope.char_to_byte(start_char);
-        let start_line = rope.byte_to_line(start_byte);
-
-        if invalidates_following_lines {
-            let start = start_line.min(semantic.lines.len());
-            for line in semantic.lines.iter_mut().skip(start) {
-                line.clear();
-            }
-            return;
-        }
-
-        let Some(spans) = semantic.lines.get_mut(start_line) else {
-            return;
-        };
-
         let line_start_byte = rope.line_to_byte(start_line);
         let local_start_byte = start_byte.saturating_sub(line_start_byte);
-        let inserted_len = inserted_text.len();
-        let deleted_len = deleted_text.len();
-        let delta = inserted_len as isize - deleted_len as isize;
 
-        let mut line = rope.line(start_line).to_string();
-        if line.ends_with('\n') {
-            line.pop();
-            if line.ends_with('\r') {
-                line.pop();
-            }
-        } else if line.ends_with('\r') {
-            line.pop();
-        }
+        let inserted_lines = inserted_text.matches('\n').count();
+        let deleted_lines = deleted_text.matches('\n').count();
+        let delta_lines = inserted_lines as isize - deleted_lines as isize;
 
-        let line_bytes = line.as_bytes();
-        let line_len = line_bytes.len();
-        let local_start_byte = local_start_byte.min(line_len);
-        let right_index = local_start_byte
-            .saturating_add(inserted_len)
-            .min(line_len);
-
-        let inserted_has_word = inserted_text.bytes().any(is_word_byte);
-        let deleted_has_word = deleted_text.bytes().any(is_word_byte);
-
-        let find_word_bounds = |anchor: usize| -> (usize, usize) {
-            let mut start = anchor;
-            while start > 0 && is_word_byte(line_bytes[start - 1]) {
-                start = start.saturating_sub(1);
-            }
-            let mut end = anchor.saturating_add(1);
-            while end < line_len && is_word_byte(line_bytes[end]) {
-                end = end.saturating_add(1);
-            }
-            (start, end)
-        };
-
-        let invalidate_range: Option<(usize, usize)> = if inserted_has_word {
-            let mut anchor = None;
-            if local_start_byte < right_index {
-                anchor = (local_start_byte..right_index)
-                    .find(|&idx| is_word_byte(line_bytes[idx]));
-            }
-
-            let anchor = anchor.or_else(|| {
-                if local_start_byte < line_len && is_word_byte(line_bytes[local_start_byte]) {
-                    Some(local_start_byte)
-                } else if local_start_byte > 0 && is_word_byte(line_bytes[local_start_byte - 1]) {
-                    Some(local_start_byte - 1)
-                } else {
-                    None
-                }
-            });
-
-            anchor.map(find_word_bounds)
-        } else if deleted_has_word {
-            let anchor = if local_start_byte < line_len && is_word_byte(line_bytes[local_start_byte]) {
-                Some(local_start_byte)
-            } else if local_start_byte > 0 && is_word_byte(line_bytes[local_start_byte - 1]) {
-                Some(local_start_byte - 1)
-            } else {
-                None
-            };
-
-            anchor.map(find_word_bounds)
+        if inserted_lines == 0 && deleted_lines == 0 {
+            semantic.apply_byte_edit(
+                start_line,
+                local_start_byte,
+                deleted_text.len(),
+                inserted_text.len(),
+            );
         } else {
-            let left_is_word =
-                local_start_byte > 0 && is_word_byte(line_bytes[local_start_byte - 1]);
-            let right_is_word = right_index < line_len && is_word_byte(line_bytes[right_index]);
-            if !left_is_word || !right_is_word {
-                None
-            } else {
-                let mut start = local_start_byte.saturating_sub(1);
-                while start > 0 && is_word_byte(line_bytes[start - 1]) {
-                    start = start.saturating_sub(1);
-                }
-                let mut end = right_index;
-                while end < line_len && is_word_byte(line_bytes[end]) {
-                    end = end.saturating_add(1);
-                }
-                Some((start, end))
-            }
-        };
-
-        let old_edit_end = local_start_byte.saturating_add(deleted_len);
-
-        let mut next: Vec<HighlightSpan> = Vec::with_capacity(spans.len());
-        for span in spans.iter().copied() {
-            if span.end > local_start_byte && span.start < old_edit_end {
-                continue;
-            }
-
-            let mut start = span.start;
-            let mut end = span.end;
-
-            if span.start >= old_edit_end {
-                let Some(new_start) = shift_byte_offset(start, delta) else {
-                    continue;
-                };
-                let Some(new_end) = shift_byte_offset(end, delta) else {
-                    continue;
-                };
-                start = new_start;
-                end = new_end;
-            }
-
-            if end <= start {
-                continue;
-            }
-
-            if let Some((invalidate_start, invalidate_end)) = invalidate_range {
-                if end > invalidate_start && start < invalidate_end {
-                    continue;
-                }
-            }
-
-            next.push(HighlightSpan {
-                start,
-                end,
-                kind: span.kind,
-            });
+            semantic.apply_newline_edit(start_line, delta_lines);
         }
 
-        *spans = next;
+        semantic.version = self.edit_version.saturating_add(1);
     }
 
     pub(crate) fn semantic_highlight_line(&self, line: usize) -> Option<&[HighlightSpan]> {
         let semantic = self.semantic_highlight.as_ref()?;
-        semantic.lines.get(line).map(|spans| spans.as_slice())
+        semantic.line(line)
     }
 
     pub fn inlay_hint_lines(&self, start_line: usize, end_line_exclusive: usize) -> Option<&[Vec<String>]> {
@@ -731,7 +635,256 @@ impl EditorTabState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticHighlightState {
     pub version: u64,
-    pub lines: Vec<Vec<HighlightSpan>>,
+    segments: Vec<SemanticHighlightSegment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SemanticHighlightSegment {
+    start_line: usize,
+    lines: Vec<Vec<HighlightSpan>>,
+}
+
+impl SemanticHighlightSegment {
+    fn new(start_line: usize, lines: Vec<Vec<HighlightSpan>>) -> Self {
+        Self { start_line, lines }
+    }
+
+    fn end_line_exclusive(&self) -> usize {
+        self.start_line.saturating_add(self.lines.len())
+    }
+}
+
+impl SemanticHighlightState {
+    fn replace_range(
+        &mut self,
+        start_line: usize,
+        end_line_exclusive: usize,
+        lines: Vec<Vec<HighlightSpan>>,
+    ) {
+        if start_line >= end_line_exclusive {
+            return;
+        }
+
+        let mut segments = std::mem::take(&mut self.segments);
+        let mut next: Vec<SemanticHighlightSegment> = Vec::with_capacity(segments.len() + 1);
+
+        for seg in segments.drain(..) {
+            let seg_start = seg.start_line;
+            let seg_end = seg.end_line_exclusive();
+
+            if seg_end <= start_line || seg_start >= end_line_exclusive {
+                next.push(seg);
+                continue;
+            }
+
+            let overlap_start = seg_start.max(start_line);
+            let overlap_end = seg_end.min(end_line_exclusive);
+            let left_keep = overlap_start.saturating_sub(seg_start);
+            let right_keep_start = overlap_end.saturating_sub(seg_start);
+
+            let mut seg_lines = seg.lines;
+            let right_lines = seg_lines.split_off(right_keep_start.min(seg_lines.len()));
+            seg_lines.truncate(left_keep.min(seg_lines.len()));
+
+            if !seg_lines.is_empty() {
+                next.push(SemanticHighlightSegment::new(seg_start, seg_lines));
+            }
+
+            if !right_lines.is_empty() {
+                next.push(SemanticHighlightSegment::new(overlap_end, right_lines));
+            }
+        }
+
+        next.push(SemanticHighlightSegment::new(start_line, lines));
+        next.sort_by(|a, b| a.start_line.cmp(&b.start_line));
+
+        let mut merged: Vec<SemanticHighlightSegment> = Vec::with_capacity(next.len());
+        for seg in next.into_iter() {
+            let Some(last) = merged.last_mut() else {
+                merged.push(seg);
+                continue;
+            };
+
+            if last.end_line_exclusive() == seg.start_line {
+                last.lines.extend(seg.lines);
+            } else {
+                merged.push(seg);
+            }
+        }
+
+        self.segments = merged;
+    }
+
+    fn line(&self, line: usize) -> Option<&[HighlightSpan]> {
+        let idx = self
+            .segments
+            .partition_point(|seg| seg.start_line <= line);
+        let seg = self.segments.get(idx.checked_sub(1)?)?;
+        if line < seg.end_line_exclusive() {
+            seg.lines
+                .get(line.saturating_sub(seg.start_line))
+                .map(|spans| spans.as_slice())
+        } else {
+            None
+        }
+    }
+
+    fn lines(&self, start_line: usize, end_line_exclusive: usize) -> Option<&[Vec<HighlightSpan>]> {
+        if start_line >= end_line_exclusive {
+            return None;
+        }
+
+        let idx = self
+            .segments
+            .partition_point(|seg| seg.start_line <= start_line);
+        let seg = self.segments.get(idx.checked_sub(1)?)?;
+        let seg_end = seg.end_line_exclusive();
+        if start_line < seg.start_line || end_line_exclusive > seg_end {
+            return None;
+        }
+
+        let start = start_line.saturating_sub(seg.start_line);
+        let end = end_line_exclusive.saturating_sub(seg.start_line).min(seg.lines.len());
+        if start >= end {
+            return None;
+        }
+        Some(&seg.lines[start..end])
+    }
+
+    fn apply_byte_edit(
+        &mut self,
+        line: usize,
+        local_start_byte: usize,
+        deleted_len: usize,
+        inserted_len: usize,
+    ) {
+        let idx = self
+            .segments
+            .partition_point(|seg| seg.start_line <= line);
+        let Some(seg) = idx.checked_sub(1).and_then(|idx| self.segments.get_mut(idx)) else {
+            return;
+        };
+        if line >= seg.end_line_exclusive() {
+            return;
+        }
+
+        let Some(spans) = seg.lines.get_mut(line.saturating_sub(seg.start_line)) else {
+            return;
+        };
+        if spans.is_empty() {
+            return;
+        }
+
+        let del_end = local_start_byte.saturating_add(deleted_len);
+        let delta = inserted_len as isize - deleted_len as isize;
+
+        fn shift(value: usize, delta: isize) -> Option<usize> {
+            if delta >= 0 {
+                value.checked_add(delta as usize)
+            } else {
+                value.checked_sub(delta.wrapping_abs() as usize)
+            }
+        }
+
+        let mut next: Vec<HighlightSpan> = Vec::with_capacity(spans.len());
+        for mut span in spans.iter().copied() {
+            if deleted_len == 0 {
+                if span.start >= local_start_byte {
+                    span.start = span.start.saturating_add(inserted_len);
+                }
+                if span.end > local_start_byte {
+                    span.end = span.end.saturating_add(inserted_len);
+                }
+            } else {
+                if span.start >= del_end {
+                    let Some(new_start) = shift(span.start, delta) else {
+                        continue;
+                    };
+                    span.start = new_start;
+                } else if span.start >= local_start_byte {
+                    span.start = local_start_byte;
+                }
+
+                if span.end >= del_end {
+                    let Some(new_end) = shift(span.end, delta) else {
+                        continue;
+                    };
+                    span.end = new_end;
+                } else if span.end > local_start_byte {
+                    span.end = local_start_byte;
+                }
+            }
+
+            if span.end <= span.start {
+                continue;
+            }
+            next.push(span);
+        }
+
+        next.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+        merge_adjacent_highlight_spans(&mut next);
+        *spans = next;
+    }
+
+    fn apply_newline_edit(&mut self, line: usize, delta_lines: isize) {
+        if delta_lines == 0 {
+            return;
+        }
+
+        let inserted = delta_lines.max(0) as usize;
+        let deleted = delta_lines.min(0).wrapping_abs() as usize;
+
+        for idx in 0..self.segments.len() {
+            let seg_start = self.segments[idx].start_line;
+            let seg_end = self.segments[idx].end_line_exclusive();
+
+            if seg_start > line {
+                self.segments[idx].start_line = if delta_lines >= 0 {
+                    seg_start.saturating_add(inserted)
+                } else {
+                    seg_start.saturating_sub(deleted)
+                };
+                continue;
+            }
+
+            if line < seg_start || line >= seg_end {
+                continue;
+            }
+
+            let rel = line.saturating_sub(seg_start);
+            let insert_at = rel.saturating_add(1).min(self.segments[idx].lines.len());
+            if inserted > 0 {
+                self.segments[idx]
+                    .lines
+                    .splice(insert_at..insert_at, std::iter::repeat_with(Vec::new).take(inserted));
+            } else if deleted > 0 {
+                let remove_end = insert_at.saturating_add(deleted).min(self.segments[idx].lines.len());
+                self.segments[idx].lines.drain(insert_at..remove_end);
+            }
+        }
+
+        self.segments.retain(|seg| !seg.lines.is_empty());
+        self.segments.sort_by(|a, b| a.start_line.cmp(&b.start_line));
+    }
+}
+
+fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
+    if spans.len() < 2 {
+        return;
+    }
+
+    let mut write = 1usize;
+    for read in 1..spans.len() {
+        let span = spans[read];
+        let prev = &mut spans[write - 1];
+        if prev.kind == span.kind && prev.end >= span.start {
+            prev.end = prev.end.max(span.end);
+        } else {
+            spans[write] = span;
+            write += 1;
+        }
+    }
+    spans.truncate(write);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

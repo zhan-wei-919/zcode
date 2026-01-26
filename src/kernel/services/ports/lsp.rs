@@ -156,6 +156,8 @@ pub struct LspServerCapabilities {
     pub format: bool,
     pub range_format: bool,
     pub semantic_tokens: bool,
+    pub semantic_tokens_range: bool,
+    pub semantic_tokens_full: bool,
     pub semantic_tokens_legend: Option<LspSemanticTokensLegend>,
     pub inlay_hints: bool,
     pub folding_range: bool,

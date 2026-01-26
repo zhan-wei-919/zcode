@@ -1085,7 +1085,7 @@ mod tests {
     }
 
     #[test]
-    fn semantic_highlight_is_invalidated_on_line_edit() {
+    fn semantic_highlight_is_shifted_on_line_edit() {
         let config = EditorConfig::default();
         let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "foo\nbar", &config);
         tab.set_semantic_highlight(
@@ -1107,16 +1107,21 @@ mod tests {
         tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
         let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
 
-        assert!(tab
-            .semantic_highlight_line(0)
-            .is_some_and(|spans| spans.is_empty()));
+        assert_eq!(
+            tab.semantic_highlight_line(0).unwrap_or_default(),
+            &[HighlightSpan {
+                start: 0,
+                end: 3,
+                kind: HighlightKind::Function
+            }]
+        );
         assert!(tab
             .semantic_highlight_line(1)
             .is_some_and(|spans| !spans.is_empty()));
     }
 
     #[test]
-    fn semantic_highlight_invalidates_following_lines_on_newline_edit() {
+    fn semantic_highlight_keeps_existing_lines_on_newline_edit() {
         let config = EditorConfig::default();
         let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "foo\nbar\nbaz", &config);
         tab.set_semantic_highlight(
@@ -1145,13 +1150,13 @@ mod tests {
 
         assert!(tab
             .semantic_highlight_line(0)
-            .is_some_and(|spans| spans.is_empty()));
+            .is_some_and(|spans| !spans.is_empty()));
         assert!(tab
             .semantic_highlight_line(1)
             .is_some_and(|spans| spans.is_empty()));
         assert!(tab
             .semantic_highlight_line(2)
-            .is_some_and(|spans| spans.is_empty()));
+            .is_some_and(|spans| !spans.is_empty()));
     }
 
     #[test]

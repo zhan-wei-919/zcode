@@ -261,6 +261,12 @@ impl Workbench {
                     service.request_semantic_tokens(&path, version);
                 }
             }
+            KernelEffect::LspSemanticTokensRangeRequest { path, version, range } => {
+                let _scope = perf::scope("effect.lsp_semantic_tokens_range");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_semantic_tokens_range(&path, range, version);
+                }
+            }
             KernelEffect::LspInlayHintsRequest {
                 path,
                 version,
