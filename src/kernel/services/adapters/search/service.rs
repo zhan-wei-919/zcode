@@ -4,10 +4,10 @@
 
 use super::searcher::{search_regex_in_slice, RopeReader, SearchConfig, StreamSearcher};
 use crate::core::Service;
-use crate::kernel::services::ports::search::{Match, SearchMessage};
+use crate::kernel::services::ports::search::{Match, Result as SearchResult, SearchMessage};
 use ropey::Rope;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 
 static SEARCH_ID: AtomicU64 = AtomicU64::new(0);
@@ -68,7 +68,7 @@ impl SearchService {
         pattern: String,
         case_sensitive: bool,
         is_regex: bool,
-        tx: Sender<SearchMessage>,
+        tx: SyncSender<SearchMessage>,
     ) -> SearchTask {
         let task = SearchTask::new();
         let search_id = task.id();
@@ -112,8 +112,15 @@ impl SearchService {
                         let _ = tx_for_complete.send(SearchMessage::Complete { search_id, total });
                     }
                 }
-                Err(_) => {
-                    let _ = tx_for_complete.send(SearchMessage::Cancelled { search_id });
+                Err(e) => {
+                    if cancelled_for_check.load(Ordering::Relaxed) {
+                        let _ = tx_for_complete.send(SearchMessage::Cancelled { search_id });
+                    } else {
+                        let _ = tx_for_complete.send(SearchMessage::Error {
+                            search_id,
+                            message: format!("Search task failed: {}", e),
+                        });
+                    }
                 }
             }
         });
@@ -127,14 +134,13 @@ impl SearchService {
         pattern: &str,
         case_sensitive: bool,
         is_regex: bool,
-    ) -> Result<Vec<Match>, String> {
+    ) -> SearchResult<Vec<Match>> {
         if pattern.is_empty() {
             return Ok(Vec::new());
         }
 
         let config = if is_regex {
-            SearchConfig::regex(pattern, case_sensitive)
-                .map_err(|e| format!("Invalid regex: {}", e))?
+            SearchConfig::regex(pattern, case_sensitive)?
         } else {
             SearchConfig::literal(pattern, case_sensitive)
         };
@@ -144,12 +150,12 @@ impl SearchService {
                 let reader = RopeReader::new(rope);
                 StreamSearcher::new(reader, &config)
                     .search()
-                    .map_err(|e| e.to_string())
+                    .map_err(Into::into)
             }
-            SearchConfig::Regex { .. } => {
+            SearchConfig::Regex { regex } => {
                 // Regex 需要全量数据
                 let text = rope.to_string();
-                Ok(search_regex_in_slice(text.as_bytes(), &config))
+                Ok(search_regex_in_slice(text.as_bytes(), regex))
             }
         }
     }
@@ -161,7 +167,7 @@ impl SearchService {
         from_byte: usize,
         case_sensitive: bool,
         is_regex: bool,
-    ) -> Result<Option<Match>, String> {
+    ) -> SearchResult<Option<Match>> {
         let matches = Self::search_sync(rope, pattern, case_sensitive, is_regex)?;
         Ok(matches.into_iter().find(|m| m.start >= from_byte))
     }
@@ -173,9 +179,12 @@ impl SearchService {
         from_byte: usize,
         case_sensitive: bool,
         is_regex: bool,
-    ) -> Result<Option<Match>, String> {
+    ) -> SearchResult<Option<Match>> {
         let matches = Self::search_sync(rope, pattern, case_sensitive, is_regex)?;
-        Ok(matches.into_iter().filter(|m| m.start < from_byte).last())
+        Ok(matches
+            .into_iter()
+            .filter(|m| m.start < from_byte)
+            .next_back())
     }
 }
 
@@ -192,39 +201,89 @@ fn search_rope_sync(
     config: &SearchConfig,
     search_id: u64,
     cancelled: &AtomicBool,
-    tx: &Sender<SearchMessage>,
+    tx: &SyncSender<SearchMessage>,
 ) -> usize {
-    let all_matches = match config {
-        SearchConfig::Literal { .. } => {
-            let reader = RopeReader::new(rope);
-            match StreamSearcher::new(reader, config).search() {
-                Ok(m) => m,
-                Err(_) => return 0,
-            }
-        }
-        SearchConfig::Regex { .. } => {
-            let text = rope.to_string();
-            search_regex_in_slice(text.as_bytes(), config)
-        }
-    };
+    let mut total = 0usize;
+    let mut batch = Vec::with_capacity(BATCH_SIZE);
 
-    let total = all_matches.len();
-
-    // 分批发送结果
-    for (i, chunk) in all_matches.chunks(BATCH_SIZE).enumerate() {
-        if cancelled.load(Ordering::Relaxed) {
-            let _ = tx.send(SearchMessage::Cancelled { search_id });
-            return 0;
+    let flush = |batch: &mut Vec<Match>, is_final: bool| {
+        if batch.is_empty() && !is_final {
+            return;
         }
-
-        let is_final = (i + 1) * BATCH_SIZE >= total;
+        let matches = std::mem::take(batch);
         let _ = tx.send(SearchMessage::Matches {
             search_id,
-            matches: chunk.to_vec(),
+            matches,
             is_final,
         });
+        *batch = Vec::with_capacity(BATCH_SIZE);
+    };
+
+    match config {
+        SearchConfig::Literal { .. } => {
+            let reader = RopeReader::new(rope);
+            let _ = StreamSearcher::new(reader, config).search_with(
+                |m| {
+                    total += 1;
+                    batch.push(m);
+                    if batch.len() >= BATCH_SIZE {
+                        flush(&mut batch, false);
+                    }
+                    Ok(())
+                },
+                || cancelled.load(Ordering::Relaxed),
+            );
+        }
+        SearchConfig::Regex { regex } => {
+            if cancelled.load(Ordering::Relaxed) {
+                let _ = tx.send(SearchMessage::Cancelled { search_id });
+                return 0;
+            }
+
+            let text = rope.to_string();
+            let bytes = text.as_bytes();
+
+            let mut current_line = 0usize;
+            let mut line_start = 0usize;
+            let mut last_pos = 0usize;
+
+            for mat in regex.find_iter(&text) {
+                if cancelled.load(Ordering::Relaxed) {
+                    let _ = tx.send(SearchMessage::Cancelled { search_id });
+                    return 0;
+                }
+
+                let start = mat.start();
+                let end = mat.end();
+
+                let newlines = super::count_byte(&bytes[last_pos..start], b'\n');
+                if newlines > 0 {
+                    current_line += newlines;
+                    for i in (last_pos..start).rev() {
+                        if bytes[i] == b'\n' {
+                            line_start = i + 1;
+                            break;
+                        }
+                    }
+                }
+                last_pos = start;
+
+                let col = start - line_start;
+                total += 1;
+                batch.push(Match::new(start, end, current_line, col));
+                if batch.len() >= BATCH_SIZE {
+                    flush(&mut batch, false);
+                }
+            }
+        }
     }
 
+    if cancelled.load(Ordering::Relaxed) {
+        let _ = tx.send(SearchMessage::Cancelled { search_id });
+        return 0;
+    }
+
+    flush(&mut batch, true);
     total
 }
 
@@ -283,7 +342,7 @@ mod tests {
     fn test_async_search() {
         let rt = create_runtime();
         let service = SearchService::new(rt.handle().clone());
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(64);
 
         let rope = Rope::from_str("hello world hello");
         let _task = service.search_in_rope(rope, "hello".to_string(), true, false, tx);
@@ -316,7 +375,7 @@ mod tests {
     fn test_cancel_search() {
         let rt = create_runtime();
         let service = SearchService::new(rt.handle().clone());
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(64);
 
         let text = "hello ".repeat(10000);
         let rope = Rope::from_str(&text);

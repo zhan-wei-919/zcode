@@ -1,14 +1,15 @@
 //! 全局搜索视图（纯渲染 + 命中测试）
 
 use crate::app::theme::UiTheme;
+use crate::core::event::MouseEvent;
+use crate::core::text_window;
 use crate::kernel::{SearchResultItem, SearchState};
-use crossterm::event::MouseEvent;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 const SEARCH_BOX_HEIGHT: u16 = 2;
 const SEARCH_LABEL: &str = "Search: ";
@@ -138,12 +139,7 @@ impl SearchView {
 
         let status_line = Line::from(Span::styled(status, muted_style));
 
-        let search_widget = Paragraph::new(vec![search_line, status_line]).block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(theme.separator)),
-        );
-        frame.render_widget(search_widget, search_area);
+        frame.render_widget(Paragraph::new(vec![search_line, status_line]), search_area);
 
         if results_area.width == 0 || results_area.height == 0 {
             return;
@@ -232,12 +228,13 @@ impl SearchView {
             }
         }
 
-        let list_widget = Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::NONE)
-                .border_style(Style::default().fg(theme.separator)),
-        );
-        frame.render_widget(list_widget, results_area);
+        frame.render_widget(Paragraph::new(lines), results_area);
+    }
+}
+
+impl Default for SearchView {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -285,56 +282,15 @@ fn query_window<'a>(
         return (cursor, cursor, indicators);
     }
 
-    let start = compute_window_start(query, cursor, available);
-    let end = start + truncate_to_width(&query[start..], available);
+    let start = text_window::compute_window_start(query, cursor, available);
+    let end = start + text_window::truncate_to_width(&query[start..], available);
     (start, end.min(query.len()), indicators)
-}
-
-fn compute_window_start(query: &str, cursor: usize, available: usize) -> usize {
-    let cursor = cursor.min(query.len());
-    let prefix = &query[..cursor];
-    if UnicodeWidthStr::width(prefix) <= available {
-        return 0;
-    }
-
-    let mut start = cursor;
-    let mut used = 0usize;
-
-    let indices: Vec<(usize, char)> = prefix.char_indices().collect();
-    for (idx, ch) in indices.into_iter().rev() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used + w > available {
-            break;
-        }
-        used += w;
-        start = idx;
-    }
-
-    start
-}
-
-fn truncate_to_width(s: &str, max_width: usize) -> usize {
-    if max_width == 0 || s.is_empty() {
-        return 0;
-    }
-
-    let mut used = 0usize;
-    let mut end = 0usize;
-    for (idx, ch) in s.char_indices() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used + w > max_width {
-            break;
-        }
-        used += w;
-        end = idx + ch.len_utf8();
-    }
-
-    end
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::event::{KeyModifiers, MouseButton, MouseEventKind};
     use ratatui::layout::Rect;
 
     #[test]
@@ -343,10 +299,10 @@ mod tests {
         view.results_area = Some(Rect::new(0, 2, 10, 3));
 
         let ev = MouseEvent {
-            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            kind: MouseEventKind::Down(MouseButton::Left),
             column: 1,
             row: 3,
-            modifiers: crossterm::event::KeyModifiers::NONE,
+            modifiers: KeyModifiers::NONE,
         };
 
         assert_eq!(view.hit_test_results_row(&ev, 0), Some(1));

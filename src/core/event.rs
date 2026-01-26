@@ -1,4 +1,105 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use std::ops::{BitOr, BitOrAssign};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyCode {
+    Char(char),
+    Enter,
+    Tab,
+    BackTab,
+    Esc,
+    Backspace,
+    Delete,
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    F(u8),
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct KeyModifiers(u8);
+
+impl KeyModifiers {
+    pub const NONE: Self = Self(0);
+    pub const SHIFT: Self = Self(1 << 0);
+    pub const CONTROL: Self = Self(1 << 1);
+    pub const ALT: Self = Self(1 << 2);
+    pub const SUPER: Self = Self(1 << 3);
+
+    pub fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl BitOr for KeyModifiers {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl BitOrAssign for KeyModifiers {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyEventKind {
+    Press,
+    Release,
+    Repeat,
+}
+
+impl Default for KeyEventKind {
+    fn default() -> Self {
+        Self::Press
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyEvent {
+    pub code: KeyCode,
+    pub modifiers: KeyModifiers,
+    pub kind: KeyEventKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseEventKind {
+    Down(MouseButton),
+    Up(MouseButton),
+    Drag(MouseButton),
+    Moved,
+    ScrollUp,
+    ScrollDown,
+    ScrollLeft,
+    ScrollRight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MouseEvent {
+    pub kind: MouseEventKind,
+    pub column: u16,
+    pub row: u16,
+    pub modifiers: KeyModifiers,
+}
 
 #[derive(Debug, Clone)]
 pub enum InputEvent {
@@ -30,19 +131,6 @@ impl InputEvent {
         match self {
             InputEvent::Mouse(e) => Some(e),
             _ => None,
-        }
-    }
-}
-
-impl From<crossterm::event::Event> for InputEvent {
-    fn from(event: crossterm::event::Event) -> Self {
-        match event {
-            crossterm::event::Event::Key(e) => InputEvent::Key(e),
-            crossterm::event::Event::Mouse(e) => InputEvent::Mouse(e),
-            crossterm::event::Event::Resize(w, h) => InputEvent::Resize(w, h),
-            crossterm::event::Event::FocusGained => InputEvent::FocusGained,
-            crossterm::event::Event::FocusLost => InputEvent::FocusLost,
-            crossterm::event::Event::Paste(s) => InputEvent::Paste(s),
         }
     }
 }
@@ -141,7 +229,6 @@ impl From<MouseEventKind> for MouseAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{KeyEventKind, KeyEventState};
 
     #[test]
     fn test_key_creation() {
@@ -156,7 +243,6 @@ mod tests {
             code: KeyCode::Enter,
             modifiers: KeyModifiers::NONE,
             kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
         };
         let key: Key = event.into();
         assert_eq!(key.code, KeyCode::Enter);
@@ -168,10 +254,8 @@ mod tests {
             code: KeyCode::Char('a'),
             modifiers: KeyModifiers::NONE,
             kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
         };
-        let event = crossterm::event::Event::Key(key_event);
-        let input: InputEvent = event.into();
+        let input = InputEvent::Key(key_event);
 
         assert!(input.is_key());
         assert!(!input.is_mouse());

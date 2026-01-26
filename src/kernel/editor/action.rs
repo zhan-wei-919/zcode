@@ -26,6 +26,19 @@ pub enum EditorAction {
         pane: usize,
         text: String,
     },
+    ApplyTextEdit {
+        pane: usize,
+        start_byte: usize,
+        end_byte: usize,
+        text: String,
+    },
+    ApplyTextEditToTab {
+        pane: usize,
+        tab_index: usize,
+        start_byte: usize,
+        end_byte: usize,
+        text: String,
+    },
     MouseDown {
         pane: usize,
         x: u16,
@@ -96,6 +109,7 @@ pub enum EditorAction {
         pane: usize,
         path: PathBuf,
         success: bool,
+        version: u64,
     },
     CloseTabAt {
         pane: usize,

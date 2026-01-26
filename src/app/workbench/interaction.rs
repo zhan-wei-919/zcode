@@ -1,7 +1,9 @@
 use super::util;
 use super::Workbench;
 use crate::core::event::Key;
-use crate::core::view::EventResult;
+use crate::core::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use crate::core::Command;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{KeybindingContext, KeybindingService};
@@ -9,19 +11,61 @@ use crate::kernel::{
     Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, PendingAction,
     SearchResultItem, SearchViewport, SidebarTab,
 };
+use crate::tui::view::EventResult;
 use crate::views::{
     compute_editor_pane_layout, hit_test_editor_mouse, hit_test_editor_tab, hit_test_tab_hover,
     TabHitResult,
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
-use ratatui::widgets::{Block, Borders};
 use std::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
 impl Workbench {
+    pub(super) fn record_user_input(&mut self) {
+        self.last_input_at = Instant::now();
+        self.idle_hover_last_request = None;
+        self.pending_completion_deadline = None;
+        self.pending_semantic_tokens_deadline = None;
+        self.pending_inlay_hints_deadline = None;
+        self.pending_folding_range_deadline = None;
+
+        if self.store.state().ui.hover_message.is_some() {
+            let _ = self.dispatch_kernel(KernelAction::LspHover {
+                text: String::new(),
+            });
+        }
+    }
+
     pub(super) fn handle_key_event(&mut self, key_event: &KeyEvent) -> EventResult {
         let _scope = perf::scope("input.key");
+
+        if self.store.state().ui.explorer_context_menu.visible {
+            match key_event.code {
+                KeyCode::Esc => {
+                    let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuClose);
+                    return EventResult::Consumed;
+                }
+                KeyCode::Up => {
+                    let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuMoveSelection {
+                        delta: -1,
+                    });
+                    return EventResult::Consumed;
+                }
+                KeyCode::Down => {
+                    let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuMoveSelection {
+                        delta: 1,
+                    });
+                    return EventResult::Consumed;
+                }
+                KeyCode::Enter => {
+                    let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuConfirm);
+                    return EventResult::Consumed;
+                }
+                _ => {
+                    let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuClose);
+                }
+            }
+        }
 
         if self.store.state().ui.input_dialog.visible {
             match (key_event.code, key_event.modifiers) {
@@ -67,6 +111,30 @@ impl Workbench {
             }
         }
 
+        if self.store.state().ui.completion.visible {
+            match key_event.code {
+                KeyCode::Esc => {
+                    let _ = self.dispatch_kernel(KernelAction::CompletionClose);
+                    return EventResult::Consumed;
+                }
+                KeyCode::Tab => {
+                    let _ =
+                        self.dispatch_kernel(KernelAction::CompletionMoveSelection { delta: 1 });
+                    return EventResult::Consumed;
+                }
+                KeyCode::BackTab => {
+                    let _ =
+                        self.dispatch_kernel(KernelAction::CompletionMoveSelection { delta: -1 });
+                    return EventResult::Consumed;
+                }
+                KeyCode::Enter => {
+                    let _ = self.dispatch_kernel(KernelAction::CompletionConfirm);
+                    return EventResult::Consumed;
+                }
+                _ => {}
+            }
+        }
+
         let context = self.keybinding_context();
         let key: Key = (*key_event).into();
 
@@ -75,7 +143,20 @@ impl Workbench {
             .get::<KeybindingService>()
             .and_then(|service| service.resolve(context, &key).cloned());
         if let Some(cmd) = cmd {
+            if cmd == Command::Copy
+                && self.store.state().ui.focus == FocusTarget::BottomPanel
+                && self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Logs
+            {
+                self.copy_logs_to_clipboard();
+                return EventResult::Consumed;
+            }
+
+            let cmd_for_schedule = cmd.clone();
             let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd));
+            self.maybe_schedule_completion_debounce(&cmd_for_schedule);
+            self.maybe_schedule_semantic_tokens_debounce(&cmd_for_schedule);
+            self.maybe_schedule_inlay_hints_debounce(&cmd_for_schedule);
+            self.maybe_schedule_folding_range_debounce(&cmd_for_schedule);
             if self.store.state().ui.should_quit {
                 return EventResult::Quit;
             }
@@ -97,7 +178,12 @@ impl Workbench {
             }
             KeybindingContext::Editor => match (key_event.code, key_event.modifiers) {
                 (KeyCode::Char(ch), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
-                    let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::InsertChar(ch)));
+                    let cmd = Command::InsertChar(ch);
+                    let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd.clone()));
+                    self.maybe_schedule_completion_debounce(&cmd);
+                    self.maybe_schedule_semantic_tokens_debounce(&cmd);
+                    self.maybe_schedule_inlay_hints_debounce(&cmd);
+                    self.maybe_schedule_folding_range_debounce(&cmd);
                     EventResult::Consumed
                 }
                 _ => EventResult::Ignored,
@@ -159,6 +245,34 @@ impl Workbench {
         }
     }
 
+    fn copy_logs_to_clipboard(&mut self) {
+        let Some(clipboard) = self
+            .kernel_services
+            .get_mut::<crate::kernel::services::adapters::ClipboardService>()
+        else {
+            return;
+        };
+
+        if self.logs.is_empty() {
+            return;
+        }
+
+        let mut text = String::new();
+        for (idx, line) in self.logs.iter().enumerate() {
+            if idx > 0 {
+                text.push('\n');
+            }
+            text.push_str(line);
+        }
+
+        if let Err(err) = clipboard.set_text(&text) {
+            self.logs.push_back(format!("[clipboard] {err}"));
+            while self.logs.len() > super::LOG_BUFFER_CAP {
+                self.logs.pop_front();
+            }
+        }
+    }
+
     fn keybinding_context(&self) -> KeybindingContext {
         let ui = &self.store.state().ui;
 
@@ -190,10 +304,215 @@ impl Workbench {
         }
     }
 
-    pub(super) fn handle_editor_mouse(
-        &mut self,
-        event: &crossterm::event::MouseEvent,
-    ) -> EventResult {
+    fn maybe_schedule_completion_debounce(&mut self, cmd: &Command) {
+        if self.store.state().ui.focus != FocusTarget::Editor {
+            return;
+        }
+
+        if self
+            .kernel_services
+            .get::<crate::kernel::services::adapters::LspService>()
+            .is_none()
+        {
+            return;
+        }
+
+        let pane = self.store.state().ui.editor_layout.active_pane;
+        let Some(tab) = self
+            .store
+            .state()
+            .editor
+            .pane(pane)
+            .and_then(|pane| pane.active_tab())
+        else {
+            return;
+        };
+
+        let Some(path) = tab.path.as_ref() else {
+            return;
+        };
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+            return;
+        }
+
+        let should_schedule = match cmd {
+            Command::InsertChar(ch) => completion_debounce_triggered_by_inserted_char(*ch),
+            Command::DeleteBackward | Command::DeleteForward => true,
+            _ => false,
+        };
+
+        if should_schedule {
+            self.pending_completion_deadline =
+                Some(Instant::now() + super::COMPLETION_DEBOUNCE_DELAY);
+        }
+    }
+
+    fn maybe_schedule_semantic_tokens_debounce(&mut self, cmd: &Command) {
+        if self.store.state().ui.focus != FocusTarget::Editor {
+            return;
+        }
+
+        if self
+            .kernel_services
+            .get::<crate::kernel::services::adapters::LspService>()
+            .is_none()
+        {
+            return;
+        }
+
+        let pane = self.store.state().ui.editor_layout.active_pane;
+        let Some(tab) = self
+            .store
+            .state()
+            .editor
+            .pane(pane)
+            .and_then(|pane| pane.active_tab())
+        else {
+            return;
+        };
+
+        let Some(path) = tab.path.as_ref() else {
+            return;
+        };
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+            return;
+        }
+
+        let should_schedule = matches!(
+            cmd,
+            Command::InsertChar(_)
+                | Command::InsertNewline
+                | Command::InsertTab
+                | Command::DeleteBackward
+                | Command::DeleteForward
+                | Command::DeleteLine
+                | Command::DeleteToLineEnd
+                | Command::DeleteSelection
+                | Command::Undo
+                | Command::Redo
+                | Command::Paste
+                | Command::Cut
+        );
+
+        if should_schedule {
+            self.pending_semantic_tokens_deadline =
+                Some(Instant::now() + super::SEMANTIC_TOKENS_DEBOUNCE_DELAY);
+        }
+    }
+
+    fn maybe_schedule_inlay_hints_debounce(&mut self, cmd: &Command) {
+        if self.store.state().ui.focus != FocusTarget::Editor {
+            return;
+        }
+
+        if self
+            .kernel_services
+            .get::<crate::kernel::services::adapters::LspService>()
+            .is_none()
+        {
+            return;
+        }
+
+        let pane = self.store.state().ui.editor_layout.active_pane;
+        let Some(tab) = self
+            .store
+            .state()
+            .editor
+            .pane(pane)
+            .and_then(|pane| pane.active_tab())
+        else {
+            return;
+        };
+
+        let Some(path) = tab.path.as_ref() else {
+            return;
+        };
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+            return;
+        }
+
+        let should_schedule = matches!(
+            cmd,
+            Command::InsertChar(_)
+                | Command::InsertNewline
+                | Command::InsertTab
+                | Command::DeleteBackward
+                | Command::DeleteForward
+                | Command::DeleteLine
+                | Command::DeleteToLineEnd
+                | Command::DeleteSelection
+                | Command::Undo
+                | Command::Redo
+                | Command::Paste
+                | Command::Cut
+                | Command::CursorUp
+                | Command::CursorDown
+                | Command::ScrollUp
+                | Command::ScrollDown
+                | Command::PageUp
+                | Command::PageDown
+        );
+
+        if should_schedule {
+            self.pending_inlay_hints_deadline =
+                Some(Instant::now() + super::INLAY_HINTS_DEBOUNCE_DELAY);
+        }
+    }
+
+    fn maybe_schedule_folding_range_debounce(&mut self, cmd: &Command) {
+        if self.store.state().ui.focus != FocusTarget::Editor {
+            return;
+        }
+
+        if self
+            .kernel_services
+            .get::<crate::kernel::services::adapters::LspService>()
+            .is_none()
+        {
+            return;
+        }
+
+        let pane = self.store.state().ui.editor_layout.active_pane;
+        let Some(tab) = self
+            .store
+            .state()
+            .editor
+            .pane(pane)
+            .and_then(|pane| pane.active_tab())
+        else {
+            return;
+        };
+
+        let Some(path) = tab.path.as_ref() else {
+            return;
+        };
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+            return;
+        }
+
+        let should_schedule = matches!(
+            cmd,
+            Command::InsertChar(_)
+                | Command::InsertNewline
+                | Command::InsertTab
+                | Command::DeleteBackward
+                | Command::DeleteForward
+                | Command::DeleteLine
+                | Command::DeleteToLineEnd
+                | Command::DeleteSelection
+                | Command::Undo
+                | Command::Redo
+                | Command::Paste
+                | Command::Cut
+        );
+
+        if should_schedule {
+            self.pending_folding_range_deadline =
+                Some(Instant::now() + super::FOLDING_RANGE_DEBOUNCE_DELAY);
+        }
+    }
+
+    pub(super) fn handle_editor_mouse(&mut self, event: &MouseEvent) -> EventResult {
         let _scope = perf::scope("input.mouse.editor");
         let active_pane = self.store.state().ui.editor_layout.active_pane;
 
@@ -207,7 +526,7 @@ impl Workbench {
             .last_editor_inner_areas
             .get(pane)
             .copied()
-            .or_else(|| self.last_editor_inner_areas.get(0).copied());
+            .or_else(|| self.last_editor_inner_areas.first().copied());
         let Some(area) = area else {
             return EventResult::Ignored;
         };
@@ -344,10 +663,7 @@ impl Workbench {
         }
     }
 
-    pub(super) fn handle_explorer_mouse(
-        &mut self,
-        event: &crossterm::event::MouseEvent,
-    ) -> EventResult {
+    pub(super) fn handle_explorer_mouse(&mut self, event: &MouseEvent) -> EventResult {
         let _scope = perf::scope("input.mouse.explorer");
         if !self.explorer.contains(event.column, event.row) {
             return EventResult::Ignored;
@@ -368,6 +684,18 @@ impl Workbench {
                 }
                 EventResult::Consumed
             }
+            MouseEventKind::Down(MouseButton::Right) => {
+                let tree_row = self
+                    .explorer
+                    .hit_test_row(event, scroll_offset)
+                    .filter(|row| *row < rows_len);
+                let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuOpen {
+                    tree_row,
+                    x: event.column,
+                    y: event.row,
+                });
+                EventResult::Consumed
+            }
             MouseEventKind::ScrollUp => {
                 let _ = self.dispatch_kernel(KernelAction::ExplorerScroll { delta: -3 });
                 EventResult::Consumed
@@ -380,10 +708,55 @@ impl Workbench {
         }
     }
 
-    pub(super) fn handle_search_mouse(
+    pub(super) fn handle_explorer_context_menu_mouse(
         &mut self,
-        event: &crossterm::event::MouseEvent,
-    ) -> EventResult {
+        event: &MouseEvent,
+    ) -> Option<EventResult> {
+        if !self.store.state().ui.explorer_context_menu.visible {
+            return None;
+        }
+
+        let Some(area) = self.last_explorer_context_menu_area else {
+            let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuClose);
+            return None;
+        };
+
+        let inner = Rect::new(
+            area.x.saturating_add(1),
+            area.y.saturating_add(1),
+            area.width.saturating_sub(2),
+            area.height.saturating_sub(2),
+        );
+        if inner.width == 0 || inner.height == 0 {
+            let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuClose);
+            return None;
+        }
+
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Down(MouseButton::Right) => {
+                if util::rect_contains(inner, event.column, event.row) {
+                    if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
+                        let idx = event.row.saturating_sub(inner.y) as usize;
+                        let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuSetSelected {
+                            index: idx,
+                        });
+                        let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuConfirm);
+                    }
+                    return Some(EventResult::Consumed);
+                }
+
+                if util::rect_contains(area, event.column, event.row) {
+                    return Some(EventResult::Consumed);
+                }
+
+                let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuClose);
+                None
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn handle_search_mouse(&mut self, event: &MouseEvent) -> EventResult {
         let _scope = perf::scope("input.mouse.search");
         if !self.search_view.contains(event.column, event.row) {
             return EventResult::Ignored;
@@ -433,10 +806,7 @@ impl Workbench {
         }
     }
 
-    pub(super) fn handle_bottom_panel_mouse(
-        &mut self,
-        event: &crossterm::event::MouseEvent,
-    ) -> EventResult {
+    pub(super) fn handle_bottom_panel_mouse(&mut self, event: &MouseEvent) -> EventResult {
         let Some(panel_area) = self.last_bottom_panel_area else {
             return EventResult::Ignored;
         };
@@ -444,7 +814,7 @@ impl Workbench {
             return EventResult::Ignored;
         }
 
-        let inner = Block::default().borders(Borders::ALL).inner(panel_area);
+        let inner = panel_area;
         if inner.width == 0 || inner.height == 0 {
             return EventResult::Ignored;
         }
@@ -527,8 +897,7 @@ impl Workbench {
 
                     let scroll_offset = self.store.state().problems.scroll_offset();
                     let items_len = self.store.state().problems.items().len();
-                    let row =
-                        (event.row.saturating_sub(content_area.y) as usize) + scroll_offset;
+                    let row = (event.row.saturating_sub(content_area.y) as usize) + scroll_offset;
                     if row >= items_len {
                         return EventResult::Ignored;
                     }
@@ -559,6 +928,120 @@ impl Workbench {
 
                     return EventResult::Consumed;
                 }
+                if active_tab == BottomPanelTab::Locations {
+                    if content_area.width == 0 || content_area.height == 0 {
+                        return EventResult::Ignored;
+                    }
+
+                    let scroll_offset = self.store.state().locations.scroll_offset();
+                    let items_len = self.store.state().locations.items().len();
+                    let row = (event.row.saturating_sub(content_area.y) as usize) + scroll_offset;
+                    if row >= items_len {
+                        return EventResult::Ignored;
+                    }
+
+                    let now = Instant::now();
+                    let double_click_ms = self.store.state().editor.config.double_click_ms;
+                    let is_double = self
+                        .last_locations_click
+                        .map(|(last_time, last_row)| {
+                            last_row == row
+                                && now.duration_since(last_time).as_millis() as u64
+                                    <= double_click_ms
+                        })
+                        .unwrap_or(false);
+
+                    if is_double {
+                        self.last_locations_click = None;
+                    } else {
+                        self.last_locations_click = Some((now, row));
+                    }
+
+                    let _ = self.dispatch_kernel(KernelAction::LocationsClickRow { row });
+                    if is_double {
+                        let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                            Command::SearchResultsOpenSelected,
+                        ));
+                    }
+
+                    return EventResult::Consumed;
+                }
+                if active_tab == BottomPanelTab::Symbols {
+                    if content_area.width == 0 || content_area.height == 0 {
+                        return EventResult::Ignored;
+                    }
+
+                    let scroll_offset = self.store.state().symbols.scroll_offset();
+                    let items_len = self.store.state().symbols.items().len();
+                    let row = (event.row.saturating_sub(content_area.y) as usize) + scroll_offset;
+                    if row >= items_len {
+                        return EventResult::Ignored;
+                    }
+
+                    let now = Instant::now();
+                    let double_click_ms = self.store.state().editor.config.double_click_ms;
+                    let is_double = self
+                        .last_symbols_click
+                        .map(|(last_time, last_row)| {
+                            last_row == row
+                                && now.duration_since(last_time).as_millis() as u64
+                                    <= double_click_ms
+                        })
+                        .unwrap_or(false);
+
+                    if is_double {
+                        self.last_symbols_click = None;
+                    } else {
+                        self.last_symbols_click = Some((now, row));
+                    }
+
+                    let _ = self.dispatch_kernel(KernelAction::SymbolsClickRow { row });
+                    if is_double {
+                        let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                            Command::SearchResultsOpenSelected,
+                        ));
+                    }
+
+                    return EventResult::Consumed;
+                }
+                if active_tab == BottomPanelTab::CodeActions {
+                    if content_area.width == 0 || content_area.height == 0 {
+                        return EventResult::Ignored;
+                    }
+
+                    let scroll_offset = self.store.state().code_actions.scroll_offset();
+                    let items_len = self.store.state().code_actions.items().len();
+                    let row = (event.row.saturating_sub(content_area.y) as usize) + scroll_offset;
+                    if row >= items_len {
+                        return EventResult::Ignored;
+                    }
+
+                    let now = Instant::now();
+                    let double_click_ms = self.store.state().editor.config.double_click_ms;
+                    let is_double = self
+                        .last_code_actions_click
+                        .map(|(last_time, last_row)| {
+                            last_row == row
+                                && now.duration_since(last_time).as_millis() as u64
+                                    <= double_click_ms
+                        })
+                        .unwrap_or(false);
+
+                    if is_double {
+                        self.last_code_actions_click = None;
+                    } else {
+                        self.last_code_actions_click = Some((now, row));
+                    }
+
+                    let _ = self.dispatch_kernel(KernelAction::CodeActionsClickRow { row });
+                    if is_double {
+                        let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                            Command::SearchResultsOpenSelected,
+                        ));
+                    }
+
+                    return EventResult::Consumed;
+                }
 
                 EventResult::Ignored
             }
@@ -571,9 +1054,23 @@ impl Workbench {
                     return EventResult::Consumed;
                 }
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Problems {
-                    let _ = self.dispatch_kernel(KernelAction::RunCommand(
-                        Command::SearchResultsScrollUp,
-                    ));
+                    let _ = self
+                        .dispatch_kernel(KernelAction::RunCommand(Command::SearchResultsScrollUp));
+                    return EventResult::Consumed;
+                }
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Locations {
+                    let _ = self
+                        .dispatch_kernel(KernelAction::RunCommand(Command::SearchResultsScrollUp));
+                    return EventResult::Consumed;
+                }
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Symbols {
+                    let _ = self
+                        .dispatch_kernel(KernelAction::RunCommand(Command::SearchResultsScrollUp));
+                    return EventResult::Consumed;
+                }
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::CodeActions {
+                    let _ = self
+                        .dispatch_kernel(KernelAction::RunCommand(Command::SearchResultsScrollUp));
                     return EventResult::Consumed;
                 }
                 EventResult::Ignored
@@ -592,9 +1089,31 @@ impl Workbench {
                     ));
                     return EventResult::Consumed;
                 }
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Locations {
+                    let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                        Command::SearchResultsScrollDown,
+                    ));
+                    return EventResult::Consumed;
+                }
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Symbols {
+                    let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                        Command::SearchResultsScrollDown,
+                    ));
+                    return EventResult::Consumed;
+                }
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::CodeActions {
+                    let _ = self.dispatch_kernel(KernelAction::RunCommand(
+                        Command::SearchResultsScrollDown,
+                    ));
+                    return EventResult::Consumed;
+                }
                 EventResult::Ignored
             }
             _ => EventResult::Ignored,
         }
     }
+}
+
+fn completion_debounce_triggered_by_inserted_char(inserted: char) -> bool {
+    inserted.is_alphanumeric() || inserted == '_'
 }

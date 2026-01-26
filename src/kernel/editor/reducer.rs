@@ -24,6 +24,19 @@ impl EditorState {
                 height,
             } => self.set_viewport_size(pane, width, height),
             EditorAction::InsertText { pane, text } => self.insert_text(pane, &text),
+            EditorAction::ApplyTextEdit {
+                pane,
+                start_byte,
+                end_byte,
+                text,
+            } => self.apply_text_edit(pane, start_byte, end_byte, &text),
+            EditorAction::ApplyTextEditToTab {
+                pane,
+                tab_index,
+                start_byte,
+                end_byte,
+                text,
+            } => self.apply_text_edit_to_tab(pane, tab_index, start_byte, end_byte, &text),
             EditorAction::MouseDown { pane, x, y, now } => self.mouse_down(pane, x, y, now),
             EditorAction::MouseDrag { pane, x, y } => self.mouse_drag(pane, x, y),
             EditorAction::MouseUp { pane } => self.mouse_up(pane),
@@ -51,7 +64,8 @@ impl EditorState {
                 pane,
                 path,
                 success,
-            } => self.saved(pane, path, success),
+                version,
+            } => self.saved(pane, path, success, version),
             EditorAction::CloseTabAt { pane, index } => self.close_tab_at(pane, index),
         }
     }
@@ -128,6 +142,11 @@ impl EditorState {
         let tab_size = self.config.tab_size;
         let default_height = self.config.default_viewport_height;
         let config = self.config.clone();
+        let already_open = self
+            .panes
+            .iter()
+            .flat_map(|pane| pane.tabs.iter())
+            .any(|tab| tab.path.as_ref() == Some(&path));
 
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
@@ -139,6 +158,9 @@ impl EditorState {
             .unwrap_or((80, default_height));
 
         let changed = pane_state.open_file(path, &content, &config);
+        if changed && !already_open {
+            self.open_paths_version = self.open_paths_version.saturating_add(1);
+        }
 
         if let Some(active) = pane_state.active_tab_mut() {
             active.viewport.width = vw;
@@ -227,11 +249,9 @@ impl EditorState {
             return (false, Vec::new());
         }
         let mut effects = Vec::new();
-        if pane_state.search_bar.visible {
-            if pane_state.search_bar.begin_search() {
-                if let Some(effect) = pane_state.trigger_search(pane) {
-                    effects.push(effect);
-                }
+        if pane_state.search_bar.visible && pane_state.search_bar.begin_search() {
+            if let Some(effect) = pane_state.trigger_search(pane) {
+                effects.push(effect);
             }
         }
         (true, effects)
@@ -246,17 +266,30 @@ impl EditorState {
             return (false, Vec::new());
         }
         let mut effects = Vec::new();
-        if pane_state.search_bar.visible {
-            if pane_state.search_bar.begin_search() {
-                if let Some(effect) = pane_state.trigger_search(pane) {
-                    effects.push(effect);
-                }
+        if pane_state.search_bar.visible && pane_state.search_bar.begin_search() {
+            if let Some(effect) = pane_state.trigger_search(pane) {
+                effects.push(effect);
             }
         }
         (true, effects)
     }
 
     fn close_tab(&mut self, pane: usize) -> (bool, Vec<Effect>) {
+        let should_bump = self
+            .panes
+            .get(pane)
+            .and_then(|pane_state| pane_state.active_tab())
+            .and_then(|tab| tab.path.as_ref())
+            .is_some_and(|path| {
+                let count = self
+                    .panes
+                    .iter()
+                    .flat_map(|pane_state| pane_state.tabs.iter())
+                    .filter(|tab| tab.path.as_ref() == Some(path))
+                    .count();
+                count <= 1
+            });
+
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
         };
@@ -264,18 +297,34 @@ impl EditorState {
         if !changed {
             return (false, Vec::new());
         }
+        if should_bump {
+            self.open_paths_version = self.open_paths_version.saturating_add(1);
+        }
         let mut effects = Vec::new();
-        if pane_state.search_bar.visible {
-            if pane_state.search_bar.begin_search() {
-                if let Some(effect) = pane_state.trigger_search(pane) {
-                    effects.push(effect);
-                }
+        if pane_state.search_bar.visible && pane_state.search_bar.begin_search() {
+            if let Some(effect) = pane_state.trigger_search(pane) {
+                effects.push(effect);
             }
         }
         (true, effects)
     }
 
     pub fn close_tab_at(&mut self, pane: usize, index: usize) -> (bool, Vec<Effect>) {
+        let should_bump = self
+            .panes
+            .get(pane)
+            .and_then(|pane_state| pane_state.tabs.get(index))
+            .and_then(|tab| tab.path.as_ref())
+            .is_some_and(|path| {
+                let count = self
+                    .panes
+                    .iter()
+                    .flat_map(|pane_state| pane_state.tabs.iter())
+                    .filter(|tab| tab.path.as_ref() == Some(path))
+                    .count();
+                count <= 1
+            });
+
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
         };
@@ -283,12 +332,13 @@ impl EditorState {
         if !changed {
             return (false, Vec::new());
         }
+        if should_bump {
+            self.open_paths_version = self.open_paths_version.saturating_add(1);
+        }
         let mut effects = Vec::new();
-        if pane_state.search_bar.visible {
-            if pane_state.search_bar.begin_search() {
-                if let Some(effect) = pane_state.trigger_search(pane) {
-                    effects.push(effect);
-                }
+        if pane_state.search_bar.visible && pane_state.search_bar.begin_search() {
+            if let Some(effect) = pane_state.trigger_search(pane) {
+                effects.push(effect);
             }
         }
         (true, effects)
@@ -410,7 +460,15 @@ impl EditorState {
         let Some(path) = tab.path.clone() else {
             return (false, Vec::new());
         };
-        (false, vec![Effect::WriteFile { pane, path }])
+        let version = tab.edit_version;
+        (
+            false,
+            vec![Effect::WriteFile {
+                pane,
+                path,
+                version,
+            }],
+        )
     }
 
     fn forward_to_active_tab(&mut self, pane: usize, command: Command) -> (bool, Vec<Effect>) {
@@ -433,6 +491,70 @@ impl EditorState {
         };
         let changed = tab.insert_text(text, tab_size);
         (changed, Vec::new())
+    }
+
+    fn apply_text_edit(
+        &mut self,
+        pane: usize,
+        start_byte: usize,
+        end_byte: usize,
+        text: &str,
+    ) -> (bool, Vec<Effect>) {
+        let tab_size = self.config.tab_size;
+        let Some(pane_state) = self.panes.get_mut(pane) else {
+            return (false, Vec::new());
+        };
+        let Some(tab) = pane_state.active_tab_mut() else {
+            return (false, Vec::new());
+        };
+        Self::apply_text_edit_to_tab_state(tab_size, tab, start_byte, end_byte, text)
+    }
+
+    fn apply_text_edit_to_tab(
+        &mut self,
+        pane: usize,
+        tab_index: usize,
+        start_byte: usize,
+        end_byte: usize,
+        text: &str,
+    ) -> (bool, Vec<Effect>) {
+        let tab_size = self.config.tab_size;
+        let Some(pane_state) = self.panes.get_mut(pane) else {
+            return (false, Vec::new());
+        };
+        let Some(tab) = pane_state.tabs.get_mut(tab_index) else {
+            return (false, Vec::new());
+        };
+        Self::apply_text_edit_to_tab_state(tab_size, tab, start_byte, end_byte, text)
+    }
+
+    fn apply_text_edit_to_tab_state(
+        tab_size: u8,
+        tab: &mut super::state::EditorTabState,
+        start_byte: usize,
+        end_byte: usize,
+        text: &str,
+    ) -> (bool, Vec<Effect>) {
+        if text.is_empty() && start_byte == end_byte {
+            return (false, Vec::new());
+        }
+
+        let rope = tab.buffer.rope();
+        let len_bytes = rope.len_bytes();
+        let start_byte = start_byte.min(len_bytes);
+        let end_byte = end_byte.min(len_bytes);
+        let mut start_char = rope.byte_to_char(start_byte);
+        let mut end_char = rope.byte_to_char(end_byte);
+        if start_char > end_char {
+            std::mem::swap(&mut start_char, &mut end_char);
+        }
+
+        let parent = tab.history.head();
+        let op = tab
+            .buffer
+            .replace_range_op_adjust_cursor(start_char, end_char, text, parent);
+        tab.apply_edit_op(op, tab_size);
+        (true, Vec::new())
     }
 
     fn mouse_down(
@@ -541,6 +663,7 @@ impl EditorState {
         pane: usize,
         path: std::path::PathBuf,
         success: bool,
+        version: u64,
     ) -> (bool, Vec<Effect>) {
         if !success {
             return (false, Vec::new());
@@ -555,6 +678,9 @@ impl EditorState {
         else {
             return (false, Vec::new());
         };
+        if tab.edit_version != version {
+            return (false, Vec::new());
+        }
         tab.on_saved();
         (true, Vec::new())
     }
@@ -741,9 +867,6 @@ impl EditorState {
         if !pane_state.search_bar.visible {
             return (false, Vec::new());
         }
-        if pane_state.search_bar.replace_text.is_empty() {
-            return (false, Vec::new());
-        }
         let Some(index) = pane_state.search_bar.current_match_index else {
             return (false, Vec::new());
         };
@@ -780,21 +903,22 @@ impl EditorState {
         if pane_state.search_bar.search_text.is_empty() {
             return (false, Vec::new());
         }
-        if pane_state.search_bar.replace_text.is_empty() {
-            return (false, Vec::new());
-        }
         let matches = pane_state.search_bar.matches.clone();
         let replace_text = pane_state.search_bar.replace_text.clone();
         if matches.is_empty() {
             return (false, Vec::new());
         }
 
+        let multi = matches.len() > 1;
         {
             let Some(tab) = pane_state.active_tab_mut() else {
                 return (false, Vec::new());
             };
             for m in matches.iter().rev() {
                 let _ = tab.replace_current_match(m, &replace_text, tab_size);
+            }
+            if multi {
+                tab.last_edit_op = None;
             }
         }
 
@@ -847,7 +971,7 @@ fn goto_byte_offset(tab: &mut super::state::EditorTabState, byte_offset: usize, 
         return;
     }
 
-    let byte_offset = byte_offset.min(rope.len_bytes().saturating_sub(1));
+    let byte_offset = byte_offset.min(rope.len_bytes());
     let char_offset = rope.byte_to_char(byte_offset);
     let row = rope.char_to_line(char_offset);
     let line_char_start = rope.line_to_char(row);
@@ -870,4 +994,153 @@ fn goto_byte_offset(tab: &mut super::state::EditorTabState, byte_offset: usize, 
     tab.buffer.set_cursor(row, col_graphemes);
     tab.buffer.clear_selection();
     viewport::clamp_and_follow(&mut tab.viewport, &tab.buffer, tab_size);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::goto_byte_offset;
+    use crate::core::Command;
+    use crate::kernel::editor::action::EditorAction;
+    use crate::kernel::editor::EditorState;
+    use crate::kernel::editor::EditorTabState;
+    use crate::kernel::services::ports::EditorConfig;
+    use crate::kernel::Effect;
+    use ropey::Rope;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_goto_byte_offset_eof_multibyte() {
+        let config = EditorConfig::default();
+        let mut tab = EditorTabState::untitled(&config);
+        tab.buffer.set_rope(Rope::from_str("é"));
+
+        let byte_offset = tab.buffer.rope().len_bytes();
+        goto_byte_offset(&mut tab, byte_offset, config.tab_size);
+
+        assert_eq!(tab.buffer.cursor(), (0, 1));
+    }
+
+    #[test]
+    fn test_saved_version_mismatch_does_not_clear_dirty() {
+        let config = EditorConfig::default();
+        let mut editor = EditorState::new(config);
+        let path = PathBuf::from("test.txt");
+
+        let _ = editor.dispatch_action(EditorAction::OpenFile {
+            pane: 0,
+            path: path.clone(),
+            content: "hello".to_string(),
+        });
+
+        let (changed, _) = editor.apply_command(0, Command::InsertChar('x'));
+        assert!(changed);
+
+        let (_, effects) = editor.apply_command(0, Command::Save);
+        let version1 = match effects.as_slice() {
+            [Effect::WriteFile { version, .. }] => *version,
+            other => panic!("expected WriteFile effect, got {other:?}"),
+        };
+
+        let (changed, _) = editor.apply_command(0, Command::InsertChar('y'));
+        assert!(changed);
+
+        let (dirty, version2) = {
+            let tab = editor.pane(0).unwrap().active_tab().unwrap();
+            (tab.dirty, tab.edit_version)
+        };
+        assert!(dirty);
+        assert!(version2 > version1);
+
+        let _ = editor.dispatch_action(EditorAction::Saved {
+            pane: 0,
+            path: path.clone(),
+            success: true,
+            version: version1,
+        });
+        assert!(editor.pane(0).unwrap().active_tab().unwrap().dirty);
+
+        let _ = editor.dispatch_action(EditorAction::Saved {
+            pane: 0,
+            path,
+            success: true,
+            version: version2,
+        });
+        assert!(!editor.pane(0).unwrap().active_tab().unwrap().dirty);
+    }
+
+    #[test]
+    fn test_apply_text_edit_swaps_and_clamps_byte_ranges() {
+        let config = EditorConfig::default();
+        let mut editor = EditorState::new(config);
+        let path = PathBuf::from("test.txt");
+
+        let _ = editor.dispatch_action(EditorAction::OpenFile {
+            pane: 0,
+            path: path.clone(),
+            content: "hello".to_string(),
+        });
+
+        let (changed, _) = editor.dispatch_action(EditorAction::ApplyTextEdit {
+            pane: 0,
+            start_byte: 999,
+            end_byte: 0,
+            text: "x".to_string(),
+        });
+        assert!(changed);
+        assert_eq!(
+            editor.pane(0).unwrap().active_tab().unwrap().buffer.text(),
+            "x"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_edit_noop_on_empty_edit() {
+        let config = EditorConfig::default();
+        let mut editor = EditorState::new(config);
+        let path = PathBuf::from("test.txt");
+
+        let _ = editor.dispatch_action(EditorAction::OpenFile {
+            pane: 0,
+            path,
+            content: "hello".to_string(),
+        });
+
+        let (changed, effects) = editor.dispatch_action(EditorAction::ApplyTextEdit {
+            pane: 0,
+            start_byte: 2,
+            end_byte: 2,
+            text: String::new(),
+        });
+        assert!(!changed);
+        assert!(effects.is_empty());
+        assert_eq!(
+            editor.pane(0).unwrap().active_tab().unwrap().buffer.text(),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn test_apply_text_edit_inserts_at_eof_multibyte() {
+        let config = EditorConfig::default();
+        let mut editor = EditorState::new(config);
+        let path = PathBuf::from("test.txt");
+
+        let _ = editor.dispatch_action(EditorAction::OpenFile {
+            pane: 0,
+            path,
+            content: "é".to_string(),
+        });
+
+        let (changed, _) = editor.dispatch_action(EditorAction::ApplyTextEdit {
+            pane: 0,
+            start_byte: 100,
+            end_byte: 100,
+            text: "x".to_string(),
+        });
+        assert!(changed);
+        assert_eq!(
+            editor.pane(0).unwrap().active_tab().unwrap().buffer.text(),
+            "éx"
+        );
+    }
 }

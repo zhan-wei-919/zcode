@@ -146,7 +146,7 @@ Handles interactions with the OS and the external world, typically involving I/O
 
 *   **AsyncRuntime**: Wraps the `tokio` runtime, allowing expensive tasks to run outside the synchronous TUI render loop.
 *   **GlobalSearchService**: Wraps underlying search tools (like `ignore` and `grep` crates) to provide async search capabilities.
-*   **Clipboard**: Wraps `arboard` for cross-platform clipboard access.
+*   **Clipboard**: Uses native clipboard providers (macOS: `pbcopy`/`pbpaste`; Linux/Windows planned).
 
 ### 5. Models - `src/models/`
 

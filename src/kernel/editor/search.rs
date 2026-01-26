@@ -1,5 +1,6 @@
 use crate::kernel::services::ports::SearchMessage;
 use crate::kernel::Effect;
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::state::{EditorPaneState, SearchBarField, SearchBarMode};
 
@@ -9,8 +10,8 @@ impl super::state::SearchBarState {
             0
         } else {
             match self.mode {
-                SearchBarMode::Search => 2,
-                SearchBarMode::Replace => 3,
+                SearchBarMode::Search => 1,
+                SearchBarMode::Replace => 2,
             }
         }
     }
@@ -79,6 +80,29 @@ impl super::state::SearchBarState {
         }
     }
 
+    fn prev_grapheme_boundary(text: &str, cursor: usize) -> usize {
+        let mut prev = 0;
+        for (pos, _) in text.grapheme_indices(true) {
+            if pos >= cursor {
+                break;
+            }
+            prev = pos;
+        }
+        prev
+    }
+
+    fn next_grapheme_boundary(text: &str, cursor: usize) -> usize {
+        for (pos, g) in text.grapheme_indices(true) {
+            if pos == cursor {
+                return pos + g.len();
+            }
+            if pos > cursor {
+                return pos;
+            }
+        }
+        text.len()
+    }
+
     pub fn switch_field(&mut self) -> bool {
         if self.mode != SearchBarMode::Replace {
             return false;
@@ -110,17 +134,12 @@ impl super::state::SearchBarState {
 
         let cursor_pos = self.cursor_pos;
         let text = self.current_text_mut();
-        let mut char_indices = text.char_indices();
-        let mut prev_pos = 0;
-
-        while let Some((pos, _)) = char_indices.next() {
-            if pos >= cursor_pos {
-                break;
-            }
-            prev_pos = pos;
+        let prev_pos = Self::prev_grapheme_boundary(text, cursor_pos);
+        if prev_pos == cursor_pos {
+            return false;
         }
-
-        text.remove(prev_pos);
+        let next_pos = Self::next_grapheme_boundary(text, prev_pos);
+        text.drain(prev_pos..next_pos);
         self.cursor_pos = prev_pos;
         true
     }
@@ -133,11 +152,10 @@ impl super::state::SearchBarState {
 
         let cursor_pos = self.cursor_pos;
         let text = self.current_text_mut();
-        let mut next_pos = cursor_pos + 1;
-        while next_pos < text.len() && !text.is_char_boundary(next_pos) {
-            next_pos += 1;
+        let next_pos = Self::next_grapheme_boundary(text, cursor_pos);
+        if next_pos == cursor_pos {
+            return false;
         }
-
         text.drain(cursor_pos..next_pos);
         true
     }
@@ -148,10 +166,7 @@ impl super::state::SearchBarState {
         }
 
         let text = self.current_text();
-        let mut new_pos = self.cursor_pos.saturating_sub(1);
-        while new_pos > 0 && !text.is_char_boundary(new_pos) {
-            new_pos -= 1;
-        }
+        let new_pos = Self::prev_grapheme_boundary(text, self.cursor_pos);
         if new_pos == self.cursor_pos {
             return false;
         }
@@ -164,10 +179,7 @@ impl super::state::SearchBarState {
         if self.cursor_pos >= text.len() {
             return false;
         }
-        let mut new_pos = self.cursor_pos + 1;
-        while new_pos < text.len() && !text.is_char_boundary(new_pos) {
-            new_pos += 1;
-        }
+        let new_pos = Self::next_grapheme_boundary(text, self.cursor_pos);
         if new_pos == self.cursor_pos {
             return false;
         }
@@ -276,5 +288,79 @@ impl EditorPaneState {
             case_sensitive: self.search_bar.case_sensitive,
             use_regex: self.search_bar.use_regex,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::editor::SearchBarState;
+    use crate::kernel::services::ports::{Match, SearchMessage};
+
+    #[test]
+    fn search_bar_backspace_deletes_grapheme_cluster() {
+        let mut state = SearchBarState::default();
+        state.show(SearchBarMode::Search);
+
+        state.insert_char('e');
+        state.insert_char('\u{301}');
+        assert_eq!(state.search_text, "e\u{301}");
+        assert_eq!(state.cursor_pos, state.search_text.len());
+
+        assert!(state.delete_backward());
+        assert_eq!(state.search_text, "");
+        assert_eq!(state.cursor_pos, 0);
+    }
+
+    #[test]
+    fn search_bar_cursor_moves_by_graphemes() {
+        let mut state = SearchBarState::default();
+        state.show(SearchBarMode::Search);
+
+        state.insert_char('👍');
+        state.insert_char('🏽');
+        state.insert_char('a');
+        assert_eq!(state.search_text, "👍🏽a");
+
+        let cluster_len = "👍🏽".len();
+        assert_eq!(state.cursor_pos, state.search_text.len());
+
+        assert!(state.cursor_left());
+        assert_eq!(state.cursor_pos, cluster_len);
+        assert!(state.cursor_left());
+        assert_eq!(state.cursor_pos, 0);
+
+        assert!(state.cursor_right());
+        assert_eq!(state.cursor_pos, cluster_len);
+        assert!(state.cursor_right());
+        assert_eq!(state.cursor_pos, state.search_text.len());
+    }
+
+    #[test]
+    fn search_bar_apply_message_ignores_other_search_ids() {
+        let mut state = SearchBarState::default();
+        state.show(SearchBarMode::Search);
+        state.search_text = "foo".to_string();
+        state.cursor_pos = state.search_text.len();
+        state.searching = true;
+        state.active_search_id = Some(1);
+
+        let ignored = SearchMessage::Matches {
+            search_id: 2,
+            matches: vec![Match::new(0, 1, 0, 0)],
+            is_final: false,
+        };
+        assert!(!state.apply_message(ignored));
+        assert!(state.matches.is_empty());
+
+        let accepted = SearchMessage::Matches {
+            search_id: 1,
+            matches: vec![Match::new(0, 1, 0, 0)],
+            is_final: true,
+        };
+        assert!(state.apply_message(accepted));
+        assert_eq!(state.matches.len(), 1);
+        assert_eq!(state.current_match_index, Some(0));
+        assert!(!state.searching);
     }
 }

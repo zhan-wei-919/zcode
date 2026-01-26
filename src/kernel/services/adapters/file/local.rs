@@ -33,14 +33,18 @@ impl FileProvider for LocalFileProvider {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             let path = entry.path();
-            let metadata = entry.metadata()?;
+            let file_type = entry.file_type()?;
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
 
             let dir_entry = DirEntry {
                 name: entry.file_name().to_string_lossy().to_string(),
                 path,
                 is_dir: metadata.is_dir(),
                 is_file: metadata.is_file(),
-                is_symlink: metadata.is_symlink(),
+                is_symlink: file_type.is_symlink(),
                 size: metadata.len(),
                 modified: metadata.modified().ok(),
             };
@@ -48,11 +52,7 @@ impl FileProvider for LocalFileProvider {
             entries.push(dir_entry);
         }
 
-        entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        });
+        entries.sort_by_cached_key(|e| (!e.is_dir, e.name.to_lowercase()));
 
         Ok(entries)
     }
@@ -153,6 +153,14 @@ impl FileProvider for LocalFileProvider {
         if !from.is_file() {
             return Err(FileError::NotAFile(from.to_path_buf()));
         }
+        if to.exists() {
+            return Err(FileError::AlreadyExists(to.to_path_buf()));
+        }
+        if let Some(parent) = to.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
         fs::copy(from, to)?;
         Ok(())
     }
@@ -174,7 +182,12 @@ impl FileProvider for LocalFileProvider {
             return Err(FileError::NotFound(path.to_path_buf()));
         }
         let meta = fs::metadata(path)?;
-        Ok(FileMetadata::from_std(meta))
+        let is_symlink = fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        let mut out = FileMetadata::from_std(meta);
+        out.is_symlink = is_symlink;
+        Ok(out)
     }
 
     fn canonicalize(&self, path: &Path) -> Result<PathBuf> {

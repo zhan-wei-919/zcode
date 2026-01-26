@@ -9,11 +9,13 @@ pub fn cursor_display_x_abs(buffer: &TextBuffer, tab_size: u8) -> u32 {
     let Some(slice) = buffer.line_slice(row) else {
         return 0;
     };
-    let line = slice_to_cow(slice);
-    let graphemes = line.graphemes(true);
+    if slice.len_bytes() == slice.len_chars() {
+        return cursor_display_x_abs_ascii(&slice, col, tab_size);
+    }
 
     let mut display_col = 0u32;
-    for (i, g) in graphemes.enumerate() {
+    let line = slice_to_cow(slice);
+    for (i, g) in line.graphemes(true).enumerate() {
         if i >= col {
             break;
         }
@@ -21,10 +23,41 @@ pub fn cursor_display_x_abs(buffer: &TextBuffer, tab_size: u8) -> u32 {
             let tab = tab_size as u32;
             let rem = display_col % tab;
             display_col += if rem == 0 { tab } else { tab - rem };
-        } else if g == "\n" {
+        } else if g == "\n" || g == "\r" {
             break;
         } else {
             display_col += g.width() as u32;
+        }
+    }
+
+    display_col
+}
+
+fn cursor_display_x_abs_ascii(slice: &ropey::RopeSlice<'_>, col: usize, tab_size: u8) -> u32 {
+    if col == 0 {
+        return 0;
+    }
+
+    let mut remaining = col;
+    let mut display_col = 0u32;
+    let tab = tab_size.max(1) as u32;
+
+    for chunk in slice.chunks() {
+        for &b in chunk.as_bytes() {
+            if b == b'\n' || b == b'\r' {
+                return display_col;
+            }
+            if remaining == 0 {
+                return display_col;
+            }
+
+            if b == b'\t' {
+                let rem = display_col % tab;
+                display_col += if rem == 0 { tab } else { tab - rem };
+            } else {
+                display_col = display_col.saturating_add(1);
+            }
+            remaining -= 1;
         }
     }
 
@@ -60,34 +93,7 @@ pub fn clamp_and_follow(viewport: &mut EditorViewportState, buffer: &TextBuffer,
     }
 }
 
-pub fn expand_tabs(line: &str, tab_size: u8) -> String {
-    let mut expanded = String::new();
-    let mut display_col = 0u32;
-    let tab_size = tab_size as u32;
-
-    for ch in line.chars() {
-        if ch == '\t' {
-            let remainder = display_col % tab_size;
-            let spaces = if remainder == 0 {
-                tab_size
-            } else {
-                tab_size - remainder
-            };
-            for _ in 0..spaces {
-                expanded.push(' ');
-            }
-            display_col += spaces;
-        } else if ch == '\n' {
-            break;
-        } else {
-            expanded.push(ch);
-            display_col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as u32;
-        }
-    }
-
-    expanded
-}
-
+#[cfg(test)]
 pub fn screen_to_pos(
     viewport: &EditorViewportState,
     buffer: &TextBuffer,
@@ -105,24 +111,79 @@ pub fn screen_to_pos(
 
     let row = (viewport.line_offset + y as usize).min(buffer.len_lines().saturating_sub(1));
 
+    let col = screen_to_col(viewport, buffer, tab_size, row, x)?;
+    Some((row, col))
+}
+
+pub fn screen_to_col(
+    viewport: &EditorViewportState,
+    buffer: &TextBuffer,
+    tab_size: u8,
+    row: usize,
+    x: u16,
+) -> Option<usize> {
+    if viewport.width == 0 || viewport.height == 0 {
+        return None;
+    }
+    if x as usize >= viewport.width {
+        return None;
+    }
+    if row >= buffer.len_lines().max(1) {
+        return None;
+    }
+
     let slice = buffer.line_slice(row)?;
     let line = slice_to_cow(slice);
-    let expanded = expand_tabs(&line, tab_size);
-    let graphemes: Vec<&str> = expanded.graphemes(true).collect();
-
     let target_x = viewport.horiz_offset + x as u32;
-    let mut accumulated_x = 0u32;
+    let mut display_col = 0u32;
     let mut col = 0usize;
 
-    for (i, g) in graphemes.iter().enumerate() {
-        let w = g.width() as u32;
-        if accumulated_x + w / 2 >= target_x {
+    for (i, g) in line.graphemes(true).enumerate() {
+        if g == "\n" || g == "\r" {
+            break;
+        }
+
+        let w = if g == "\t" {
+            let tab = tab_size.max(1) as u32;
+            let rem = display_col % tab;
+            if rem == 0 { tab } else { tab - rem }
+        } else {
+            g.width() as u32
+        };
+
+        if display_col + w / 2 >= target_x {
             col = i;
             break;
         }
-        accumulated_x += w;
+
+        display_col += w;
         col = i + 1;
     }
 
-    Some((row, col.min(graphemes.len())))
+    Some(col)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_screen_to_pos_tab_mapping() {
+        let buffer = TextBuffer::from_text("\tabc\n");
+        let mut viewport = EditorViewportState {
+            width: 100,
+            height: 1,
+            line_offset: 0,
+            horiz_offset: 0,
+            ..Default::default()
+        };
+
+        assert_eq!(screen_to_pos(&viewport, &buffer, 4, 0, 0), Some((0, 0)));
+        assert_eq!(screen_to_pos(&viewport, &buffer, 4, 3, 0), Some((0, 1)));
+        assert_eq!(screen_to_pos(&viewport, &buffer, 4, 4, 0), Some((0, 1)));
+        assert_eq!(screen_to_pos(&viewport, &buffer, 4, 5, 0), Some((0, 2)));
+
+        viewport.horiz_offset = 4;
+        assert_eq!(screen_to_pos(&viewport, &buffer, 4, 0, 0), Some((0, 1)));
+    }
 }

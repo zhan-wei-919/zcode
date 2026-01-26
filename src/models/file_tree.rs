@@ -48,12 +48,12 @@ impl fmt::Display for FileTreeError {
 impl std::error::Error for FileTreeError {}
 
 #[derive(Debug, Clone)]
-pub struct Node {
-    pub kind: NodeKind,
-    pub name: OsString,
-    pub parent: Option<NodeId>,
-    pub children: Option<BTreeMap<OsString, NodeId>>,
-    pub load_state: LoadState,
+struct Node {
+    kind: NodeKind,
+    name: OsString,
+    parent: Option<NodeId>,
+    children: Option<BTreeMap<OsString, NodeId>>,
+    load_state: LoadState,
 }
 
 impl Node {
@@ -85,6 +85,7 @@ pub struct FileTree {
     selected: Option<NodeId>,
     absolute_root: PathBuf,
     path_cache: HashMap<NodeId, PathBuf>,
+    id_by_path: HashMap<PathBuf, NodeId>,
 }
 
 impl FileTree {
@@ -102,6 +103,7 @@ impl FileTree {
             selected: Some(root),
             absolute_root,
             path_cache: HashMap::new(),
+            id_by_path: HashMap::new(),
         }
     }
 
@@ -120,10 +122,6 @@ impl FileTree {
 
     pub fn set_selected(&mut self, id: Option<NodeId>) {
         self.selected = id;
-    }
-
-    pub fn get(&self, id: NodeId) -> Option<&Node> {
-        self.arena.get(id)
     }
 
     pub fn absolute_root(&self) -> &Path {
@@ -188,6 +186,8 @@ impl FileTree {
 
     pub fn full_path(&mut self, id: NodeId) -> PathBuf {
         if id == self.root {
+            self.id_by_path
+                .insert(self.absolute_root.clone(), self.root);
             return self.absolute_root.clone();
         }
 
@@ -213,13 +213,16 @@ impl FileTree {
         }
 
         self.path_cache.insert(id, path.clone());
+        self.id_by_path.insert(path.clone(), id);
         path
     }
 
     fn invalidate_path_cache_subtree(&mut self, id: NodeId) {
         let mut stack = vec![id];
         while let Some(node_id) = stack.pop() {
-            self.path_cache.remove(&node_id);
+            if let Some(path) = self.path_cache.remove(&node_id) {
+                self.id_by_path.remove(&path);
+            }
             if let Some(node) = self.arena.get(node_id) {
                 if let Some(children) = &node.children {
                     for &child_id in children.values() {
@@ -360,7 +363,9 @@ impl FileTree {
             }
 
             self.expanded.remove(&id);
-            self.path_cache.remove(&id);
+            if let Some(path) = self.path_cache.remove(&id) {
+                self.id_by_path.remove(&path);
+            }
 
             if self.selected == Some(id) {
                 self.selected = node.parent;
@@ -371,11 +376,7 @@ impl FileTree {
     }
 
     pub fn toggle_expand(&mut self, id: NodeId) {
-        if self
-            .arena
-            .get(id)
-            .map_or(false, |n| n.kind == NodeKind::Dir)
-        {
+        if self.arena.get(id).is_some_and(|n| n.kind == NodeKind::Dir) {
             if self.expanded.contains(&id) {
                 self.expanded.remove(&id);
             } else {
@@ -385,11 +386,7 @@ impl FileTree {
     }
 
     pub fn expand(&mut self, id: NodeId) {
-        if self
-            .arena
-            .get(id)
-            .map_or(false, |n| n.kind == NodeKind::Dir)
-        {
+        if self.arena.get(id).is_some_and(|n| n.kind == NodeKind::Dir) {
             self.expanded.insert(id);
         }
     }
@@ -482,13 +479,13 @@ impl FileTree {
 
     pub fn find_node_by_path(&mut self, path: &Path) -> Option<NodeId> {
         if path == self.absolute_root {
+            self.id_by_path
+                .insert(self.absolute_root.clone(), self.root);
             return Some(self.root);
         }
 
-        for (id, cached_path) in &self.path_cache {
-            if cached_path == path {
-                return Some(*id);
-            }
+        if let Some(id) = self.id_by_path.get(path).copied() {
+            return Some(id);
         }
 
         let relative = path.strip_prefix(&self.absolute_root).ok()?;
@@ -501,6 +498,7 @@ impl FileTree {
         }
 
         self.path_cache.insert(current, path.to_path_buf());
+        self.id_by_path.insert(path.to_path_buf(), current);
         Some(current)
     }
 }
@@ -542,7 +540,7 @@ pub fn build_file_tree(root_path: &Path) -> io::Result<FileTree> {
 
     let root_name = root_path
         .file_name()
-        .or_else(|| root_path.iter().last())
+        .or_else(|| root_path.iter().next_back())
         .unwrap_or(root_path.as_os_str())
         .to_os_string();
 
@@ -611,7 +609,7 @@ mod tests {
             .unwrap();
         tree.delete(file_id).unwrap();
 
-        assert!(tree.get(file_id).is_none());
+        assert!(tree.get_name(file_id).is_none());
     }
 
     #[test]

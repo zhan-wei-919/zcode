@@ -16,8 +16,8 @@ mod logging;
 
 use zcode::app::Workbench;
 use zcode::core::event::InputEvent;
-use zcode::core::view::{EventResult, View};
 use zcode::kernel::services::adapters::AsyncRuntime;
+use zcode::tui::view::{EventResult, View};
 
 fn main() -> io::Result<()> {
     let mut logging_guard = logging::init();
@@ -27,8 +27,10 @@ fn main() -> io::Result<()> {
         }
     }
 
-    if let Ok(path) = zcode::kernel::services::adapters::ensure_settings_file() {
-        tracing::info!(settings_path = %path.display(), "settings ready");
+    if !env_truthy("ZCODE_DISABLE_SETTINGS") {
+        if let Ok(path) = zcode::kernel::services::adapters::ensure_settings_file() {
+            tracing::info!(settings_path = %path.display(), "settings ready");
+        }
     }
 
     let args: Vec<String> = env::args().collect();
@@ -71,13 +73,25 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
+fn env_truthy(key: &str) -> bool {
+    matches!(
+        std::env::var(key)
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
+}
+
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     path: &Path,
     log_rx: Option<mpsc::Receiver<String>>,
 ) -> io::Result<()> {
     let (tx, rx) = mpsc::channel();
-    let async_runtime = AsyncRuntime::new(tx);
+    let async_runtime = AsyncRuntime::new(tx)?;
     let mut workbench = Workbench::new(path, async_runtime, log_rx)?;
 
     let mut dirty = true;
@@ -101,7 +115,7 @@ fn run_app(
             let events = drain_pending_events(event);
 
             for ev in events {
-                let input_event: InputEvent = ev.into();
+                let input_event: InputEvent = zcode::tui::crossterm::into_input_event(ev);
                 match workbench.handle_input(&input_event) {
                     EventResult::Quit => return Ok(()),
                     EventResult::Ignored => {}

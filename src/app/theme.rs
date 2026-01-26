@@ -10,6 +10,11 @@ pub struct UiTheme {
     pub inactive_border: Color,
     pub separator: Color,
     pub accent_fg: Color,
+    pub syntax_string_fg: Color,
+    pub syntax_number_fg: Color,
+    pub syntax_attribute_fg: Color,
+    pub error_fg: Color,
+    pub warning_fg: Color,
     pub activity_bg: Color,
     pub activity_fg: Color,
     pub activity_active_bg: Color,
@@ -33,6 +38,11 @@ impl Default for UiTheme {
             inactive_border: Color::DarkGray,
             separator: Color::DarkGray,
             accent_fg: Color::Yellow,
+            syntax_string_fg: Color::Green,
+            syntax_number_fg: Color::Magenta,
+            syntax_attribute_fg: Color::Blue,
+            error_fg: Color::Red,
+            warning_fg: Color::Yellow,
             activity_bg: Color::Reset,
             activity_fg: Color::DarkGray,
             activity_active_bg: Color::DarkGray,
@@ -71,6 +81,31 @@ impl UiTheme {
         if let Some(v) = &settings.accent_fg {
             if let Some(c) = parse_color(v) {
                 self.accent_fg = c;
+            }
+        }
+        if let Some(v) = &settings.syntax_string_fg {
+            if let Some(c) = parse_color(v) {
+                self.syntax_string_fg = c;
+            }
+        }
+        if let Some(v) = &settings.syntax_number_fg {
+            if let Some(c) = parse_color(v) {
+                self.syntax_number_fg = c;
+            }
+        }
+        if let Some(v) = &settings.syntax_attribute_fg {
+            if let Some(c) = parse_color(v) {
+                self.syntax_attribute_fg = c;
+            }
+        }
+        if let Some(v) = &settings.error_fg {
+            if let Some(c) = parse_color(v) {
+                self.error_fg = c;
+            }
+        }
+        if let Some(v) = &settings.warning_fg {
+            if let Some(c) = parse_color(v) {
+                self.warning_fg = c;
             }
         }
         if let Some(v) = &settings.activity_bg {

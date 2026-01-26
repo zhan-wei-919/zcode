@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use std::path::PathBuf;
@@ -6,15 +5,24 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use zcode::app::Workbench;
 use zcode::core::event::InputEvent;
-use zcode::core::View;
+use zcode::core::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use zcode::core::Command;
 use zcode::kernel::services::adapters::perf;
-use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
+use zcode::kernel::services::adapters::AsyncRuntime;
+use zcode::tui::view::View;
 
 fn main() -> std::io::Result<()> {
     let mut frames: usize = 300;
     let mut events: usize = 100_000;
     let mut width: u16 = 120;
     let mut height: u16 = 40;
+    let mut panes: usize = 2;
+    let mut tabs_per_pane: usize = 5;
+    let mut explorer_files: usize = 200;
+    let mut normal_lines: usize = 2000;
+    let mut normal_cols: usize = 80;
+    let mut long_lines: usize = 200;
+    let mut long_cols: usize = 2000;
 
     for arg in std::env::args().skip(1) {
         if let Some(value) = arg.strip_prefix("--frames=") {
@@ -25,21 +33,63 @@ fn main() -> std::io::Result<()> {
             width = value.parse().unwrap_or(width);
         } else if let Some(value) = arg.strip_prefix("--height=") {
             height = value.parse().unwrap_or(height);
+        } else if let Some(value) = arg.strip_prefix("--panes=") {
+            panes = value.parse().unwrap_or(panes);
+        } else if let Some(value) = arg.strip_prefix("--tabs=") {
+            tabs_per_pane = value.parse().unwrap_or(tabs_per_pane);
+        } else if let Some(value) = arg.strip_prefix("--explorer-files=") {
+            explorer_files = value.parse().unwrap_or(explorer_files);
+        } else if let Some(value) = arg.strip_prefix("--lines=") {
+            normal_lines = value.parse().unwrap_or(normal_lines);
+        } else if let Some(value) = arg.strip_prefix("--cols=") {
+            normal_cols = value.parse().unwrap_or(normal_cols);
+        } else if let Some(value) = arg.strip_prefix("--long-lines=") {
+            long_lines = value.parse().unwrap_or(long_lines);
+        } else if let Some(value) = arg.strip_prefix("--long-cols=") {
+            long_cols = value.parse().unwrap_or(long_cols);
         }
     }
 
-    let root = create_fixture_dir()?;
+    let panes = panes.clamp(1, 2);
+    let tabs_per_pane = tabs_per_pane.max(1);
+    let required_tabs = panes.saturating_mul(tabs_per_pane);
+    let explorer_files = explorer_files.max(required_tabs);
+
+    let root = create_fixture_dir(explorer_files)?;
     let (tx, _rx) = mpsc::channel();
-    let runtime = AsyncRuntime::new(tx);
+    let runtime = AsyncRuntime::new(tx)?;
     let mut workbench = Workbench::new(&root, runtime, None)?;
 
-    let file_path = root.join("big.txt");
-    let content = generate_text(2000, 80);
-    std::fs::write(&file_path, &content)?;
-    workbench.handle_message(AppMessage::FileLoaded {
-        path: file_path,
-        content,
-    });
+    if panes == 2 {
+        workbench.bench_run_command(Command::SplitEditorVertical);
+    }
+
+    let normal = generate_rust_like(normal_lines, normal_cols);
+    let long = generate_rust_like(long_lines, long_cols);
+    let small = "fn main() {}\n".to_string();
+
+    for pane in 0..panes {
+        for tab in 0..tabs_per_pane {
+            let idx = pane.saturating_mul(tabs_per_pane).saturating_add(tab);
+            let path = root.join("src").join(format!("file_{idx}.rs"));
+            let content = if tab + 1 == tabs_per_pane {
+                long.clone()
+            } else if tab == 0 {
+                normal.clone()
+            } else {
+                small.clone()
+            };
+            workbench.bench_open_file(pane, path, content);
+        }
+    }
+
+    workbench.bench_set_active_pane(0);
+    workbench.bench_run_command(Command::FocusEditor);
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::End,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
 
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend)?;
@@ -75,7 +125,6 @@ fn main() -> std::io::Result<()> {
             code,
             modifiers,
             kind: KeyEventKind::Press,
-            state: KeyEventState::NONE,
         };
         let _ = workbench.handle_input(&InputEvent::Key(key_event));
     }
@@ -91,7 +140,7 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-fn create_fixture_dir() -> std::io::Result<PathBuf> {
+fn create_fixture_dir(src_files: usize) -> std::io::Result<PathBuf> {
     let mut root = std::env::temp_dir();
     let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
@@ -106,7 +155,7 @@ fn create_fixture_dir() -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(root.join("docs"))?;
     std::fs::write(root.join("README.md"), "# bench\n")?;
 
-    for i in 0..200 {
+    for i in 0..src_files {
         std::fs::write(
             root.join("src").join(format!("file_{i}.rs")),
             "fn main() {}\n",
@@ -116,11 +165,20 @@ fn create_fixture_dir() -> std::io::Result<PathBuf> {
     Ok(root)
 }
 
-fn generate_text(lines: usize, cols: usize) -> String {
-    let line = "a".repeat(cols.saturating_sub(1));
+fn generate_rust_like(lines: usize, cols: usize) -> String {
+    if lines == 0 || cols == 0 {
+        return String::new();
+    }
+
+    let prefix = "fn bench() { let n: usize = 123; let s = \"hello\"; } // ";
     let mut out = String::with_capacity(lines.saturating_mul(cols + 1));
-    for _ in 0..lines {
-        out.push_str(&line);
+    for i in 0..lines {
+        out.push_str(prefix);
+        out.push_str(&i.to_string());
+        if cols > prefix.len() + 16 {
+            let pad = cols.saturating_sub(prefix.len() + 16);
+            out.push_str(&"a".repeat(pad.saturating_sub(1)));
+        }
         out.push('\n');
     }
     out

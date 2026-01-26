@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct OpId {
-    pub timestamp: u64,
-    pub counter: u16,
+    pub(crate) timestamp: u64,
+    pub(crate) counter: u16,
 }
 
 impl OpId {
@@ -13,7 +13,7 @@ impl OpId {
         static COUNTER: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as u64;
         let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Self { timestamp, counter }
@@ -70,11 +70,11 @@ pub enum OpKind {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EditOp {
-    pub id: OpId,
-    pub parent: OpId,
-    pub kind: OpKind,
-    pub cursor_before: (usize, usize),
-    pub cursor_after: (usize, usize),
+    pub(crate) id: OpId,
+    pub(crate) parent: OpId,
+    pub(crate) kind: OpKind,
+    pub(crate) cursor_before: (usize, usize),
+    pub(crate) cursor_after: (usize, usize),
 }
 
 impl EditOp {
@@ -175,8 +175,8 @@ impl EditOp {
         self.kind.apply(rope);
     }
 
-    pub fn to_json_line(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
+    pub fn to_json_line(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
     }
 
     pub fn from_json_line(line: &str) -> Option<Self> {
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn test_serialization() {
         let op = EditOp::insert(OpId::root(), 0, "hello".to_string(), (0, 0), (0, 5));
-        let json = op.to_json_line();
+        let json = op.to_json_line().unwrap();
         let restored = EditOp::from_json_line(&json).unwrap();
 
         assert_eq!(restored.cursor_after(), (0, 5));

@@ -53,7 +53,14 @@ impl Selection {
         let line = slice_to_cow(slice);
         let (start, end) = Self::word_bounds_at(&line, pos.1);
 
-        if pos.1 - start < end - pos.1 {
+        if start == end {
+            return (pos.0, end);
+        }
+
+        let left_dist = pos.1.saturating_sub(start);
+        let right_dist = end.saturating_sub(pos.1);
+
+        if left_dist < right_dist {
             (pos.0, start)
         } else {
             (pos.0, end)
@@ -88,42 +95,43 @@ impl Selection {
             }
         };
 
-        let graphemes: Vec<_> = line.graphemes(true).enumerate().collect();
-        let len = graphemes.len();
+        let mut len = 0usize;
+        let mut prev_type: Option<CharType> = None;
+        let mut segment_start = 0usize;
 
-        if col >= len {
-            return (len, len);
+        let mut start = 0usize;
+        let mut current_type: Option<CharType> = None;
+
+        for (idx, grapheme) in line.graphemes(true).enumerate() {
+            let ty = classify_char(grapheme);
+            if prev_type.is_some_and(|prev| prev != ty) {
+                segment_start = idx;
+            }
+            prev_type = Some(ty);
+
+            if idx == col {
+                current_type = Some(ty);
+                start = segment_start;
+            } else if current_type.is_some_and(|ct| idx > col && ty != ct) {
+                return (start, idx);
+            }
+
+            len = idx + 1;
         }
 
-        let current_type = classify_char(graphemes[col].1);
-
-        let mut start = col;
-        for i in (0..col).rev() {
-            if classify_char(graphemes[i].1) != current_type {
-                start = i + 1;
-                break;
-            }
-            if i == 0 {
-                start = 0;
-                break;
-            }
+        match current_type {
+            Some(_) => (start, len),
+            None => (len, len),
         }
-
-        let mut end = len;
-        for i in (col + 1)..len {
-            if classify_char(graphemes[i].1) != current_type {
-                end = i;
-                break;
-            }
-        }
-
-        (start, end)
     }
 
     fn line_grapheme_len(rope: &Rope, row: usize) -> usize {
         let slice = rope.line(row);
         let line = slice_to_cow(slice);
         let without_newline = line.strip_suffix('\n').unwrap_or(&line);
+        let without_newline = without_newline
+            .strip_suffix('\r')
+            .unwrap_or(without_newline);
         without_newline.graphemes(true).count()
     }
 
@@ -184,5 +192,13 @@ mod tests {
         let mut sel = Selection::new((5, 7), Granularity::Char);
         sel.cursor = (2, 3);
         assert_eq!(sel.range(), ((2, 3), (5, 7)));
+    }
+
+    #[test]
+    fn test_word_selection_out_of_bounds_cursor() {
+        let rope = Rope::from_str("hello");
+        let mut sel = Selection::new((0, 0), Granularity::Word);
+        sel.update_cursor((0, 100), &rope);
+        assert_eq!(sel.cursor(), (0, 5));
     }
 }

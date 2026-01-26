@@ -128,7 +128,7 @@ impl TextBuffer {
 
     pub fn line(&self, row: usize) -> Option<String> {
         if row < self.rope.len_lines() {
-            self.rope.line(row).as_str().map(|s| s.to_string())
+            Some(slice_to_cow(self.rope.line(row)).into_owned())
         } else {
             None
         }
@@ -143,12 +143,14 @@ impl TextBuffer {
     }
 
     pub fn cursor_char_offset(&mut self) -> usize {
-        if self.cached_char_pos.is_none() {
-            let char_offset = self.rope.line_to_char(self.cursor.0)
-                + self.grapheme_to_char_index(self.cursor.0, self.cursor.1);
-            self.cached_char_pos = Some(char_offset);
+        if let Some(char_offset) = self.cached_char_pos {
+            return char_offset;
         }
-        self.cached_char_pos.unwrap()
+
+        let char_offset = self.rope.line_to_char(self.cursor.0)
+            + self.grapheme_to_char_index(self.cursor.0, self.cursor.1);
+        self.cached_char_pos = Some(char_offset);
+        char_offset
     }
 
     pub fn set_cursor_char_offset_cache(&mut self, char_offset: usize) {
@@ -161,6 +163,10 @@ impl TextBuffer {
 
     pub fn grapheme_to_char_index(&self, row: usize, grapheme_index: usize) -> usize {
         let slice = self.rope.line(row);
+        if slice.len_bytes() == slice.len_chars() {
+            let len = ascii_line_len_no_newline(slice);
+            return grapheme_index.min(len);
+        }
         let line = slice_to_cow(slice);
         line.graphemes(true)
             .take(grapheme_index)
@@ -168,10 +174,43 @@ impl TextBuffer {
             .sum()
     }
 
+    pub(crate) fn cursor_pos_from_char_offset(&self, char_offset: usize) -> (usize, usize) {
+        let char_offset = char_offset.min(self.rope.len_chars());
+        let row = self.rope.char_to_line(char_offset);
+        let line_char_start = self.rope.line_to_char(row);
+        let col_chars = char_offset.saturating_sub(line_char_start);
+
+        let slice = self.rope.line(row);
+        if slice.len_bytes() == slice.len_chars() {
+            let len = ascii_line_len_no_newline(slice);
+            return (row, col_chars.min(len));
+        }
+
+        let line = slice_to_cow(slice);
+        let mut taken_chars = 0usize;
+        let mut col_graphemes = 0usize;
+        for g in line.graphemes(true) {
+            let g_chars = g.chars().count();
+            if taken_chars + g_chars > col_chars {
+                break;
+            }
+            taken_chars += g_chars;
+            col_graphemes += 1;
+        }
+
+        (row, col_graphemes)
+    }
+
     pub fn line_grapheme_len(&self, row: usize) -> usize {
         let slice = self.rope.line(row);
+        if slice.len_bytes() == slice.len_chars() {
+            return ascii_line_len_no_newline(slice);
+        }
         let line = slice_to_cow(slice);
         let without_newline = line.strip_suffix('\n').unwrap_or(&line);
+        let without_newline = without_newline
+            .strip_suffix('\r')
+            .unwrap_or(without_newline);
         without_newline.graphemes(true).count()
     }
 
@@ -184,13 +223,10 @@ impl TextBuffer {
 
         self.rope.insert_char(char_offset, c);
 
-        let cursor_after = if c == '\n' {
-            (cursor_before.0 + 1, 0)
-        } else {
-            (cursor_before.0, cursor_before.1 + 1)
-        };
+        let cursor_after_char_offset = char_offset.saturating_add(1);
+        let cursor_after = self.cursor_pos_from_char_offset(cursor_after_char_offset);
         self.cursor = cursor_after;
-        self.cached_char_pos = Some(char_offset + 1);
+        self.cached_char_pos = Some(cursor_after_char_offset);
 
         EditOp::insert(
             parent,
@@ -208,20 +244,10 @@ impl TextBuffer {
 
         self.rope.insert(char_offset, s);
 
-        // 计算新光标位置
-        let newlines = s.chars().filter(|&c| c == '\n').count();
-        let cursor_after = if newlines > 0 {
-            let last_newline = s.rfind('\n').unwrap();
-            let after_last_newline = &s[last_newline + 1..];
-            (
-                cursor_before.0 + newlines,
-                after_last_newline.graphemes(true).count(),
-            )
-        } else {
-            (cursor_before.0, cursor_before.1 + s.graphemes(true).count())
-        };
+        let cursor_after_char_offset = char_offset.saturating_add(s.chars().count());
+        let cursor_after = self.cursor_pos_from_char_offset(cursor_after_char_offset);
         self.cursor = cursor_after;
-        self.cached_char_pos = Some(char_offset + s.chars().count());
+        self.cached_char_pos = Some(cursor_after_char_offset);
 
         EditOp::insert(
             parent,
@@ -382,6 +408,7 @@ impl TextBuffer {
     /// 替换整个 Rope（用于 Undo/Redo）
     pub fn set_rope(&mut self, rope: Rope) {
         self.rope = rope;
+        self.selection = None;
         self.invalidate_char_pos_cache();
     }
 
@@ -422,9 +449,135 @@ impl TextBuffer {
         )
     }
 
+    pub fn replace_range_op_auto_cursor(
+        &mut self,
+        start_char: usize,
+        end_char: usize,
+        inserted: &str,
+        parent: OpId,
+    ) -> EditOp {
+        let cursor_before = self.cursor;
+        let deleted: String = self.rope.slice(start_char..end_char).to_string();
+
+        self.rope.remove(start_char..end_char);
+        self.rope.insert(start_char, inserted);
+
+        let cursor_after_char_offset = start_char.saturating_add(inserted.chars().count());
+        let row = self.rope.char_to_line(cursor_after_char_offset);
+        let line_char_start = self.rope.line_to_char(row);
+        let col_chars = cursor_after_char_offset.saturating_sub(line_char_start);
+
+        let slice = self.rope.line(row);
+        let line = slice_to_cow(slice);
+
+        let mut taken_chars = 0usize;
+        let mut col_graphemes = 0usize;
+        for g in unicode_segmentation::UnicodeSegmentation::graphemes(line.as_ref(), true) {
+            let g_chars = g.chars().count();
+            if taken_chars + g_chars > col_chars {
+                break;
+            }
+            taken_chars += g_chars;
+            col_graphemes += 1;
+        }
+
+        let cursor_after = (row, col_graphemes);
+        self.cursor = cursor_after;
+        self.selection = None;
+        self.cached_char_pos = Some(cursor_after_char_offset);
+
+        EditOp::replace(
+            parent,
+            start_char,
+            end_char,
+            deleted,
+            inserted.to_string(),
+            cursor_before,
+            cursor_after,
+        )
+    }
+
+    pub fn replace_range_op_adjust_cursor(
+        &mut self,
+        start_char: usize,
+        end_char: usize,
+        inserted: &str,
+        parent: OpId,
+    ) -> EditOp {
+        let cursor_before = self.cursor;
+        let cursor_before_char_offset = self.cursor_char_offset();
+        let deleted: String = self.rope.slice(start_char..end_char).to_string();
+
+        self.rope.remove(start_char..end_char);
+        self.rope.insert(start_char, inserted);
+
+        let inserted_chars = inserted.chars().count();
+        let deleted_chars = end_char.saturating_sub(start_char);
+
+        let mut cursor_after_char_offset = if cursor_before_char_offset < start_char {
+            cursor_before_char_offset
+        } else if cursor_before_char_offset >= end_char {
+            cursor_before_char_offset
+                .saturating_add(inserted_chars)
+                .saturating_sub(deleted_chars)
+        } else {
+            start_char.saturating_add(inserted_chars)
+        };
+        cursor_after_char_offset = cursor_after_char_offset.min(self.rope.len_chars());
+
+        let row = self.rope.char_to_line(cursor_after_char_offset);
+        let line_char_start = self.rope.line_to_char(row);
+        let col_chars = cursor_after_char_offset.saturating_sub(line_char_start);
+
+        let slice = self.rope.line(row);
+        let line = slice_to_cow(slice);
+
+        let mut taken_chars = 0usize;
+        let mut col_graphemes = 0usize;
+        for g in unicode_segmentation::UnicodeSegmentation::graphemes(line.as_ref(), true) {
+            let g_chars = g.chars().count();
+            if taken_chars + g_chars > col_chars {
+                break;
+            }
+            taken_chars += g_chars;
+            col_graphemes += 1;
+        }
+
+        let cursor_after = (row, col_graphemes);
+        self.cursor = cursor_after;
+        self.selection = None;
+        self.cached_char_pos = Some(cursor_after_char_offset);
+
+        EditOp::replace(
+            parent,
+            start_char,
+            end_char,
+            deleted,
+            inserted.to_string(),
+            cursor_before,
+            cursor_after,
+        )
+    }
+
     fn invalidate_char_pos_cache(&mut self) {
         self.cached_char_pos = None;
     }
+}
+
+fn ascii_line_len_no_newline(slice: RopeSlice<'_>) -> usize {
+    let mut len = slice.len_chars();
+    if len == 0 {
+        return 0;
+    }
+
+    if slice.char(len.saturating_sub(1)) == '\n' {
+        len = len.saturating_sub(1);
+        if len > 0 && slice.char(len.saturating_sub(1)) == '\r' {
+            len = len.saturating_sub(1);
+        }
+    }
+
+    len
 }
 
 impl Default for TextBuffer {
@@ -468,11 +621,52 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_combining_mark_keeps_cursor_grapheme_index() {
+        let mut buffer = TextBuffer::new();
+
+        buffer.insert_char_op('e', OpId::root());
+        buffer.insert_char_op('\u{301}', OpId::root());
+
+        assert_eq!(buffer.text(), "e\u{301}");
+        assert_eq!(buffer.cursor(), (0, 1));
+
+        let _ = buffer.delete_backward_op(OpId::root()).expect("delete");
+        assert_eq!(buffer.text(), "");
+        assert_eq!(buffer.cursor(), (0, 0));
+    }
+
+    #[test]
+    fn test_insert_str_combining_mark_keeps_cursor_grapheme_index() {
+        let mut buffer = TextBuffer::new();
+
+        buffer.insert_str_op("e", OpId::root());
+        buffer.insert_str_op("\u{301}", OpId::root());
+
+        assert_eq!(buffer.text(), "e\u{301}");
+        assert_eq!(buffer.cursor(), (0, 1));
+    }
+
+    #[test]
     fn test_line_grapheme_len() {
         let buffer = TextBuffer::from_text("hello\nworld\n");
 
         assert_eq!(buffer.line_grapheme_len(0), 5);
         assert_eq!(buffer.line_grapheme_len(1), 5);
+    }
+
+    #[test]
+    fn test_line_grapheme_len_crlf() {
+        let buffer = TextBuffer::from_text("hello\r\nworld\r\n");
+
+        assert_eq!(buffer.line_grapheme_len(0), 5);
+        assert_eq!(buffer.line_grapheme_len(1), 5);
+    }
+
+    #[test]
+    fn test_line_non_contiguous_slice_returns_string() {
+        let long = "a".repeat(5000);
+        let buffer = TextBuffer::from_text(&long);
+        assert_eq!(buffer.line(0).unwrap(), long);
     }
 
     #[test]
@@ -485,5 +679,49 @@ mod tests {
             super::super::selection::Granularity::Char,
         )));
         assert!(!buffer.has_selection());
+    }
+
+    #[test]
+    fn replace_range_op_adjust_cursor_keeps_cursor_when_edit_after_cursor() {
+        let mut buffer = TextBuffer::from_text("abcdef");
+        buffer.set_cursor(0, 0);
+
+        let _ = buffer.replace_range_op_adjust_cursor(4, 6, "XY", OpId::root());
+
+        assert_eq!(buffer.text(), "abcdXY");
+        assert_eq!(buffer.cursor(), (0, 0));
+    }
+
+    #[test]
+    fn replace_range_op_adjust_cursor_shifts_cursor_when_edit_before_cursor() {
+        let mut buffer = TextBuffer::from_text("abcdef");
+        buffer.set_cursor(0, 4);
+
+        let _ = buffer.replace_range_op_adjust_cursor(0, 2, "XYZ", OpId::root());
+
+        assert_eq!(buffer.text(), "XYZcdef");
+        assert_eq!(buffer.cursor(), (0, 5));
+    }
+
+    #[test]
+    fn replace_range_op_adjust_cursor_moves_cursor_to_end_of_insert_when_cursor_inside_range() {
+        let mut buffer = TextBuffer::from_text("abcdef");
+        buffer.set_cursor(0, 1);
+
+        let _ = buffer.replace_range_op_adjust_cursor(0, 2, "XYZ", OpId::root());
+
+        assert_eq!(buffer.text(), "XYZcdef");
+        assert_eq!(buffer.cursor(), (0, 3));
+    }
+
+    #[test]
+    fn replace_range_op_adjust_cursor_moves_cursor_after_insertion_at_cursor() {
+        let mut buffer = TextBuffer::from_text("abc");
+        buffer.set_cursor(0, 1);
+
+        let _ = buffer.replace_range_op_adjust_cursor(1, 1, "XYZ", OpId::root());
+
+        assert_eq!(buffer.text(), "aXYZbc");
+        assert_eq!(buffer.cursor(), (0, 4));
     }
 }

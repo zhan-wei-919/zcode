@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::config::EditorConfig;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Settings {
     #[serde(default)]
     pub keybindings: Vec<KeybindingRule>,
@@ -30,6 +30,16 @@ pub struct ThemeSettings {
     pub separator: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accent_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_string_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_number_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_attribute_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activity_bg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -67,6 +77,11 @@ impl Default for ThemeSettings {
             inactive_border: Some("dark_gray".to_string()),
             separator: Some("dark_gray".to_string()),
             accent_fg: Some("yellow".to_string()),
+            syntax_string_fg: Some("green".to_string()),
+            syntax_number_fg: Some("magenta".to_string()),
+            syntax_attribute_fg: Some("blue".to_string()),
+            error_fg: Some("red".to_string()),
+            warning_fg: Some("yellow".to_string()),
             activity_bg: None,
             activity_fg: Some("dark_gray".to_string()),
             activity_active_bg: Some("dark_gray".to_string()),
@@ -81,16 +96,6 @@ impl Default for ThemeSettings {
             palette_selected_bg: Some("dark_gray".to_string()),
             palette_selected_fg: Some("white".to_string()),
             palette_muted_fg: Some("dark_gray".to_string()),
-        }
-    }
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            keybindings: Vec::new(),
-            theme: ThemeSettings::default(),
-            editor: EditorConfig::default(),
         }
     }
 }

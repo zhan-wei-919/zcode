@@ -1,9 +1,9 @@
 //! 快捷键：按键 → 命令（支持上下文）
 
 use crate::core::event::Key;
+use crate::core::event::{KeyCode, KeyModifiers};
 use crate::core::Command;
 use crate::core::Service;
-use crossterm::event::KeyCode;
 use rustc_hash::FxHashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -86,6 +86,18 @@ impl KeybindingService {
             KeybindingContext::BottomPanel => {
                 self.bottom_panel.get(key).or_else(|| self.global.get(key))
             }
+        }
+    }
+
+    pub fn bindings(&self, context: KeybindingContext) -> &FxHashMap<Key, Command> {
+        match context {
+            KeybindingContext::Global => &self.global,
+            KeybindingContext::Editor => &self.editor,
+            KeybindingContext::EditorSearchBar => &self.editor_search_bar,
+            KeybindingContext::SidebarExplorer => &self.sidebar_explorer,
+            KeybindingContext::SidebarSearch => &self.sidebar_search,
+            KeybindingContext::CommandPalette => &self.command_palette,
+            KeybindingContext::BottomPanel => &self.bottom_panel,
         }
     }
 
@@ -193,6 +205,15 @@ fn default_editor_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::ctrl(KeyCode::Char('k')), Command::DeleteToLineEnd);
     bindings.insert(Key::simple(KeyCode::F(2)), Command::LspHover);
     bindings.insert(Key::simple(KeyCode::F(12)), Command::LspDefinition);
+    bindings.insert(Key::shift(KeyCode::F(12)), Command::LspReferences);
+    bindings.insert(Key::alt(KeyCode::Enter), Command::LspCodeAction);
+    bindings.insert(Key::ctrl(KeyCode::Char('.')), Command::LspCompletion);
+    bindings.insert(Key::ctrl(KeyCode::Char(' ')), Command::LspCompletion);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('r')), Command::LspRename);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('o')), Command::LspDocumentSymbols);
+    bindings.insert(Key::ctrl(KeyCode::Char('t')), Command::LspWorkspaceSymbols);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('[')), Command::EditorFold);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char(']')), Command::EditorUnfold);
 
     bindings.insert(Key::shift(KeyCode::Left), Command::ExtendSelectionLeft);
     bindings.insert(Key::shift(KeyCode::Right), Command::ExtendSelectionRight);
@@ -226,10 +247,7 @@ fn default_editor_search_bar_keybindings() -> FxHashMap<Key, Command> {
         Command::EditorSearchBarReplaceCurrent,
     );
     bindings.insert(
-        Key::new(
-            KeyCode::Enter,
-            crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
-        ),
+        Key::new(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
         Command::EditorSearchBarReplaceAll,
     );
     bindings.insert(

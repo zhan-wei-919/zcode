@@ -1,18 +1,18 @@
 //! 全局搜索服务
 //!
 //! - Literal 模式：流式搜索，8KB 栈 buffer
-//! - Regex 模式：mmap 全量搜索
+//! - Regex 模式：逐行流式搜索
 //! - 使用 ignore crate 的并行遍历，自动利用多核
 
-use super::searcher::{search_regex_in_slice, SearchConfig, StreamSearcher};
+use super::searcher::{SearchConfig, StreamSearcher};
 use crate::core::Service;
 use crate::kernel::services::ports::search::{FileMatches, GlobalSearchMessage, Match};
 use ignore::{WalkBuilder, WalkState};
-use memmap2::Mmap;
 use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 
 static GLOBAL_SEARCH_ID: AtomicU64 = AtomicU64::new(0);
@@ -72,7 +72,7 @@ impl GlobalSearchService {
         pattern: String,
         case_sensitive: bool,
         is_regex: bool,
-        tx: Sender<GlobalSearchMessage>,
+        tx: SyncSender<GlobalSearchMessage>,
     ) -> GlobalSearchTask {
         let task = GlobalSearchTask::new();
         let search_id = task.id();
@@ -104,10 +104,29 @@ impl GlobalSearchService {
                 SearchConfig::literal(&pattern, case_sensitive)
             };
 
-            let _ = tokio::task::spawn_blocking(move || {
-                search_dir_parallel(&root, &config, search_id, &cancelled, &tx)
+            let cancelled_for_blocking = cancelled.clone();
+            let tx_for_blocking = tx.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                search_dir_parallel(
+                    &root,
+                    &config,
+                    search_id,
+                    &cancelled_for_blocking,
+                    &tx_for_blocking,
+                )
             })
             .await;
+
+            if let Err(e) = result {
+                if cancelled.load(Ordering::Relaxed) {
+                    let _ = tx.send(GlobalSearchMessage::Cancelled { search_id });
+                } else {
+                    let _ = tx.send(GlobalSearchMessage::Error {
+                        search_id,
+                        message: format!("Global search task failed: {}", e),
+                    });
+                }
+            }
         });
 
         task
@@ -130,7 +149,7 @@ fn search_dir_parallel(
     config: &SearchConfig,
     search_id: u64,
     cancelled: &AtomicBool,
-    tx: &Sender<GlobalSearchMessage>,
+    tx: &SyncSender<GlobalSearchMessage>,
 ) {
     let files_searched = Arc::new(AtomicUsize::new(0));
     let files_with_matches = Arc::new(AtomicUsize::new(0));
@@ -146,7 +165,6 @@ fn search_dir_parallel(
     walker.run(|| {
         // 每个线程的局部状态
         let config = config.clone();
-        let cancelled = cancelled;
         let tx = tx.clone();
         let files_searched = files_searched.clone();
         let files_with_matches = files_with_matches.clone();
@@ -168,10 +186,14 @@ fn search_dir_parallel(
                 return WalkState::Continue;
             }
 
-            let matches = match search_file(path, &config) {
+            let matches = match search_file(path, &config, cancelled) {
                 Ok(m) => m,
                 Err(_) => return WalkState::Continue,
             };
+
+            if cancelled.load(Ordering::Relaxed) {
+                return WalkState::Quit;
+            }
 
             let searched = files_searched.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -189,7 +211,7 @@ fn search_dir_parallel(
             }
 
             // 每 100 个文件发送进度
-            if searched % 100 == 0 {
+            if searched.is_multiple_of(100) {
                 let _ = tx.send(GlobalSearchMessage::Progress {
                     search_id,
                     files_searched: searched,
@@ -213,7 +235,15 @@ fn search_dir_parallel(
     }
 }
 
-fn search_file(path: &Path, config: &SearchConfig) -> std::io::Result<Vec<Match>> {
+fn search_file(
+    path: &Path,
+    config: &SearchConfig,
+    cancelled: &AtomicBool,
+) -> std::io::Result<Vec<Match>> {
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(Vec::new());
+    }
+
     let file = File::open(path)?;
     let metadata = file.metadata()?;
     let file_size = metadata.len() as usize;
@@ -222,30 +252,91 @@ fn search_file(path: &Path, config: &SearchConfig) -> std::io::Result<Vec<Match>
         return Ok(Vec::new());
     }
 
+    let mut preview = [0u8; 8192];
+    let preview_len = std::io::Read::read(&mut &file, &mut preview)?;
+    if is_likely_binary(&preview[..preview_len]) {
+        return Ok(Vec::new());
+    }
+
     match config {
         SearchConfig::Literal { .. } => {
             // Literal 模式：流式搜索
-            let mut preview = [0u8; 8192];
-            let preview_len = std::io::Read::read(&mut &file, &mut preview)?;
-            if is_likely_binary(&preview[..preview_len]) {
+            let file = File::open(path)?;
+            let mut matches = Vec::new();
+            let _ = StreamSearcher::new(file, config).search_with(
+                |m| {
+                    matches.push(m);
+                    Ok(())
+                },
+                || cancelled.load(Ordering::Relaxed),
+            )?;
+            if cancelled.load(Ordering::Relaxed) {
                 return Ok(Vec::new());
             }
-
-            let file = File::open(path)?;
-            StreamSearcher::new(file, config).search()
+            Ok(matches)
         }
         SearchConfig::Regex { .. } => {
-            // Regex 模式：mmap 全量搜索
-            // SAFETY: 文件在搜索期间不会被修改
-            let mmap = unsafe { Mmap::map(&file)? };
-
-            if is_likely_binary(&mmap) {
-                return Ok(Vec::new());
-            }
-
-            Ok(search_regex_in_slice(&mmap, config))
+            // Regex 模式：逐行搜索，避免 mmap 在文件被截断时触发 SIGBUS
+            let file = File::open(path)?;
+            search_regex_by_line(file, config, cancelled)
         }
     }
+}
+
+fn search_regex_by_line(
+    file: File,
+    config: &SearchConfig,
+    cancelled: &AtomicBool,
+) -> std::io::Result<Vec<Match>> {
+    let regex = match config {
+        SearchConfig::Regex { regex } => regex,
+        SearchConfig::Literal { .. } => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "search_regex_by_line only supports Regex mode",
+            ));
+        }
+    };
+
+    let mut reader = BufReader::new(file);
+    let mut buf = Vec::new();
+    let mut matches = Vec::new();
+    let mut line_no = 0usize;
+    let mut offset = 0usize;
+
+    loop {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(Vec::new());
+        }
+
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf)?;
+        if n == 0 {
+            break;
+        }
+
+        let trimmed = buf
+            .strip_suffix(b"\n")
+            .unwrap_or(&buf)
+            .strip_suffix(b"\r")
+            .unwrap_or(buf.as_slice());
+
+        let line = match std::str::from_utf8(trimmed) {
+            Ok(s) => s,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        for mat in regex.find_iter(line) {
+            let start = offset + mat.start();
+            let end = offset + mat.end();
+            matches.push(Match::new(start, end, line_no, mat.start()));
+        }
+
+        offset = offset.saturating_add(n);
+        line_no = line_no.saturating_add(1);
+    }
+
+    Ok(matches)
 }
 
 #[cfg(test)]
@@ -267,7 +358,7 @@ mod tests {
     fn test_global_search_literal() {
         let rt = create_runtime();
         let service = GlobalSearchService::new(rt.handle().clone());
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(64);
 
         let dir = tempdir().unwrap();
         let file1 = dir.path().join("test1.txt");
@@ -312,7 +403,7 @@ mod tests {
     fn test_global_search_regex() {
         let rt = create_runtime();
         let service = GlobalSearchService::new(rt.handle().clone());
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(64);
 
         let dir = tempdir().unwrap();
         let file1 = dir.path().join("test1.txt");
@@ -352,7 +443,7 @@ mod tests {
     fn test_skip_binary_files() {
         let rt = create_runtime();
         let service = GlobalSearchService::new(rt.handle().clone());
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(64);
 
         let dir = tempdir().unwrap();
         let text_file = dir.path().join("text.txt");
@@ -389,7 +480,7 @@ mod tests {
     fn test_cancel_search() {
         let rt = create_runtime();
         let service = GlobalSearchService::new(rt.handle().clone());
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(64);
 
         let dir = tempdir().unwrap();
         for i in 0..100 {

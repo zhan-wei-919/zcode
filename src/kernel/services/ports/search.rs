@@ -1,4 +1,36 @@
+use std::io;
 use std::path::PathBuf;
+
+pub type Result<T> = std::result::Result<T, SearchError>;
+
+#[derive(Debug)]
+pub enum SearchError {
+    Io(io::Error),
+    InvalidRegex(regex::Error),
+}
+
+impl std::fmt::Display for SearchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SearchError::Io(e) => write!(f, "IO error: {}", e),
+            SearchError::InvalidRegex(e) => write!(f, "Invalid regex: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for SearchError {}
+
+impl From<io::Error> for SearchError {
+    fn from(e: io::Error) -> Self {
+        SearchError::Io(e)
+    }
+}
+
+impl From<regex::Error> for SearchError {
+    fn from(e: regex::Error) -> Self {
+        SearchError::InvalidRegex(e)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Match {

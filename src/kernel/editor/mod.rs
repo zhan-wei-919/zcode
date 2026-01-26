@@ -15,3 +15,5 @@ pub use state::{
     SearchBarField, SearchBarMode, SearchBarState,
 };
 pub use syntax::{HighlightKind, HighlightSpan, LanguageId};
+pub(crate) use viewport::clamp_and_follow;
+pub use viewport::cursor_display_x_abs;

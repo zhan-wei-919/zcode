@@ -1,13 +1,26 @@
 use super::Workbench;
 use crate::core::event::InputEvent;
-use crate::core::view::EventResult;
 use crate::kernel::{FocusTarget, SidebarTab};
+use crate::tui::view::EventResult;
 
 pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> EventResult {
+    if matches!(
+        event,
+        InputEvent::Key(_) | InputEvent::Mouse(_) | InputEvent::Paste(_)
+    ) {
+        workbench.record_user_input();
+    }
+
     match event {
         InputEvent::Key(key_event) => workbench.handle_key_event(key_event),
         InputEvent::Paste(text) => workbench.handle_paste(text),
         InputEvent::Mouse(mouse_event) => {
+            if workbench.store.state().ui.explorer_context_menu.visible {
+                if let Some(result) = workbench.handle_explorer_context_menu_mouse(mouse_event) {
+                    return result;
+                }
+            }
+
             if let Some(result) = workbench.handle_editor_split_mouse(mouse_event) {
                 return result;
             }

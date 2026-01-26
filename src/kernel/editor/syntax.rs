@@ -19,6 +19,9 @@ pub enum HighlightKind {
     Number,
     Attribute,
     Lifetime,
+    Function,
+    Macro,
+    Variable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,14 +173,45 @@ impl SyntaxDocument {
 }
 
 fn parse_rope(parser: &mut Parser, rope: &Rope, old_tree: Option<&Tree>) -> Option<Tree> {
+    let mut cache = RopeChunkCache::new(rope);
     parser.parse_with(
-        &mut |byte_offset, _| {
-            let (chunk, chunk_start, _, _) = rope.chunk_at_byte(byte_offset);
-            let rel = byte_offset.saturating_sub(chunk_start);
-            &chunk.as_bytes()[rel..]
-        },
+        &mut |byte_offset, _| cache.bytes_from(byte_offset),
         old_tree,
     )
+}
+
+struct RopeChunkCache<'a> {
+    rope: &'a Rope,
+    chunk: &'a str,
+    start: usize,
+    end: usize,
+}
+
+impl<'a> RopeChunkCache<'a> {
+    fn new(rope: &'a Rope) -> Self {
+        Self {
+            rope,
+            chunk: "",
+            start: 0,
+            end: 0,
+        }
+    }
+
+    fn bytes_from(&mut self, byte_offset: usize) -> &'a [u8] {
+        if byte_offset >= self.rope.len_bytes() {
+            return &[];
+        }
+
+        if byte_offset < self.start || byte_offset >= self.end {
+            let (chunk, chunk_start, _, _) = self.rope.chunk_at_byte(byte_offset);
+            self.chunk = chunk;
+            self.start = chunk_start;
+            self.end = chunk_start + chunk.len();
+        }
+
+        let rel = byte_offset.saturating_sub(self.start);
+        &self.chunk.as_bytes()[rel..]
+    }
 }
 
 fn build_input_edit(rope: &Rope, op: &EditOp) -> Option<InputEdit> {
@@ -205,8 +239,8 @@ fn build_input_edit(rope: &Rope, op: &EditOp) -> Option<InputEdit> {
     let start_byte = rope.char_to_byte(start_char);
     let start_position = point_for_char(rope, start_char, start_byte)?;
 
-    let old_end_byte = start_byte + old_text.as_bytes().len();
-    let new_end_byte = start_byte + new_text.as_bytes().len();
+    let old_end_byte = start_byte + old_text.len();
+    let new_end_byte = start_byte + new_text.len();
 
     let old_end_position = advance_point(start_position, old_text);
     let new_end_position = advance_point(start_position, new_text);

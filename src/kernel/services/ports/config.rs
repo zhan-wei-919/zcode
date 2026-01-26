@@ -12,6 +12,8 @@ pub struct EditorConfig {
     pub show_line_numbers: bool,
     pub word_wrap: bool,
     pub auto_indent: bool,
+    #[serde(default, alias = "formatOnSave")]
+    pub format_on_save: bool,
 }
 
 impl Default for EditorConfig {
@@ -26,6 +28,7 @@ impl Default for EditorConfig {
             show_line_numbers: true,
             word_wrap: false,
             auto_indent: true,
+            format_on_save: false,
         }
     }
 }
@@ -45,6 +48,7 @@ mod tests {
         let config = EditorConfig::default();
         assert_eq!(config.tab_size, 4);
         assert!(config.show_line_numbers);
+        assert!(!config.format_on_save);
     }
 
     #[test]

@@ -4,17 +4,19 @@
 //! TODO: 大文本粘贴优化（>10MB 时考虑分块处理或警告）
 
 use crate::core::Service;
-
-#[cfg(not(target_os = "android"))]
-use arboard::Clipboard;
+use std::path::Path;
 
 const PASTE_MAX_SIZE: usize = 10 * 1024 * 1024; // 10MB
 
+#[derive(Debug, Clone, Copy)]
+enum ClipboardProvider {
+    #[cfg(target_os = "macos")]
+    MacOsPasteboard,
+    None,
+}
+
 pub struct ClipboardService {
-    #[cfg(not(target_os = "android"))]
-    clipboard: Option<Clipboard>,
-    #[cfg(target_os = "android")]
-    _dummy: (),
+    provider: ClipboardProvider,
 }
 
 #[derive(Debug)]
@@ -40,68 +42,141 @@ impl std::fmt::Display for ClipboardError {
 
 impl ClipboardService {
     pub fn new() -> Self {
-        #[cfg(not(target_os = "android"))]
-        {
-            let clipboard = Clipboard::new().ok();
-            Self { clipboard }
-        }
-        #[cfg(target_os = "android")]
-        {
-            Self { _dummy: () }
-        }
+        let provider = {
+            #[cfg(target_os = "macos")]
+            {
+                if command_exists("pbcopy") && command_exists("pbpaste") {
+                    ClipboardProvider::MacOsPasteboard
+                } else {
+                    ClipboardProvider::None
+                }
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                ClipboardProvider::None
+            }
+        };
+
+        Self { provider }
     }
 
     pub fn is_available(&self) -> bool {
-        #[cfg(not(target_os = "android"))]
-        {
-            self.clipboard.is_some()
-        }
-        #[cfg(target_os = "android")]
-        {
-            false
-        }
+        !matches!(self.provider, ClipboardProvider::None)
     }
 
     pub fn get_text(&mut self) -> Result<String, ClipboardError> {
-        #[cfg(not(target_os = "android"))]
-        {
-            let clipboard = self
-                .clipboard
-                .as_mut()
-                .ok_or(ClipboardError::NotAvailable)?;
-
-            let text = clipboard
-                .get_text()
-                .map_err(|e| ClipboardError::GetFailed(e.to_string()))?;
-
-            if text.len() > PASTE_MAX_SIZE {
-                return Err(ClipboardError::TooLarge(text.len()));
-            }
-
-            Ok(text)
-        }
-        #[cfg(target_os = "android")]
-        {
-            Err(ClipboardError::NotAvailable)
+        match self.provider {
+            #[cfg(target_os = "macos")]
+            ClipboardProvider::MacOsPasteboard => macos::pbpaste_text(),
+            ClipboardProvider::None => Err(ClipboardError::NotAvailable),
         }
     }
 
     pub fn set_text(&mut self, text: &str) -> Result<(), ClipboardError> {
-        #[cfg(not(target_os = "android"))]
-        {
-            let clipboard = self
-                .clipboard
-                .as_mut()
-                .ok_or(ClipboardError::NotAvailable)?;
+        match self.provider {
+            #[cfg(target_os = "macos")]
+            ClipboardProvider::MacOsPasteboard => macos::pbcopy_text(text),
+            ClipboardProvider::None => Err(ClipboardError::NotAvailable),
+        }
+    }
+}
 
-            clipboard
-                .set_text(text.to_string())
-                .map_err(|e| ClipboardError::SetFailed(e.to_string()))
+fn command_exists(name: &str) -> bool {
+    if name.trim().is_empty() {
+        return false;
+    }
+
+    // If a path is provided, just check the file exists.
+    if name.contains('/') || name.contains('\\') {
+        return Path::new(name).is_file();
+    }
+
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+
+    std::env::split_paths(&paths).any(|dir| dir.join(name).is_file())
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::{ClipboardError, PASTE_MAX_SIZE};
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+
+    pub(super) fn pbpaste_text() -> Result<String, ClipboardError> {
+        let mut child = Command::new("pbpaste")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| ClipboardError::GetFailed(e.to_string()))?;
+
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ClipboardError::GetFailed("pbpaste missing stdout".to_string()))?;
+
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let n = stdout
+                .read(&mut chunk)
+                .map_err(|e| ClipboardError::GetFailed(e.to_string()))?;
+            if n == 0 {
+                break;
+            }
+            if buf.len().saturating_add(n) > PASTE_MAX_SIZE {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ClipboardError::TooLarge(buf.len().saturating_add(n)));
+            }
+            buf.extend_from_slice(&chunk[..n]);
         }
-        #[cfg(target_os = "android")]
+
+        let status = child
+            .wait()
+            .map_err(|e| ClipboardError::GetFailed(e.to_string()))?;
+        if !status.success() {
+            return Err(ClipboardError::GetFailed(format!(
+                "pbpaste failed: {}",
+                status
+            )));
+        }
+
+        String::from_utf8(buf).map_err(|e| ClipboardError::GetFailed(e.to_string()))
+    }
+
+    pub(super) fn pbcopy_text(text: &str) -> Result<(), ClipboardError> {
+        let mut child = Command::new("pbcopy")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| ClipboardError::SetFailed(e.to_string()))?;
+
         {
-            Err(ClipboardError::NotAvailable)
+            let stdin = child
+                .stdin
+                .as_mut()
+                .ok_or_else(|| ClipboardError::SetFailed("pbcopy missing stdin".to_string()))?;
+            stdin
+                .write_all(text.as_bytes())
+                .map_err(|e| ClipboardError::SetFailed(e.to_string()))?;
         }
+
+        let status = child
+            .wait()
+            .map_err(|e| ClipboardError::SetFailed(e.to_string()))?;
+        if !status.success() {
+            return Err(ClipboardError::SetFailed(format!(
+                "pbcopy failed: {}",
+                status
+            )));
+        }
+
+        Ok(())
     }
 }
 

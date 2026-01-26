@@ -11,6 +11,7 @@ pub mod runtime;
 pub mod search;
 pub mod settings;
 
+pub use crate::kernel::services::ports::{LspCompletionItem, LspPosition, LspRange, LspTextChange};
 pub use backup::{
     ensure_backup_dir, ensure_log_dir, get_backup_dir, get_log_dir, get_ops_file_path,
 };
@@ -18,7 +19,7 @@ pub use clipboard::{ClipboardError, ClipboardService};
 pub use config::ConfigService;
 pub use file::{FileService, LocalFileProvider};
 pub use keybinding::{KeybindingContext, KeybindingService};
-pub use lsp::{LspPosition, LspRange, LspService, LspTextChange};
+pub use lsp::LspService;
 pub use runtime::{AppMessage, AsyncRuntime};
 pub use search::{
     search_regex_in_slice, GlobalSearchService, GlobalSearchTask, RopeReader, SearchConfig,

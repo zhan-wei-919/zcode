@@ -1,53 +1,15 @@
-use rustc_hash::FxHashMap;
-use std::path::PathBuf;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProblemSeverity {
-    Error,
-    Warning,
-    Information,
-    Hint,
-}
-
-impl ProblemSeverity {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Error => "error",
-            Self::Warning => "warning",
-            Self::Information => "info",
-            Self::Hint => "hint",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProblemRange {
-    pub start_line: u32,
-    pub start_col: u32,
-    pub end_line: u32,
-    pub end_col: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProblemItem {
-    pub path: PathBuf,
-    pub range: ProblemRange,
-    pub severity: ProblemSeverity,
-    pub message: String,
-    pub source: Option<String>,
-}
+use crate::kernel::services::ports::LspCodeAction;
 
 #[derive(Debug, Default)]
-pub struct ProblemsState {
-    by_path: FxHashMap<PathBuf, Vec<ProblemItem>>,
-    items: Vec<ProblemItem>,
+pub struct CodeActionsState {
+    items: Vec<LspCodeAction>,
     selected_index: usize,
     view_height: usize,
     scroll_offset: usize,
 }
 
-impl ProblemsState {
-    pub fn items(&self) -> &[ProblemItem] {
+impl CodeActionsState {
+    pub fn items(&self) -> &[LspCodeAction] {
         &self.items
     }
 
@@ -57,6 +19,32 @@ impl ProblemsState {
 
     pub fn scroll_offset(&self) -> usize {
         self.scroll_offset
+    }
+
+    pub fn set_items(&mut self, items: Vec<LspCodeAction>) -> bool {
+        let changed = self.items.len() != items.len()
+            || self
+                .items
+                .iter()
+                .zip(items.iter())
+                .any(|(a, b)| a.title != b.title);
+        if !changed {
+            return false;
+        }
+        self.items = items;
+        self.clamp_selection();
+        self.clamp_scroll();
+        true
+    }
+
+    pub fn clear(&mut self) -> bool {
+        if self.items.is_empty() && self.selected_index == 0 && self.scroll_offset == 0 {
+            return false;
+        }
+        self.items.clear();
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+        true
     }
 
     pub fn set_view_height(&mut self, height: usize) -> bool {
@@ -120,40 +108,8 @@ impl ProblemsState {
         true
     }
 
-    pub fn update_path(&mut self, path: PathBuf, items: Vec<ProblemItem>) -> bool {
-        let changed = match self.by_path.get(&path) {
-            Some(existing) => existing != &items,
-            None => !items.is_empty(),
-        };
-
-        if items.is_empty() {
-            self.by_path.remove(&path);
-        } else {
-            self.by_path.insert(path, items);
-        }
-
-        if changed {
-            self.rebuild_items();
-        }
-
-        changed
-    }
-
-    fn rebuild_items(&mut self) {
-        self.items.clear();
-        for items in self.by_path.values() {
-            self.items.extend(items.iter().cloned());
-        }
-        self.items.sort_by(|a, b| {
-            let path_a = a.path.as_os_str();
-            let path_b = b.path.as_os_str();
-            path_a
-                .cmp(path_b)
-                .then(a.range.start_line.cmp(&b.range.start_line))
-                .then(a.range.start_col.cmp(&b.range.start_col))
-        });
-        self.clamp_selection();
-        self.clamp_scroll();
+    pub fn selected(&self) -> Option<&LspCodeAction> {
+        self.items.get(self.selected_index)
     }
 
     fn clamp_selection(&mut self) {

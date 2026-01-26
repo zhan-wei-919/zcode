@@ -50,10 +50,17 @@ impl EditorTabState {
         let granularity = click_granularity(&mut self.mouse, x, y, now, slop, triple_click_ms);
         self.mouse.granularity = granularity;
 
-        let Some(pos) = viewport::screen_to_pos(&self.viewport, &self.buffer, tab_size, x, y)
+        let visible_lines =
+            self.visible_lines_in_viewport(self.viewport.line_offset, self.viewport.height.max(1));
+        let Some(row) = visible_lines.get(y as usize).copied() else {
+            return false;
+        };
+
+        let Some(col) = viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
         else {
             return false;
         };
+        let pos = (row, col);
 
         self.buffer.set_cursor(pos.0, pos.1);
 
@@ -72,10 +79,17 @@ impl EditorTabState {
             return false;
         }
 
-        let Some(pos) = viewport::screen_to_pos(&self.viewport, &self.buffer, tab_size, x, y)
+        let visible_lines =
+            self.visible_lines_in_viewport(self.viewport.line_offset, self.viewport.height.max(1));
+        let Some(row) = visible_lines.get(y as usize).copied() else {
+            return false;
+        };
+
+        let Some(col) = viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
         else {
             return false;
         };
+        let pos = (row, col);
 
         self.buffer.update_selection_cursor(pos);
         self.buffer.set_cursor(pos.0, pos.1);

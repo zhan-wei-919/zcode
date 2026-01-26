@@ -1,5 +1,10 @@
 use ropey::Rope;
+use serde_json::Value;
 use std::path::PathBuf;
+
+use crate::kernel::services::ports::{
+    LspCompletionItem, LspPositionEncoding, LspRange, LspResourceOp, LspWorkspaceFileEdit,
+};
 
 #[derive(Debug, Clone)]
 pub enum Effect {
@@ -7,7 +12,14 @@ pub enum Effect {
     LoadDir(PathBuf),
     CreateFile(PathBuf),
     CreateDir(PathBuf),
-    DeletePath { path: PathBuf, is_dir: bool },
+    RenamePath {
+        from: PathBuf,
+        to: PathBuf,
+    },
+    DeletePath {
+        path: PathBuf,
+        is_dir: bool,
+    },
     ReloadSettings,
     OpenSettings,
     StartGlobalSearch {
@@ -29,6 +41,7 @@ pub enum Effect {
     WriteFile {
         pane: usize,
         path: PathBuf,
+        version: u64,
     },
     SetClipboardText(String),
     RequestClipboardText {
@@ -43,5 +56,70 @@ pub enum Effect {
         path: PathBuf,
         line: u32,
         column: u32,
+    },
+    LspReferencesRequest {
+        path: PathBuf,
+        line: u32,
+        column: u32,
+    },
+    LspDocumentSymbolsRequest {
+        path: PathBuf,
+    },
+    LspWorkspaceSymbolsRequest {
+        query: String,
+    },
+    LspCodeActionRequest {
+        path: PathBuf,
+        line: u32,
+        column: u32,
+    },
+    LspCompletionRequest {
+        path: PathBuf,
+        line: u32,
+        column: u32,
+    },
+    LspCompletionResolveRequest {
+        item: LspCompletionItem,
+    },
+    LspSignatureHelpRequest {
+        path: PathBuf,
+        line: u32,
+        column: u32,
+    },
+    LspRenameRequest {
+        path: PathBuf,
+        line: u32,
+        column: u32,
+        new_name: String,
+    },
+    LspFormatRequest {
+        path: PathBuf,
+    },
+    LspRangeFormatRequest {
+        path: PathBuf,
+        range: LspRange,
+    },
+    LspSemanticTokensRequest {
+        path: PathBuf,
+        version: u64,
+    },
+    LspInlayHintsRequest {
+        path: PathBuf,
+        version: u64,
+        range: LspRange,
+    },
+    LspFoldingRangeRequest {
+        path: PathBuf,
+        version: u64,
+    },
+    LspExecuteCommand {
+        command: String,
+        arguments: Vec<Value>,
+    },
+    LspShutdown,
+    ApplyFileEdits {
+        position_encoding: LspPositionEncoding,
+        resource_ops: Vec<LspResourceOp>,
+        edits: Vec<LspWorkspaceFileEdit>,
     },
 }

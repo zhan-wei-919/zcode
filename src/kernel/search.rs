@@ -40,7 +40,7 @@ pub enum SearchResultItem {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SearchState {
     pub query: String,
     pub query_cursor: usize,
@@ -71,29 +71,6 @@ pub struct SearchResultsSnapshot<'a> {
     pub selected_index: usize,
     pub scroll_offset: usize,
     pub last_error: Option<&'a str>,
-}
-
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            query: String::new(),
-            query_cursor: 0,
-            case_sensitive: false,
-            use_regex: false,
-            searching: false,
-            active_search_id: None,
-            files_searched: 0,
-            files_with_matches: 0,
-            total_matches: 0,
-            file_count: 0,
-            files: Vec::new(),
-            items: Vec::new(),
-            selected_index: 0,
-            sidebar_view: SearchViewportState::default(),
-            panel_view: SearchViewportState::default(),
-            last_error: None,
-        }
-    }
 }
 
 impl SearchState {

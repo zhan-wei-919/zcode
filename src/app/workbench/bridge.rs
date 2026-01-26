@@ -1,30 +1,30 @@
 use super::Workbench;
 use crate::kernel::services::adapters::perf;
+use crate::kernel::services::adapters::{
+    ClipboardService, GlobalSearchService, LspService, SearchService,
+};
+use crate::kernel::services::ports::{LspPosition, LspPositionEncoding, LspRange, LspTextChange};
 use crate::kernel::{Action as KernelAction, EditorAction, Effect as KernelEffect};
-use crate::kernel::services::adapters::{ClipboardService, GlobalSearchService, LspService, LspTextChange, SearchService};
 use crate::models::OpKind;
 use ropey::Rope;
 use rustc_hash::FxHashSet;
-use std::fs::File;
-use std::io::BufWriter;
 use std::sync::mpsc;
 
 impl Workbench {
     pub(super) fn dispatch_kernel(&mut self, action: KernelAction) -> bool {
         let _scope = perf::scope("kernel.dispatch");
-        let prev_paths = self.collect_open_paths();
         let result = {
             let _scope = perf::scope("kernel.reduce");
             self.store.dispatch(action)
         };
+        self.sync_editor_search_slots();
+        self.sync_lsp();
         {
             let _scope = perf::scope("kernel.effects");
             for effect in result.effects {
                 self.run_effect(effect);
             }
         }
-        self.sync_editor_search_slots();
-        self.sync_lsp(prev_paths);
         result.state_changed
     }
 
@@ -67,6 +67,10 @@ impl Workbench {
                 let _scope = perf::scope("effect.create_dir");
                 self.runtime.create_dir(path)
             }
+            KernelEffect::RenamePath { from, to } => {
+                let _scope = perf::scope("effect.rename_path");
+                self.runtime.rename_path(from, to)
+            }
             KernelEffect::DeletePath { path, is_dir } => {
                 let _scope = perf::scope("effect.delete_path");
                 self.runtime.delete_path(path, is_dir)
@@ -90,17 +94,11 @@ impl Workbench {
                     task.cancel();
                 }
 
-                let (tx, rx) = mpsc::channel();
+                let (tx, rx) = mpsc::sync_channel(super::GLOBAL_SEARCH_CHANNEL_CAP);
                 self.global_search_rx = Some(rx);
 
                 if let Some(service) = self.kernel_services.get::<GlobalSearchService>() {
-                    let task = service.search_in_dir(
-                        root,
-                        pattern,
-                        case_sensitive,
-                        use_regex,
-                        tx,
-                    );
+                    let task = service.search_in_dir(root, pattern, case_sensitive, use_regex, tx);
                     let search_id = task.id();
                     self.global_search_task = Some(task);
                     let _ = self.dispatch_kernel(KernelAction::SearchStarted { search_id });
@@ -124,23 +122,18 @@ impl Workbench {
                 }
                 self.editor_search_rx[pane] = None;
 
-                let (tx, rx) = mpsc::channel();
+                let (tx, rx) = mpsc::sync_channel(super::EDITOR_SEARCH_CHANNEL_CAP);
                 self.editor_search_rx[pane] = Some(rx);
 
                 if let Some(service) = self.kernel_services.get::<SearchService>() {
-                    let task = service.search_in_rope(
-                        rope,
-                        pattern,
-                        case_sensitive,
-                        use_regex,
-                        tx,
-                    );
+                    let task = service.search_in_rope(rope, pattern, case_sensitive, use_regex, tx);
                     let search_id = task.id();
                     self.editor_search_tasks[pane] = Some(task);
-                    let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::SearchStarted {
-                        pane,
-                        search_id,
-                    }));
+                    let _ =
+                        self.dispatch_kernel(KernelAction::Editor(EditorAction::SearchStarted {
+                            pane,
+                            search_id,
+                        }));
                 }
             }
             KernelEffect::CancelEditorSearch { pane } => {
@@ -154,30 +147,25 @@ impl Workbench {
                 }
                 self.editor_search_rx[pane] = None;
             }
-            KernelEffect::WriteFile { pane, path } => {
+            KernelEffect::WriteFile {
+                pane,
+                path,
+                version,
+            } => {
                 let _scope = perf::scope("effect.write_file");
-                let success = write_file_from_state(&self.store, pane, &path);
-                if !success {
-                    tracing::error!(path = %path.display(), "write_file failed");
-                }
-                if success {
-                    if let Some(service) = self.kernel_services.get_mut::<LspService>() {
-                        service.save_document(&path);
-                    }
-                }
-                if success
-                    && self
-                        .settings_path
-                        .as_ref()
-                        .is_some_and(|settings_path| settings_path.as_path() == path.as_path())
-                {
-                    self.reload_settings();
-                }
-                let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::Saved {
-                    pane,
-                    path,
-                    success,
-                }));
+                let Some(pane_state) = self.store.state().editor.pane(pane) else {
+                    return;
+                };
+                let Some(tab) = pane_state
+                    .tabs
+                    .iter()
+                    .find(|t| t.path.as_deref() == Some(path.as_path()))
+                else {
+                    return;
+                };
+
+                let rope = tab.buffer.rope().clone();
+                self.runtime.write_file(pane, path, version, rope);
             }
             KernelEffect::SetClipboardText(text) => {
                 let _scope = perf::scope("effect.clipboard_set");
@@ -206,7 +194,7 @@ impl Workbench {
                 if let Some(service) = self.kernel_services.get_mut::<LspService>() {
                     service.request_hover(
                         &path,
-                        crate::kernel::services::adapters::LspPosition {
+                        LspPosition {
                             line,
                             character: column,
                         },
@@ -218,57 +206,192 @@ impl Workbench {
                 if let Some(service) = self.kernel_services.get_mut::<LspService>() {
                     service.request_definition(
                         &path,
-                        crate::kernel::services::adapters::LspPosition {
+                        LspPosition {
                             line,
                             character: column,
                         },
                     );
                 }
             }
+            KernelEffect::LspReferencesRequest { path, line, column } => {
+                let _scope = perf::scope("effect.lsp_references");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_references(
+                        &path,
+                        LspPosition {
+                            line,
+                            character: column,
+                        },
+                    );
+                }
+            }
+            KernelEffect::LspCodeActionRequest { path, line, column } => {
+                let _scope = perf::scope("effect.lsp_code_action");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_code_action(
+                        &path,
+                        LspPosition {
+                            line,
+                            character: column,
+                        },
+                    );
+                }
+            }
+            KernelEffect::LspCompletionRequest { path, line, column } => {
+                let _scope = perf::scope("effect.lsp_completion");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_completion(
+                        &path,
+                        LspPosition {
+                            line,
+                            character: column,
+                        },
+                    );
+                }
+            }
+            KernelEffect::LspCompletionResolveRequest { item } => {
+                let _scope = perf::scope("effect.lsp_completion_resolve");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_completion_resolve(item);
+                }
+            }
+            KernelEffect::LspSemanticTokensRequest { path, version } => {
+                let _scope = perf::scope("effect.lsp_semantic_tokens");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_semantic_tokens(&path, version);
+                }
+            }
+            KernelEffect::LspInlayHintsRequest {
+                path,
+                version,
+                range,
+            } => {
+                let _scope = perf::scope("effect.lsp_inlay_hints");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_inlay_hints(&path, range, version);
+                }
+            }
+            KernelEffect::LspFoldingRangeRequest { path, version } => {
+                let _scope = perf::scope("effect.lsp_folding_range");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_folding_range(&path, version);
+                }
+            }
+            KernelEffect::LspSignatureHelpRequest { path, line, column } => {
+                let _scope = perf::scope("effect.lsp_signature_help");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_signature_help(
+                        &path,
+                        LspPosition {
+                            line,
+                            character: column,
+                        },
+                    );
+                }
+            }
+            KernelEffect::LspRenameRequest {
+                path,
+                line,
+                column,
+                new_name,
+            } => {
+                let _scope = perf::scope("effect.lsp_rename");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_rename(
+                        &path,
+                        LspPosition {
+                            line,
+                            character: column,
+                        },
+                        new_name,
+                    );
+                }
+            }
+            KernelEffect::LspFormatRequest { path } => {
+                let _scope = perf::scope("effect.lsp_format");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_format(&path);
+                }
+            }
+            KernelEffect::LspDocumentSymbolsRequest { path } => {
+                let _scope = perf::scope("effect.lsp_document_symbols");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_document_symbols(&path);
+                }
+            }
+            KernelEffect::LspWorkspaceSymbolsRequest { query } => {
+                let _scope = perf::scope("effect.lsp_workspace_symbols");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_workspace_symbols(query);
+                }
+            }
+            KernelEffect::LspRangeFormatRequest { path, range } => {
+                let _scope = perf::scope("effect.lsp_range_format");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.request_range_format(&path, range);
+                }
+            }
+            KernelEffect::LspExecuteCommand { command, arguments } => {
+                let _scope = perf::scope("effect.lsp_execute_command");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.execute_command(command, arguments);
+                }
+            }
+            KernelEffect::LspShutdown => {
+                let _scope = perf::scope("effect.lsp_shutdown");
+                if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    service.shutdown();
+                }
+            }
+            KernelEffect::ApplyFileEdits {
+                position_encoding,
+                resource_ops,
+                edits,
+            } => {
+                let _scope = perf::scope("effect.apply_file_edits");
+                self.runtime
+                    .apply_file_edits(position_encoding, resource_ops, edits);
+            }
         }
     }
 }
 
 impl Workbench {
-    fn collect_open_paths(&self) -> FxHashSet<std::path::PathBuf> {
-        let mut paths = FxHashSet::default();
-        for pane in &self.store.state().editor.panes {
-            for tab in &pane.tabs {
-                if let Some(path) = tab.path.as_ref() {
-                    paths.insert(path.clone());
-                }
-            }
-        }
-        paths
-    }
-
-    fn sync_lsp(&mut self, prev_paths: FxHashSet<std::path::PathBuf>) {
+    fn sync_lsp(&mut self) {
         let Some(service) = self.kernel_services.get_mut::<LspService>() else {
             return;
         };
 
-        let mut current_paths = FxHashSet::default();
-        let mut newly_open = Vec::new();
+        let open_paths_version = self.store.state().editor.open_paths_version;
+        if open_paths_version != self.lsp_open_paths_version {
+            let mut current_paths = FxHashSet::default();
+            let mut newly_open = Vec::new();
 
-        for pane in &self.store.state().editor.panes {
-            for tab in &pane.tabs {
-                let Some(path) = tab.path.as_ref() else {
-                    continue;
-                };
-                current_paths.insert(path.clone());
-                if !prev_paths.contains(path) {
-                    newly_open.push((path.clone(), tab));
+            for pane in &self.store.state().editor.panes {
+                for tab in &pane.tabs {
+                    let Some(path) = tab.path.as_ref() else {
+                        continue;
+                    };
+                    if !is_rust_source_path(path) {
+                        continue;
+                    }
+                    current_paths.insert(path.clone());
+                    if !self.lsp_open_paths.contains(path) {
+                        newly_open.push((path.clone(), tab));
+                    }
                 }
             }
-        }
 
-        for path in prev_paths.difference(&current_paths) {
-            service.close_document(path);
-        }
+            for path in self.lsp_open_paths.difference(&current_paths) {
+                service.close_document(path);
+            }
 
-        for (path, tab) in newly_open {
-            let text = tab.buffer.text();
-            service.sync_document(&path, &text, tab.edit_version, None);
+            for (path, tab) in newly_open {
+                service.sync_document(&path, tab.edit_version, None, || tab.buffer.text());
+            }
+
+            self.lsp_open_paths_version = open_paths_version;
+            self.lsp_open_paths = current_paths;
         }
 
         let pane = self.store.state().ui.editor_layout.active_pane;
@@ -281,18 +404,35 @@ impl Workbench {
         let Some(path) = tab.path.as_ref() else {
             return;
         };
+        if !is_rust_source_path(path) {
+            return;
+        }
 
         if !service.needs_sync(path, tab.edit_version) {
             return;
         }
 
-        let change = lsp_change_from_tab(tab);
-        let text = tab.buffer.text();
-        service.sync_document(path, &text, tab.edit_version, change);
+        let encoding = self
+            .store
+            .state()
+            .lsp
+            .server_capabilities
+            .as_ref()
+            .map(|c| c.position_encoding)
+            .unwrap_or(LspPositionEncoding::Utf16);
+        let change = lsp_change_from_tab(tab, encoding);
+        service.sync_document(path, tab.edit_version, change, || tab.buffer.text());
     }
 }
 
-fn lsp_change_from_tab(tab: &crate::kernel::editor::EditorTabState) -> Option<LspTextChange> {
+fn is_rust_source_path(path: &std::path::Path) -> bool {
+    matches!(path.extension().and_then(|s| s.to_str()), Some("rs"))
+}
+
+fn lsp_change_from_tab(
+    tab: &crate::kernel::editor::EditorTabState,
+    encoding: LspPositionEncoding,
+) -> Option<LspTextChange> {
     let op = tab.last_edit_op.as_ref()?;
     if op.id != tab.history.head() {
         return None;
@@ -300,20 +440,17 @@ fn lsp_change_from_tab(tab: &crate::kernel::editor::EditorTabState) -> Option<Ls
 
     match &op.kind {
         OpKind::Insert { char_offset, text } => {
-            let start = lsp_position_at(tab.buffer.rope(), *char_offset);
+            let start = lsp_position_at(tab.buffer.rope(), *char_offset, encoding);
             Some(LspTextChange {
-                range: Some(crate::kernel::services::adapters::LspRange {
-                    start,
-                    end: start,
-                }),
+                range: Some(LspRange { start, end: start }),
                 text: text.clone(),
             })
         }
         OpKind::Delete { start, deleted, .. } => {
-            let start_pos = lsp_position_at(tab.buffer.rope(), *start);
-            let end_pos = lsp_position_after_text(start_pos, deleted);
+            let start_pos = lsp_position_at(tab.buffer.rope(), *start, encoding);
+            let end_pos = lsp_position_after_text(start_pos, deleted, encoding);
             Some(LspTextChange {
-                range: Some(crate::kernel::services::adapters::LspRange {
+                range: Some(LspRange {
                     start: start_pos,
                     end: end_pos,
                 }),
@@ -326,10 +463,10 @@ fn lsp_change_from_tab(tab: &crate::kernel::editor::EditorTabState) -> Option<Ls
             inserted,
             ..
         } => {
-            let start_pos = lsp_position_at(tab.buffer.rope(), *start);
-            let end_pos = lsp_position_after_text(start_pos, deleted);
+            let start_pos = lsp_position_at(tab.buffer.rope(), *start, encoding);
+            let end_pos = lsp_position_after_text(start_pos, deleted, encoding);
             Some(LspTextChange {
-                range: Some(crate::kernel::services::adapters::LspRange {
+                range: Some(LspRange {
                     start: start_pos,
                     end: end_pos,
                 }),
@@ -339,26 +476,35 @@ fn lsp_change_from_tab(tab: &crate::kernel::editor::EditorTabState) -> Option<Ls
     }
 }
 
-fn lsp_position_at(rope: &Rope, char_offset: usize) -> crate::kernel::services::adapters::LspPosition {
+fn lsp_position_at(rope: &Rope, char_offset: usize, encoding: LspPositionEncoding) -> LspPosition {
     let line = rope.char_to_line(char_offset);
     let line_start = rope.line_to_char(line);
     let col_chars = char_offset.saturating_sub(line_start);
-    let line_text = rope.line(line).to_string();
-    let utf16 = line_text
-        .chars()
-        .take(col_chars)
-        .map(|ch| ch.len_utf16() as u32)
-        .sum();
-    crate::kernel::services::adapters::LspPosition {
+    let line_slice = rope.line(line);
+    let col = match encoding {
+        LspPositionEncoding::Utf8 => line_slice
+            .chars()
+            .take(col_chars)
+            .map(|ch| ch.len_utf8() as u32)
+            .sum(),
+        LspPositionEncoding::Utf16 => line_slice
+            .chars()
+            .take(col_chars)
+            .map(|ch| ch.len_utf16() as u32)
+            .sum(),
+        LspPositionEncoding::Utf32 => col_chars as u32,
+    };
+    LspPosition {
         line: line as u32,
-        character: utf16,
+        character: col,
     }
 }
 
 fn lsp_position_after_text(
-    mut pos: crate::kernel::services::adapters::LspPosition,
+    mut pos: LspPosition,
     text: &str,
-) -> crate::kernel::services::adapters::LspPosition {
+    encoding: LspPositionEncoding,
+) -> LspPosition {
     let mut line = pos.line;
     let mut col = pos.character;
     for ch in text.chars() {
@@ -370,33 +516,13 @@ fn lsp_position_after_text(
         if ch == '\r' {
             continue;
         }
-        col = col.saturating_add(ch.len_utf16() as u32);
+        col = col.saturating_add(match encoding {
+            LspPositionEncoding::Utf8 => ch.len_utf8() as u32,
+            LspPositionEncoding::Utf16 => ch.len_utf16() as u32,
+            LspPositionEncoding::Utf32 => 1,
+        });
     }
     pos.line = line;
     pos.character = col;
     pos
-}
-
-fn write_file_from_state(
-    store: &crate::kernel::Store,
-    pane: usize,
-    path: &std::path::Path,
-) -> bool {
-    let Some(pane_state) = store.state().editor.pane(pane) else {
-        return false;
-    };
-
-    let Some(tab) = pane_state
-        .tabs
-        .iter()
-        .find(|t| t.path.as_deref() == Some(path))
-    else {
-        return false;
-    };
-
-    let Ok(file) = File::create(path) else {
-        return false;
-    };
-    let mut writer = BufWriter::new(file);
-    tab.buffer.write_to(&mut writer).is_ok()
 }

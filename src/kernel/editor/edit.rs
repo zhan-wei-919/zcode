@@ -72,6 +72,10 @@ impl EditorTabState {
                 let changed = self.extend_selection_word_right(tab_size);
                 (changed, Vec::new())
             }
+            Command::EditorFoldToggle | Command::EditorFold | Command::EditorUnfold => {
+                let changed = self.execute(command, config);
+                (changed, Vec::new())
+            }
             cmd if cmd.is_cursor_command()
                 || cmd.is_selection_command()
                 || cmd.is_edit_command() =>
@@ -90,6 +94,9 @@ impl EditorTabState {
             Command::CursorRight => self.cursor_right(tab_size),
             Command::CursorUp => self.cursor_up(tab_size),
             Command::CursorDown => self.cursor_down(tab_size),
+            Command::EditorFoldToggle => self.fold_toggle_at_cursor(tab_size),
+            Command::EditorFold => self.fold_close_at_cursor(tab_size),
+            Command::EditorUnfold => self.fold_open_at_cursor(tab_size),
             Command::CursorLineStart => {
                 let (row, _) = self.buffer.cursor();
                 self.buffer.set_cursor(row, 0);
@@ -110,8 +117,9 @@ impl EditorTabState {
             }
             Command::CursorFileEnd => {
                 let last = self.buffer.len_lines().saturating_sub(1);
-                let len = self.buffer.line_grapheme_len(last);
-                self.buffer.set_cursor(last, len);
+                let row = self.prev_visible_row_at_or_before(last).unwrap_or(last);
+                let len = self.buffer.line_grapheme_len(row);
+                self.buffer.set_cursor(row, len);
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
                 true
             }
@@ -123,7 +131,9 @@ impl EditorTabState {
                 self.viewport.line_offset =
                     self.viewport.line_offset.min(total.saturating_sub(height));
                 let (row, col) = self.buffer.cursor();
-                self.buffer.set_cursor(row.saturating_sub(height), col);
+                let target = row.saturating_sub(height);
+                let target = self.prev_visible_row_at_or_before(target).unwrap_or(target);
+                self.buffer.set_cursor(target, col);
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
                 true
             }
@@ -135,6 +145,7 @@ impl EditorTabState {
                 self.viewport.line_offset = (self.viewport.line_offset + height).min(max_offset);
                 let (row, col) = self.buffer.cursor();
                 let new_row = (row + height).min(total.saturating_sub(1));
+                let new_row = self.next_visible_row_at_or_after(new_row).unwrap_or(new_row);
                 self.buffer.set_cursor(new_row, col);
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
                 true
@@ -224,9 +235,9 @@ impl EditorTabState {
         let prev = (row, col);
         if col > 0 {
             self.buffer.set_cursor(row, col - 1);
-        } else if row > 0 {
-            let prev_len = self.buffer.line_grapheme_len(row - 1);
-            self.buffer.set_cursor(row - 1, prev_len);
+        } else if let Some(prev_row) = self.prev_visible_row_before(row) {
+            let prev_len = self.buffer.line_grapheme_len(prev_row);
+            self.buffer.set_cursor(prev_row, prev_len);
         }
         let changed = self.buffer.cursor() != prev;
         if changed {
@@ -242,8 +253,8 @@ impl EditorTabState {
         let line_len = self.buffer.line_grapheme_len(row);
         if col < line_len {
             self.buffer.set_cursor(row, col + 1);
-        } else if row + 1 < self.buffer.len_lines() {
-            self.buffer.set_cursor(row + 1, 0);
+        } else if let Some(next_row) = self.next_visible_row_after(row) {
+            self.buffer.set_cursor(next_row, 0);
         }
         let changed = self.buffer.cursor() != prev;
         if changed {
@@ -255,12 +266,12 @@ impl EditorTabState {
 
     fn cursor_up(&mut self, tab_size: u8) -> bool {
         let (row, col) = self.buffer.cursor();
-        if row == 0 {
+        let Some(prev_row) = self.prev_visible_row_before(row) else {
             return false;
-        }
+        };
         let prev = (row, col);
-        let new_len = self.buffer.line_grapheme_len(row - 1);
-        self.buffer.set_cursor(row - 1, col.min(new_len));
+        let new_len = self.buffer.line_grapheme_len(prev_row);
+        self.buffer.set_cursor(prev_row, col.min(new_len));
         let changed = self.buffer.cursor() != prev;
         if changed {
             self.buffer.update_selection_cursor(self.buffer.cursor());
@@ -271,12 +282,12 @@ impl EditorTabState {
 
     fn cursor_down(&mut self, tab_size: u8) -> bool {
         let (row, col) = self.buffer.cursor();
-        if row + 1 >= self.buffer.len_lines() {
+        let Some(next_row) = self.next_visible_row_after(row) else {
             return false;
-        }
+        };
         let prev = (row, col);
-        let new_len = self.buffer.line_grapheme_len(row + 1);
-        self.buffer.set_cursor(row + 1, col.min(new_len));
+        let new_len = self.buffer.line_grapheme_len(next_row);
+        self.buffer.set_cursor(next_row, col.min(new_len));
         let changed = self.buffer.cursor() != prev;
         if changed {
             self.buffer.update_selection_cursor(self.buffer.cursor());
@@ -290,9 +301,9 @@ impl EditorTabState {
         let prev = (row, col);
 
         if col == 0 {
-            if row > 0 {
-                let prev_len = self.buffer.line_grapheme_len(row - 1);
-                self.buffer.set_cursor(row - 1, prev_len);
+            if let Some(prev_row) = self.prev_visible_row_before(row) {
+                let prev_len = self.buffer.line_grapheme_len(prev_row);
+                self.buffer.set_cursor(prev_row, prev_len);
             }
             let changed = self.buffer.cursor() != prev;
             if changed {
@@ -338,8 +349,8 @@ impl EditorTabState {
         let line_len = self.buffer.line_grapheme_len(row);
 
         if col >= line_len {
-            if row + 1 < self.buffer.len_lines() {
-                self.buffer.set_cursor(row + 1, 0);
+            if let Some(next_row) = self.next_visible_row_after(row) {
+                self.buffer.set_cursor(next_row, 0);
             }
             let changed = self.buffer.cursor() != prev;
             if changed {
@@ -386,6 +397,7 @@ impl EditorTabState {
 
     fn select_all(&mut self, tab_size: u8) -> bool {
         let last_line = self.buffer.len_lines().saturating_sub(1);
+        let last_line = self.prev_visible_row_at_or_before(last_line).unwrap_or(last_line);
         let last_col = self.buffer.line_grapheme_len(last_line);
 
         let mut selection = Selection::new((0, 0), Granularity::Char);
@@ -410,9 +422,9 @@ impl EditorTabState {
         let prev = (row, col);
         let new_pos = if col > 0 {
             (row, col - 1)
-        } else if row > 0 {
-            let prev_len = self.buffer.line_grapheme_len(row - 1);
-            (row - 1, prev_len)
+        } else if let Some(prev_row) = self.prev_visible_row_before(row) {
+            let prev_len = self.buffer.line_grapheme_len(prev_row);
+            (prev_row, prev_len)
         } else {
             (row, col)
         };
@@ -432,8 +444,8 @@ impl EditorTabState {
         let line_len = self.buffer.line_grapheme_len(row);
         let new_pos = if col < line_len {
             (row, col + 1)
-        } else if row + 1 < self.buffer.len_lines() {
-            (row + 1, 0)
+        } else if let Some(next_row) = self.next_visible_row_after(row) {
+            (next_row, 0)
         } else {
             (row, col)
         };
@@ -449,12 +461,12 @@ impl EditorTabState {
     fn extend_selection_up(&mut self, tab_size: u8) -> bool {
         self.ensure_selection();
         let (row, col) = self.buffer.cursor();
-        if row == 0 {
+        let Some(prev_row) = self.prev_visible_row_before(row) else {
             return false;
-        }
+        };
         let prev = (row, col);
-        let new_len = self.buffer.line_grapheme_len(row - 1);
-        let new_pos = (row - 1, col.min(new_len));
+        let new_len = self.buffer.line_grapheme_len(prev_row);
+        let new_pos = (prev_row, col.min(new_len));
         self.buffer.update_selection_cursor(new_pos);
         self.buffer.set_cursor(new_pos.0, new_pos.1);
         let changed = self.buffer.cursor() != prev;
@@ -467,12 +479,12 @@ impl EditorTabState {
     fn extend_selection_down(&mut self, tab_size: u8) -> bool {
         self.ensure_selection();
         let (row, col) = self.buffer.cursor();
-        if row + 1 >= self.buffer.len_lines() {
+        let Some(next_row) = self.next_visible_row_after(row) else {
             return false;
-        }
+        };
         let prev = (row, col);
-        let new_len = self.buffer.line_grapheme_len(row + 1);
-        let new_pos = (row + 1, col.min(new_len));
+        let new_len = self.buffer.line_grapheme_len(next_row);
+        let new_pos = (next_row, col.min(new_len));
         self.buffer.update_selection_cursor(new_pos);
         self.buffer.set_cursor(new_pos.0, new_pos.1);
         let changed = self.buffer.cursor() != prev;
@@ -517,9 +529,9 @@ impl EditorTabState {
         let prev = (row, col);
 
         if col == 0 {
-            if row > 0 {
-                let prev_len = self.buffer.line_grapheme_len(row - 1);
-                let new_pos = (row - 1, prev_len);
+            if let Some(prev_row) = self.prev_visible_row_before(row) {
+                let prev_len = self.buffer.line_grapheme_len(prev_row);
+                let new_pos = (prev_row, prev_len);
                 self.buffer.update_selection_cursor(new_pos);
                 self.buffer.set_cursor(new_pos.0, new_pos.1);
             }
@@ -568,8 +580,8 @@ impl EditorTabState {
         let line_len = self.buffer.line_grapheme_len(row);
 
         if col >= line_len {
-            if row + 1 < self.buffer.len_lines() {
-                let new_pos = (row + 1, 0);
+            if let Some(next_row) = self.next_visible_row_after(row) {
+                let new_pos = (next_row, 0);
                 self.buffer.update_selection_cursor(new_pos);
                 self.buffer.set_cursor(new_pos.0, new_pos.1);
             }
@@ -618,11 +630,16 @@ impl EditorTabState {
 
     fn commit_op(&mut self, op: EditOp, tab_size: u8) {
         self.apply_syntax_edit(&op);
+        self.invalidate_semantic_highlight_on_edit(&op);
         self.last_edit_op = Some(op.clone());
         self.history.push(op, self.buffer.rope());
         self.dirty = true;
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         self.bump_version();
+    }
+
+    pub(super) fn apply_edit_op(&mut self, op: EditOp, tab_size: u8) {
+        self.commit_op(op, tab_size);
     }
 
     fn insert_brace_pair(&mut self, tab_size: u8) -> bool {
@@ -685,7 +702,8 @@ impl EditorTabState {
         let cursor_char_offset = self.buffer.cursor_char_offset();
         let rope = self.buffer.rope();
         let line_start = rope.line_to_char(row);
-        let before_cursor = rope.slice(line_start..cursor_char_offset).to_string();
+        let before_cursor = slice_to_cow(rope.slice(line_start..cursor_char_offset));
+        let before_cursor = before_cursor.as_ref();
 
         let mut indent = String::new();
         for ch in before_cursor.chars() {
@@ -696,8 +714,7 @@ impl EditorTabState {
             }
         }
 
-        let trimmed = before_cursor
-            .trim_end_matches(|c| c == ' ' || c == '\t');
+        let trimmed = before_cursor.trim_end_matches([' ', '\t']);
         if trimmed.ends_with('{')
             && self.language() == Some(LanguageId::Rust)
             && !self.in_string_or_comment()
@@ -727,26 +744,18 @@ impl EditorTabState {
 
         let line_cow = slice_to_cow(slice);
         let line = line_cow.strip_suffix('\n').unwrap_or(&line_cow);
+        let line = line.strip_suffix('\r').unwrap_or(line);
         let graphemes: Vec<&str> = line.graphemes(true).collect();
         let len = graphemes.len();
         let col = col.min(len);
 
         let is_ws = |g: &str| g.chars().all(|c| c.is_whitespace());
 
-        let mut left = None;
-        for i in (0..col).rev() {
-            if !is_ws(graphemes[i]) {
-                left = Some(i);
-                break;
-            }
-        }
-        let mut right = None;
-        for i in col..len {
-            if !is_ws(graphemes[i]) {
-                right = Some(i);
-                break;
-            }
-        }
+        let left = graphemes[..col].iter().rposition(|&g| !is_ws(g));
+        let right = graphemes[col..]
+            .iter()
+            .position(|&g| !is_ws(g))
+            .map(|i| i + col);
 
         let (left, right) = match (left, right) {
             (Some(l), Some(r)) => (l, r),
@@ -808,7 +817,21 @@ impl EditorTabState {
         if text.is_empty() || text.len() > PASTE_MAX_SIZE {
             return false;
         }
-        let _ = self.delete_selection(tab_size);
+        if self.buffer.has_selection() {
+            let parent = self.history.head();
+            let Some(selection) = self.buffer.selection() else {
+                return false;
+            };
+            let (start_pos, end_pos) = selection.range();
+            let start_char = self.buffer.pos_to_char(start_pos);
+            let end_char = self.buffer.pos_to_char(end_pos);
+            let op = self
+                .buffer
+                .replace_range_op_auto_cursor(start_char, end_char, text, parent);
+            self.commit_op(op, tab_size);
+            return true;
+        }
+
         let parent = self.history.head();
         let op = self.buffer.insert_str_op(text, parent);
         self.commit_op(op, tab_size);
@@ -848,7 +871,7 @@ impl EditorTabState {
     }
 
     fn undo(&mut self, tab_size: u8) -> bool {
-        if let Some((rope, cursor)) = self.history.undo() {
+        if let Some((rope, cursor)) = self.history.undo(self.buffer.rope()) {
             self.buffer.set_rope(rope);
             self.buffer.set_cursor(cursor.0, cursor.1);
             self.reparse_syntax();
@@ -862,7 +885,7 @@ impl EditorTabState {
     }
 
     fn redo(&mut self, tab_size: u8) -> bool {
-        if let Some((rope, cursor)) = self.history.redo() {
+        if let Some((rope, cursor)) = self.history.redo(self.buffer.rope()) {
             self.buffer.set_rope(rope);
             self.buffer.set_cursor(cursor.0, cursor.1);
             self.reparse_syntax();
@@ -893,18 +916,22 @@ impl EditorTabState {
     }
 
     pub fn replace_current_match(&mut self, m: &Match, replace: &str, tab_size: u8) -> bool {
-        if replace.is_empty() {
+        let rope = self.buffer.rope();
+        if m.start >= m.end || m.start >= rope.len_bytes() {
             return false;
         }
-        let rope = self.buffer.rope();
+
         let start_char = rope.byte_to_char(m.start);
-        let end_char = rope.byte_to_char(m.end);
-        self.buffer.replace_range(start_char, end_char, replace);
-        self.reparse_syntax();
-        self.dirty = true;
-        viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
-        self.last_edit_op = None;
-        self.bump_version();
+        let end_char = rope.byte_to_char(m.end.min(rope.len_bytes()));
+        if start_char >= end_char {
+            return false;
+        }
+
+        let parent = self.history.head();
+        let op = self
+            .buffer
+            .replace_range_op_auto_cursor(start_char, end_char, replace, parent);
+        self.commit_op(op, tab_size);
         true
     }
 
@@ -917,6 +944,7 @@ impl EditorTabState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::editor::{HighlightKind, HighlightSpan};
     use std::path::PathBuf;
 
     #[test]
@@ -955,6 +983,52 @@ mod tests {
     }
 
     #[test]
+    fn test_replace_is_undoable() {
+        let config = EditorConfig::default();
+        let mut tab = EditorTabState::from_file(PathBuf::from("test.txt"), "foo foo", &config);
+
+        let m = Match::new(0, 3, 0, 0);
+        assert!(tab.replace_current_match(&m, "bar", config.tab_size));
+        assert_eq!(tab.buffer.text(), "bar foo");
+
+        let (changed, _) = tab.apply_command(Command::Undo, 0, &config);
+        assert!(changed);
+        assert_eq!(tab.buffer.text(), "foo foo");
+    }
+
+    #[test]
+    fn test_replace_with_empty_string_deletes_and_undo() {
+        let config = EditorConfig::default();
+        let mut tab = EditorTabState::from_file(PathBuf::from("test.txt"), "foo foo", &config);
+
+        let m = Match::new(4, 7, 0, 4);
+        assert!(tab.replace_current_match(&m, "", config.tab_size));
+        assert_eq!(tab.buffer.text(), "foo ");
+
+        let (changed, _) = tab.apply_command(Command::Undo, 0, &config);
+        assert!(changed);
+        assert_eq!(tab.buffer.text(), "foo foo");
+    }
+
+    #[test]
+    fn test_paste_over_selection_single_undo() {
+        let config = EditorConfig::default();
+        let mut tab = EditorTabState::from_file(PathBuf::from("test.txt"), "abc", &config);
+
+        tab.buffer.set_cursor(0, 1);
+        tab.buffer
+            .set_selection(Some(Selection::new((0, 1), Granularity::Char)));
+        tab.buffer.update_selection_cursor((0, 2));
+
+        assert!(tab.insert_text("X", config.tab_size));
+        assert_eq!(tab.buffer.text(), "aXc");
+
+        let (changed, _) = tab.apply_command(Command::Undo, 0, &config);
+        assert!(changed);
+        assert_eq!(tab.buffer.text(), "abc");
+    }
+
+    #[test]
     fn test_auto_pair_and_skip_closing() {
         let config = EditorConfig::default();
         let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "", &config);
@@ -984,5 +1058,211 @@ mod tests {
         let _ = tab.apply_command(Command::InsertChar('\''), 0, &config);
         assert_eq!(tab.buffer.text(), "''");
         assert_eq!(tab.buffer.cursor(), (0, 2));
+    }
+
+    #[test]
+    fn semantic_highlight_and_inlay_hints_do_not_flicker_on_edit() {
+        let config = EditorConfig::default();
+        let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "fn main() {}", &config);
+
+        tab.set_semantic_highlight(
+            0,
+            vec![vec![HighlightSpan {
+                start: 0,
+                end: 2,
+                kind: HighlightKind::Keyword,
+            }]],
+        );
+        tab.set_inlay_hints(0, 0, 1, vec![vec![": hint".to_string()]]);
+
+        assert!(tab.semantic_highlight_line(0).is_some());
+        assert!(tab.inlay_hint_line(0).is_some());
+
+        let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
+
+        assert!(tab.semantic_highlight_line(0).is_some());
+        assert!(tab.inlay_hint_line(0).is_some());
+    }
+
+    #[test]
+    fn semantic_highlight_is_invalidated_on_line_edit() {
+        let config = EditorConfig::default();
+        let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "foo\nbar", &config);
+        tab.set_semantic_highlight(
+            0,
+            vec![
+                vec![HighlightSpan {
+                    start: 0,
+                    end: 3,
+                    kind: HighlightKind::Function,
+                }],
+                vec![HighlightSpan {
+                    start: 0,
+                    end: 3,
+                    kind: HighlightKind::Macro,
+                }],
+            ],
+        );
+
+        tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
+        let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
+
+        assert!(tab
+            .semantic_highlight_line(0)
+            .is_some_and(|spans| spans.is_empty()));
+        assert!(tab
+            .semantic_highlight_line(1)
+            .is_some_and(|spans| !spans.is_empty()));
+    }
+
+    #[test]
+    fn semantic_highlight_invalidates_following_lines_on_newline_edit() {
+        let config = EditorConfig::default();
+        let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "foo\nbar\nbaz", &config);
+        tab.set_semantic_highlight(
+            0,
+            vec![
+                vec![HighlightSpan {
+                    start: 0,
+                    end: 3,
+                    kind: HighlightKind::Function,
+                }],
+                vec![HighlightSpan {
+                    start: 0,
+                    end: 3,
+                    kind: HighlightKind::Macro,
+                }],
+                vec![HighlightSpan {
+                    start: 0,
+                    end: 3,
+                    kind: HighlightKind::Type,
+                }],
+            ],
+        );
+
+        tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
+        let _ = tab.apply_command(Command::InsertNewline, 0, &config);
+
+        assert!(tab
+            .semantic_highlight_line(0)
+            .is_some_and(|spans| spans.is_empty()));
+        assert!(tab
+            .semantic_highlight_line(1)
+            .is_some_and(|spans| spans.is_empty()));
+        assert!(tab
+            .semantic_highlight_line(2)
+            .is_some_and(|spans| spans.is_empty()));
+    }
+
+    #[test]
+    fn semantic_highlight_is_not_invalidated_when_appending_punctuation() {
+        let config = EditorConfig::default();
+        let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "String", &config);
+        tab.set_semantic_highlight(
+            0,
+            vec![vec![HighlightSpan {
+                start: 0,
+                end: 6,
+                kind: HighlightKind::Type,
+            }]],
+        );
+
+        tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
+        let _ = tab.apply_command(Command::InsertChar(':'), 0, &config);
+
+        assert_eq!(
+            tab.semantic_highlight_line(0).unwrap_or_default(),
+            &[HighlightSpan {
+                start: 0,
+                end: 6,
+                kind: HighlightKind::Type
+            }]
+        );
+    }
+
+    struct Rng(u64);
+
+    impl Rng {
+        fn new(seed: u64) -> Self {
+            Self(seed)
+        }
+
+        fn next_u32(&mut self) -> u32 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (self.0 >> 32) as u32
+        }
+
+        fn gen_range(&mut self, upper: usize) -> usize {
+            if upper == 0 {
+                return 0;
+            }
+            (self.next_u32() as usize) % upper
+        }
+    }
+
+    fn assert_cursor_invariants(tab: &EditorTabState) {
+        let (row, col) = tab.buffer.cursor();
+        let total_lines = tab.buffer.len_lines().max(1);
+        assert!(row < total_lines);
+        assert!(col <= tab.buffer.line_grapheme_len(row));
+    }
+
+    fn random_insert_char(rng: &mut Rng) -> char {
+        match rng.gen_range(36) {
+            0..=25 => (b'a' + rng.gen_range(26) as u8) as char,
+            26 => ' ',
+            27 => 'é',
+            28 => '你',
+            29 => '\u{301}',
+            30 => '👍',
+            31 => '🏽',
+            _ => (b'a' + rng.gen_range(26) as u8) as char,
+        }
+    }
+
+    #[test]
+    fn fuzz_editing_undo_redo_roundtrip() {
+        let config = EditorConfig {
+            auto_indent: false,
+            ..Default::default()
+        };
+
+        let mut tab = EditorTabState::untitled(&config);
+        let mut rng = Rng::new(0xC0FFEE);
+
+        const STEPS: usize = 2000;
+        for _ in 0..STEPS {
+            let cmd = match rng.gen_range(10) {
+                0 => Command::InsertChar(random_insert_char(&mut rng)),
+                1 => Command::InsertNewline,
+                2 => Command::InsertTab,
+                3 => Command::DeleteBackward,
+                4 => Command::DeleteForward,
+                5 => Command::CursorLeft,
+                6 => Command::CursorRight,
+                7 => Command::CursorUp,
+                8 => Command::CursorDown,
+                _ => Command::InsertChar(random_insert_char(&mut rng)),
+            };
+            let _ = tab.apply_command(cmd, 0, &config);
+            assert_cursor_invariants(&tab);
+        }
+
+        let final_text = tab.buffer.text();
+        let final_cursor = tab.buffer.cursor();
+
+        while tab.apply_command(Command::Undo, 0, &config).0 {
+            assert_cursor_invariants(&tab);
+        }
+
+        while tab.apply_command(Command::Redo, 0, &config).0 {
+            assert_cursor_invariants(&tab);
+        }
+
+        assert_eq!(tab.buffer.text(), final_text);
+        assert_eq!(tab.buffer.cursor(), final_cursor);
     }
 }

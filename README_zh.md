@@ -145,7 +145,7 @@ cargo run --release -- .
 
 *   **AsyncRuntime**: 封装 `tokio` 运行时，允许在同步的 TUI 绘制循环之外执行耗时任务。
 *   **GlobalSearchService**: 封装底层搜索工具（如 `ignore` 和 `grep` crate），提供异步搜索能力。
-*   **Clipboard**: 封装 `arboard`，提供跨平台的剪贴板读写。
+*   **Clipboard**: 使用原生剪贴板 provider（macOS: `pbcopy`/`pbpaste`；Linux/Windows 逐步补齐）。
 
 ### 5. 数据模型 (Models) - `src/models/`
 

@@ -9,7 +9,7 @@ pub mod text_buffer;
 pub use edit_history::{EditHistory, EditHistoryConfig};
 pub use edit_op::{EditOp, OpId, OpKind};
 pub use file_tree::{
-    build_file_tree, should_ignore, FileTree, FileTreeError, FileTreeRow, LoadState, Node, NodeId,
+    build_file_tree, should_ignore, FileTree, FileTreeError, FileTreeRow, LoadState, NodeId,
     NodeKind,
 };
 pub use selection::{Granularity, Selection};

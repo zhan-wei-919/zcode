@@ -1,7 +1,7 @@
 use crate::core::event::Key;
+use crate::core::event::{KeyCode, KeyModifiers};
 use crate::core::Command;
 use crate::kernel::services::ports::settings::Settings;
-use crossterm::event::{KeyCode, KeyModifiers};
 use std::path::PathBuf;
 
 const SETTINGS_DIR: &str = ".zcode";
@@ -107,27 +107,29 @@ fn parse_key_code(value: &str) -> Option<KeyCode> {
 fn get_cache_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
-        return std::env::var("HOME")
+        std::env::var("HOME")
             .ok()
-            .map(|home| PathBuf::from(home).join("Library/Caches"));
+            .map(|home| PathBuf::from(home).join("Library/Caches"))
     }
 
     #[cfg(target_os = "linux")]
     {
-        if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {
-            return Some(PathBuf::from(xdg));
-        }
-        return std::env::var("HOME")
+        std::env::var("XDG_CACHE_HOME")
             .ok()
-            .map(|home| PathBuf::from(home).join(".cache"));
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|home| PathBuf::from(home).join(".cache"))
+            })
     }
 
     #[cfg(target_os = "windows")]
     {
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            return Some(PathBuf::from(local));
-        }
-        return std::env::var("APPDATA").ok().map(PathBuf::from);
+        std::env::var("LOCALAPPDATA")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(|| std::env::var("APPDATA").ok().map(PathBuf::from))
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]

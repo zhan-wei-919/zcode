@@ -2,9 +2,12 @@ use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use crate::core::Command;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
-use crate::kernel::ProblemsState;
+use crate::kernel::services::ports::LspCompletionItem;
+use crate::kernel::services::ports::LspServerCapabilities;
+use crate::kernel::{CodeActionsState, LocationsState, ProblemsState, SymbolsState};
 use crate::models::{should_ignore, FileTree, FileTreeRow, LoadState, NodeId, NodeKind};
 
 use super::editor::EditorState;
@@ -28,6 +31,9 @@ pub enum SidebarTab {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BottomPanelTab {
     Problems,
+    CodeActions,
+    Locations,
+    Symbols,
     SearchResults,
     Logs,
 }
@@ -68,6 +74,13 @@ pub struct CommandPaletteState {
 pub enum InputDialogKind {
     NewFile { parent_dir: PathBuf },
     NewFolder { parent_dir: PathBuf },
+    ExplorerRename { from: PathBuf },
+    LspRename {
+        path: PathBuf,
+        line: u32,
+        column: u32,
+    },
+    LspWorkspaceSymbols,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -113,6 +126,76 @@ pub struct ConfirmDialogState {
 }
 
 #[derive(Debug, Clone)]
+pub struct CompletionRequestContext {
+    pub pane: usize,
+    pub path: PathBuf,
+    pub version: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CompletionPopupState {
+    pub visible: bool,
+    pub all_items: Vec<LspCompletionItem>,
+    pub items: Vec<LspCompletionItem>,
+    pub selected: usize,
+    pub request: Option<CompletionRequestContext>,
+    pub pending_request: Option<CompletionRequestContext>,
+    pub is_incomplete: bool,
+    pub resolve_inflight: Option<u64>,
+    pub session_started_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SignatureHelpRequestContext {
+    pub pane: usize,
+    pub path: PathBuf,
+    pub version: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SignatureHelpPopupState {
+    pub visible: bool,
+    pub text: String,
+    pub request: Option<SignatureHelpRequestContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplorerContextMenuItem {
+    NewFile,
+    NewFolder,
+    Rename,
+    Delete,
+}
+
+impl ExplorerContextMenuItem {
+    pub fn label(self) -> &'static str {
+        match self {
+            ExplorerContextMenuItem::NewFile => "New File",
+            ExplorerContextMenuItem::NewFolder => "New Folder",
+            ExplorerContextMenuItem::Rename => "Rename",
+            ExplorerContextMenuItem::Delete => "Delete",
+        }
+    }
+
+    pub fn command(self) -> Command {
+        match self {
+            ExplorerContextMenuItem::NewFile => Command::ExplorerNewFile,
+            ExplorerContextMenuItem::NewFolder => Command::ExplorerNewFolder,
+            ExplorerContextMenuItem::Rename => Command::ExplorerRename,
+            ExplorerContextMenuItem::Delete => Command::ExplorerDelete,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExplorerContextMenuState {
+    pub visible: bool,
+    pub anchor: (u16, u16),
+    pub selected: usize,
+    pub items: Vec<ExplorerContextMenuItem>,
+}
+
+#[derive(Debug, Clone)]
 pub struct UiState {
     pub sidebar_visible: bool,
     pub sidebar_tab: SidebarTab,
@@ -121,11 +204,14 @@ pub struct UiState {
     pub editor_layout: EditorLayoutState,
     pub command_palette: CommandPaletteState,
     pub input_dialog: InputDialogState,
+    pub explorer_context_menu: ExplorerContextMenuState,
     pub pending_editor_nav: Option<PendingEditorNavigation>,
     pub should_quit: bool,
     pub hovered_tab: Option<(usize, usize)>,
     pub confirm_dialog: ConfirmDialogState,
     pub hover_message: Option<String>,
+    pub signature_help: SignatureHelpPopupState,
+    pub completion: CompletionPopupState,
 }
 
 impl Default for UiState {
@@ -145,11 +231,14 @@ impl Default for UiState {
                 selected: 0,
             },
             input_dialog: InputDialogState::default(),
+            explorer_context_menu: ExplorerContextMenuState::default(),
             pending_editor_nav: None,
             should_quit: false,
             hovered_tab: None,
             confirm_dialog: ConfirmDialogState::default(),
             hover_message: None,
+            signature_help: SignatureHelpPopupState::default(),
+            completion: CompletionPopupState::default(),
         }
     }
 }
@@ -158,10 +247,14 @@ impl Default for UiState {
 pub struct AppState {
     pub workspace_root: PathBuf,
     pub ui: UiState,
+    pub lsp: LspState,
     pub explorer: ExplorerState,
     pub search: SearchState,
     pub editor: EditorState,
     pub problems: ProblemsState,
+    pub code_actions: CodeActionsState,
+    pub locations: LocationsState,
+    pub symbols: SymbolsState,
 }
 
 impl AppState {
@@ -170,12 +263,22 @@ impl AppState {
         Self {
             workspace_root,
             ui: UiState::default(),
+            lsp: LspState::default(),
             explorer: ExplorerState::new(file_tree),
             search: SearchState::default(),
             editor,
             problems: ProblemsState::default(),
+            code_actions: CodeActionsState::default(),
+            locations: LocationsState::default(),
+            symbols: SymbolsState::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LspState {
+    pub server_capabilities: Option<LspServerCapabilities>,
+    pub pending_format_on_save: Option<PathBuf>,
 }
 
 pub struct ExplorerState {
@@ -240,11 +343,20 @@ impl ExplorerState {
             return false;
         }
 
-        let current_index = self
+        let current_index = match self
             .tree
             .selected()
             .and_then(|id| self.index_by_id.get(&id).copied())
-            .unwrap_or(0);
+        {
+            Some(index) => index,
+            None => {
+                let new_index = if delta < 0 { self.rows.len() - 1 } else { 0 };
+                let new_id = self.rows[new_index].id;
+                self.tree.set_selected(Some(new_id));
+                self.keep_row_visible(new_index);
+                return true;
+            }
+        };
 
         let new_index = if delta < 0 {
             current_index.saturating_sub((-delta) as usize)
@@ -288,7 +400,8 @@ impl ExplorerState {
             return self.toggle_dir(id);
         }
 
-        (false, Vec::new())
+        let path = self.tree.full_path(id);
+        (false, vec![Effect::LoadFile(path)])
     }
 
     pub fn collapse_selected(&mut self) -> bool {
@@ -338,6 +451,20 @@ impl ExplorerState {
         (prev_selected != Some(node_id), Vec::new())
     }
 
+    pub fn select_row(&mut self, row: usize) -> bool {
+        if row >= self.rows.len() {
+            return false;
+        }
+
+        let node_id = self.rows[row].id;
+        let prev_selected = self.tree.selected();
+        self.tree.set_selected(Some(node_id));
+        if let Some(index) = self.index_by_id.get(&node_id).copied() {
+            self.keep_row_visible(index);
+        }
+        prev_selected != Some(node_id)
+    }
+
     pub fn selected_create_parent_dir(&mut self) -> PathBuf {
         let root = self.tree.absolute_root().to_path_buf();
         let Some(id) = self.tree.selected() else {
@@ -375,7 +502,11 @@ impl ExplorerState {
             return false;
         }
 
-        let kind = if is_dir { NodeKind::Dir } else { NodeKind::File };
+        let kind = if is_dir {
+            NodeKind::Dir
+        } else {
+            NodeKind::File
+        };
         if self
             .tree
             .insert_child(parent_id, name.to_os_string(), kind)
@@ -397,6 +528,55 @@ impl ExplorerState {
             return true;
         }
         false
+    }
+
+    pub fn apply_path_renamed(&mut self, from: PathBuf, to: PathBuf) -> bool {
+        if from == to {
+            return false;
+        }
+
+        let Some(id) = self.tree.find_node_by_path(&from) else {
+            return false;
+        };
+        let is_dir = self.tree.is_dir(id);
+
+        let same_parent = from
+            .parent()
+            .and_then(|a| to.parent().map(|b| a == b))
+            .unwrap_or(false);
+        if same_parent {
+            let Some(name) = to.file_name() else {
+                return false;
+            };
+            if self.tree.rename(id, name.to_os_string()).is_ok() {
+                self.refresh_rows();
+                return true;
+            }
+            return false;
+        }
+
+        let mut changed = false;
+        if let Some(parent) = to.parent().and_then(|p| self.tree.find_node_by_path(p)) {
+            if self.tree.is_dir(parent) {
+                if self.tree.move_to(id, parent).is_ok() {
+                    changed = true;
+                }
+                if let Some(name) = to.file_name() {
+                    if self.tree.rename(id, name.to_os_string()).is_ok() {
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if changed {
+            self.refresh_rows();
+            return true;
+        }
+
+        let deleted = self.apply_path_deleted(from);
+        let created = self.apply_path_created(to, is_dir);
+        deleted || created
     }
 
     pub fn apply_dir_loaded(&mut self, path: PathBuf, entries: Vec<DirEntryInfo>) -> bool {
@@ -485,5 +665,26 @@ impl ExplorerState {
         }
 
         self.clamp_scroll();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{FileTree, NodeKind};
+    use std::ffi::OsString;
+
+    #[test]
+    fn explorer_move_selection_selects_first_row_when_root_selected() {
+        let root = std::env::temp_dir();
+        let mut tree = FileTree::new_with_root_for_test(OsString::from("root"), root);
+        let file_id = tree
+            .insert_child(tree.root(), OsString::from("a.txt"), NodeKind::File)
+            .unwrap();
+
+        let mut explorer = ExplorerState::new(tree);
+        assert!(explorer.selected().is_some());
+        assert!(explorer.move_selection(1));
+        assert_eq!(explorer.selected(), Some(file_id));
     }
 }

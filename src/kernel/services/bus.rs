@@ -16,10 +16,7 @@ pub struct KernelBusReceiver {
 
 pub fn kernel_bus() -> (KernelBusSender, KernelBusReceiver) {
     let (tx, rx) = mpsc::channel();
-    (
-        KernelBusSender { tx },
-        KernelBusReceiver { rx },
-    )
+    (KernelBusSender { tx }, KernelBusReceiver { rx })
 }
 
 impl KernelBusSender {

@@ -1,8 +1,8 @@
 //! 文件浏览器视图（纯渲染 + 命中测试）
 
 use crate::app::theme::UiTheme;
+use crate::core::event::MouseEvent;
 use crate::models::{FileTreeRow, NodeId};
-use crossterm::event::MouseEvent;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -80,6 +80,17 @@ impl ExplorerView {
     ) {
         self.area = Some(area);
 
+        if rows.is_empty() {
+            let style = Style::default()
+                .bg(theme.palette_bg)
+                .fg(theme.palette_muted_fg);
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled("Empty folder", style))),
+                area,
+            );
+            return;
+        }
+
         let visible_height = area.height as usize;
         let visible_end = (scroll_offset + visible_height).min(rows.len());
 
@@ -92,6 +103,12 @@ impl ExplorerView {
             .collect();
 
         frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+impl Default for ExplorerView {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

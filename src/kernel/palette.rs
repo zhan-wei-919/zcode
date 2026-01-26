@@ -89,6 +89,61 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::LspDefinition,
     },
     PaletteItem {
+        label: "LSP: Completion",
+        label_lc: "lsp: completion",
+        command: Command::LspCompletion,
+    },
+    PaletteItem {
+        label: "LSP: Signature Help",
+        label_lc: "lsp: signature help",
+        command: Command::LspSignatureHelp,
+    },
+    PaletteItem {
+        label: "LSP: Format Document",
+        label_lc: "lsp: format document",
+        command: Command::LspFormat,
+    },
+    PaletteItem {
+        label: "LSP: Format Selection",
+        label_lc: "lsp: format selection",
+        command: Command::LspFormatSelection,
+    },
+    PaletteItem {
+        label: "LSP: Rename Symbol",
+        label_lc: "lsp: rename symbol",
+        command: Command::LspRename,
+    },
+    PaletteItem {
+        label: "LSP: Find References",
+        label_lc: "lsp: find references",
+        command: Command::LspReferences,
+    },
+    PaletteItem {
+        label: "LSP: Document Symbols",
+        label_lc: "lsp: document symbols",
+        command: Command::LspDocumentSymbols,
+    },
+    PaletteItem {
+        label: "LSP: Workspace Symbols",
+        label_lc: "lsp: workspace symbols",
+        command: Command::LspWorkspaceSymbols,
+    },
+    PaletteItem {
+        label: "LSP: Code Action",
+        label_lc: "lsp: code action",
+        command: Command::LspCodeAction,
+    },
+    PaletteItem {
+        label: "Editor: Fold",
+        label_lc: "editor: fold",
+        command: Command::EditorFold,
+    },
+    PaletteItem {
+        label: "Editor: Unfold",
+        label_lc: "editor: unfold",
+        command: Command::EditorUnfold,
+    },
+    PaletteItem {
         label: "View: Toggle Bottom Panel",
         label_lc: "view: toggle bottom panel",
         command: Command::ToggleBottomPanel,
@@ -132,8 +187,7 @@ pub fn match_indices(query: &str) -> Vec<usize> {
     }
 
     let query_lc = query.to_ascii_lowercase();
-    let mut matches = Vec::new();
-    matches.reserve(PALETTE_ITEMS.len());
+    let mut matches = Vec::with_capacity(PALETTE_ITEMS.len());
     for (i, item) in PALETTE_ITEMS.iter().enumerate() {
         if item.label_lc.contains(&query_lc) {
             matches.push(i);
@@ -156,8 +210,7 @@ pub fn match_items(query: &str) -> Vec<PaletteMatch<'static>> {
     }
 
     let query_lc = query.to_ascii_lowercase();
-    let mut matches = Vec::new();
-    matches.reserve(PALETTE_ITEMS.len());
+    let mut matches = Vec::with_capacity(PALETTE_ITEMS.len());
 
     for item in PALETTE_ITEMS {
         if item.label_lc.contains(&query_lc) {

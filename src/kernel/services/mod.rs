@@ -3,6 +3,7 @@
 //! - `ports`: pure contracts/types used across the app (kernel-facing).
 //! - `adapters`: OS/runtime specific implementations (IO/async).
 
+#[cfg(feature = "tui")]
 pub mod adapters;
 pub mod bus;
 pub mod host;

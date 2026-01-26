@@ -13,6 +13,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use tracing::{error, warn};
 
 /// 刷新到磁盘的间隔（毫秒）
 pub const DEFAULT_FLUSH_INTERVAL_MS: u64 = 1000;
@@ -51,10 +52,13 @@ pub struct EditHistory {
     base_snapshot: Rope,
     ops: HashMap<OpId, EditOp>,
     head: OpId,
+    saved_head: OpId,
     children: HashMap<OpId, Vec<OpId>>,
+    preferred_child: HashMap<OpId, OpId>,
     checkpoints: HashMap<OpId, Checkpoint>,
     pending_ops: Vec<EditOp>,
     last_flush: Instant,
+    last_persisted_head: OpId,
     ops_file_path: Option<PathBuf>,
     ops_file: Option<File>,
     config: EditHistoryConfig,
@@ -68,10 +72,13 @@ impl EditHistory {
             base_snapshot,
             ops: HashMap::new(),
             head: OpId::root(),
+            saved_head: OpId::root(),
             children: HashMap::new(),
+            preferred_child: HashMap::new(),
             checkpoints: HashMap::new(),
             pending_ops: Vec::new(),
             last_flush: Instant::now(),
+            last_persisted_head: OpId::root(),
             ops_file_path: None,
             ops_file: None,
             config: EditHistoryConfig::default(),
@@ -90,10 +97,13 @@ impl EditHistory {
             base_snapshot,
             ops: HashMap::new(),
             head: OpId::root(),
+            saved_head: OpId::root(),
             children: HashMap::new(),
+            preferred_child: HashMap::new(),
             checkpoints: HashMap::new(),
             pending_ops: Vec::new(),
             last_flush: Instant::now(),
+            last_persisted_head: OpId::root(),
             ops_file_path: Some(ops_file_path),
             ops_file: Some(ops_file),
             config: EditHistoryConfig::default(),
@@ -112,20 +122,23 @@ impl EditHistory {
     /// 记录新操作
     pub fn push(&mut self, op: EditOp, current_rope: &Rope) {
         let op_id = op.id;
+        let parent_id = op.parent;
 
         // 添加到 DAG
         self.ops.insert(op_id, op.clone());
-        self.children
-            .entry(op.parent)
-            .or_insert_with(Vec::new)
-            .push(op_id);
+        self.children.entry(parent_id).or_default().push(op_id);
+        self.preferred_child.insert(parent_id, op_id);
 
         // 更新 HEAD
         self.head = op_id;
         self.op_count += 1;
 
         // 创建检查点
-        if self.op_count % self.config.checkpoint_interval == 0 {
+        if self.config.checkpoint_interval != 0
+            && self
+                .op_count
+                .is_multiple_of(self.config.checkpoint_interval)
+        {
             self.checkpoints.insert(
                 op_id,
                 Checkpoint {
@@ -140,41 +153,54 @@ impl EditHistory {
     }
 
     /// Undo：返回恢复后的 Rope 和光标位置
-    pub fn undo(&mut self) -> Option<(Rope, (usize, usize))> {
-        if self.head.is_root() {
+    pub fn undo(&mut self, current_rope: &Rope) -> Option<(Rope, (usize, usize))> {
+        let current_id = self.head;
+        if current_id.is_root() {
             return None;
         }
 
-        let current_op = self.ops.get(&self.head)?;
+        let current_op = self.ops.get(&current_id)?;
         let cursor_pos = current_op.cursor_before();
         let parent_id = current_op.parent;
 
+        self.preferred_child.insert(parent_id, current_id);
+
+        let mut rope = current_rope.clone();
+        current_op.inverse().apply(&mut rope);
+
         // 移动 HEAD 到父节点
         self.head = parent_id;
+        self.maybe_flush();
 
-        // 重建 Rope
-        let rope = self.rebuild_rope_at(parent_id);
         Some((rope, cursor_pos))
     }
 
     /// Redo：沿着最近的分支前进
-    pub fn redo(&mut self) -> Option<(Rope, (usize, usize))> {
+    pub fn redo(&mut self, current_rope: &Rope) -> Option<(Rope, (usize, usize))> {
         // 获取当前节点的子节点
-        let children = self.children.get(&self.head)?;
+        let head_id = self.head;
+        let children = self.children.get(&head_id)?;
         if children.is_empty() {
             return None;
         }
 
-        // 选择最后一个子节点（最近的操作）
-        let next_id = *children.last()?;
+        let next_id = self
+            .preferred_child
+            .get(&head_id)
+            .copied()
+            .filter(|id| children.contains(id))
+            .unwrap_or_else(|| *children.last().unwrap());
         let next_op = self.ops.get(&next_id)?;
         let cursor_pos = next_op.cursor_after();
 
+        let mut rope = current_rope.clone();
+        next_op.apply(&mut rope);
+
         // 移动 HEAD
         self.head = next_id;
+        self.preferred_child.insert(head_id, next_id);
+        self.maybe_flush();
 
-        // 重建 Rope
-        let rope = self.rebuild_rope_at(next_id);
         Some((rope, cursor_pos))
     }
 
@@ -185,7 +211,7 @@ impl EditHistory {
 
     /// 是否有未保存的修改
     pub fn is_dirty(&self) -> bool {
-        !self.head.is_root()
+        self.head != self.saved_head
     }
 
     /// 是否可以 Undo
@@ -218,6 +244,7 @@ impl EditHistory {
     pub fn checkout(&mut self, id: OpId) -> Option<(Rope, (usize, usize))> {
         if id.is_root() {
             self.head = id;
+            self.maybe_flush();
             return Some((self.base_snapshot.clone(), (0, 0)));
         }
 
@@ -226,6 +253,7 @@ impl EditHistory {
         }
 
         self.head = id;
+        self.maybe_flush();
         let rope = self.rebuild_rope_at(id);
         let cursor = self
             .ops
@@ -310,8 +338,11 @@ impl EditHistory {
 
     pub fn on_save(&mut self, current_rope: &Rope) {
         self.force_flush();
-        self.base_snapshot = current_rope.clone();
-        if !self.head.is_root() {
+        self.saved_head = self.head;
+        if self.head.is_root() {
+            return;
+        }
+        if !self.checkpoints.contains_key(&self.head) {
             self.checkpoints.insert(
                 self.head,
                 Checkpoint {
@@ -323,22 +354,34 @@ impl EditHistory {
 
     pub fn clear(&mut self, current_rope: &Rope) {
         self.base_snapshot = current_rope.clone();
+        self.saved_head = OpId::root();
         self.ops.clear();
         self.head = OpId::root();
         self.children.clear();
+        self.preferred_child.clear();
         self.checkpoints.clear();
+        self.pending_ops.clear();
+        self.last_persisted_head = OpId::root();
         self.op_count = 0;
 
         if let Some(path) = &self.ops_file_path {
-            if let Ok(file) = File::create(path) {
-                self.ops_file = Some(file);
+            match File::create(path) {
+                Ok(file) => {
+                    self.ops_file = Some(file);
+                }
+                Err(e) => {
+                    self.ops_file = None;
+                    error!(error = %e, path = %path.display(), "failed to recreate ops file");
+                }
             }
         }
     }
 
     fn maybe_flush(&mut self) {
+        let interval = Duration::from_millis(self.config.flush_interval_ms);
+        let elapsed = self.last_flush.elapsed() > interval;
         let should_flush = self.pending_ops.len() >= self.config.flush_threshold
-            || self.last_flush.elapsed() > Duration::from_millis(self.config.flush_interval_ms);
+            || (elapsed && (!self.pending_ops.is_empty() || self.head != self.last_persisted_head));
 
         if should_flush {
             self.flush();
@@ -346,17 +389,79 @@ impl EditHistory {
     }
 
     fn flush(&mut self) {
-        if self.pending_ops.is_empty() {
+        if self.pending_ops.is_empty() && self.head == self.last_persisted_head {
             return;
         }
-        if let Some(f) = &mut self.ops_file {
-            for op in &self.pending_ops {
-                let _ = writeln!(f, "{}", op.to_json_line());
-            }
-            let _ = writeln!(f, "HEAD={}", self.head);
-            let _ = f.sync_data();
+
+        if self.ops_file.is_none() {
+            self.pending_ops.clear();
+            self.last_persisted_head = self.head;
+            self.last_flush = Instant::now();
+            return;
         }
+
+        let mut written_ops = 0usize;
+        let mut had_error = false;
+        let mut disable_persistence = false;
+
+        {
+            let Some(f) = self.ops_file.as_mut() else {
+                self.pending_ops.clear();
+                self.last_persisted_head = self.head;
+                self.last_flush = Instant::now();
+                return;
+            };
+
+            while written_ops < self.pending_ops.len() {
+                let line = match self.pending_ops[written_ops].to_json_line() {
+                    Ok(line) => line,
+                    Err(e) => {
+                        error!(error = %e, "serialize edit op failed; disabling history persistence");
+                        disable_persistence = true;
+                        had_error = true;
+                        break;
+                    }
+                };
+
+                if let Err(e) = writeln!(f, "{line}") {
+                    error!(error = %e, "write edit op failed");
+                    had_error = true;
+                    break;
+                }
+
+                written_ops += 1;
+            }
+
+            if !had_error && self.head != self.last_persisted_head {
+                if let Err(e) = writeln!(f, "HEAD={}", self.head) {
+                    error!(error = %e, "write edit history head failed");
+                    had_error = true;
+                }
+            }
+
+            if !had_error {
+                if let Err(e) = f.sync_data() {
+                    warn!(error = %e, "sync edit history failed");
+                }
+            }
+        }
+
+        if written_ops > 0 {
+            self.pending_ops.drain(..written_ops);
+        }
+
+        if had_error {
+            self.last_flush = Instant::now();
+            if disable_persistence {
+                self.ops_file = None;
+                self.pending_ops.clear();
+                self.last_persisted_head = self.head;
+            }
+            return;
+        }
+
         self.pending_ops.clear();
+        self.last_persisted_head = self.head;
         self.last_flush = Instant::now();
     }
 
@@ -365,7 +470,7 @@ impl EditHistory {
     }
 
     pub fn tick(&mut self) {
-        if !self.pending_ops.is_empty()
+        if (self.head != self.last_persisted_head || !self.pending_ops.is_empty())
             && self.last_flush.elapsed() > Duration::from_millis(self.config.flush_interval_ms)
         {
             self.flush();
@@ -380,59 +485,81 @@ impl EditHistory {
         let reader = BufReader::new(file);
         let mut ops = HashMap::new();
         let mut children: HashMap<OpId, Vec<OpId>> = HashMap::new();
+        let mut preferred_child: HashMap<OpId, OpId> = HashMap::new();
         let mut head = OpId::root();
         let mut last_cursor = (0, 0);
         for line in reader.lines() {
-            if let Ok(line) = line {
-                if line.starts_with("HEAD=") {
-                    if let Some(head_str) = line.strip_prefix("HEAD=") {
-                        if let Some((ts, cnt)) = head_str.split_once(':') {
-                            if let (Ok(timestamp), Ok(counter)) =
-                                (u64::from_str_radix(ts, 16), u16::from_str_radix(cnt, 16))
-                            {
-                                head = OpId { timestamp, counter };
-                            }
+            let line = line?;
+            if line.starts_with("HEAD=") {
+                if let Some(head_str) = line.strip_prefix("HEAD=") {
+                    if let Some((ts, cnt)) = head_str.split_once(':') {
+                        if let (Ok(timestamp), Ok(counter)) =
+                            (u64::from_str_radix(ts, 16), u16::from_str_radix(cnt, 16))
+                        {
+                            head = OpId { timestamp, counter };
                         }
                     }
-                } else if let Some(op) = EditOp::from_json_line(&line) {
-                    last_cursor = op.cursor_after();
-                    children
-                        .entry(op.parent)
-                        .or_insert_with(Vec::new)
-                        .push(op.id);
-                    ops.insert(op.id, op);
                 }
+            } else if let Some(op) = EditOp::from_json_line(&line) {
+                last_cursor = op.cursor_after();
+                let op_id = op.id;
+                let parent = op.parent;
+                let is_new = ops.insert(op_id, op).is_none();
+                if is_new {
+                    children.entry(parent).or_default().push(op_id);
+                }
+                preferred_child.insert(parent, op_id);
             }
         }
+        let op_count = ops.len();
         if head.is_root() && !ops.is_empty() {
-            for op_id in ops.keys() {
-                if !children.values().any(|c| c.contains(op_id)) {
-                    head = *op_id;
-                    break;
+            let mut best: Option<OpId> = None;
+            for &op_id in ops.keys() {
+                if children.contains_key(&op_id) {
+                    continue;
                 }
+                best = match best {
+                    None => Some(op_id),
+                    Some(prev) => Some(max_op_id(prev, op_id)),
+                };
+            }
+            if let Some(best) = best {
+                head = best;
             }
         }
         let mut history = Self {
             base_snapshot: base_snapshot.clone(),
             ops,
             head,
+            saved_head: OpId::root(),
             children,
             checkpoints: HashMap::new(),
             pending_ops: Vec::new(),
             last_flush: Instant::now(),
+            last_persisted_head: head,
             ops_file_path: Some(ops_file_path.clone()),
             ops_file: None,
             config: EditHistoryConfig::default(),
-            op_count: 0,
+            op_count,
+            preferred_child,
         };
         let rope = history.rebuild_rope_at(head);
+        let cursor = if head.is_root() {
+            (0, 0)
+        } else {
+            history
+                .ops
+                .get(&head)
+                .map(|op| op.cursor_after())
+                .unwrap_or(last_cursor)
+        };
         let ops_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&ops_file_path)?;
         history.ops_file = Some(ops_file);
 
-        Ok((history, rope, last_cursor))
+        Ok((history, rope, cursor))
     }
 
     pub fn has_backup(ops_file_path: &PathBuf) -> bool {
@@ -457,6 +584,14 @@ impl Drop for EditHistory {
     }
 }
 
+fn max_op_id(a: OpId, b: OpId) -> OpId {
+    if (a.timestamp, a.counter) >= (b.timestamp, b.counter) {
+        a
+    } else {
+        b
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,15 +611,16 @@ mod tests {
         assert!(!history.can_redo());
 
         // Undo
-        let (undo_rope, cursor) = history.undo().unwrap();
+        let (undo_rope, cursor) = history.undo(&rope).unwrap();
         assert_eq!(undo_rope.to_string(), "hello");
         assert_eq!(cursor, (0, 5));
+        rope = undo_rope;
 
         assert!(!history.can_undo());
         assert!(history.can_redo());
 
         // Redo
-        let (redo_rope, cursor) = history.redo().unwrap();
+        let (redo_rope, cursor) = history.redo(&rope).unwrap();
         assert_eq!(redo_rope.to_string(), "hello world");
         assert_eq!(cursor, (0, 11));
     }
@@ -505,7 +641,7 @@ mod tests {
         history.push(op_b.clone(), &rope);
 
         // Undo 一次（回到 "a"）
-        let (_, _) = history.undo().unwrap();
+        let _ = history.undo(&rope).unwrap();
 
         // 插入 "c"（创建分支）
         rope = Rope::from_str("ac");
@@ -516,9 +652,17 @@ mod tests {
         let children = history.children_of(&op_a.id);
         assert_eq!(children.len(), 2); // b 和 c 都是 a 的子节点
 
-        // 可以 Redo（会选择最后一个分支，即 c）
-        history.undo().unwrap();
-        assert!(history.can_redo());
+        // checkout 到旧分支 b，再 undo 回 a，然后 redo 应该回到 b（而不是最近创建的 c）
+        let (checkout_rope, _) = history.checkout(op_b.id).unwrap();
+        assert_eq!(checkout_rope.to_string(), "ab");
+        rope = checkout_rope;
+
+        let (undo_rope, _) = history.undo(&rope).unwrap();
+        assert_eq!(undo_rope.to_string(), "a");
+        rope = undo_rope;
+
+        let (redo_rope, _) = history.redo(&rope).unwrap();
+        assert_eq!(redo_rope.to_string(), "ab");
     }
 
     #[test]
@@ -578,5 +722,27 @@ mod tests {
         history.push(op, &rope);
 
         assert!(history.is_dirty());
+    }
+
+    #[test]
+    fn test_dirty_save_point() {
+        let base = Rope::from_str("hello");
+        let mut history = EditHistory::new(base.clone());
+
+        let mut rope = base.clone();
+        let op = EditOp::insert(history.head(), 5, " world".to_string(), (0, 5), (0, 11));
+        op.apply(&mut rope);
+        history.push(op, &rope);
+
+        assert!(history.is_dirty());
+        history.on_save(&rope);
+        assert!(!history.is_dirty());
+
+        let (undo_rope, _) = history.undo(&rope).unwrap();
+        assert!(history.is_dirty());
+
+        let (redo_rope, _) = history.redo(&undo_rope).unwrap();
+        assert_eq!(redo_rope.to_string(), "hello world");
+        assert!(!history.is_dirty());
     }
 }

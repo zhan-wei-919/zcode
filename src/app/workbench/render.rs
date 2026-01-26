@@ -1,15 +1,17 @@
 use super::palette;
 use super::Workbench;
+use crate::core::text_window;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::{
     Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, SearchResultItem,
     SearchViewport, SidebarTab, SplitDirection,
 };
 use crate::views::{compute_editor_pane_layout, cursor_position_editor, render_editor_pane};
+use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
@@ -39,27 +41,13 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
         workbench.render_status(frame, status_area);
     }
 
-    let (main_area, bottom_panel_area) = if workbench.store.state().ui.bottom_panel.visible {
-        let panel_height = super::util::bottom_panel_height(body_area.height);
-        let areas = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(panel_height)])
-            .split(body_area);
-        let panel_area = (areas[1].height > 0).then_some(areas[1]);
-        (areas[0], panel_area)
-    } else {
-        (body_area, None)
-    };
-
-    workbench.last_bottom_panel_area = bottom_panel_area;
-
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(super::ACTIVITY_BAR_WIDTH),
             Constraint::Min(0),
         ])
-        .split(main_area);
+        .split(body_area);
 
     let activity_area = columns[0];
     let content_area = columns[1];
@@ -71,12 +59,26 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
         workbench.render_activity_bar(frame, activity_area);
     }
 
-    if workbench.store.state().ui.sidebar_visible && content_area.width > 0 {
-        let sidebar_width = super::util::sidebar_width(content_area.width);
+    let (main_area, bottom_panel_area) = if workbench.store.state().ui.bottom_panel.visible {
+        let panel_height = super::util::bottom_panel_height(content_area.height);
+        let areas = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(panel_height)])
+            .split(content_area);
+        let panel_area = (areas[1].height > 0).then_some(areas[1]);
+        (areas[0], panel_area)
+    } else {
+        (content_area, None)
+    };
+
+    workbench.last_bottom_panel_area = bottom_panel_area;
+
+    if workbench.store.state().ui.sidebar_visible && main_area.width > 0 {
+        let sidebar_width = super::util::sidebar_width(main_area.width);
         let body_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
-            .split(content_area);
+            .split(main_area);
 
         workbench.last_sidebar_area =
             (body_chunks[0].width > 0 && body_chunks[0].height > 0).then_some(body_chunks[0]);
@@ -96,7 +98,7 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
         workbench.last_sidebar_tabs_area = None;
         workbench.last_sidebar_content_area = None;
         let _scope = perf::scope("render.editors");
-        workbench.render_editor_panes(frame, content_area);
+        workbench.render_editor_panes(frame, main_area);
     }
 
     if let Some(panel_area) = bottom_panel_area {
@@ -104,12 +106,25 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
         workbench.render_bottom_panel(frame, panel_area);
     }
 
-    if workbench.store.state().ui.hover_message.is_some()
-        && !workbench.store.state().ui.command_palette.visible
+    if !workbench.store.state().ui.command_palette.visible
         && !workbench.store.state().ui.input_dialog.visible
         && !workbench.store.state().ui.confirm_dialog.visible
+        && !workbench.store.state().ui.explorer_context_menu.visible
     {
-        workbench.render_hover_popup(frame, area);
+        if workbench.store.state().ui.signature_help.visible {
+            workbench.render_signature_help_popup(frame, area);
+        }
+        if workbench.store.state().ui.completion.visible {
+            workbench.render_completion_popup(frame, area);
+        } else if workbench.store.state().ui.hover_message.is_some() {
+            workbench.render_hover_popup(frame, area);
+        }
+    }
+
+    if workbench.store.state().ui.explorer_context_menu.visible {
+        render_explorer_context_menu(workbench, frame, area);
+    } else {
+        workbench.last_explorer_context_menu_area = None;
     }
 
     if workbench.store.state().ui.command_palette.visible {
@@ -134,9 +149,59 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
     }
 }
 
+struct ThinVSeparator {
+    fg: Color,
+    bg: Color,
+}
+
+impl Widget for ThinVSeparator {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        // Use box-drawing chars so the separator connects across cells (avoids "dashed" look).
+        let style = Style::default().fg(self.fg).bg(self.bg);
+        let right = area.x.saturating_add(area.width);
+        let bottom = area.y.saturating_add(area.height);
+        for y in area.y..bottom {
+            for x in area.x..right {
+                buf[(x, y)].set_char('│').set_style(style);
+            }
+        }
+    }
+}
+
+struct ThinHSeparator {
+    fg: Color,
+    bg: Color,
+}
+
+impl Widget for ThinHSeparator {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        // Use box-drawing chars so the separator connects across cells (avoids "dashed" look).
+        let style = Style::default().fg(self.fg).bg(self.bg);
+        let right = area.x.saturating_add(area.width);
+        let bottom = area.y.saturating_add(area.height);
+        for y in area.y..bottom {
+            for x in area.x..right {
+                buf[(x, y)].set_char('─').set_style(style);
+            }
+        }
+    }
+}
+
 pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
     if workbench.store.state().ui.input_dialog.visible {
         return input_dialog_cursor(workbench);
+    }
+
+    if workbench.store.state().ui.explorer_context_menu.visible {
+        return None;
     }
 
     if workbench.store.state().ui.command_palette.visible
@@ -185,13 +250,18 @@ impl Workbench {
     }
 
     fn render_header(&self, frame: &mut Frame, area: Rect) {
-        let title = "zcode - TUI Editor";
-        let header = Paragraph::new(Span::styled(
-            title,
-            Style::default().fg(self.theme.header_fg),
-        ))
-        .block(Block::default().borders(Borders::BOTTOM));
-        frame.render_widget(header, area);
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let title = "zcode";
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                title,
+                Style::default().fg(self.theme.header_fg),
+            )),
+            area,
+        );
     }
 
     fn render_status(&self, frame: &mut Frame, area: Rect) {
@@ -229,51 +299,121 @@ impl Workbench {
     }
 
     fn render_activity_bar(&self, frame: &mut Frame, area: Rect) {
-        let active = self.store.state().ui.sidebar_tab;
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
 
         let base = Style::default()
             .bg(self.theme.activity_bg)
             .fg(self.theme.activity_fg);
         let active_style = Style::default()
             .bg(self.theme.activity_active_bg)
-            .fg(self.theme.activity_active_fg);
+            .fg(self.theme.activity_active_fg)
+            .add_modifier(Modifier::BOLD);
 
-        let explorer_style = if active == SidebarTab::Explorer {
-            active_style
-        } else {
-            base
-        };
+        let content = area;
+        frame.render_widget(Block::default().style(base), content);
 
-        let search_style = if active == SidebarTab::Search {
-            active_style
-        } else {
-            base
-        };
+        let state = self.store.state();
+        let active_pane = state.ui.editor_layout.active_pane;
+        let pane = state.editor.pane(active_pane);
+        let search_bar = pane.map(|p| &p.search_bar);
 
-        let lines = vec![
-            Line::from(Span::styled(" E ", explorer_style)),
-            Line::from(Span::styled(" S ", search_style)),
-        ];
+        let settings_active = self.settings_path.as_ref().is_some_and(|settings_path| {
+            pane.and_then(|p| p.active_tab())
+                .and_then(|t| t.path.as_ref())
+                .is_some_and(|p| p == settings_path)
+        });
 
-        let widget = Paragraph::new(lines)
-            .style(base)
-            .block(Block::default().borders(Borders::RIGHT));
-        frame.render_widget(widget, area);
+        let slot_h = super::util::activity_slot_height(content.height);
+        for (i, item) in super::util::activity_items().iter().enumerate() {
+            let slot_top = content.y.saturating_add((i as u16).saturating_mul(slot_h));
+            if slot_top >= content.y.saturating_add(content.height) {
+                break;
+            }
+
+            let active = match item {
+                super::util::ActivityItem::Explorer => {
+                    state.ui.sidebar_visible && state.ui.sidebar_tab == SidebarTab::Explorer
+                }
+                super::util::ActivityItem::Search => {
+                    state.ui.sidebar_visible && state.ui.sidebar_tab == SidebarTab::Search
+                }
+                super::util::ActivityItem::Problems => {
+                    state.ui.bottom_panel.visible
+                        && state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                }
+                super::util::ActivityItem::Results => {
+                    state.ui.bottom_panel.visible
+                        && state.ui.bottom_panel.active_tab == BottomPanelTab::SearchResults
+                }
+                super::util::ActivityItem::Logs => {
+                    state.ui.bottom_panel.visible
+                        && state.ui.bottom_panel.active_tab == BottomPanelTab::Logs
+                }
+                super::util::ActivityItem::Find => search_bar.is_some_and(|sb| {
+                    sb.visible && sb.mode == crate::kernel::editor::SearchBarMode::Search
+                }),
+                super::util::ActivityItem::Replace => search_bar.is_some_and(|sb| {
+                    sb.visible && sb.mode == crate::kernel::editor::SearchBarMode::Replace
+                }),
+                super::util::ActivityItem::Palette => state.ui.command_palette.visible,
+                super::util::ActivityItem::Settings => settings_active,
+            };
+
+            let remaining = content
+                .y
+                .saturating_add(content.height)
+                .saturating_sub(slot_top);
+            let h = slot_h.min(remaining).max(1);
+            let slot = Rect::new(content.x, slot_top, content.width, h);
+            if slot.width == 0 || slot.height == 0 {
+                continue;
+            }
+
+            if active {
+                frame.render_widget(Block::default().style(active_style), slot);
+            }
+
+            let icon_y = slot.y.saturating_add(slot.height / 2);
+            let icon_x = slot
+                .x
+                .saturating_add(slot.width / 2)
+                .min(slot.x.saturating_add(slot.width.saturating_sub(1)));
+            let style = if active { active_style } else { base };
+            let cell = Rect::new(icon_x, icon_y, 1.min(slot.width), 1);
+
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(item.icon().to_string(), style))),
+                cell,
+            );
+        }
     }
 
     fn render_sidebar(&mut self, frame: &mut Frame, area: Rect) {
-        let is_focused = self.store.state().ui.focus == FocusTarget::Explorer;
-        let border_style = if is_focused {
-            Style::default().fg(self.theme.focus_border)
-        } else {
-            Style::default().fg(self.theme.inactive_border)
-        };
+        if area.width == 0 || area.height == 0 {
+            self.last_sidebar_tabs_area = None;
+            self.last_sidebar_content_area = None;
+            return;
+        }
 
-        let block = Block::default()
-            .borders(Borders::RIGHT)
-            .border_style(border_style);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
+        let inner = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+        let sep = Rect::new(
+            area.x.saturating_add(area.width.saturating_sub(1)),
+            area.y,
+            1.min(area.width),
+            area.height,
+        );
+        if sep.width > 0 {
+            frame.render_widget(
+                ThinVSeparator {
+                    fg: self.theme.separator,
+                    bg: self.theme.palette_bg,
+                },
+                sep,
+            );
+        }
+
         if inner.width == 0 || inner.height == 0 {
             self.last_sidebar_tabs_area = None;
             self.last_sidebar_content_area = None;
@@ -300,9 +440,9 @@ impl Workbench {
 
         let active_tab = self.store.state().ui.sidebar_tab;
         let tab_active = Style::default()
-            .fg(self.theme.sidebar_tab_active_fg)
-            .bg(self.theme.sidebar_tab_active_bg);
-        let tab_inactive = Style::default().fg(self.theme.sidebar_tab_inactive_fg);
+            .fg(self.theme.header_fg)
+            .add_modifier(Modifier::BOLD);
+        let tab_inactive = Style::default().fg(self.theme.palette_muted_fg);
 
         let explorer_style = if active_tab == SidebarTab::Explorer {
             tab_active
@@ -348,27 +488,19 @@ impl Workbench {
 
     fn render_bottom_panel(&mut self, frame: &mut Frame, area: Rect) {
         let tab = self.store.state().ui.bottom_panel.active_tab.clone();
-        let is_focused = self.store.state().ui.focus == FocusTarget::BottomPanel;
-        let border_style = if is_focused {
-            Style::default().fg(self.theme.focus_border)
-        } else {
-            Style::default().fg(self.theme.inactive_border)
-        };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        if inner.width == 0 || inner.height == 0 {
+        if area.width == 0 || area.height == 0 {
             return;
         }
+
+        let base_style = Style::default()
+            .bg(self.theme.palette_bg)
+            .fg(self.theme.palette_fg);
+        frame.render_widget(Block::default().style(base_style), area);
 
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(0)])
-            .split(inner);
+            .split(area);
         let tabs_area = rows[0];
         let content_area = rows[1];
 
@@ -376,6 +508,9 @@ impl Workbench {
 
         match tab {
             BottomPanelTab::Problems => self.render_bottom_panel_problems(frame, content_area),
+            BottomPanelTab::CodeActions => self.render_bottom_panel_code_actions(frame, content_area),
+            BottomPanelTab::Locations => self.render_bottom_panel_locations(frame, content_area),
+            BottomPanelTab::Symbols => self.render_bottom_panel_symbols(frame, content_area),
             BottomPanelTab::SearchResults => {
                 self.render_bottom_panel_search_results(frame, content_area)
             }
@@ -385,9 +520,9 @@ impl Workbench {
 
     fn render_bottom_panel_tabs(&self, frame: &mut Frame, area: Rect, active: &BottomPanelTab) {
         let tab_active = Style::default()
-            .fg(self.theme.sidebar_tab_active_fg)
-            .bg(self.theme.sidebar_tab_active_bg);
-        let tab_inactive = Style::default().fg(self.theme.sidebar_tab_inactive_fg);
+            .fg(self.theme.header_fg)
+            .add_modifier(Modifier::BOLD);
+        let tab_inactive = Style::default().fg(self.theme.palette_muted_fg);
 
         let mut spans = Vec::new();
         for (tab, label) in self.bottom_panel_tabs() {
@@ -446,10 +581,10 @@ impl Workbench {
             let marker = if is_selected { ">" } else { " " };
             let severity_style = match item.severity {
                 crate::kernel::problems::ProblemSeverity::Error => {
-                    Style::default().fg(Color::Red)
+                    Style::default().fg(self.theme.error_fg)
                 }
                 crate::kernel::problems::ProblemSeverity::Warning => {
-                    Style::default().fg(Color::Yellow)
+                    Style::default().fg(self.theme.warning_fg)
                 }
                 crate::kernel::problems::ProblemSeverity::Information => {
                     Style::default().fg(self.theme.palette_muted_fg)
@@ -465,12 +600,191 @@ impl Workbench {
                     format!("{}:{}:{} ", file_name, line, col),
                     Style::default().fg(self.theme.accent_fg),
                 ),
-                Span::styled(
-                    format!("[{}] ", item.severity.label()),
-                    severity_style,
-                ),
+                Span::styled(format!("[{}] ", item.severity.label()), severity_style),
                 Span::raw(item.message.as_str()),
             ]));
+        }
+
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+
+    fn render_bottom_panel_locations(&mut self, frame: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let height = area.height as usize;
+        self.sync_locations_view_height(area.height);
+
+        let locations_state = &self.store.state().locations;
+        let locations = locations_state.items();
+        if locations.is_empty() {
+            let msg = Line::from(Span::styled(
+                "No locations",
+                Style::default().fg(self.theme.palette_muted_fg),
+            ));
+            frame.render_widget(Paragraph::new(msg), area);
+            return;
+        }
+
+        let start = locations_state.scroll_offset().min(locations.len());
+        let end = (start + height).min(locations.len());
+        let selected = locations_state
+            .selected_index()
+            .min(locations.len().saturating_sub(1));
+
+        let mut lines = Vec::with_capacity(end.saturating_sub(start));
+        for (i, item) in locations.iter().enumerate().take(end).skip(start) {
+            let file_name = item
+                .path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| item.path.to_string_lossy().to_string());
+            let line = item.line.saturating_add(1);
+            let col = item.column.saturating_add(1);
+            let is_selected = i == selected;
+            let marker_style = if is_selected {
+                Style::default().fg(self.theme.focus_border)
+            } else {
+                Style::default().fg(self.theme.palette_muted_fg)
+            };
+            let marker = if is_selected { ">" } else { " " };
+            lines.push(Line::from(vec![
+                Span::styled(marker, marker_style),
+                Span::raw(" "),
+                Span::styled(
+                    format!("{}:{}:{} ", file_name, line, col),
+                    Style::default().fg(self.theme.accent_fg),
+                ),
+            ]));
+        }
+
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+
+    fn render_bottom_panel_code_actions(&mut self, frame: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let height = area.height as usize;
+        self.sync_code_actions_view_height(area.height);
+
+        let actions_state = &self.store.state().code_actions;
+        let actions = actions_state.items();
+        if actions.is_empty() {
+            let msg = Line::from(Span::styled(
+                "No actions",
+                Style::default().fg(self.theme.palette_muted_fg),
+            ));
+            frame.render_widget(Paragraph::new(msg), area);
+            return;
+        }
+
+        let start = actions_state.scroll_offset().min(actions.len());
+        let end = (start + height).min(actions.len());
+        let selected = actions_state
+            .selected_index()
+            .min(actions.len().saturating_sub(1));
+
+        let mut lines = Vec::with_capacity(end.saturating_sub(start));
+        for (i, action) in actions.iter().enumerate().take(end).skip(start) {
+            let is_selected = i == selected;
+            let marker_style = if is_selected {
+                Style::default().fg(self.theme.focus_border)
+            } else {
+                Style::default().fg(self.theme.palette_muted_fg)
+            };
+            let marker = if is_selected { ">" } else { " " };
+
+            let title_style = if action.is_preferred {
+                Style::default()
+                    .fg(self.theme.accent_fg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(self.theme.palette_fg)
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(marker, marker_style),
+                Span::raw(" "),
+                Span::styled(action.title.as_str(), title_style),
+            ]));
+        }
+
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+
+    fn render_bottom_panel_symbols(&mut self, frame: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let height = area.height as usize;
+        self.sync_symbols_view_height(area.height);
+
+        let symbols_state = &self.store.state().symbols;
+        let symbols = symbols_state.items();
+        if symbols.is_empty() {
+            let msg = Line::from(Span::styled(
+                "No symbols",
+                Style::default().fg(self.theme.palette_muted_fg),
+            ));
+            frame.render_widget(Paragraph::new(msg), area);
+            return;
+        }
+
+        let start = symbols_state.scroll_offset().min(symbols.len());
+        let end = (start + height).min(symbols.len());
+        let selected = symbols_state
+            .selected_index()
+            .min(symbols.len().saturating_sub(1));
+
+        let mut lines = Vec::with_capacity(end.saturating_sub(start));
+        for (i, item) in symbols.iter().enumerate().take(end).skip(start) {
+            let file_name = item
+                .path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| item.path.to_string_lossy().to_string());
+            let line = item.line.saturating_add(1);
+            let col = item.column.saturating_add(1);
+            let is_selected = i == selected;
+            let marker_style = if is_selected {
+                Style::default().fg(self.theme.focus_border)
+            } else {
+                Style::default().fg(self.theme.palette_muted_fg)
+            };
+            let marker = if is_selected { ">" } else { " " };
+
+            let kind = symbol_kind_label(item.kind);
+            let indent = "  ".repeat(item.level.min(32));
+
+            let mut spans = Vec::with_capacity(8);
+            spans.push(Span::styled(marker, marker_style));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                format!("{}:{}:{} ", file_name, line, col),
+                Style::default().fg(self.theme.accent_fg),
+            ));
+            spans.push(Span::styled(
+                format!("[{}] ", kind),
+                Style::default().fg(self.theme.palette_muted_fg),
+            ));
+            spans.push(Span::raw(indent));
+            spans.push(Span::styled(
+                item.name.as_str(),
+                Style::default().fg(self.theme.palette_fg),
+            ));
+            if let Some(detail) = item.detail.as_deref().filter(|s| !s.is_empty()) {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    detail,
+                    Style::default().fg(self.theme.palette_muted_fg),
+                ));
+            }
+
+            lines.push(Line::from(spans));
         }
 
         frame.render_widget(Paragraph::new(lines), area);
@@ -481,16 +795,46 @@ impl Workbench {
             return;
         }
 
-        if self.logs.is_empty() {
-            let msg = Line::from(Span::styled(
-                "No logs yet",
-                Style::default().fg(self.theme.palette_muted_fg),
-            ));
-            frame.render_widget(Paragraph::new(msg), area);
+        if area.width < 3 || area.height < 3 {
             return;
         }
 
-        let height = area.height as usize;
+        let base_style = Style::default()
+            .bg(self.theme.palette_bg)
+            .fg(self.theme.palette_fg);
+        let border_style = Style::default()
+            .fg(self.theme.focus_border)
+            .bg(self.theme.palette_bg);
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .style(base_style),
+            area,
+        );
+
+        let inner = Rect::new(
+            area.x.saturating_add(1),
+            area.y.saturating_add(1),
+            area.width.saturating_sub(2),
+            area.height.saturating_sub(2),
+        );
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        if self.logs.is_empty() {
+            let msg = Line::from(Span::styled(
+                "No logs yet",
+                Style::default()
+                    .bg(self.theme.palette_bg)
+                    .fg(self.theme.palette_muted_fg),
+            ));
+            frame.render_widget(Paragraph::new(msg), inner);
+            return;
+        }
+
+        let height = inner.height as usize;
         let visible = height.min(self.logs.len());
         let start = self.logs.len().saturating_sub(visible);
 
@@ -499,7 +843,7 @@ impl Workbench {
             lines.push(Line::from(line.as_str()));
         }
 
-        frame.render_widget(Paragraph::new(lines), area);
+        frame.render_widget(Paragraph::new(lines).style(base_style), inner);
     }
 
     fn render_hover_popup(&self, frame: &mut Frame, area: Rect) {
@@ -532,22 +876,265 @@ impl Workbench {
             lines.truncate(6);
         }
 
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
         let max_line_width = lines
             .iter()
             .map(|line| UnicodeWidthStr::width(*line))
             .max()
             .unwrap_or(1);
-        let width = (max_line_width as u16 + 2)
-            .min(area.width.max(1))
-            .max(4);
-        let height = (lines.len() as u16 + 2).min(area.height.max(1)).max(3);
 
+        let desired_width = max_line_width.saturating_add(2);
+        let desired_height = lines.len().saturating_add(2);
+
+        let width = desired_width.max(4).min(area.width as usize).max(1) as u16;
+        let height = desired_height.max(3).min(area.height as usize).max(1) as u16;
+
+        let right = area.x.saturating_add(area.width);
         let mut x = cx;
-        if x + width > area.x + area.width {
-            x = area.x + area.width - width;
+        if x.saturating_add(width) > right {
+            x = right.saturating_sub(width);
         }
         let below = cy.saturating_add(1);
-        let mut y = if below + height <= area.y + area.height {
+        let bottom = area.y.saturating_add(area.height);
+        let mut y = if below.saturating_add(height) <= bottom {
+            below
+        } else {
+            cy.saturating_sub(height)
+        };
+        if y < area.y {
+            y = area.y;
+        }
+
+        let popup_area = Rect::new(x, y, width, height);
+        frame.render_widget(Clear, popup_area);
+        let base_style = Style::default()
+            .bg(self.theme.palette_bg)
+            .fg(self.theme.palette_fg);
+        frame.render_widget(Block::default().style(base_style), popup_area);
+
+        let inner = Rect::new(
+            popup_area.x.saturating_add(1),
+            popup_area.y.saturating_add(1),
+            popup_area.width.saturating_sub(2),
+            popup_area.height.saturating_sub(2),
+        );
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        let content = lines.join("\n");
+        frame.render_widget(
+            Paragraph::new(content)
+                .style(base_style)
+                .wrap(Wrap { trim: true }),
+            inner,
+        );
+    }
+
+    fn render_signature_help_popup(&self, frame: &mut Frame, area: Rect) {
+        let signature_help = &self.store.state().ui.signature_help;
+        if !signature_help.visible || signature_help.text.trim().is_empty() {
+            return;
+        }
+
+        let active_pane = self.store.state().ui.editor_layout.active_pane;
+        let pane_area = match self.last_editor_areas.get(active_pane) {
+            Some(area) => *area,
+            None => return,
+        };
+        let Some(pane_state) = self.store.state().editor.pane(active_pane) else {
+            return;
+        };
+        let config = &self.store.state().editor.config;
+        let layout = compute_editor_pane_layout(pane_area, pane_state, config);
+        let Some((cx, cy)) = cursor_position_editor(&layout, pane_state, config) else {
+            return;
+        };
+
+        let mut lines: Vec<&str> = signature_help.text.lines().collect();
+        if lines.is_empty() {
+            return;
+        }
+        if lines.len() > 4 {
+            lines.truncate(4);
+        }
+
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let max_line_width = lines
+            .iter()
+            .map(|line| UnicodeWidthStr::width(*line))
+            .max()
+            .unwrap_or(1);
+
+        let desired_width = max_line_width.saturating_add(2);
+        let desired_height = lines.len().saturating_add(2);
+
+        let width = desired_width.max(8).min(area.width as usize).max(1) as u16;
+        let height = desired_height.max(3).min(area.height as usize).max(1) as u16;
+
+        let right = area.x.saturating_add(area.width);
+        let mut x = cx;
+        if x.saturating_add(width) > right {
+            x = right.saturating_sub(width);
+        }
+
+        let below = cy.saturating_add(1);
+        let bottom = area.y.saturating_add(area.height);
+        let prefer_above = self.store.state().ui.completion.visible;
+        let mut y = if prefer_above {
+            let above = cy.saturating_sub(height);
+            if cy >= height && above >= area.y {
+                above
+            } else if below.saturating_add(height) <= bottom {
+                below
+            } else {
+                area.y
+            }
+        } else if below.saturating_add(height) <= bottom {
+            below
+        } else {
+            cy.saturating_sub(height)
+        };
+        if y < area.y {
+            y = area.y;
+        }
+
+        let popup_area = Rect::new(x, y, width, height);
+        frame.render_widget(Clear, popup_area);
+        let base_style = Style::default()
+            .bg(self.theme.palette_bg)
+            .fg(self.theme.palette_fg);
+        frame.render_widget(Block::default().style(base_style), popup_area);
+
+        let inner = Rect::new(
+            popup_area.x.saturating_add(1),
+            popup_area.y.saturating_add(1),
+            popup_area.width.saturating_sub(2),
+            popup_area.height.saturating_sub(2),
+        );
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        let content = lines.join("\n");
+        frame.render_widget(
+            Paragraph::new(content)
+                .style(base_style)
+                .wrap(Wrap { trim: true }),
+            inner,
+        );
+    }
+
+    fn render_completion_popup(&self, frame: &mut Frame, area: Rect) {
+        let completion = &self.store.state().ui.completion;
+        if !completion.visible || completion.items.is_empty() {
+            return;
+        }
+
+        let active_pane = self.store.state().ui.editor_layout.active_pane;
+        let pane = completion
+            .request
+            .as_ref()
+            .map(|req| req.pane)
+            .unwrap_or(active_pane);
+        let pane_area = match self
+            .last_editor_areas
+            .get(pane)
+            .or_else(|| self.last_editor_areas.get(active_pane))
+        {
+            Some(area) => *area,
+            None => return,
+        };
+        let Some(pane_state) = self.store.state().editor.pane(pane) else {
+            return;
+        };
+        let config = &self.store.state().editor.config;
+        let layout = compute_editor_pane_layout(pane_area, pane_state, config);
+        let Some((cx, cy)) = cursor_position_editor(&layout, pane_state, config) else {
+            return;
+        };
+
+        let max_items = 8usize;
+        let selected = completion
+            .selected
+            .min(completion.items.len().saturating_sub(1));
+        let mut start = 0usize;
+        if selected >= max_items {
+            start = selected + 1 - max_items;
+        }
+        let end = (start + max_items).min(completion.items.len());
+
+        let mut lines = Vec::with_capacity(end.saturating_sub(start));
+        let mut max_width = 1usize;
+        for (i, item) in completion.items.iter().enumerate().take(end).skip(start) {
+            let is_selected = i == selected;
+            let row_bg = if is_selected {
+                self.theme.palette_selected_bg
+            } else {
+                self.theme.palette_bg
+            };
+            let marker_style = Style::default()
+                .fg(if is_selected {
+                    self.theme.focus_border
+                } else {
+                    self.theme.palette_muted_fg
+                })
+                .bg(row_bg);
+            let label_style = Style::default().fg(self.theme.palette_fg).bg(row_bg);
+            let detail_style = Style::default().fg(self.theme.palette_muted_fg).bg(row_bg);
+            let marker = if is_selected { ">" } else { " " };
+
+            let text = item.label.as_str();
+            let mut detail = "";
+            if let Some(d) = item.detail.as_deref() {
+                if !d.trim().is_empty() {
+                    detail = d;
+                }
+            }
+
+            let width = if detail.is_empty() {
+                UnicodeWidthStr::width(text)
+            } else {
+                UnicodeWidthStr::width(text).saturating_add(1 + UnicodeWidthStr::width(detail))
+            };
+            max_width = max_width.max(width.saturating_add(2));
+
+            let mut spans = vec![
+                Span::styled(marker, marker_style),
+                Span::styled(" ", label_style),
+                Span::styled(text, label_style),
+            ];
+            if !detail.is_empty() {
+                spans.push(Span::styled(" ", label_style));
+                spans.push(Span::styled(detail, detail_style));
+            }
+            lines.push(Line::from(spans));
+        }
+
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let desired_width = max_width.saturating_add(2);
+        let desired_height = lines.len().saturating_add(2);
+
+        let width = desired_width.max(8).min(area.width as usize).max(1) as u16;
+        let height = desired_height.max(3).min(area.height as usize).max(1) as u16;
+
+        let right = area.x.saturating_add(area.width);
+        let mut x = cx;
+        if x.saturating_add(width) > right {
+            x = right.saturating_sub(width);
+        }
+        let below = cy.saturating_add(1);
+        let bottom = area.y.saturating_add(area.height);
+        let mut y = if below.saturating_add(height) <= bottom {
             below
         } else {
             cy.saturating_sub(height)
@@ -559,14 +1146,31 @@ impl Workbench {
         let popup_area = Rect::new(x, y, width, height);
         frame.render_widget(Clear, popup_area);
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.focus_border));
-        let inner = block.inner(popup_area);
-        frame.render_widget(block, popup_area);
+        let base_style = Style::default()
+            .bg(self.theme.palette_bg)
+            .fg(self.theme.palette_fg);
+        let border_style = Style::default()
+            .fg(self.theme.focus_border)
+            .bg(self.theme.palette_bg);
+        frame.render_widget(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .style(base_style),
+            popup_area,
+        );
 
-        let content = lines.join("\n");
-        frame.render_widget(Paragraph::new(content).wrap(Wrap { trim: true }), inner);
+        let inner = Rect::new(
+            popup_area.x.saturating_add(1),
+            popup_area.y.saturating_add(1),
+            popup_area.width.saturating_sub(2),
+            popup_area.height.saturating_sub(2),
+        );
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        frame.render_widget(Paragraph::new(lines).style(base_style), inner);
     }
 
     fn render_bottom_panel_search_results(&mut self, frame: &mut Frame, area: Rect) {
@@ -697,6 +1301,7 @@ impl Workbench {
     fn render_editor_panes(&mut self, frame: &mut Frame, area: Rect) {
         let panes = self.store.state().ui.editor_layout.panes.max(1);
         let hovered = self.store.state().ui.hovered_tab;
+        let workspace_empty = self.store.state().explorer.rows.is_empty();
         self.last_editor_areas.clear();
         self.last_editor_areas.reserve(panes.min(2));
         self.last_editor_inner_areas.clear();
@@ -729,6 +1334,7 @@ impl Workbench {
                         config,
                         &self.theme,
                         hovered_for_pane(0),
+                        workspace_empty,
                     );
                 }
             }
@@ -761,6 +1367,7 @@ impl Workbench {
                                     config,
                                     &self.theme,
                                     hovered_for_pane(active),
+                                    workspace_empty,
                                 );
                             }
                             return;
@@ -782,40 +1389,16 @@ impl Workbench {
                         self.last_editor_areas.push(left_area);
                         self.last_editor_areas.push(right_area);
 
-                        let active = self.store.state().ui.editor_layout.active_pane;
-                        let focus = self.store.state().ui.focus;
-
-                        let inactive_border = Style::default().fg(self.theme.inactive_border);
-                        let active_border = Style::default().fg(self.theme.focus_border);
-                        let sep_style = if focus == FocusTarget::Editor {
-                            Style::default().fg(self.theme.focus_border)
-                        } else {
-                            Style::default().fg(self.theme.separator)
-                        };
-
+                        // Split separator: avoid box borders (more nvim-like), just paint a 1-cell bar.
                         frame.render_widget(
-                            Block::default()
-                                .borders(Borders::LEFT)
-                                .border_style(sep_style),
+                            ThinVSeparator {
+                                fg: self.theme.separator,
+                                bg: self.theme.palette_bg,
+                            },
                             sep_area,
                         );
 
-                        let left_border = if active == 0 {
-                            active_border
-                        } else {
-                            inactive_border
-                        };
-                        let right_border = if active == 1 {
-                            active_border
-                        } else {
-                            inactive_border
-                        };
-
-                        let left_block = Block::default()
-                            .borders(Borders::LEFT | Borders::TOP | Borders::BOTTOM)
-                            .border_style(left_border);
-                        let left_inner = left_block.inner(left_area);
-                        frame.render_widget(left_block, left_area);
+                        let left_inner = left_area;
                         self.last_editor_inner_areas.push(left_inner);
                         if left_inner.width > 0 && left_inner.height > 0 {
                             let layout = {
@@ -835,15 +1418,12 @@ impl Workbench {
                                     config,
                                     &self.theme,
                                     hovered_for_pane(0),
+                                    workspace_empty,
                                 );
                             }
                         }
 
-                        let right_block = Block::default()
-                            .borders(Borders::RIGHT | Borders::TOP | Borders::BOTTOM)
-                            .border_style(right_border);
-                        let right_inner = right_block.inner(right_area);
-                        frame.render_widget(right_block, right_area);
+                        let right_inner = right_area;
                         self.last_editor_inner_areas.push(right_inner);
                         if right_inner.width > 0 && right_inner.height > 0 {
                             let layout = {
@@ -863,6 +1443,7 @@ impl Workbench {
                                     config,
                                     &self.theme,
                                     hovered_for_pane(1),
+                                    workspace_empty,
                                 );
                             }
                         }
@@ -893,6 +1474,7 @@ impl Workbench {
                                     config,
                                     &self.theme,
                                     hovered_for_pane(active),
+                                    workspace_empty,
                                 );
                             }
                             return;
@@ -914,40 +1496,16 @@ impl Workbench {
                         self.last_editor_areas.push(top_area);
                         self.last_editor_areas.push(bottom_area);
 
-                        let active = self.store.state().ui.editor_layout.active_pane;
-                        let focus = self.store.state().ui.focus;
-
-                        let inactive_border = Style::default().fg(self.theme.inactive_border);
-                        let active_border = Style::default().fg(self.theme.focus_border);
-                        let sep_style = if focus == FocusTarget::Editor {
-                            Style::default().fg(self.theme.focus_border)
-                        } else {
-                            Style::default().fg(self.theme.separator)
-                        };
-
+                        // Split separator: avoid box borders (more nvim-like), just paint a 1-cell bar.
                         frame.render_widget(
-                            Block::default()
-                                .borders(Borders::TOP)
-                                .border_style(sep_style),
+                            ThinHSeparator {
+                                fg: self.theme.separator,
+                                bg: self.theme.palette_bg,
+                            },
                             sep_area,
                         );
 
-                        let top_border = if active == 0 {
-                            active_border
-                        } else {
-                            inactive_border
-                        };
-                        let bottom_border = if active == 1 {
-                            active_border
-                        } else {
-                            inactive_border
-                        };
-
-                        let top_block = Block::default()
-                            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
-                            .border_style(top_border);
-                        let top_inner = top_block.inner(top_area);
-                        frame.render_widget(top_block, top_area);
+                        let top_inner = top_area;
                         self.last_editor_inner_areas.push(top_inner);
                         if top_inner.width > 0 && top_inner.height > 0 {
                             let layout = {
@@ -967,15 +1525,12 @@ impl Workbench {
                                     config,
                                     &self.theme,
                                     hovered_for_pane(0),
+                                    workspace_empty,
                                 );
                             }
                         }
 
-                        let bottom_block = Block::default()
-                            .borders(Borders::BOTTOM | Borders::LEFT | Borders::RIGHT)
-                            .border_style(bottom_border);
-                        let bottom_inner = bottom_block.inner(bottom_area);
-                        frame.render_widget(bottom_block, bottom_area);
+                        let bottom_inner = bottom_area;
                         self.last_editor_inner_areas.push(bottom_inner);
                         if bottom_inner.width > 0 && bottom_inner.height > 0 {
                             let layout = {
@@ -995,6 +1550,7 @@ impl Workbench {
                                     config,
                                     &self.theme,
                                     hovered_for_pane(1),
+                                    workspace_empty,
                                 );
                             }
                         }
@@ -1030,6 +1586,7 @@ impl Workbench {
                         config,
                         &self.theme,
                         hovered_for_pane(active),
+                        workspace_empty,
                     );
                 }
             }
@@ -1108,6 +1665,45 @@ impl Workbench {
             height: height as usize,
         });
     }
+
+    fn sync_locations_view_height(&mut self, height: u16) {
+        if height == 0 {
+            return;
+        }
+        if self.last_locations_panel_height == Some(height) {
+            return;
+        }
+        self.last_locations_panel_height = Some(height);
+        let _ = self.dispatch_kernel(KernelAction::LocationsSetViewHeight {
+            height: height as usize,
+        });
+    }
+
+    fn sync_code_actions_view_height(&mut self, height: u16) {
+        if height == 0 {
+            return;
+        }
+        if self.last_code_actions_panel_height == Some(height) {
+            return;
+        }
+        self.last_code_actions_panel_height = Some(height);
+        let _ = self.dispatch_kernel(KernelAction::CodeActionsSetViewHeight {
+            height: height as usize,
+        });
+    }
+
+    fn sync_symbols_view_height(&mut self, height: u16) {
+        if height == 0 {
+            return;
+        }
+        if self.last_symbols_panel_height == Some(height) {
+            return;
+        }
+        self.last_symbols_panel_height = Some(height);
+        let _ = self.dispatch_kernel(KernelAction::SymbolsSetViewHeight {
+            height: height as usize,
+        });
+    }
 }
 
 fn render_confirm_dialog(workbench: &Workbench, frame: &mut Frame, area: Rect) {
@@ -1130,17 +1726,27 @@ fn render_confirm_dialog(workbench: &Workbench, frame: &mut Frame, area: Rect) {
 
     frame.render_widget(Clear, dialog_area);
 
-    let block = Block::default()
-        .title(" Confirm ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(workbench.theme.palette_border));
-    let inner = block.inner(dialog_area);
-    frame.render_widget(block, dialog_area);
+    let base_style = Style::default()
+        .bg(workbench.theme.palette_bg)
+        .fg(workbench.theme.palette_fg);
+    frame.render_widget(Block::default().style(base_style), dialog_area);
 
+    let inner = Rect::new(
+        dialog_area.x.saturating_add(1),
+        dialog_area.y.saturating_add(1),
+        dialog_area.width.saturating_sub(2),
+        dialog_area.height.saturating_sub(2),
+    );
     if inner.height < 2 || inner.width < 10 {
         return;
     }
 
+    let title_line = Line::from(Span::styled(
+        "Confirm",
+        Style::default()
+            .fg(workbench.theme.header_fg)
+            .add_modifier(Modifier::BOLD),
+    ));
     let msg_line = Line::from(dialog.message.as_str());
     let hint_line = Line::from(vec![
         Span::styled("[Enter]", Style::default().fg(workbench.theme.accent_fg)),
@@ -1152,8 +1758,141 @@ fn render_confirm_dialog(workbench: &Workbench, frame: &mut Frame, area: Rect) {
         Span::raw(" Cancel"),
     ]);
 
-    let content = Paragraph::new(vec![msg_line, Line::raw(""), hint_line]);
+    let content = Paragraph::new(vec![title_line, msg_line, Line::raw(""), hint_line])
+        .style(base_style)
+        .wrap(Wrap { trim: true });
     frame.render_widget(content, inner);
+}
+
+fn render_explorer_context_menu(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
+    use ratatui::widgets::Clear;
+
+    let menu = &workbench.store.state().ui.explorer_context_menu;
+    if !menu.visible {
+        workbench.last_explorer_context_menu_area = None;
+        return;
+    }
+
+    let items = &menu.items;
+    if items.is_empty() || area.width == 0 || area.height == 0 {
+        workbench.last_explorer_context_menu_area = None;
+        return;
+    }
+
+    if area.width < 3 || area.height < 3 {
+        workbench.last_explorer_context_menu_area = None;
+        return;
+    }
+
+    let mut max_label_w = 0usize;
+    for item in items {
+        max_label_w = max_label_w.max(item.label().width());
+    }
+
+    let desired_inner_width = (max_label_w.saturating_add(4)).min(u16::MAX as usize) as u16;
+    let desired_inner_height = (items.len().min(u16::MAX as usize)) as u16;
+    let width = desired_inner_width
+        .saturating_add(2)
+        .min(area.width)
+        .max(3);
+    let height = desired_inner_height
+        .saturating_add(2)
+        .min(area.height)
+        .max(3);
+
+    let right = area.x.saturating_add(area.width);
+    let bottom = area.y.saturating_add(area.height);
+
+    let mut x = menu.anchor.0.max(area.x);
+    let mut y = menu.anchor.1.max(area.y);
+    if x.saturating_add(width) > right {
+        x = right.saturating_sub(width);
+    }
+    if y.saturating_add(height) > bottom {
+        y = bottom.saturating_sub(height);
+    }
+
+    let popup_area = Rect::new(x, y, width, height);
+    workbench.last_explorer_context_menu_area = Some(popup_area);
+
+    frame.render_widget(Clear, popup_area);
+
+    let base_style = Style::default()
+        .bg(workbench.theme.palette_bg)
+        .fg(workbench.theme.palette_fg);
+    let border_style = Style::default()
+        .fg(workbench.theme.focus_border)
+        .bg(workbench.theme.palette_bg);
+    let selected_style = Style::default()
+        .bg(workbench.theme.palette_selected_bg)
+        .fg(workbench.theme.palette_selected_fg);
+
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .style(base_style),
+        popup_area,
+    );
+
+    let inner = Rect::new(
+        popup_area.x.saturating_add(1),
+        popup_area.y.saturating_add(1),
+        popup_area.width.saturating_sub(2),
+        popup_area.height.saturating_sub(2),
+    );
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let selected = menu.selected.min(items.len().saturating_sub(1));
+    let mut lines = Vec::new();
+    for (idx, item) in items.iter().enumerate().take(inner.height as usize) {
+        let is_selected = idx == selected;
+        let style = if is_selected { selected_style } else { base_style };
+        let prefix = if is_selected { "▸ " } else { "  " };
+        let mut text = format!("{prefix}{}", item.label());
+        let pad_to = inner.width as usize;
+        let current_w = text.width();
+        if current_w < pad_to {
+            text.push_str(&" ".repeat(pad_to - current_w));
+        }
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+
+    frame.render_widget(Paragraph::new(lines).style(base_style), inner);
+}
+
+fn symbol_kind_label(kind: u32) -> &'static str {
+    match kind {
+        1 => "file",
+        2 => "mod",
+        3 => "ns",
+        4 => "pkg",
+        5 => "class",
+        6 => "method",
+        7 => "prop",
+        8 => "field",
+        9 => "ctor",
+        10 => "enum",
+        11 => "iface",
+        12 => "fn",
+        13 => "var",
+        14 => "const",
+        15 => "str",
+        16 => "num",
+        17 => "bool",
+        18 => "array",
+        19 => "obj",
+        20 => "key",
+        21 => "null",
+        22 => "enum_member",
+        23 => "struct",
+        24 => "event",
+        25 => "op",
+        26 => "type",
+        _ => "?",
+    }
 }
 
 fn input_dialog_area(area: Rect) -> Rect {
@@ -1175,38 +1914,53 @@ fn render_input_dialog(workbench: &Workbench, frame: &mut Frame, area: Rect) {
 
     frame.render_widget(Clear, popup_area);
 
-    let title = if dialog.title.is_empty() {
-        " Input ".to_string()
-    } else {
-        format!(" {} ", dialog.title)
-    };
-
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(workbench.theme.palette_border));
-    let inner = block.inner(popup_area);
-    frame.render_widget(block, popup_area);
-
-    if inner.width == 0 || inner.height == 0 {
-        return;
-    }
-
     let base_style = Style::default()
         .bg(workbench.theme.palette_bg)
         .fg(workbench.theme.palette_fg);
     let muted_style = Style::default().fg(workbench.theme.palette_muted_fg);
 
+    frame.render_widget(Block::default().style(base_style), popup_area);
+
+    let inner = Rect::new(
+        popup_area.x.saturating_add(1),
+        popup_area.y.saturating_add(1),
+        popup_area.width.saturating_sub(2),
+        popup_area.height.saturating_sub(2),
+    );
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let title = if dialog.title.is_empty() {
+        "Input"
+    } else {
+        dialog.title.as_str()
+    };
+    let title_style = Style::default()
+        .fg(workbench.theme.header_fg)
+        .add_modifier(Modifier::BOLD);
+
+    let prefix = "> ";
+    let prefix_w = prefix.width() as u16;
+    let cursor = dialog.cursor.min(dialog.value.len());
+    let (v_start, v_end) = text_window::window(
+        dialog.value.as_str(),
+        cursor,
+        inner.width.saturating_sub(prefix_w) as usize,
+    );
+    let visible_value = dialog.value.get(v_start..v_end).unwrap_or_default();
+
     let mut lines = Vec::new();
+    lines.push(Line::from(Span::styled(title, title_style)));
     lines.push(Line::from(vec![
         Span::styled("> ", base_style),
-        Span::styled(dialog.value.as_str(), base_style),
+        Span::styled(visible_value, base_style),
     ]));
 
     if let Some(err) = dialog.error.as_deref() {
         lines.push(Line::from(Span::styled(
             err,
-            Style::default().fg(Color::Red),
+            Style::default().fg(workbench.theme.error_fg),
         )));
     } else {
         lines.push(Line::from(Span::raw("")));
@@ -1230,22 +1984,37 @@ fn input_dialog_cursor(workbench: &Workbench) -> Option<(u16, u16)> {
     }
 
     let popup_area = input_dialog_area(area);
-    let inner_x = popup_area.x.saturating_add(1);
-    let inner_y = popup_area.y.saturating_add(1);
     if popup_area.width < 4 || popup_area.height < 3 {
         return None;
     }
 
+    let inner = Rect::new(
+        popup_area.x.saturating_add(1),
+        popup_area.y.saturating_add(1),
+        popup_area.width.saturating_sub(2),
+        popup_area.height.saturating_sub(2),
+    );
+    if inner.width == 0 || inner.height < 2 {
+        return None;
+    }
+
     let cursor = dialog.cursor.min(dialog.value.len());
-    let prefix_w = 2u16;
-    let before = dialog.value.get(..cursor).unwrap_or_default();
+    let prefix_w = "> ".width() as u16;
+    let (start, _end) = text_window::window(
+        dialog.value.as_str(),
+        cursor,
+        inner.width.saturating_sub(prefix_w) as usize,
+    );
+    let before = dialog.value.get(start..cursor).unwrap_or_default();
     let before_w = before.width() as u16;
 
-    let x = inner_x
+    let x = inner
+        .x
         .saturating_add(prefix_w)
         .saturating_add(before_w)
-        .min(popup_area.x + popup_area.width.saturating_sub(2));
-    let y = inner_y;
+        .min(inner.x + inner.width.saturating_sub(1));
+    // Title line is at inner.y, input line is at inner.y + 1.
+    let y = inner.y.saturating_add(1);
 
     Some((x, y))
 }
