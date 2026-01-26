@@ -2104,21 +2104,31 @@ impl Store {
                         .map(|c| c.signature_help_triggers.as_slice())
                         .unwrap_or(&[]);
                     if signature_help_triggered_by_insert(ch, triggers) {
-                    if let Some((pane, path, line, column, version)) =
-                        lsp_request_target(&self.state)
-                    {
-                        self.state.ui.signature_help.visible = false;
-                        self.state.ui.signature_help.text.clear();
-                        self.state.ui.signature_help.request =
-                            Some(super::state::SignatureHelpRequestContext {
-                                pane,
-                                path: path.clone(),
-                                version,
-                            });
-                        effects.push(Effect::LspSignatureHelpRequest { path, line, column });
-                        state_changed = true;
+                        if let Some((pane, path, line, column, version)) =
+                            lsp_request_target(&self.state)
+                        {
+                            self.state.ui.signature_help.visible = false;
+                            self.state.ui.signature_help.text.clear();
+                            self.state.ui.signature_help.request =
+                                Some(super::state::SignatureHelpRequestContext {
+                                    pane,
+                                    path: path.clone(),
+                                    version,
+                                });
+                            effects.push(Effect::LspSignatureHelpRequest { path, line, column });
+                            state_changed = true;
+                        }
                     }
                 }
+
+                let had_signature_help = self.state.ui.signature_help.visible
+                    || self.state.ui.signature_help.request.is_some()
+                    || !self.state.ui.signature_help.text.is_empty();
+                if had_signature_help
+                    && !tab.is_some_and(signature_help_should_keep_open)
+                {
+                    self.state.ui.signature_help = super::state::SignatureHelpPopupState::default();
+                    state_changed = true;
                 }
 
                 return DispatchResult {
@@ -3785,6 +3795,15 @@ impl Store {
                                 super::state::CompletionPopupState::default();
                             state_changed = true;
                         }
+
+                        let had_signature_help = self.state.ui.signature_help.visible
+                            || self.state.ui.signature_help.request.is_some()
+                            || !self.state.ui.signature_help.text.is_empty();
+                        if had_signature_help && !signature_help_should_keep_open(tab) {
+                            self.state.ui.signature_help =
+                                super::state::SignatureHelpPopupState::default();
+                            state_changed = true;
+                        }
                         return DispatchResult {
                             effects,
                             state_changed,
@@ -3829,6 +3848,23 @@ impl Store {
                     }
                 }
 
+                let had_signature_help = self.state.ui.signature_help.visible
+                    || self.state.ui.signature_help.request.is_some()
+                    || !self.state.ui.signature_help.text.is_empty();
+                if had_signature_help {
+                    let keep = self
+                        .state
+                        .editor
+                        .pane(pane)
+                        .and_then(|p| p.active_tab())
+                        .is_some_and(signature_help_should_keep_open);
+                    if !keep {
+                        self.state.ui.signature_help =
+                            super::state::SignatureHelpPopupState::default();
+                        state_changed = true;
+                    }
+                }
+
                 return DispatchResult {
                     effects,
                     state_changed,
@@ -3843,6 +3879,23 @@ impl Store {
                 // TODO: avoid allocation by using SmallVec if needed.
                 let mut effects = effects;
                 effects.extend(cmd_effects);
+
+                let had_signature_help = self.state.ui.signature_help.visible
+                    || self.state.ui.signature_help.request.is_some()
+                    || !self.state.ui.signature_help.text.is_empty();
+                if had_signature_help {
+                    let keep = self
+                        .state
+                        .editor
+                        .pane(pane)
+                        .and_then(|p| p.active_tab())
+                        .is_some_and(signature_help_should_keep_open);
+                    if !keep {
+                        self.state.ui.signature_help =
+                            super::state::SignatureHelpPopupState::default();
+                        state_changed = true;
+                    }
+                }
                 return DispatchResult {
                     effects,
                     state_changed,
@@ -4747,6 +4800,44 @@ fn signature_help_triggered_by_insert(inserted: char, triggers: &[char]) -> bool
 
 fn signature_help_closed_by_insert(inserted: char) -> bool {
     matches!(inserted, ')')
+}
+
+fn signature_help_should_keep_open(tab: &super::editor::EditorTabState) -> bool {
+    if tab.is_in_string_or_comment_at_cursor() {
+        return false;
+    }
+
+    let rope = tab.buffer.rope();
+    let (row, col) = tab.buffer.cursor();
+    let cursor_char_offset = tab.buffer.pos_to_char((row, col)).min(rope.len_chars());
+    let start = cursor_char_offset.saturating_sub(4096);
+
+    let mut depth: usize = 0;
+    let mut idx = cursor_char_offset;
+    while idx > start {
+        idx = idx.saturating_sub(1);
+        let ch = rope.char(idx);
+        if ch != '(' && ch != ')' {
+            continue;
+        }
+
+        if tab.is_in_string_or_comment_at_char(idx) {
+            continue;
+        }
+
+        match ch {
+            ')' => depth = depth.saturating_add(1),
+            '(' => {
+                if depth == 0 {
+                    return true;
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    false
 }
 
 fn lsp_request_target(

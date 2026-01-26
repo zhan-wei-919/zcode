@@ -178,6 +178,11 @@ fn handle_request(
                     trigger_characters: Some(vec![".".to_string()]),
                     ..Default::default()
                 }),
+                signature_help_provider: Some(lsp_types::SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: None,
+                    work_done_progress_options: lsp_types::WorkDoneProgressOptions::default(),
+                }),
                 folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(true)),
                 semantic_tokens_provider: Some(
                     lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
@@ -338,6 +343,58 @@ fn handle_request(
             }
 
             (Response::new_ok(req.id, out), None, Vec::new())
+        }
+        m if m == lsp_types::request::SignatureHelpRequest::METHOD => {
+            let params =
+                serde_json::from_value::<lsp_types::SignatureHelpParams>(req.params)
+                    .unwrap_or_else(|_| lsp_types::SignatureHelpParams {
+                        context: None,
+                        text_document_position_params: lsp_types::TextDocumentPositionParams {
+                            text_document: lsp_types::TextDocumentIdentifier {
+                                uri: lsp_types::Url::parse("file:///").unwrap(),
+                            },
+                            position: lsp_types::Position::new(0, 0),
+                        },
+                        work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+                    });
+
+            if let Ok(delay) = std::env::var("ZCODE_LSP_STUB_SIGNATURE_HELP_DELAY_MS") {
+                if let Ok(delay) = delay.trim().parse::<u64>() {
+                    if delay > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(delay));
+                    }
+                }
+            }
+
+            let signature = lsp_types::SignatureInformation {
+                label: "fn from(value: T) -> String".to_string(),
+                documentation: Some(lsp_types::Documentation::String(
+                    "Converts to this type from the input type.".to_string(),
+                )),
+                parameters: Some(vec![lsp_types::ParameterInformation {
+                    label: lsp_types::ParameterLabel::Simple("value: T".to_string()),
+                    documentation: None,
+                }]),
+                active_parameter: Some(0),
+            };
+
+            let help = lsp_types::SignatureHelp {
+                signatures: vec![signature],
+                active_signature: Some(0),
+                active_parameter: Some(0),
+            };
+
+            (
+                Response::new_ok(req.id, Some(help)),
+                params
+                    .text_document_position_params
+                    .text_document
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| path.parent().map(|dir| dir.to_path_buf())),
+                Vec::new(),
+            )
         }
         m if m == lsp_types::request::FoldingRangeRequest::METHOD => {
             let _params = serde_json::from_value::<lsp_types::FoldingRangeParams>(req.params)
