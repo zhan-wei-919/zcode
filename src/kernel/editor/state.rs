@@ -659,60 +659,100 @@ impl SemanticHighlightState {
         &mut self,
         start_line: usize,
         end_line_exclusive: usize,
-        lines: Vec<Vec<HighlightSpan>>,
+        mut lines: Vec<Vec<HighlightSpan>>,
     ) {
-        if start_line >= end_line_exclusive {
+        if start_line >= end_line_exclusive || lines.is_empty() {
             return;
         }
 
-        let mut segments = std::mem::take(&mut self.segments);
-        let mut next: Vec<SemanticHighlightSegment> = Vec::with_capacity(segments.len() + 1);
+        debug_assert!(self
+            .segments
+            .windows(2)
+            .all(|w| w[0].end_line_exclusive() <= w[1].start_line));
 
-        for seg in segments.drain(..) {
-            let seg_start = seg.start_line;
-            let seg_end = seg.end_line_exclusive();
+        let start_idx = self
+            .segments
+            .partition_point(|seg| seg.end_line_exclusive() <= start_line);
+        let end_idx = self
+            .segments
+            .partition_point(|seg| seg.start_line < end_line_exclusive);
 
-            if seg_end <= start_line || seg_start >= end_line_exclusive {
-                next.push(seg);
-                continue;
-            }
+        let mut prefix_start: Option<usize> = None;
+        let mut prefix_lines: Vec<Vec<HighlightSpan>> = Vec::new();
+        let mut suffix_lines: Vec<Vec<HighlightSpan>> = Vec::new();
 
-            let overlap_start = seg_start.max(start_line);
-            let overlap_end = seg_end.min(end_line_exclusive);
-            let left_keep = overlap_start.saturating_sub(seg_start);
-            let right_keep_start = overlap_end.saturating_sub(seg_start);
+        {
+            let placeholder = SemanticHighlightSegment::new(start_line, Vec::new());
+            let mut removed = self
+                .segments
+                .splice(start_idx..end_idx, std::iter::once(placeholder));
+            if let Some(mut first) = removed.next() {
+                let mut last: Option<SemanticHighlightSegment> = None;
+                for seg in removed {
+                    last = Some(seg);
+                }
 
-            let mut seg_lines = seg.lines;
-            let right_lines = seg_lines.split_off(right_keep_start.min(seg_lines.len()));
-            seg_lines.truncate(left_keep.min(seg_lines.len()));
+                if let Some(mut last) = last {
+                    if first.start_line < start_line {
+                        let keep_len = start_line
+                            .saturating_sub(first.start_line)
+                            .min(first.lines.len());
+                        first.lines.truncate(keep_len);
+                        if !first.lines.is_empty() {
+                            prefix_start = Some(first.start_line);
+                            prefix_lines = first.lines;
+                        }
+                    }
 
-            if !seg_lines.is_empty() {
-                next.push(SemanticHighlightSegment::new(seg_start, seg_lines));
-            }
+                    if last.end_line_exclusive() > end_line_exclusive {
+                        let split_at = end_line_exclusive
+                            .saturating_sub(last.start_line)
+                            .min(last.lines.len());
+                        suffix_lines = last.lines.split_off(split_at);
+                    }
+                } else {
+                    let seg_start = first.start_line;
+                    let seg_end = first.end_line_exclusive();
+                    let overlap_start = seg_start.max(start_line);
+                    let overlap_end = seg_end.min(end_line_exclusive);
+                    let left_keep = overlap_start
+                        .saturating_sub(seg_start)
+                        .min(first.lines.len());
+                    let right_keep_start =
+                        overlap_end.saturating_sub(seg_start).min(first.lines.len());
 
-            if !right_lines.is_empty() {
-                next.push(SemanticHighlightSegment::new(overlap_end, right_lines));
+                    let mut seg_lines = first.lines;
+                    let mut right_lines = seg_lines.split_off(right_keep_start);
+                    seg_lines.truncate(left_keep);
+
+                    if !seg_lines.is_empty() {
+                        prefix_start = Some(seg_start);
+                        prefix_lines = seg_lines;
+                    }
+
+                    if !right_lines.is_empty() {
+                        suffix_lines.append(&mut right_lines);
+                    }
+                }
             }
         }
 
-        next.push(SemanticHighlightSegment::new(start_line, lines));
-        next.sort_by(|a, b| a.start_line.cmp(&b.start_line));
+        let replacement_start = prefix_start.unwrap_or(start_line);
+        let mut replacement_lines = prefix_lines;
+        replacement_lines.reserve(lines.len() + suffix_lines.len());
+        replacement_lines.append(&mut lines);
+        replacement_lines.append(&mut suffix_lines);
 
-        let mut merged: Vec<SemanticHighlightSegment> = Vec::with_capacity(next.len());
-        for seg in next.into_iter() {
-            let Some(last) = merged.last_mut() else {
-                merged.push(seg);
-                continue;
-            };
-
-            if last.end_line_exclusive() == seg.start_line {
-                last.lines.extend(seg.lines);
-            } else {
-                merged.push(seg);
-            }
+        if replacement_lines.is_empty() {
+            self.segments.remove(start_idx);
+            return;
         }
 
-        self.segments = merged;
+        let seg = &mut self.segments[start_idx];
+        seg.start_line = replacement_start;
+        seg.lines = replacement_lines;
+
+        self.merge_adjacent_segments(start_idx);
     }
 
     fn line(&self, line: usize) -> Option<&[HighlightSpan]> {
@@ -871,6 +911,22 @@ impl SemanticHighlightState {
         self.segments
             .sort_by(|a, b| a.start_line.cmp(&b.start_line));
     }
+
+    fn merge_adjacent_segments(&mut self, idx: usize) {
+        let mut idx = idx;
+        if idx > 0 && self.segments[idx - 1].end_line_exclusive() == self.segments[idx].start_line {
+            let mut current = self.segments.remove(idx);
+            self.segments[idx - 1].lines.append(&mut current.lines);
+            idx = idx.saturating_sub(1);
+        }
+
+        while idx + 1 < self.segments.len()
+            && self.segments[idx].end_line_exclusive() == self.segments[idx + 1].start_line
+        {
+            let mut next = self.segments.remove(idx + 1);
+            self.segments[idx].lines.append(&mut next.lines);
+        }
+    }
 }
 
 fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
@@ -891,6 +947,10 @@ fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
     }
     spans.truncate(write);
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/kernel/editor/state.rs"]
+mod tests;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHintsState {
