@@ -24,6 +24,7 @@
 ### 环境依赖
 
 *   [Rust Toolchain](https://rustup.rs/) (1.70+)
+*   终端字体建议使用 Nerd Font（用于显示 UI 图标）
 
 ### 启动编辑器
 

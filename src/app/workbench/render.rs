@@ -8,7 +8,7 @@ use crate::kernel::{
 };
 use crate::views::{compute_editor_pane_layout, cursor_position_editor, render_editor_pane};
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
@@ -376,15 +376,12 @@ impl Workbench {
             }
 
             let icon_y = slot.y.saturating_add(slot.height / 2);
-            let icon_x = slot
-                .x
-                .saturating_add(slot.width / 2)
-                .min(slot.x.saturating_add(slot.width.saturating_sub(1)));
             let style = if active { active_style } else { base };
-            let cell = Rect::new(icon_x, icon_y, 1.min(slot.width), 1);
+            let cell = Rect::new(slot.x, icon_y, slot.width, 1);
 
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(item.icon().to_string(), style))),
+                Paragraph::new(Line::from(Span::styled(item.icon().to_string(), style)))
+                    .alignment(Alignment::Center),
                 cell,
             );
         }

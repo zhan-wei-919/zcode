@@ -30,15 +30,15 @@ const ACTIVITY_ITEMS: [ActivityItem; 9] = [
 impl ActivityItem {
     pub(super) fn icon(self) -> char {
         match self {
-            ActivityItem::Explorer => 'E',
-            ActivityItem::Search => 'S',
-            ActivityItem::Problems => '!',
-            ActivityItem::Results => '*',
-            ActivityItem::Logs => 'L',
-            ActivityItem::Find => '/',
-            ActivityItem::Replace => 'H',
-            ActivityItem::Palette => 'P',
-            ActivityItem::Settings => ',',
+            ActivityItem::Explorer => '\u{f07b}',
+            ActivityItem::Search => '\u{f002}',
+            ActivityItem::Problems => '\u{f071}',
+            ActivityItem::Results => '\u{f0ca}',
+            ActivityItem::Logs => '\u{f0f6}',
+            ActivityItem::Find => '\u{f00e}',
+            ActivityItem::Replace => '\u{f0ec}',
+            ActivityItem::Palette => '\u{f11c}',
+            ActivityItem::Settings => '\u{f013}',
         }
     }
 

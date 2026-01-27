@@ -24,6 +24,7 @@
 ### Prerequisites
 
 *   [Rust Toolchain](https://rustup.rs/) (1.70+)
+*   A terminal font with Nerd Font glyphs (recommended for UI icons)
 
 ### Launching the Editor
 
