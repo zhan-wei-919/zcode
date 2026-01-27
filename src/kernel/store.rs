@@ -169,6 +169,7 @@ impl Store {
                                     };
                                 };
                                 let version = tab.edit_version;
+                                let encoding = lsp_position_encoding(&self.state);
 
                                 if supports_semantic_tokens {
                                     let use_range = self
@@ -190,23 +191,18 @@ impl Store {
                                         let start_line = viewport_top.saturating_sub(overscan);
                                         let end_line_exclusive =
                                             (viewport_top + height + overscan).min(total_lines);
-
-                                        let range = LspRange {
-                                            start: LspPosition {
-                                                line: start_line as u32,
-                                                character: 0,
-                                            },
-                                            end: LspPosition {
-                                                line: end_line_exclusive as u32,
-                                                character: 0,
-                                            },
-                                        };
-
-                                        effects.push(Effect::LspSemanticTokensRangeRequest {
-                                            path: opened_path.clone(),
-                                            version,
-                                            range,
-                                        });
+                                        if let Some(range) = lsp_range_for_full_lines(
+                                            tab,
+                                            start_line,
+                                            end_line_exclusive,
+                                            encoding,
+                                        ) {
+                                            effects.push(Effect::LspSemanticTokensRangeRequest {
+                                                path: opened_path.clone(),
+                                                version,
+                                                range,
+                                            });
+                                        }
                                     } else {
                                         effects.push(Effect::LspSemanticTokensRequest {
                                             path: opened_path.clone(),
@@ -221,21 +217,18 @@ impl Store {
                                         tab.viewport.line_offset.min(total_lines.saturating_sub(1));
                                     let end_line_exclusive =
                                         (start_line + tab.viewport.height.max(1)).min(total_lines);
-                                    let range = LspRange {
-                                        start: LspPosition {
-                                            line: start_line as u32,
-                                            character: 0,
-                                        },
-                                        end: LspPosition {
-                                            line: end_line_exclusive as u32,
-                                            character: 0,
-                                        },
-                                    };
-                                    effects.push(Effect::LspInlayHintsRequest {
-                                        path: opened_path.clone(),
-                                        version,
-                                        range,
-                                    });
+                                    if let Some(range) = lsp_range_for_full_lines(
+                                        tab,
+                                        start_line,
+                                        end_line_exclusive,
+                                        encoding,
+                                    ) {
+                                        effects.push(Effect::LspInlayHintsRequest {
+                                            path: opened_path.clone(),
+                                            version,
+                                            range,
+                                        });
+                                    }
                                 }
 
                                 if supports_folding_range {
@@ -3541,6 +3534,7 @@ impl Store {
                 }
 
                 let version = tab.edit_version;
+                let encoding = lsp_position_encoding(&self.state);
 
                 let use_range = self
                     .state
@@ -3557,26 +3551,18 @@ impl Store {
                     let overscan = 40usize.min(total_lines);
                     let start_line = viewport_top.saturating_sub(overscan);
                     let end_line_exclusive = (viewport_top + height + overscan).min(total_lines);
-
-                    let range = LspRange {
-                        start: LspPosition {
-                            line: start_line as u32,
-                            character: 0,
-                        },
-                        end: LspPosition {
-                            line: end_line_exclusive as u32,
-                            character: 0,
-                        },
-                    };
-
-                    return DispatchResult {
-                        effects: vec![Effect::LspSemanticTokensRangeRequest {
-                            path,
-                            version,
-                            range,
-                        }],
-                        state_changed,
-                    };
+                    if let Some(range) =
+                        lsp_range_for_full_lines(tab, start_line, end_line_exclusive, encoding)
+                    {
+                        return DispatchResult {
+                            effects: vec![Effect::LspSemanticTokensRangeRequest {
+                                path,
+                                version,
+                                range,
+                            }],
+                            state_changed,
+                        };
+                    }
                 }
 
                 return DispatchResult {
@@ -3621,16 +3607,14 @@ impl Store {
                 let total_lines = tab.buffer.len_lines().max(1);
                 let start_line = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
                 let end_line_exclusive = (start_line + tab.viewport.height.max(1)).min(total_lines);
-
-                let range = LspRange {
-                    start: LspPosition {
-                        line: start_line as u32,
-                        character: 0,
-                    },
-                    end: LspPosition {
-                        line: end_line_exclusive as u32,
-                        character: 0,
-                    },
+                let encoding = lsp_position_encoding(&self.state);
+                let Some(range) =
+                    lsp_range_for_full_lines(tab, start_line, end_line_exclusive, encoding)
+                else {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
                 };
 
                 return DispatchResult {
@@ -5013,6 +4997,52 @@ fn lsp_position_from_char_offset(
         line: row as u32,
         character,
     }
+}
+
+fn lsp_range_for_full_lines(
+    tab: &super::editor::EditorTabState,
+    start_line: usize,
+    end_line_exclusive: usize,
+    encoding: LspPositionEncoding,
+) -> Option<LspRange> {
+    if start_line >= end_line_exclusive {
+        return None;
+    }
+
+    let total_lines = tab.buffer.len_lines().max(1);
+    let start_line = start_line.min(total_lines.saturating_sub(1));
+    let end_line_exclusive = end_line_exclusive
+        .max(start_line.saturating_add(1))
+        .min(total_lines);
+
+    let start = LspPosition {
+        line: start_line as u32,
+        character: 0,
+    };
+
+    let end = if end_line_exclusive < total_lines {
+        LspPosition {
+            line: end_line_exclusive as u32,
+            character: 0,
+        }
+    } else {
+        let rope = tab.buffer.rope();
+        let last_line = total_lines.saturating_sub(1);
+        let line_start = rope.line_to_char(last_line);
+        let slice = rope.line(last_line);
+        let mut len = slice.len_chars();
+        if len > 0 && slice.char(len.saturating_sub(1)) == '\n' {
+            len = len.saturating_sub(1);
+            if len > 0 && slice.char(len.saturating_sub(1)) == '\r' {
+                len = len.saturating_sub(1);
+            }
+        }
+
+        let end_char = (line_start + len).min(rope.len_chars());
+        lsp_position_from_char_offset(tab, end_char, encoding)
+    };
+
+    Some(LspRange { start, end })
 }
 
 fn find_open_tab(

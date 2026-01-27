@@ -780,6 +780,34 @@ fn lsp_position_to_byte_offset_handles_emoji_crlf_and_out_of_bounds() {
 }
 
 #[test]
+fn lsp_range_for_full_lines_keeps_end_position_within_document() {
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "a😀".to_string(),
+    }));
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let total_lines = tab.buffer.len_lines().max(1);
+    let range = lsp_range_for_full_lines(tab, 0, total_lines, LspPositionEncoding::Utf16).unwrap();
+    assert_eq!(range.end.line, 0);
+    assert_eq!(range.end.character, 3);
+
+    let path = store.state.workspace_root.join("newline.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "abc\n".to_string(),
+    }));
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let total_lines = tab.buffer.len_lines().max(1);
+    let range = lsp_range_for_full_lines(tab, 0, total_lines, LspPositionEncoding::Utf16).unwrap();
+    assert_eq!(range.end.line, 1);
+    assert_eq!(range.end.character, 0);
+}
+
+#[test]
 fn fuzz_workspace_edit_application_does_not_break_cursor_invariants() {
     struct Rng(u64);
 
