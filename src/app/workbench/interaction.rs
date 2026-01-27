@@ -718,7 +718,12 @@ impl Workbench {
 
     pub(super) fn handle_explorer_mouse(&mut self, event: &MouseEvent) -> EventResult {
         let _scope = perf::scope("input.mouse.explorer");
-        if !self.explorer.contains(event.column, event.row) {
+        let in_tree = self.explorer.contains(event.column, event.row);
+        let in_git = self
+            .last_git_panel_area
+            .is_some_and(|a| util::rect_contains(a, event.column, event.row));
+
+        if !in_tree && !in_git {
             return EventResult::Ignored;
         }
 
@@ -727,6 +732,27 @@ impl Workbench {
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                if in_git {
+                    let Some((idx, _)) = self
+                        .last_git_worktree_areas
+                        .iter()
+                        .find(|(_, rect)| util::rect_contains(*rect, event.column, event.row))
+                    else {
+                        return EventResult::Consumed;
+                    };
+
+                    let state = self.store.state();
+                    let Some(item) = state.git.worktrees.get(*idx) else {
+                        return EventResult::Consumed;
+                    };
+                    if state.git.repo_root.as_ref() != Some(&item.path) {
+                        let _ = self.dispatch_kernel(KernelAction::GitWorktreeResolved {
+                            path: item.path.clone(),
+                        });
+                    }
+                    return EventResult::Consumed;
+                }
+
                 if let Some(row) = self.explorer.hit_test_row(event, scroll_offset) {
                     if row < rows_len {
                         let _ = self.dispatch_kernel(KernelAction::ExplorerClickRow {
@@ -738,6 +764,9 @@ impl Workbench {
                 EventResult::Consumed
             }
             MouseEventKind::Down(MouseButton::Right) => {
+                if in_git {
+                    return EventResult::Consumed;
+                }
                 let tree_row = self
                     .explorer
                     .hit_test_row(event, scroll_offset)

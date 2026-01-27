@@ -26,6 +26,10 @@ pub enum EventResult {
     Consumed,
     Ignored,
     Quit,
+    Restart {
+        path: PathBuf,
+        hard: bool,
+    },
     /// 请求打开当前选中的文件
     OpenFile,
     /// 请求异步加载目录内容

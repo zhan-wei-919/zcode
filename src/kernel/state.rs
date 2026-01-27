@@ -8,6 +8,7 @@ use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::LspCompletionItem;
 use crate::kernel::services::ports::LspServerCapabilities;
 use crate::kernel::{CodeActionsState, LocationsState, ProblemsState, SymbolsState};
+use crate::kernel::{GitFileStatusKind, GitState};
 use crate::models::{should_ignore, FileTree, FileTreeRow, LoadState, NodeId, NodeKind};
 
 use super::editor::EditorState;
@@ -87,6 +88,9 @@ pub enum InputDialogKind {
         column: u32,
     },
     LspWorkspaceSymbols,
+    GitWorktreeAdd {
+        repo_root: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -205,6 +209,7 @@ pub struct ExplorerContextMenuState {
 pub struct UiState {
     pub sidebar_visible: bool,
     pub sidebar_tab: SidebarTab,
+    pub git_panel_expanded: bool,
     pub bottom_panel: BottomPanelState,
     pub focus: FocusTarget,
     pub editor_layout: EditorLayoutState,
@@ -225,6 +230,7 @@ impl Default for UiState {
         Self {
             sidebar_visible: true,
             sidebar_tab: SidebarTab::Explorer,
+            git_panel_expanded: true,
             bottom_panel: BottomPanelState {
                 visible: false,
                 active_tab: BottomPanelTab::Problems,
@@ -254,6 +260,7 @@ pub struct AppState {
     pub workspace_root: PathBuf,
     pub ui: UiState,
     pub lsp: LspState,
+    pub git: GitState,
     pub explorer: ExplorerState,
     pub search: SearchState,
     pub editor: EditorState,
@@ -270,6 +277,7 @@ impl AppState {
             workspace_root,
             ui: UiState::default(),
             lsp: LspState::default(),
+            git: GitState::default(),
             explorer: ExplorerState::new(file_tree),
             search: SearchState::default(),
             editor,
@@ -292,6 +300,7 @@ pub struct ExplorerState {
     pub view_height: usize,
     pub scroll_offset: usize,
     pub rows: Vec<FileTreeRow>,
+    pub git_status_by_id: FxHashMap<NodeId, GitFileStatusKind>,
     index_by_id: FxHashMap<NodeId, usize>,
     last_click: Option<(Instant, NodeId)>,
 }
@@ -315,11 +324,36 @@ impl ExplorerState {
             view_height: 10,
             scroll_offset: 0,
             rows: Vec::new(),
+            git_status_by_id: FxHashMap::default(),
             index_by_id: FxHashMap::default(),
             last_click: None,
         };
         state.refresh_rows();
         state
+    }
+
+    pub fn set_git_statuses(&mut self, statuses: &FxHashMap<PathBuf, GitFileStatusKind>) -> bool {
+        if statuses.is_empty() {
+            if self.git_status_by_id.is_empty() {
+                return false;
+            }
+            self.git_status_by_id.clear();
+            return true;
+        }
+
+        let mut next: FxHashMap<NodeId, GitFileStatusKind> = FxHashMap::default();
+        for row in &self.rows {
+            let path = self.tree.full_path(row.id);
+            if let Some(status) = statuses.get(&path) {
+                next.insert(row.id, *status);
+            }
+        }
+
+        if next == self.git_status_by_id {
+            return false;
+        }
+        self.git_status_by_id = next;
+        true
     }
 
     pub fn selected(&self) -> Option<NodeId> {

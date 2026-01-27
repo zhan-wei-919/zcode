@@ -7,9 +7,29 @@ pub struct Settings {
     #[serde(default)]
     pub keybindings: Vec<KeybindingRule>,
     #[serde(default)]
+    pub ui: UiSettings,
+    #[serde(default)]
     pub theme: ThemeSettings,
     #[serde(default)]
     pub editor: EditorConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSettings {
+    #[serde(default = "default_worktree_bar_visible")]
+    pub worktree_bar: bool,
+}
+
+fn default_worktree_bar_visible() -> bool {
+    true
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        Self {
+            worktree_bar: default_worktree_bar_visible(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -164,6 +164,11 @@ pub enum Command {
     ReloadSettings,
     OpenSettings,
 
+    // ==================== Git ====================
+    GitWorktreeAdd,
+    GitTogglePanel,
+    HardReload,
+
     // ==================== 扩展点 ====================
     Custom(String),
 }
@@ -295,6 +300,9 @@ impl Command {
             Command::CommandPalette => "commandPalette",
             Command::ReloadSettings => "reloadSettings",
             Command::OpenSettings => "openSettings",
+            Command::GitWorktreeAdd => "gitWorktreeAdd",
+            Command::GitTogglePanel => "gitTogglePanel",
+            Command::HardReload => "hardReload",
             Command::Escape => "escape",
             Command::Custom(name) => name,
         }
@@ -426,6 +434,9 @@ impl Command {
             "commandPalette" => Command::CommandPalette,
             "reloadSettings" => Command::ReloadSettings,
             "openSettings" => Command::OpenSettings,
+            "gitWorktreeAdd" => Command::GitWorktreeAdd,
+            "gitTogglePanel" => Command::GitTogglePanel,
+            "hardReload" => Command::HardReload,
             other => Command::Custom(other.to_string()),
         }
     }

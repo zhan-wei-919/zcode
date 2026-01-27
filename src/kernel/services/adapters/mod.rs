@@ -4,6 +4,7 @@ pub mod backup;
 pub mod clipboard;
 pub mod config;
 pub mod file;
+pub mod git;
 pub mod keybinding;
 pub mod lsp;
 pub mod perf;

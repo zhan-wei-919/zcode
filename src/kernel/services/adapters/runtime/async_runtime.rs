@@ -1,4 +1,5 @@
 use super::message::AppMessage;
+use crate::kernel::services::adapters::git as git_helpers;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::{
     LspPositionEncoding, LspResourceOp, LspTextEdit, LspWorkspaceFileEdit,
@@ -6,6 +7,7 @@ use crate::kernel::services::ports::{
 use crate::models::should_ignore;
 use ropey::Rope;
 use std::io::{self, Write};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
@@ -34,6 +36,272 @@ impl AsyncRuntime {
 
     pub fn tokio_handle(&self) -> tokio::runtime::Handle {
         self.runtime.handle().clone()
+    }
+
+    pub fn git_detect_repo(&self, workspace_root: PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let output = match git_output(workspace_root.as_path(), |cmd| {
+                cmd.arg("rev-parse").arg("--show-toplevel");
+            })
+            .await
+            {
+                Ok(out) => out,
+                Err(e) => {
+                    tracing::debug!(error = %e, "git rev-parse failed");
+                    let _ = tx.send(AppMessage::GitRepoCleared);
+                    return;
+                }
+            };
+
+            if !output.status.success() {
+                let _ = tx.send(AppMessage::GitRepoCleared);
+                return;
+            }
+
+            let repo_root_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if repo_root_str.is_empty() {
+                let _ = tx.send(AppMessage::GitRepoCleared);
+                return;
+            }
+
+            let repo_root = PathBuf::from(repo_root_str);
+
+            let branch_output = git_output(repo_root.as_path(), |cmd| {
+                cmd.arg("symbolic-ref").arg("--short").arg("HEAD");
+            })
+            .await;
+
+            let (branch, detached) = match branch_output {
+                Ok(out) if out.status.success() => {
+                    let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if b.is_empty() {
+                        (None, true)
+                    } else {
+                        (Some(b), false)
+                    }
+                }
+                _ => (None, true),
+            };
+
+            let commit = git_output(repo_root.as_path(), |cmd| {
+                cmd.arg("rev-parse").arg("--short").arg("HEAD");
+            })
+            .await
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+
+            let worktrees_output = git_output(repo_root.as_path(), |cmd| {
+                cmd.arg("worktree").arg("list").arg("--porcelain");
+            })
+            .await;
+
+            let mut worktrees = worktrees_output
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| git_helpers::parse_worktree_list(&String::from_utf8_lossy(&o.stdout)))
+                .unwrap_or_default();
+
+            for item in &mut worktrees {
+                if item.head.short_commit.len() > 12 {
+                    item.head.short_commit = item.head.short_commit[..12].to_string();
+                }
+            }
+
+            let head = crate::kernel::GitHead {
+                branch,
+                short_commit: commit,
+                detached,
+            };
+
+            let _ = tx.send(AppMessage::GitRepoDetected {
+                repo_root,
+                head,
+                worktrees,
+            });
+        });
+    }
+
+    pub fn git_refresh_status(&self, repo_root: PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let output = match git_output(repo_root.as_path(), |cmd| {
+                cmd.arg("status")
+                    .arg("--porcelain")
+                    .arg("-z")
+                    .arg("--untracked-files=all");
+            })
+            .await
+            {
+                Ok(out) => out,
+                Err(e) => {
+                    tracing::debug!(error = %e, "git status failed");
+                    return;
+                }
+            };
+
+            if !output.status.success() {
+                let _ = tx.send(AppMessage::GitRepoCleared);
+                return;
+            }
+
+            let statuses =
+                git_helpers::parse_status_porcelain_z(&output.stdout, repo_root.as_path());
+            let _ = tx.send(AppMessage::GitStatusUpdated { statuses });
+        });
+    }
+
+    pub fn git_refresh_diff(&self, repo_root: PathBuf, path: PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let rel = match path.strip_prefix(repo_root.as_path()) {
+                Ok(p) => p.to_path_buf(),
+                Err(_) => return,
+            };
+
+            let output = match git_output(repo_root.as_path(), |cmd| {
+                cmd.arg("diff")
+                    .arg("--no-color")
+                    .arg("-U0")
+                    .arg("HEAD")
+                    .arg("--")
+                    .arg(rel);
+            })
+            .await
+            {
+                Ok(out) => out,
+                Err(e) => {
+                    tracing::debug!(error = %e, "git diff failed");
+                    return;
+                }
+            };
+
+            if !output.status.success() {
+                return;
+            }
+
+            let text = String::from_utf8_lossy(&output.stdout);
+            let marks = git_helpers::parse_diff_hunks_to_gutter_marks(&text);
+            let _ = tx.send(AppMessage::GitDiffUpdated { path, marks });
+        });
+    }
+
+    pub fn git_list_worktrees(&self, repo_root: PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let output = match git_output(repo_root.as_path(), |cmd| {
+                cmd.arg("worktree").arg("list").arg("--porcelain");
+            })
+            .await
+            {
+                Ok(out) => out,
+                Err(e) => {
+                    tracing::debug!(error = %e, "git worktree list failed");
+                    return;
+                }
+            };
+
+            if !output.status.success() {
+                return;
+            }
+
+            let worktrees =
+                git_helpers::parse_worktree_list(&String::from_utf8_lossy(&output.stdout));
+            let _ = tx.send(AppMessage::GitWorktreesUpdated { worktrees });
+        });
+    }
+
+    pub fn git_worktree_add(&self, repo_root: PathBuf, branch: String) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let branch = branch.trim().strip_prefix("refs/heads/").unwrap_or(&branch);
+            let branch = branch.trim();
+            if branch.is_empty() {
+                return;
+            }
+
+            if let Ok(out) = git_output(repo_root.as_path(), |cmd| {
+                cmd.arg("worktree").arg("list").arg("--porcelain");
+            })
+            .await
+            {
+                if out.status.success() {
+                    let worktrees =
+                        git_helpers::parse_worktree_list(&String::from_utf8_lossy(&out.stdout));
+                    if let Some(item) = worktrees
+                        .into_iter()
+                        .find(|w| w.head.branch.as_deref() == Some(branch))
+                    {
+                        let _ = tx.send(AppMessage::GitWorktreeResolved { path: item.path });
+                        return;
+                    }
+                }
+            }
+
+            let path = repo_root.join(".worktrees").join(branch);
+            if let Some(parent) = path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+
+            let try_existing = git_output(repo_root.as_path(), |cmd| {
+                cmd.arg("worktree").arg("add").arg(&path).arg(branch);
+            })
+            .await;
+
+            let ok = matches!(try_existing.as_ref(), Ok(out) if out.status.success());
+
+            let result = if ok {
+                try_existing
+            } else {
+                git_output(repo_root.as_path(), |cmd| {
+                    cmd.arg("worktree")
+                        .arg("add")
+                        .arg("-b")
+                        .arg(branch)
+                        .arg(&path);
+                })
+                .await
+            };
+
+            if matches!(result.as_ref(), Ok(out) if out.status.success()) {
+                let _ = tx.send(AppMessage::GitWorktreeResolved { path });
+            }
+        });
+    }
+
+    pub fn git_worktree_resolve(&self, repo_root: PathBuf, branch: String) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let output = match git_output(repo_root.as_path(), |cmd| {
+                cmd.arg("worktree").arg("list").arg("--porcelain");
+            })
+            .await
+            {
+                Ok(out) => out,
+                Err(_) => return,
+            };
+
+            if !output.status.success() {
+                return;
+            }
+
+            let worktrees =
+                git_helpers::parse_worktree_list(&String::from_utf8_lossy(&output.stdout));
+            let wanted = branch.trim();
+            let found = worktrees.into_iter().find(|w| {
+                w.head.branch.as_deref() == Some(wanted)
+                    || w.head
+                        .branch
+                        .as_deref()
+                        .is_some_and(|b| format!("refs/heads/{b}") == wanted)
+            });
+
+            if let Some(item) = found {
+                let _ = tx.send(AppMessage::GitWorktreeResolved { path: item.path });
+            }
+        });
     }
 
     pub fn load_dir(&self, path: PathBuf) {
@@ -386,6 +654,18 @@ impl AsyncRuntime {
             }
         });
     }
+}
+
+async fn git_output(
+    cwd: &Path,
+    configure: impl FnOnce(&mut tokio::process::Command),
+) -> io::Result<std::process::Output> {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.arg("-C").arg(cwd);
+    cmd.env("GIT_OPTIONAL_LOCKS", "0");
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    configure(&mut cmd);
+    cmd.output().await
 }
 
 fn apply_create_file(

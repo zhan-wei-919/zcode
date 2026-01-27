@@ -2,12 +2,16 @@
 
 use crate::app::theme::UiTheme;
 use crate::core::event::MouseEvent;
+use crate::core::text_window;
+use crate::kernel::GitFileStatusKind;
 use crate::models::{FileTreeRow, NodeId};
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
+use rustc_hash::FxHashMap;
+use unicode_width::UnicodeWidthStr;
 
 pub struct ExplorerView {
     area: Option<Rect>,
@@ -41,7 +45,14 @@ impl ExplorerView {
         Some((event.row - area.y) as usize + scroll_offset)
     }
 
-    fn render_row(&self, row: &FileTreeRow, is_selected: bool, theme: &UiTheme) -> Line<'static> {
+    fn render_row(
+        &self,
+        row: &FileTreeRow,
+        is_selected: bool,
+        git_status: Option<GitFileStatusKind>,
+        width: u16,
+        theme: &UiTheme,
+    ) -> Line<'static> {
         let indent = "  ".repeat(row.depth as usize);
         let icon = if row.is_dir {
             if row.is_expanded {
@@ -54,9 +65,8 @@ impl ExplorerView {
         };
 
         let name = row.name.to_string_lossy().to_string();
-        let text = format!("{}{}{}", indent, icon, name);
 
-        let style = if is_selected {
+        let row_style = if is_selected {
             Style::default()
                 .bg(theme.palette_selected_bg)
                 .fg(theme.palette_selected_fg)
@@ -66,7 +76,47 @@ impl ExplorerView {
             Style::default().fg(theme.palette_fg)
         };
 
-        Line::from(Span::styled(text, style))
+        let status_char = git_status.map(|s| s.marker()).unwrap_or(' ');
+        let status_style = match git_status {
+            Some(GitFileStatusKind::Modified) => row_style.fg(theme.header_fg),
+            Some(GitFileStatusKind::Added) => row_style.fg(Color::Green),
+            Some(GitFileStatusKind::Untracked) => row_style.fg(theme.palette_muted_fg),
+            Some(GitFileStatusKind::Conflict) => row_style.fg(theme.error_fg),
+            None => row_style,
+        };
+
+        let width = width as usize;
+        if width == 0 {
+            return Line::default();
+        }
+
+        let trailing_width = if width >= 2 { 2 } else { 1 };
+        let left_target_width = width.saturating_sub(trailing_width);
+
+        let mut left = format!("{indent}{icon}{name}");
+        if left_target_width == 0 {
+            left.clear();
+        } else {
+            let end = text_window::truncate_to_width(&left, left_target_width);
+            left.truncate(end);
+        }
+        let left_width = left.width();
+        let pad = " ".repeat(left_target_width.saturating_sub(left_width));
+
+        if trailing_width == 1 {
+            return Line::from(vec![
+                Span::styled(left, row_style),
+                Span::styled(pad, row_style),
+                Span::styled(status_char.to_string(), status_style),
+            ]);
+        }
+
+        Line::from(vec![
+            Span::styled(left, row_style),
+            Span::styled(pad, row_style),
+            Span::styled(" ", row_style),
+            Span::styled(status_char.to_string(), status_style),
+        ])
     }
 
     pub fn render(
@@ -76,6 +126,7 @@ impl ExplorerView {
         rows: &[FileTreeRow],
         selected_id: Option<NodeId>,
         scroll_offset: usize,
+        git_status_by_id: &FxHashMap<NodeId, GitFileStatusKind>,
         theme: &UiTheme,
     ) {
         self.area = Some(area);
@@ -98,7 +149,8 @@ impl ExplorerView {
             .iter()
             .map(|row| {
                 let is_selected = selected_id == Some(row.id);
-                self.render_row(row, is_selected, theme)
+                let git_status = git_status_by_id.get(&row.id).copied();
+                self.render_row(row, is_selected, git_status, area.width, theme)
             })
             .collect();
 

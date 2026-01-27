@@ -1,3 +1,4 @@
+use crate::kernel::git::GitGutterMarks;
 use crate::kernel::services::ports::{EditorConfig, LspFoldingRange, Match};
 use crate::models::{EditHistory, EditOp, Granularity, OpKind, TextBuffer};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -113,6 +114,7 @@ pub struct EditorTabState {
     pub last_edit_op: Option<EditOp>,
     pub mouse: EditorMouseState,
     semantic_highlight: Option<SemanticHighlightState>,
+    git_gutter: Option<GitGutterMarks>,
     inlay_hints: Option<InlayHintsState>,
     folding: Option<FoldingState>,
     syntax: Option<SyntaxDocument>,
@@ -148,6 +150,7 @@ impl EditorTabState {
             last_edit_op: None,
             mouse: EditorMouseState::new(),
             semantic_highlight: None,
+            git_gutter: None,
             inlay_hints: None,
             folding: None,
             syntax: None,
@@ -178,6 +181,7 @@ impl EditorTabState {
             last_edit_op: None,
             mouse: EditorMouseState::new(),
             semantic_highlight: None,
+            git_gutter: None,
             inlay_hints: None,
             folding: None,
             syntax,
@@ -192,8 +196,35 @@ impl EditorTabState {
         self.path = Some(path.clone());
         self.syntax = SyntaxDocument::for_path(&path, self.buffer.rope());
         self.semantic_highlight = None;
+        self.git_gutter = None;
         self.inlay_hints = None;
         self.clear_folding();
+    }
+
+    pub fn set_git_gutter(&mut self, gutter: Option<GitGutterMarks>) -> bool {
+        if self.git_gutter == gutter {
+            return false;
+        }
+        self.git_gutter = gutter;
+        true
+    }
+
+    pub fn clear_git_gutter(&mut self) -> bool {
+        self.set_git_gutter(None)
+    }
+
+    pub fn git_gutter_marker(&self, line: usize) -> Option<char> {
+        let gutter = self.git_gutter.as_ref()?;
+        if gutter.deletions.binary_search(&line).is_ok() {
+            return Some('-');
+        }
+
+        let idx = gutter.ranges.partition_point(|r| r.start_line <= line);
+        let range = idx.checked_sub(1).and_then(|i| gutter.ranges.get(i))?;
+        if line < range.end_line_exclusive {
+            return Some(range.kind.marker());
+        }
+        None
     }
 
     pub fn display_title(&self) -> String {

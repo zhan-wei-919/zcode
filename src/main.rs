@@ -90,15 +90,16 @@ fn run_app(
     path: &Path,
     log_rx: Option<mpsc::Receiver<String>>,
 ) -> io::Result<()> {
-    let (tx, rx) = mpsc::channel();
-    let async_runtime = AsyncRuntime::new(tx)?;
-    let mut workbench = Workbench::new(path, async_runtime, log_rx)?;
+    let mut root_path = path.to_path_buf();
+    let (mut tx, mut rx) = mpsc::channel();
+    let mut workbench =
+        Workbench::new(root_path.as_path(), AsyncRuntime::new(tx.clone())?, log_rx)?;
 
     let mut dirty = true;
     let mut last_tick = Instant::now();
     let tick_rate = Duration::from_millis(50);
 
-    loop {
+    'app: loop {
         if dirty {
             terminal.draw(|frame| {
                 workbench.render(frame, frame.area());
@@ -118,6 +119,24 @@ fn run_app(
                 let input_event: InputEvent = zcode::tui::crossterm::into_input_event(ev);
                 match workbench.handle_input(&input_event) {
                     EventResult::Quit => return Ok(()),
+                    EventResult::Restart { path, hard } => {
+                        let log_rx = workbench.take_log_rx();
+                        root_path = path;
+                        let (new_tx, new_rx) = mpsc::channel();
+                        tx = new_tx;
+                        rx = new_rx;
+                        workbench = Workbench::new(
+                            root_path.as_path(),
+                            AsyncRuntime::new(tx.clone())?,
+                            log_rx,
+                        )?;
+                        dirty = true;
+                        last_tick = Instant::now();
+                        if hard {
+                            tracing::info!("hard reload completed");
+                        }
+                        continue 'app;
+                    }
                     EventResult::Ignored => {}
                     _ => dirty = true,
                 }
@@ -127,6 +146,21 @@ fn run_app(
         while let Ok(msg) = rx.try_recv() {
             workbench.handle_message(msg);
             dirty = true;
+            if let Some((path, hard)) = workbench.take_pending_restart() {
+                let log_rx = workbench.take_log_rx();
+                root_path = path;
+                let (new_tx, new_rx) = mpsc::channel();
+                tx = new_tx;
+                rx = new_rx;
+                workbench =
+                    Workbench::new(root_path.as_path(), AsyncRuntime::new(tx.clone())?, log_rx)?;
+                dirty = true;
+                last_tick = Instant::now();
+                if hard {
+                    tracing::info!("hard reload completed");
+                }
+                continue 'app;
+            }
         }
 
         // 定时检查是否需要刷盘

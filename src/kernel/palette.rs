@@ -174,6 +174,16 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::OpenSettings,
     },
     PaletteItem {
+        label: "Git: Worktree (Open/Create)",
+        label_lc: "git: worktree (open/create)",
+        command: Command::GitWorktreeAdd,
+    },
+    PaletteItem {
+        label: "App: Hard Reload",
+        label_lc: "app: hard reload",
+        command: Command::HardReload,
+    },
+    PaletteItem {
         label: "Quit",
         label_lc: "quit",
         command: Command::Quit,

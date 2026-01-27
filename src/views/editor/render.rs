@@ -9,7 +9,7 @@ use crate::models::slice_to_cow;
 use memchr::memchr;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Tabs, Widget};
 use ratatui::Frame;
@@ -495,7 +495,7 @@ impl Widget for EditorGutterWidget<'_> {
                 base_style
             };
 
-            // Reserve last 2 columns: " " + gap.
+            // Reserve last 2 columns: fold marker + git marker.
             let mut x = right.saturating_sub(2);
             if area.width >= 2 {
                 if let Some(marker) = self
@@ -503,6 +503,18 @@ impl Widget for EditorGutterWidget<'_> {
                     .fold_marker_char(line.min(u32::MAX as usize) as u32)
                 {
                     buf[(x, y)].set_char(marker).set_style(style);
+                }
+            }
+            if area.width >= 1 {
+                let git_x = right.saturating_sub(1);
+                if let Some(marker) = self.tab.git_gutter_marker(line) {
+                    let marker_style = match marker {
+                        '+' => style.fg(Color::Green),
+                        '~' => style.fg(self.theme.warning_fg),
+                        '-' => style.fg(self.theme.error_fg),
+                        _ => style,
+                    };
+                    buf[(git_x, y)].set_char(marker).set_style(marker_style);
                 }
             }
             let mut n = line_no;

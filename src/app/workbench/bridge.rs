@@ -362,6 +362,33 @@ impl Workbench {
                 self.runtime
                     .apply_file_edits(position_encoding, resource_ops, edits);
             }
+            KernelEffect::GitDetectRepo { workspace_root } => {
+                let _scope = perf::scope("effect.git_detect");
+                self.runtime.git_detect_repo(workspace_root);
+            }
+            KernelEffect::GitRefreshStatus { repo_root } => {
+                let _scope = perf::scope("effect.git_status");
+                self.runtime.git_refresh_status(repo_root);
+            }
+            KernelEffect::GitRefreshDiff { repo_root, path } => {
+                let _scope = perf::scope("effect.git_diff");
+                self.runtime.git_refresh_diff(repo_root, path);
+            }
+            KernelEffect::GitListWorktrees { repo_root } => {
+                let _scope = perf::scope("effect.git_worktrees");
+                self.runtime.git_list_worktrees(repo_root);
+            }
+            KernelEffect::GitWorktreeAdd { repo_root, branch } => {
+                let _scope = perf::scope("effect.git_worktree_add");
+                self.runtime.git_worktree_add(repo_root, branch);
+            }
+            KernelEffect::GitWorktreeResolve { repo_root, branch } => {
+                let _scope = perf::scope("effect.git_worktree_resolve");
+                self.runtime.git_worktree_resolve(repo_root, branch);
+            }
+            KernelEffect::Restart { path, hard } => {
+                self.pending_restart = Some(super::PendingRestart { path, hard });
+            }
         }
     }
 }

@@ -22,7 +22,7 @@ pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(super::HEADER_HEIGHT),
+            Constraint::Length(0),
             Constraint::Min(0),
             Constraint::Length(super::STATUS_HEIGHT),
         ])
@@ -249,20 +249,7 @@ impl Workbench {
         }
     }
 
-    fn render_header(&self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
-
-        let title = "zcode";
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                title,
-                Style::default().fg(self.theme.header_fg),
-            )),
-            area,
-        );
-    }
+    fn render_header(&mut self, _frame: &mut Frame, _area: Rect) {}
 
     fn render_status(&self, frame: &mut Frame, area: Rect) {
         let (mode, cursor_info) = if let Some(pane) = self
@@ -358,6 +345,9 @@ impl Workbench {
                     sb.visible && sb.mode == crate::kernel::editor::SearchBarMode::Replace
                 }),
                 super::util::ActivityItem::Palette => state.ui.command_palette.visible,
+                super::util::ActivityItem::Git => {
+                    state.git.repo_root.is_some() && state.ui.git_panel_expanded
+                }
                 super::util::ActivityItem::Settings => settings_active,
             };
 
@@ -461,16 +451,55 @@ impl Workbench {
 
         match active_tab {
             SidebarTab::Explorer => {
-                self.sync_explorer_view_height(content_area.height);
-                let explorer_state = &self.store.state().explorer;
+                self.last_git_panel_area = None;
+                self.last_git_worktree_areas.clear();
+
+                let (show_git_panel, worktrees_len) = {
+                    let state = self.store.state();
+                    (
+                        state.git.repo_root.is_some() && state.ui.git_panel_expanded,
+                        state.git.worktrees.len(),
+                    )
+                };
+
+                let (tree_area, git_area) = if show_git_panel && content_area.height >= 3 {
+                    let worktrees_len = worktrees_len.max(1) as u16;
+                    let max_git_height = content_area.height.saturating_sub(1);
+                    let git_height = (1 + worktrees_len).min(max_git_height);
+                    let tree_height = content_area.height.saturating_sub(git_height);
+                    let tree_area = Rect::new(
+                        content_area.x,
+                        content_area.y,
+                        content_area.width,
+                        tree_height,
+                    );
+                    let git_area = Rect::new(
+                        content_area.x,
+                        content_area.y.saturating_add(tree_height),
+                        content_area.width,
+                        content_area.height.saturating_sub(tree_height),
+                    );
+                    (tree_area, Some(git_area))
+                } else {
+                    (content_area, None)
+                };
+
+                self.sync_explorer_view_height(tree_area.height);
+                let state = self.store.state();
+                let explorer_state = &state.explorer;
                 self.explorer.render(
                     frame,
-                    content_area,
+                    tree_area,
                     &explorer_state.rows,
                     explorer_state.selected(),
                     explorer_state.scroll_offset,
+                    &explorer_state.git_status_by_id,
                     &self.theme,
                 );
+
+                if let Some(git_area) = git_area {
+                    self.render_git_panel(frame, git_area);
+                }
             }
             SidebarTab::Search => {
                 let search_box_height = 2u16.min(content_area.height);
@@ -480,6 +509,84 @@ impl Workbench {
                 self.search_view
                     .render(frame, content_area, search_state, &self.theme);
             }
+        }
+    }
+
+    fn render_git_panel(&mut self, frame: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let state = self.store.state();
+        let Some(repo_root) = state.git.repo_root.as_ref() else {
+            return;
+        };
+        if !state.ui.git_panel_expanded {
+            return;
+        }
+
+        self.last_git_panel_area = Some(area);
+
+        let base_style = Style::default()
+            .bg(self.theme.palette_bg)
+            .fg(self.theme.palette_fg);
+        frame.render_widget(Block::default().style(base_style), area);
+
+        let sep_area = Rect::new(area.x, area.y, area.width, 1.min(area.height));
+        frame.render_widget(
+            ThinHSeparator {
+                fg: self.theme.separator,
+                bg: self.theme.palette_bg,
+            },
+            sep_area,
+        );
+
+        if area.height <= 1 {
+            return;
+        }
+
+        let active_style = Style::default()
+            .bg(self.theme.palette_selected_bg)
+            .fg(self.theme.palette_selected_fg)
+            .add_modifier(Modifier::BOLD);
+        let inactive_style = base_style;
+
+        let max_items = (area.height - 1) as usize;
+        if state.git.worktrees.is_empty() {
+            if let Some(head) = state.git.head.as_ref() {
+                let mut label = head.display();
+                let end = text_window::truncate_to_width(&label, area.width as usize);
+                label.truncate(end);
+                let line_area = Rect::new(area.x, area.y + 1, area.width, 1);
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(label, inactive_style))),
+                    line_area,
+                );
+            }
+            return;
+        }
+
+        for (idx, item) in state.git.worktrees.iter().take(max_items).enumerate() {
+            let y = area.y + 1 + idx as u16;
+            if y >= area.y.saturating_add(area.height) {
+                break;
+            }
+            let mut label = item.head.display();
+            let end = text_window::truncate_to_width(&label, area.width as usize);
+            label.truncate(end);
+
+            let is_active = repo_root == &item.path;
+            let style = if is_active {
+                active_style
+            } else {
+                inactive_style
+            };
+            let line_area = Rect::new(area.x, y, area.width, 1);
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(label, style))),
+                line_area,
+            );
+            self.last_git_worktree_areas.push((idx, line_area));
         }
     }
 

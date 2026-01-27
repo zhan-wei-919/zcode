@@ -36,7 +36,6 @@ mod tests;
 mod tick;
 mod util;
 
-const HEADER_HEIGHT: u16 = 0;
 const STATUS_HEIGHT: u16 = 1;
 const ACTIVITY_BAR_WIDTH: u16 = 3;
 const SIDEBAR_WIDTH_PERCENT: u16 = 20;
@@ -54,6 +53,12 @@ const COMPLETION_DEBOUNCE_DELAY: Duration = Duration::from_millis(60);
 const SEMANTIC_TOKENS_DEBOUNCE_DELAY: Duration = Duration::from_millis(200);
 const INLAY_HINTS_DEBOUNCE_DELAY: Duration = Duration::from_millis(200);
 const FOLDING_RANGE_DEBOUNCE_DELAY: Duration = Duration::from_millis(250);
+
+#[derive(Debug, Clone)]
+struct PendingRestart {
+    path: PathBuf,
+    hard: bool,
+}
 
 fn env_truthy(key: &str) -> bool {
     matches!(
@@ -104,6 +109,16 @@ fn lsp_command_override() -> Option<(String, Vec<String>)> {
     Some((command, args))
 }
 
+fn git_enabled() -> bool {
+    if env_truthy("ZCODE_DISABLE_GIT") {
+        return false;
+    }
+    if cfg!(test) {
+        return false;
+    }
+    true
+}
+
 pub struct Workbench {
     store: Store,
     explorer: ExplorerView,
@@ -134,6 +149,8 @@ pub struct Workbench {
     last_sidebar_area: Option<Rect>,
     last_sidebar_tabs_area: Option<Rect>,
     last_sidebar_content_area: Option<Rect>,
+    last_git_panel_area: Option<Rect>,
+    last_git_worktree_areas: Vec<(usize, Rect)>,
     last_explorer_context_menu_area: Option<Rect>,
     last_bottom_panel_area: Option<Rect>,
     last_editor_areas: Vec<Rect>,
@@ -153,6 +170,7 @@ pub struct Workbench {
     last_locations_click: Option<(Instant, usize)>,
     last_code_actions_click: Option<(Instant, usize)>,
     last_symbols_click: Option<(Instant, usize)>,
+    pending_restart: Option<PendingRestart>,
 }
 
 impl Workbench {
@@ -227,7 +245,7 @@ impl Workbench {
         let panes = store.state().ui.editor_layout.panes.max(1);
         let lsp_open_paths_version = store.state().editor.open_paths_version;
 
-        Ok(Self {
+        let mut workbench = Self {
             store,
             explorer: ExplorerView::new(),
             search_view: SearchView::new(),
@@ -257,6 +275,8 @@ impl Workbench {
             last_sidebar_area: None,
             last_sidebar_tabs_area: None,
             last_sidebar_content_area: None,
+            last_git_panel_area: None,
+            last_git_worktree_areas: Vec::new(),
             last_explorer_context_menu_area: None,
             last_bottom_panel_area: None,
             last_editor_areas: Vec::new(),
@@ -276,7 +296,22 @@ impl Workbench {
             last_locations_click: None,
             last_code_actions_click: None,
             last_symbols_click: None,
-        })
+            pending_restart: None,
+        };
+
+        if git_enabled() {
+            let _ = workbench.dispatch_kernel(KernelAction::GitInit);
+        }
+
+        Ok(workbench)
+    }
+
+    pub fn take_log_rx(&mut self) -> Option<Receiver<String>> {
+        self.log_rx.take()
+    }
+
+    pub fn take_pending_restart(&mut self) -> Option<(PathBuf, bool)> {
+        self.pending_restart.take().map(|req| (req.path, req.hard))
     }
 
     pub(super) fn open_settings(&mut self) {
@@ -379,6 +414,32 @@ impl Workbench {
                     self.logs.pop_front();
                 }
             }
+            AppMessage::GitRepoDetected {
+                repo_root,
+                head,
+                worktrees,
+            } => {
+                let _ = self.dispatch_kernel(KernelAction::GitRepoDetected {
+                    repo_root,
+                    head,
+                    worktrees,
+                });
+            }
+            AppMessage::GitRepoCleared => {
+                let _ = self.dispatch_kernel(KernelAction::GitRepoCleared);
+            }
+            AppMessage::GitStatusUpdated { statuses } => {
+                let _ = self.dispatch_kernel(KernelAction::GitStatusUpdated { statuses });
+            }
+            AppMessage::GitDiffUpdated { path, marks } => {
+                let _ = self.dispatch_kernel(KernelAction::GitDiffUpdated { path, marks });
+            }
+            AppMessage::GitWorktreesUpdated { worktrees } => {
+                let _ = self.dispatch_kernel(KernelAction::GitWorktreesUpdated { worktrees });
+            }
+            AppMessage::GitWorktreeResolved { path } => {
+                let _ = self.dispatch_kernel(KernelAction::GitWorktreeResolved { path });
+            }
         }
     }
 
@@ -453,7 +514,14 @@ impl Workbench {
 impl View for Workbench {
     fn handle_input(&mut self, event: &InputEvent) -> EventResult {
         let _scope = perf::scope("view.input");
-        input::handle_input(self, event)
+        let result = input::handle_input(self, event);
+        if matches!(result, EventResult::Quit) {
+            return result;
+        }
+        if let Some((path, hard)) = self.take_pending_restart() {
+            return EventResult::Restart { path, hard };
+        }
+        result
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect) {

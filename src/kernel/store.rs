@@ -87,6 +87,7 @@ impl Store {
                             content,
                         } => {
                             let opened_path = path.clone();
+                            let opened_path_for_git = opened_path.clone();
                             let pending = self
                                 .state
                                 .ui
@@ -239,6 +240,100 @@ impl Store {
                                 }
                             }
 
+                            if let Some(repo_root) = self.state.git.repo_root.clone() {
+                                effects.push(Effect::GitRefreshStatus {
+                                    repo_root: repo_root.clone(),
+                                });
+                                effects.push(Effect::GitRefreshDiff {
+                                    repo_root,
+                                    path: opened_path_for_git,
+                                });
+                            }
+
+                            DispatchResult {
+                                effects,
+                                state_changed,
+                            }
+                        }
+                        EditorAction::SetActiveTab { pane, index } => {
+                            let (state_changed, mut effects) = self
+                                .state
+                                .editor
+                                .dispatch_action(EditorAction::SetActiveTab { pane, index });
+
+                            if let Some(repo_root) = self.state.git.repo_root.clone() {
+                                let path = self
+                                    .state
+                                    .editor
+                                    .pane(pane)
+                                    .and_then(|pane_state| pane_state.active_tab())
+                                    .and_then(|tab| tab.path.clone());
+                                if let Some(path) = path {
+                                    effects.push(Effect::GitRefreshStatus {
+                                        repo_root: repo_root.clone(),
+                                    });
+                                    effects.push(Effect::GitRefreshDiff { repo_root, path });
+                                }
+                            }
+
+                            DispatchResult {
+                                effects,
+                                state_changed,
+                            }
+                        }
+                        EditorAction::Saved {
+                            pane,
+                            path,
+                            success,
+                            version,
+                        } => {
+                            let saved_path = path.clone();
+                            let (state_changed, mut effects) =
+                                self.state.editor.dispatch_action(EditorAction::Saved {
+                                    pane,
+                                    path,
+                                    success,
+                                    version,
+                                });
+
+                            if success {
+                                if let Some(repo_root) = self.state.git.repo_root.clone() {
+                                    effects.push(Effect::GitRefreshStatus {
+                                        repo_root: repo_root.clone(),
+                                    });
+                                    effects.push(Effect::GitRefreshDiff {
+                                        repo_root,
+                                        path: saved_path,
+                                    });
+                                }
+                            }
+
+                            DispatchResult {
+                                effects,
+                                state_changed,
+                            }
+                        }
+                        EditorAction::CloseTabAt { pane, index } => {
+                            let (state_changed, mut effects) = self
+                                .state
+                                .editor
+                                .dispatch_action(EditorAction::CloseTabAt { pane, index });
+
+                            if let Some(repo_root) = self.state.git.repo_root.clone() {
+                                let path = self
+                                    .state
+                                    .editor
+                                    .pane(pane)
+                                    .and_then(|pane_state| pane_state.active_tab())
+                                    .and_then(|tab| tab.path.clone());
+                                if let Some(path) = path {
+                                    effects.push(Effect::GitRefreshStatus {
+                                        repo_root: repo_root.clone(),
+                                    });
+                                    effects.push(Effect::GitRefreshDiff { repo_root, path });
+                                }
+                            }
+
                             DispatchResult {
                                 effects,
                                 state_changed,
@@ -262,6 +357,136 @@ impl Store {
             },
             Action::Tick => DispatchResult {
                 effects: Vec::new(),
+                state_changed: false,
+            },
+            Action::GitInit => DispatchResult {
+                effects: vec![Effect::GitDetectRepo {
+                    workspace_root: self.state.workspace_root.clone(),
+                }],
+                state_changed: false,
+            },
+            Action::GitRepoDetected {
+                repo_root,
+                head,
+                worktrees,
+            } => {
+                let repo_changed = self.state.git.repo_root.as_ref() != Some(&repo_root);
+                let head_changed = self.state.git.head.as_ref() != Some(&head);
+                let worktrees_changed = self.state.git.worktrees != worktrees;
+
+                self.state.git.repo_root = Some(repo_root.clone());
+                self.state.git.head = Some(head);
+                self.state.git.worktrees = worktrees;
+
+                if repo_changed {
+                    self.state.git.file_status.clear();
+                    let _ = self
+                        .state
+                        .explorer
+                        .set_git_statuses(&self.state.git.file_status);
+                    for pane in &mut self.state.editor.panes {
+                        for tab in &mut pane.tabs {
+                            tab.clear_git_gutter();
+                        }
+                    }
+                }
+
+                let mut effects = Vec::new();
+                effects.push(Effect::GitRefreshStatus {
+                    repo_root: repo_root.clone(),
+                });
+                effects.push(Effect::GitListWorktrees { repo_root });
+
+                DispatchResult {
+                    effects,
+                    state_changed: repo_changed || head_changed || worktrees_changed,
+                }
+            }
+            Action::GitRepoCleared => {
+                let had_repo = self.state.git.repo_root.take().is_some();
+                let had_head = self.state.git.head.take().is_some();
+                let had_worktrees = !self.state.git.worktrees.is_empty();
+                let had_status = !self.state.git.file_status.is_empty();
+
+                self.state.git.worktrees.clear();
+                self.state.git.file_status.clear();
+                let explorer_git_changed = self
+                    .state
+                    .explorer
+                    .set_git_statuses(&self.state.git.file_status);
+                for pane in &mut self.state.editor.panes {
+                    for tab in &mut pane.tabs {
+                        tab.clear_git_gutter();
+                    }
+                }
+
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: had_repo
+                        || had_head
+                        || had_worktrees
+                        || had_status
+                        || explorer_git_changed,
+                }
+            }
+            Action::GitStatusUpdated { statuses } => {
+                let mut map = rustc_hash::FxHashMap::default();
+                for (path, status) in statuses {
+                    map.insert(path, status);
+                }
+
+                if self.state.git.file_status == map {
+                    let explorer_git_changed = self
+                        .state
+                        .explorer
+                        .set_git_statuses(&self.state.git.file_status);
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: explorer_git_changed,
+                    };
+                }
+
+                self.state.git.file_status = map;
+                let _ = self
+                    .state
+                    .explorer
+                    .set_git_statuses(&self.state.git.file_status);
+
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
+                }
+            }
+            Action::GitDiffUpdated { path, marks } => {
+                let mut changed = false;
+                for pane in &mut self.state.editor.panes {
+                    for tab in &mut pane.tabs {
+                        if tab.path.as_ref() == Some(&path) {
+                            changed |= tab.set_git_gutter(Some(marks.clone()));
+                        }
+                    }
+                }
+
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: changed,
+                }
+            }
+            Action::GitWorktreesUpdated { worktrees } => {
+                if self.state.git.worktrees == worktrees {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+                self.state.git.worktrees = worktrees;
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
+                }
+            }
+            Action::GitWorktreeResolved { path } => DispatchResult {
+                effects: vec![Effect::Restart { path, hard: false }],
                 state_changed: false,
             },
             Action::EditorConfigUpdated { config } => {
@@ -434,6 +659,31 @@ impl Store {
                             };
                         }
                     }
+                    InputDialogKind::GitWorktreeAdd { .. } => {
+                        if value.is_empty() {
+                            let prev = dialog.error.replace("Branch required".to_string());
+                            return DispatchResult {
+                                effects: Vec::new(),
+                                state_changed: prev.as_deref() != dialog.error.as_deref(),
+                            };
+                        }
+                        if value.chars().any(|ch| ch.is_whitespace()) {
+                            let prev = dialog
+                                .error
+                                .replace("Branch cannot contain spaces".to_string());
+                            return DispatchResult {
+                                effects: Vec::new(),
+                                state_changed: prev.as_deref() != dialog.error.as_deref(),
+                            };
+                        }
+                        if value.contains('\\') || value.contains("..") || value.starts_with('/') {
+                            let prev = dialog.error.replace("Invalid branch".to_string());
+                            return DispatchResult {
+                                effects: Vec::new(),
+                                state_changed: prev.as_deref() != dialog.error.as_deref(),
+                            };
+                        }
+                    }
                 }
 
                 let value = value.to_string();
@@ -487,6 +737,13 @@ impl Store {
                         self.state.ui.focus = FocusTarget::BottomPanel;
                         Effect::LspWorkspaceSymbolsRequest { query: value }
                     }
+                    InputDialogKind::GitWorktreeAdd { repo_root } => {
+                        let branch = value
+                            .strip_prefix("refs/heads/")
+                            .unwrap_or(value.as_str())
+                            .to_string();
+                        Effect::GitWorktreeAdd { repo_root, branch }
+                    }
                 };
 
                 DispatchResult {
@@ -534,8 +791,26 @@ impl Store {
                 self.state.ui.editor_layout.active_pane = pane;
                 self.state.ui.focus = FocusTarget::Editor;
 
+                let mut effects = Vec::new();
+                if pane != prev {
+                    if let Some(repo_root) = self.state.git.repo_root.clone() {
+                        let path = self
+                            .state
+                            .editor
+                            .pane(pane)
+                            .and_then(|pane_state| pane_state.active_tab())
+                            .and_then(|tab| tab.path.clone());
+                        if let Some(path) = path {
+                            effects.push(Effect::GitRefreshStatus {
+                                repo_root: repo_root.clone(),
+                            });
+                            effects.push(Effect::GitRefreshDiff { repo_root, path });
+                        }
+                    }
+                }
+
                 DispatchResult {
-                    effects: Vec::new(),
+                    effects,
                     state_changed: pane != prev
                         || prev_focus != FocusTarget::Editor
                         || completion_changed,
@@ -570,21 +845,51 @@ impl Store {
                 state_changed: self.state.explorer.scroll(delta),
             },
             Action::ExplorerActivate => {
+                let prev_rows_len = self.state.explorer.rows.len();
                 let (state_changed, effects) = self.state.explorer.activate_selected();
+                let rows_changed = self.state.explorer.rows.len() != prev_rows_len;
+                let explorer_git_changed = if rows_changed {
+                    self.state
+                        .explorer
+                        .set_git_statuses(&self.state.git.file_status)
+                } else {
+                    false
+                };
                 DispatchResult {
                     effects,
-                    state_changed,
+                    state_changed: state_changed || explorer_git_changed,
                 }
             }
-            Action::ExplorerCollapse => DispatchResult {
-                effects: Vec::new(),
-                state_changed: self.state.explorer.collapse_selected(),
-            },
+            Action::ExplorerCollapse => {
+                let prev_rows_len = self.state.explorer.rows.len();
+                let state_changed = self.state.explorer.collapse_selected();
+                let rows_changed = self.state.explorer.rows.len() != prev_rows_len;
+                let explorer_git_changed = if rows_changed {
+                    self.state
+                        .explorer
+                        .set_git_statuses(&self.state.git.file_status)
+                } else {
+                    false
+                };
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: state_changed || explorer_git_changed,
+                }
+            }
             Action::ExplorerClickRow { row, now } => {
+                let prev_rows_len = self.state.explorer.rows.len();
                 let (state_changed, effects) = self.state.explorer.click_row(row, now);
+                let rows_changed = self.state.explorer.rows.len() != prev_rows_len;
+                let explorer_git_changed = if rows_changed {
+                    self.state
+                        .explorer
+                        .set_git_statuses(&self.state.git.file_status)
+                } else {
+                    false
+                };
                 DispatchResult {
                     effects,
-                    state_changed,
+                    state_changed: state_changed || explorer_git_changed,
                 }
             }
             Action::ExplorerContextMenuOpen { tree_row, x, y } => {
@@ -1689,19 +1994,59 @@ impl Store {
             }
             Action::DirLoaded { path, entries } => DispatchResult {
                 effects: Vec::new(),
-                state_changed: self.state.explorer.apply_dir_loaded(path, entries),
+                state_changed: {
+                    let changed = self.state.explorer.apply_dir_loaded(path, entries);
+                    let git_changed = if changed {
+                        self.state
+                            .explorer
+                            .set_git_statuses(&self.state.git.file_status)
+                    } else {
+                        false
+                    };
+                    changed || git_changed
+                },
             },
             Action::DirLoadError { path } => DispatchResult {
                 effects: Vec::new(),
-                state_changed: self.state.explorer.apply_dir_load_error(path),
+                state_changed: {
+                    let changed = self.state.explorer.apply_dir_load_error(path);
+                    let git_changed = if changed {
+                        self.state
+                            .explorer
+                            .set_git_statuses(&self.state.git.file_status)
+                    } else {
+                        false
+                    };
+                    changed || git_changed
+                },
             },
             Action::ExplorerPathCreated { path, is_dir } => DispatchResult {
                 effects: Vec::new(),
-                state_changed: self.state.explorer.apply_path_created(path, is_dir),
+                state_changed: {
+                    let changed = self.state.explorer.apply_path_created(path, is_dir);
+                    let git_changed = if changed {
+                        self.state
+                            .explorer
+                            .set_git_statuses(&self.state.git.file_status)
+                    } else {
+                        false
+                    };
+                    changed || git_changed
+                },
             },
             Action::ExplorerPathDeleted { path } => DispatchResult {
                 effects: Vec::new(),
-                state_changed: self.state.explorer.apply_path_deleted(path),
+                state_changed: {
+                    let changed = self.state.explorer.apply_path_deleted(path);
+                    let git_changed = if changed {
+                        self.state
+                            .explorer
+                            .set_git_statuses(&self.state.git.file_status)
+                    } else {
+                        false
+                    };
+                    changed || git_changed
+                },
             },
             Action::ExplorerPathRenamed { from, to } => {
                 let mut state_changed = self
@@ -1733,6 +2078,13 @@ impl Store {
                     self.state.editor.open_paths_version =
                         self.state.editor.open_paths_version.saturating_add(1);
                     state_changed = true;
+                }
+
+                if state_changed {
+                    state_changed |= self
+                        .state
+                        .explorer
+                        .set_git_statuses(&self.state.git.file_status);
                 }
 
                 DispatchResult {
@@ -1980,6 +2332,55 @@ impl Store {
                     state_changed: false,
                 };
             }
+            Command::GitWorktreeAdd => {
+                if self.state.ui.input_dialog.visible {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                }
+
+                let Some(repo_root) = self.state.git.repo_root.clone() else {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                };
+
+                self.state.ui.input_dialog.visible = true;
+                self.state.ui.input_dialog.title = "Git Worktree".to_string();
+                self.state.ui.input_dialog.value.clear();
+                self.state.ui.input_dialog.cursor = 0;
+                self.state.ui.input_dialog.error = None;
+                self.state.ui.input_dialog.kind =
+                    Some(InputDialogKind::GitWorktreeAdd { repo_root });
+                state_changed = true;
+            }
+            Command::GitTogglePanel => {
+                let prev = self.state.ui.git_panel_expanded;
+                self.state.ui.git_panel_expanded = !prev;
+
+                if !self.state.ui.sidebar_visible {
+                    self.state.ui.sidebar_visible = true;
+                }
+                if self.state.ui.sidebar_tab != SidebarTab::Explorer {
+                    self.state.ui.sidebar_tab = SidebarTab::Explorer;
+                }
+                if self.state.ui.focus != FocusTarget::Explorer {
+                    self.state.ui.focus = FocusTarget::Explorer;
+                }
+
+                state_changed = true;
+            }
+            Command::HardReload => {
+                return DispatchResult {
+                    effects: vec![Effect::Restart {
+                        path: self.state.workspace_root.clone(),
+                        hard: true,
+                    }],
+                    state_changed: false,
+                };
+            }
             Command::InsertChar(ch) => {
                 let pane = self.state.ui.editor_layout.active_pane;
                 let (changed, cmd_effects) = self
@@ -2207,6 +2608,29 @@ impl Store {
                     state_changed =
                         prev_dir != SplitDirection::Vertical || prev_focus != FocusTarget::Editor;
                 }
+
+                if state_changed {
+                    let pane = self.state.ui.editor_layout.active_pane;
+                    let mut effects = effects;
+                    if let Some(repo_root) = self.state.git.repo_root.clone() {
+                        let path = self
+                            .state
+                            .editor
+                            .pane(pane)
+                            .and_then(|pane_state| pane_state.active_tab())
+                            .and_then(|tab| tab.path.clone());
+                        if let Some(path) = path {
+                            effects.push(Effect::GitRefreshStatus {
+                                repo_root: repo_root.clone(),
+                            });
+                            effects.push(Effect::GitRefreshDiff { repo_root, path });
+                        }
+                    }
+                    return DispatchResult {
+                        effects,
+                        state_changed,
+                    };
+                }
             }
             Command::SplitEditorHorizontal => {
                 let prev_dir = self.state.ui.editor_layout.split_direction;
@@ -2225,6 +2649,29 @@ impl Store {
                     state_changed =
                         prev_dir != SplitDirection::Horizontal || prev_focus != FocusTarget::Editor;
                 }
+
+                if state_changed {
+                    let pane = self.state.ui.editor_layout.active_pane;
+                    let mut effects = effects;
+                    if let Some(repo_root) = self.state.git.repo_root.clone() {
+                        let path = self
+                            .state
+                            .editor
+                            .pane(pane)
+                            .and_then(|pane_state| pane_state.active_tab())
+                            .and_then(|tab| tab.path.clone());
+                        if let Some(path) = path {
+                            effects.push(Effect::GitRefreshStatus {
+                                repo_root: repo_root.clone(),
+                            });
+                            effects.push(Effect::GitRefreshDiff { repo_root, path });
+                        }
+                    }
+                    return DispatchResult {
+                        effects,
+                        state_changed,
+                    };
+                }
             }
             Command::CloseEditorSplit => {
                 if self.state.ui.editor_layout.panes > 1 {
@@ -2235,6 +2682,27 @@ impl Store {
                     let panes = self.state.ui.editor_layout.panes;
                     let _ = self.state.editor.ensure_panes(panes);
                     state_changed = true;
+
+                    let pane = self.state.ui.editor_layout.active_pane;
+                    let mut effects = effects;
+                    if let Some(repo_root) = self.state.git.repo_root.clone() {
+                        let path = self
+                            .state
+                            .editor
+                            .pane(pane)
+                            .and_then(|pane_state| pane_state.active_tab())
+                            .and_then(|tab| tab.path.clone());
+                        if let Some(path) = path {
+                            effects.push(Effect::GitRefreshStatus {
+                                repo_root: repo_root.clone(),
+                            });
+                            effects.push(Effect::GitRefreshDiff { repo_root, path });
+                        }
+                    }
+                    return DispatchResult {
+                        effects,
+                        state_changed,
+                    };
                 }
             }
             Command::FocusNextEditorPane => {
@@ -2245,6 +2713,35 @@ impl Store {
                     self.state.ui.focus = FocusTarget::Editor;
                     state_changed = true;
                 }
+
+                if !state_changed {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                }
+
+                let pane = self.state.ui.editor_layout.active_pane;
+                let mut effects = effects;
+                if let Some(repo_root) = self.state.git.repo_root.clone() {
+                    let path = self
+                        .state
+                        .editor
+                        .pane(pane)
+                        .and_then(|pane_state| pane_state.active_tab())
+                        .and_then(|tab| tab.path.clone());
+                    if let Some(path) = path {
+                        effects.push(Effect::GitRefreshStatus {
+                            repo_root: repo_root.clone(),
+                        });
+                        effects.push(Effect::GitRefreshDiff { repo_root, path });
+                    }
+                }
+
+                return DispatchResult {
+                    effects,
+                    state_changed,
+                };
             }
             Command::FocusPrevEditorPane => {
                 let panes = self.state.ui.editor_layout.panes.max(1);
@@ -2258,6 +2755,35 @@ impl Store {
                     self.state.ui.focus = FocusTarget::Editor;
                     state_changed = true;
                 }
+
+                if !state_changed {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                }
+
+                let pane = self.state.ui.editor_layout.active_pane;
+                let mut effects = effects;
+                if let Some(repo_root) = self.state.git.repo_root.clone() {
+                    let path = self
+                        .state
+                        .editor
+                        .pane(pane)
+                        .and_then(|pane_state| pane_state.active_tab())
+                        .and_then(|tab| tab.path.clone());
+                    if let Some(path) = path {
+                        effects.push(Effect::GitRefreshStatus {
+                            repo_root: repo_root.clone(),
+                        });
+                        effects.push(Effect::GitRefreshDiff { repo_root, path });
+                    }
+                }
+
+                return DispatchResult {
+                    effects,
+                    state_changed,
+                };
             }
             Command::ToggleBottomPanel => {
                 let visible = !self.state.ui.bottom_panel.visible;
@@ -3924,6 +4450,10 @@ impl Store {
             }
             other => {
                 let pane = self.state.ui.editor_layout.active_pane;
+                let should_git_refresh = matches!(
+                    other,
+                    Command::NextTab | Command::PrevTab | Command::CloseTab
+                );
                 let (changed, cmd_effects) = self.state.editor.apply_command(pane, other);
                 if changed {
                     state_changed = true;
@@ -3931,6 +4461,23 @@ impl Store {
                 // TODO: avoid allocation by using SmallVec if needed.
                 let mut effects = effects;
                 effects.extend(cmd_effects);
+
+                if should_git_refresh {
+                    if let Some(repo_root) = self.state.git.repo_root.clone() {
+                        let path = self
+                            .state
+                            .editor
+                            .pane(pane)
+                            .and_then(|pane_state| pane_state.active_tab())
+                            .and_then(|tab| tab.path.clone());
+                        if let Some(path) = path {
+                            effects.push(Effect::GitRefreshStatus {
+                                repo_root: repo_root.clone(),
+                            });
+                            effects.push(Effect::GitRefreshDiff { repo_root, path });
+                        }
+                    }
+                }
 
                 let had_signature_help = self.state.ui.signature_help.visible
                     || self.state.ui.signature_help.request.is_some()

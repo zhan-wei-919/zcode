@@ -12,10 +12,11 @@ pub(super) enum ActivityItem {
     Find,
     Replace,
     Palette,
+    Git,
     Settings,
 }
 
-const ACTIVITY_ITEMS: [ActivityItem; 9] = [
+const ACTIVITY_ITEMS: [ActivityItem; 10] = [
     ActivityItem::Explorer,
     ActivityItem::Search,
     ActivityItem::Problems,
@@ -24,6 +25,7 @@ const ACTIVITY_ITEMS: [ActivityItem; 9] = [
     ActivityItem::Find,
     ActivityItem::Replace,
     ActivityItem::Palette,
+    ActivityItem::Git,
     ActivityItem::Settings,
 ];
 
@@ -38,6 +40,7 @@ impl ActivityItem {
             ActivityItem::Find => '\u{f00e}',
             ActivityItem::Replace => '\u{f0ec}',
             ActivityItem::Palette => '\u{f11c}',
+            ActivityItem::Git => '\u{e0a0}',
             ActivityItem::Settings => '\u{f013}',
         }
     }
