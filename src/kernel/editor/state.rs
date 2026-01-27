@@ -242,11 +242,7 @@ impl EditorTabState {
         semantic.lines(start_line, end_line_exclusive)
     }
 
-    pub fn set_semantic_highlight(
-        &mut self,
-        version: u64,
-        lines: Vec<Vec<HighlightSpan>>,
-    ) -> bool {
+    pub fn set_semantic_highlight(&mut self, version: u64, lines: Vec<Vec<HighlightSpan>>) -> bool {
         let segment = SemanticHighlightSegment::new(0, lines.clone());
         let same = self
             .semantic_highlight
@@ -340,13 +336,19 @@ impl EditorTabState {
         semantic.line(line)
     }
 
-    pub fn inlay_hint_lines(&self, start_line: usize, end_line_exclusive: usize) -> Option<&[Vec<String>]> {
+    pub fn inlay_hint_lines(
+        &self,
+        start_line: usize,
+        end_line_exclusive: usize,
+    ) -> Option<&[Vec<String>]> {
         let hints = self.inlay_hints.as_ref()?;
         if start_line < hints.start_line || end_line_exclusive > hints.end_line_exclusive {
             return None;
         }
         let start = start_line.saturating_sub(hints.start_line);
-        let end = end_line_exclusive.saturating_sub(hints.start_line).min(hints.lines.len());
+        let end = end_line_exclusive
+            .saturating_sub(hints.start_line)
+            .min(hints.lines.len());
         if start >= end {
             return None;
         }
@@ -391,9 +393,7 @@ impl EditorTabState {
     }
 
     pub(crate) fn fold_marker_char(&self, line: u32) -> Option<char> {
-        self.folding
-            .as_ref()
-            .and_then(|s| s.marker_char(line))
+        self.folding.as_ref().and_then(|s| s.marker_char(line))
     }
 
     pub(crate) fn folding_version(&self) -> Option<u64> {
@@ -412,7 +412,11 @@ impl EditorTabState {
 
         let start_line = start_line.min(total_lines.saturating_sub(1));
 
-        let Some(folding) = self.folding.as_ref().filter(|s| !s.hidden_ranges.is_empty()) else {
+        let Some(folding) = self
+            .folding
+            .as_ref()
+            .filter(|s| !s.hidden_ranges.is_empty())
+        else {
             let end = (start_line + height).min(total_lines);
             return (start_line..end).collect();
         };
@@ -573,11 +577,7 @@ impl EditorTabState {
         true
     }
 
-    pub fn set_folding_ranges(
-        &mut self,
-        version: u64,
-        ranges: Vec<LspFoldingRange>,
-    ) -> bool {
+    pub fn set_folding_ranges(&mut self, version: u64, ranges: Vec<LspFoldingRange>) -> bool {
         let mut collapsed = self
             .folding
             .as_ref()
@@ -716,9 +716,7 @@ impl SemanticHighlightState {
     }
 
     fn line(&self, line: usize) -> Option<&[HighlightSpan]> {
-        let idx = self
-            .segments
-            .partition_point(|seg| seg.start_line <= line);
+        let idx = self.segments.partition_point(|seg| seg.start_line <= line);
         let seg = self.segments.get(idx.checked_sub(1)?)?;
         if line < seg.end_line_exclusive() {
             seg.lines
@@ -744,7 +742,9 @@ impl SemanticHighlightState {
         }
 
         let start = start_line.saturating_sub(seg.start_line);
-        let end = end_line_exclusive.saturating_sub(seg.start_line).min(seg.lines.len());
+        let end = end_line_exclusive
+            .saturating_sub(seg.start_line)
+            .min(seg.lines.len());
         if start >= end {
             return None;
         }
@@ -758,10 +758,11 @@ impl SemanticHighlightState {
         deleted_len: usize,
         inserted_len: usize,
     ) {
-        let idx = self
-            .segments
-            .partition_point(|seg| seg.start_line <= line);
-        let Some(seg) = idx.checked_sub(1).and_then(|idx| self.segments.get_mut(idx)) else {
+        let idx = self.segments.partition_point(|seg| seg.start_line <= line);
+        let Some(seg) = idx
+            .checked_sub(1)
+            .and_then(|idx| self.segments.get_mut(idx))
+        else {
             return;
         };
         if line >= seg.end_line_exclusive() {
@@ -854,17 +855,21 @@ impl SemanticHighlightState {
             let rel = line.saturating_sub(seg_start);
             let insert_at = rel.saturating_add(1).min(self.segments[idx].lines.len());
             if inserted > 0 {
-                self.segments[idx]
-                    .lines
-                    .splice(insert_at..insert_at, std::iter::repeat_with(Vec::new).take(inserted));
+                self.segments[idx].lines.splice(
+                    insert_at..insert_at,
+                    std::iter::repeat_with(Vec::new).take(inserted),
+                );
             } else if deleted > 0 {
-                let remove_end = insert_at.saturating_add(deleted).min(self.segments[idx].lines.len());
+                let remove_end = insert_at
+                    .saturating_add(deleted)
+                    .min(self.segments[idx].lines.len());
                 self.segments[idx].lines.drain(insert_at..remove_end);
             }
         }
 
         self.segments.retain(|seg| !seg.lines.is_empty());
-        self.segments.sort_by(|a, b| a.start_line.cmp(&b.start_line));
+        self.segments
+            .sort_by(|a, b| a.start_line.cmp(&b.start_line));
     }
 }
 

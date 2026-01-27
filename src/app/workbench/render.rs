@@ -508,7 +508,9 @@ impl Workbench {
 
         match tab {
             BottomPanelTab::Problems => self.render_bottom_panel_problems(frame, content_area),
-            BottomPanelTab::CodeActions => self.render_bottom_panel_code_actions(frame, content_area),
+            BottomPanelTab::CodeActions => {
+                self.render_bottom_panel_code_actions(frame, content_area)
+            }
             BottomPanelTab::Locations => self.render_bottom_panel_locations(frame, content_area),
             BottomPanelTab::Symbols => self.render_bottom_panel_symbols(frame, content_area),
             BottomPanelTab::SearchResults => {
@@ -1791,10 +1793,7 @@ fn render_explorer_context_menu(workbench: &mut Workbench, frame: &mut Frame, ar
 
     let desired_inner_width = (max_label_w.saturating_add(4)).min(u16::MAX as usize) as u16;
     let desired_inner_height = (items.len().min(u16::MAX as usize)) as u16;
-    let width = desired_inner_width
-        .saturating_add(2)
-        .min(area.width)
-        .max(3);
+    let width = desired_inner_width.saturating_add(2).min(area.width).max(3);
     let height = desired_inner_height
         .saturating_add(2)
         .min(area.height)
@@ -1849,7 +1848,11 @@ fn render_explorer_context_menu(workbench: &mut Workbench, frame: &mut Frame, ar
     let mut lines = Vec::new();
     for (idx, item) in items.iter().enumerate().take(inner.height as usize) {
         let is_selected = idx == selected;
-        let style = if is_selected { selected_style } else { base_style };
+        let style = if is_selected {
+            selected_style
+        } else {
+            base_style
+        };
         let prefix = if is_selected { "▸ " } else { "  " };
         let mut text = format!("{prefix}{}", item.label());
         let pad_to = inner.width as usize;

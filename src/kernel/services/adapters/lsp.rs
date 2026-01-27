@@ -1,14 +1,14 @@
 use crate::core::Service;
-use crate::kernel::problems::{ProblemItem, ProblemRange, ProblemSeverity};
 use crate::kernel::locations::LocationItem;
-use crate::kernel::symbols::SymbolItem;
+use crate::kernel::problems::{ProblemItem, ProblemRange, ProblemSeverity};
 use crate::kernel::services::ports::{
-    LspCodeAction, LspCommand, LspCompletionItem, LspFoldingRange, LspInlayHint, LspPosition,
-    LspInsertTextFormat, LspPositionEncoding, LspRange, LspResourceOp, LspSemanticToken,
-    LspSemanticTokensLegend, LspServerCapabilities, LspTextChange, LspTextEdit, LspWorkspaceEdit,
-    LspWorkspaceFileEdit,
+    LspCodeAction, LspCommand, LspCompletionItem, LspFoldingRange, LspInlayHint,
+    LspInsertTextFormat, LspPosition, LspPositionEncoding, LspRange, LspResourceOp,
+    LspSemanticToken, LspSemanticTokensLegend, LspServerCapabilities, LspTextChange, LspTextEdit,
+    LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use crate::kernel::services::KernelServiceContext;
+use crate::kernel::symbols::SymbolItem;
 use crate::kernel::Action;
 use lsp_server::{ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::Notification as _;
@@ -84,12 +84,19 @@ enum LspRequestKind {
     Hover,
     Definition,
     References,
-    DocumentSymbols { path: PathBuf },
+    DocumentSymbols {
+        path: PathBuf,
+    },
     WorkspaceSymbols,
     CodeAction,
     Completion,
-    CompletionResolve { item_id: u64 },
-    SemanticTokens { path: PathBuf, version: u64 },
+    CompletionResolve {
+        item_id: u64,
+    },
+    SemanticTokens {
+        path: PathBuf,
+        version: u64,
+    },
     SemanticTokensRange {
         path: PathBuf,
         version: u64,
@@ -100,10 +107,15 @@ enum LspRequestKind {
         version: u64,
         range: LspRange,
     },
-    FoldingRange { path: PathBuf, version: u64 },
+    FoldingRange {
+        path: PathBuf,
+        version: u64,
+    },
     SignatureHelp,
     Rename,
-    Format { path: PathBuf },
+    Format {
+        path: PathBuf,
+    },
     ExecuteCommand,
     Shutdown,
 }
@@ -459,7 +471,10 @@ impl LspService {
 
         let params = lsp_types::CodeActionParams {
             text_document: lsp_types::TextDocumentIdentifier { uri },
-            range: lsp_types::Range { start: pos, end: pos },
+            range: lsp_types::Range {
+                start: pos,
+                end: pos,
+            },
             context: lsp_types::CodeActionContext {
                 diagnostics: Vec::new(),
                 only: None,
@@ -532,9 +547,7 @@ impl LspService {
         }
 
         let id = self.next_id();
-        let prev = self
-            .latest_completion_resolve
-            .swap(id, Ordering::Relaxed);
+        let prev = self.latest_completion_resolve.swap(id, Ordering::Relaxed);
         self.track_request(id, LspRequestKind::CompletionResolve { item_id: item.id });
         if prev != 0 && prev != id {
             self.cancel_request(prev);
@@ -1488,9 +1501,9 @@ fn reader_loop(args: ReaderLoopArgs) {
                     }
 
                     if let Some(result) = resp.result.as_ref() {
-                        if let Ok(result) = serde_json::from_value::<lsp_types::InitializeResult>(
-                            result.clone(),
-                        ) {
+                        if let Ok(result) =
+                            serde_json::from_value::<lsp_types::InitializeResult>(result.clone())
+                        {
                             let caps = server_capabilities_from_lsp(&result.capabilities);
                             ctx.dispatch(Action::LspServerCapabilities { capabilities: caps });
                         }
@@ -1532,10 +1545,12 @@ fn reader_loop(args: ReaderLoopArgs) {
                             resp.id == RequestId::from(latest_references.load(Ordering::Relaxed))
                         }
                         LspRequestKind::DocumentSymbols { .. } => {
-                            resp.id == RequestId::from(latest_document_symbols.load(Ordering::Relaxed))
+                            resp.id
+                                == RequestId::from(latest_document_symbols.load(Ordering::Relaxed))
                         }
                         LspRequestKind::WorkspaceSymbols => {
-                            resp.id == RequestId::from(latest_workspace_symbols.load(Ordering::Relaxed))
+                            resp.id
+                                == RequestId::from(latest_workspace_symbols.load(Ordering::Relaxed))
                         }
                         LspRequestKind::CodeAction => {
                             resp.id == RequestId::from(latest_code_action.load(Ordering::Relaxed))
@@ -1545,7 +1560,9 @@ fn reader_loop(args: ReaderLoopArgs) {
                         }
                         LspRequestKind::CompletionResolve { .. } => {
                             resp.id
-                                == RequestId::from(latest_completion_resolve.load(Ordering::Relaxed))
+                                == RequestId::from(
+                                    latest_completion_resolve.load(Ordering::Relaxed),
+                                )
                         }
                         LspRequestKind::SemanticTokens { .. }
                         | LspRequestKind::SemanticTokensRange { .. } => {
@@ -1553,12 +1570,10 @@ fn reader_loop(args: ReaderLoopArgs) {
                                 == RequestId::from(latest_semantic_tokens.load(Ordering::Relaxed))
                         }
                         LspRequestKind::InlayHints { .. } => {
-                            resp.id
-                                == RequestId::from(latest_inlay_hints.load(Ordering::Relaxed))
+                            resp.id == RequestId::from(latest_inlay_hints.load(Ordering::Relaxed))
                         }
                         LspRequestKind::FoldingRange { .. } => {
-                            resp.id
-                                == RequestId::from(latest_folding_range.load(Ordering::Relaxed))
+                            resp.id == RequestId::from(latest_folding_range.load(Ordering::Relaxed))
                         }
                         LspRequestKind::SignatureHelp => {
                             resp.id
@@ -1748,20 +1763,19 @@ fn server_capabilities_from_lsp(caps: &lsp_types::ServerCapabilities) -> LspServ
         .as_ref()
         .map(|provider| {
             let options = match provider {
-                lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => options,
+                lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => {
+                    options
+                }
                 lsp_types::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
                     options,
                 ) => &options.semantic_tokens_options,
             };
 
             let range = options.range.unwrap_or(false);
-            let full = options
-                .full
-                .as_ref()
-                .is_some_and(|full| match full {
-                    lsp_types::SemanticTokensFullOptions::Bool(enabled) => *enabled,
-                    lsp_types::SemanticTokensFullOptions::Delta { .. } => true,
-                });
+            let full = options.full.as_ref().is_some_and(|full| match full {
+                lsp_types::SemanticTokensFullOptions::Bool(enabled) => *enabled,
+                lsp_types::SemanticTokensFullOptions::Delta { .. } => true,
+            });
 
             (range, full)
         })
@@ -1805,17 +1819,17 @@ fn handle_server_request(
             Response::new_ok(req.id, items)
         }
         m if m == lsp_types::request::ApplyWorkspaceEdit::METHOD => {
-            let params = match serde_json::from_value::<lsp_types::ApplyWorkspaceEditParams>(req.params)
-            {
-                Ok(params) => params,
-                Err(err) => {
-                    return Response::new_err(
-                        req.id,
-                        ErrorCode::InvalidParams as i32,
-                        format!("invalid params: {err}"),
-                    );
-                }
-            };
+            let params =
+                match serde_json::from_value::<lsp_types::ApplyWorkspaceEditParams>(req.params) {
+                    Ok(params) => params,
+                    Err(err) => {
+                        return Response::new_err(
+                            req.id,
+                            ErrorCode::InvalidParams as i32,
+                            format!("invalid params: {err}"),
+                        );
+                    }
+                };
 
             let edit = workspace_edit_from_lsp(params.edit);
             if !edit.changes.is_empty() {
@@ -1854,29 +1868,35 @@ fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceCont
     if let Some(err) = resp.error {
         tracing::warn!(code = err.code, error = %err.message, "lsp request failed");
         match &kind {
-            LspRequestKind::Hover => ctx.dispatch(Action::LspHover { text: String::new() }),
+            LspRequestKind::Hover => ctx.dispatch(Action::LspHover {
+                text: String::new(),
+            }),
             LspRequestKind::References => ctx.dispatch(Action::LspReferences { items: Vec::new() }),
             LspRequestKind::DocumentSymbols { .. } | LspRequestKind::WorkspaceSymbols => {
                 ctx.dispatch(Action::LspSymbols { items: Vec::new() })
             }
-            LspRequestKind::CodeAction => ctx.dispatch(Action::LspCodeActions { items: Vec::new() }),
+            LspRequestKind::CodeAction => {
+                ctx.dispatch(Action::LspCodeActions { items: Vec::new() })
+            }
             LspRequestKind::Completion => ctx.dispatch(Action::LspCompletion {
                 items: Vec::new(),
                 is_incomplete: false,
             }),
             LspRequestKind::SemanticTokens { .. } | LspRequestKind::SemanticTokensRange { .. } => {}
             LspRequestKind::InlayHints { .. } => {}
-            LspRequestKind::FoldingRange { path, version } => ctx.dispatch(Action::LspFoldingRanges {
-                path: path.clone(),
-                version: *version,
-                ranges: Vec::new(),
-            }),
-            LspRequestKind::SignatureHelp => {
-                ctx.dispatch(Action::LspSignatureHelp { text: String::new() })
+            LspRequestKind::FoldingRange { path, version } => {
+                ctx.dispatch(Action::LspFoldingRanges {
+                    path: path.clone(),
+                    version: *version,
+                    ranges: Vec::new(),
+                })
             }
-            LspRequestKind::Format { path } => ctx.dispatch(Action::LspFormatCompleted {
-                path: path.clone(),
+            LspRequestKind::SignatureHelp => ctx.dispatch(Action::LspSignatureHelp {
+                text: String::new(),
             }),
+            LspRequestKind::Format { path } => {
+                ctx.dispatch(Action::LspFormatCompleted { path: path.clone() })
+            }
             _ => {}
         }
         return;
@@ -1884,29 +1904,35 @@ fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceCont
 
     let Some(result) = resp.result else {
         match &kind {
-            LspRequestKind::Hover => ctx.dispatch(Action::LspHover { text: String::new() }),
+            LspRequestKind::Hover => ctx.dispatch(Action::LspHover {
+                text: String::new(),
+            }),
             LspRequestKind::References => ctx.dispatch(Action::LspReferences { items: Vec::new() }),
             LspRequestKind::DocumentSymbols { .. } | LspRequestKind::WorkspaceSymbols => {
                 ctx.dispatch(Action::LspSymbols { items: Vec::new() })
             }
-            LspRequestKind::CodeAction => ctx.dispatch(Action::LspCodeActions { items: Vec::new() }),
+            LspRequestKind::CodeAction => {
+                ctx.dispatch(Action::LspCodeActions { items: Vec::new() })
+            }
             LspRequestKind::Completion => ctx.dispatch(Action::LspCompletion {
                 items: Vec::new(),
                 is_incomplete: false,
             }),
             LspRequestKind::SemanticTokens { .. } | LspRequestKind::SemanticTokensRange { .. } => {}
             LspRequestKind::InlayHints { .. } => {}
-            LspRequestKind::FoldingRange { path, version } => ctx.dispatch(Action::LspFoldingRanges {
-                path: path.clone(),
-                version: *version,
-                ranges: Vec::new(),
-            }),
-            LspRequestKind::SignatureHelp => {
-                ctx.dispatch(Action::LspSignatureHelp { text: String::new() })
+            LspRequestKind::FoldingRange { path, version } => {
+                ctx.dispatch(Action::LspFoldingRanges {
+                    path: path.clone(),
+                    version: *version,
+                    ranges: Vec::new(),
+                })
             }
-            LspRequestKind::Format { path } => ctx.dispatch(Action::LspFormatCompleted {
-                path: path.clone(),
+            LspRequestKind::SignatureHelp => ctx.dispatch(Action::LspSignatureHelp {
+                text: String::new(),
             }),
+            LspRequestKind::Format { path } => {
+                ctx.dispatch(Action::LspFormatCompleted { path: path.clone() })
+            }
             _ => {}
         }
         return;
@@ -1949,10 +1975,9 @@ fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceCont
             ctx.dispatch(Action::LspReferences { items });
         }
         LspRequestKind::DocumentSymbols { path } => {
-            let resp =
-                serde_json::from_value::<Option<lsp_types::DocumentSymbolResponse>>(result)
-                    .ok()
-                    .flatten();
+            let resp = serde_json::from_value::<Option<lsp_types::DocumentSymbolResponse>>(result)
+                .ok()
+                .flatten();
 
             let mut items = Vec::new();
             if let Some(resp) = resp {
@@ -1962,7 +1987,9 @@ fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceCont
                     }
                     lsp_types::DocumentSymbolResponse::Flat(symbols) => {
                         for sym in symbols {
-                            if let Some(item) = symbol_item_from_symbol_information(Some(&path), sym) {
+                            if let Some(item) =
+                                symbol_item_from_symbol_information(Some(&path), sym)
+                            {
                                 items.push(item);
                             }
                         }
@@ -1973,10 +2000,9 @@ fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceCont
             ctx.dispatch(Action::LspSymbols { items });
         }
         LspRequestKind::WorkspaceSymbols => {
-            let resp =
-                serde_json::from_value::<Option<lsp_types::WorkspaceSymbolResponse>>(result)
-                    .ok()
-                    .flatten();
+            let resp = serde_json::from_value::<Option<lsp_types::WorkspaceSymbolResponse>>(result)
+                .ok()
+                .flatten();
 
             let mut items = Vec::new();
             if let Some(resp) = resp {
@@ -2096,7 +2122,11 @@ fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceCont
                 tokens,
             });
         }
-        LspRequestKind::InlayHints { path, version, range } => {
+        LspRequestKind::InlayHints {
+            path,
+            version,
+            range,
+        } => {
             let resp = serde_json::from_value::<Option<Vec<lsp_types::InlayHint>>>(result)
                 .ok()
                 .flatten();
@@ -2880,7 +2910,10 @@ fn workspace_edit_from_lsp(edit: lsp_types::WorkspaceEdit) -> LspWorkspaceEdit {
     }
 }
 
-fn merge_text_document_edits(by_path: &mut FxHashMap<PathBuf, Vec<LspTextEdit>>, doc: lsp_types::TextDocumentEdit) {
+fn merge_text_document_edits(
+    by_path: &mut FxHashMap<PathBuf, Vec<LspTextEdit>>,
+    doc: lsp_types::TextDocumentEdit,
+) {
     let Ok(path) = doc.text_document.uri.to_file_path() else {
         return;
     };
@@ -3096,117 +3129,5 @@ fn language_id_for_path(path: &Path) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::kernel::services::ports::{AsyncExecutor, BoxFuture};
-    use crate::kernel::services::KernelServiceHost;
-    use std::sync::mpsc::TryRecvError;
-    use std::sync::Arc;
-
-    #[test]
-    fn file_url_roundtrip_unix() {
-        #[cfg(unix)]
-        {
-            let path = PathBuf::from("/tmp/zcode test.rs");
-            let url = lsp_types::Url::from_file_path(&path).unwrap();
-            let back = url.to_file_path().unwrap();
-            assert_eq!(back, path);
-        }
-    }
-
-    #[test]
-    fn lsp_restart_backoff_blocks_ensure_started() {
-        struct NoopExecutor;
-
-        impl AsyncExecutor for NoopExecutor {
-            fn spawn(&self, _task: BoxFuture) {}
-        }
-
-        let host = KernelServiceHost::new(Arc::new(NoopExecutor));
-        let mut service = LspService::new(PathBuf::from("."), host.context());
-
-        service.schedule_restart_backoff();
-        assert_eq!(service.restart_attempts, 1);
-        assert!(service.restart_backoff_until.is_some());
-        assert!(!service.ensure_started());
-        assert!(service.restart_backoff_until.is_some());
-    }
-
-    #[test]
-    fn lsp_restart_backoff_is_capped() {
-        struct NoopExecutor;
-
-        impl AsyncExecutor for NoopExecutor {
-            fn spawn(&self, _task: BoxFuture) {}
-        }
-
-        let host = KernelServiceHost::new(Arc::new(NoopExecutor));
-        let mut service = LspService::new(PathBuf::from("."), host.context());
-
-        for _ in 0..16 {
-            service.schedule_restart_backoff();
-        }
-
-        let until = service.restart_backoff_until.expect("backoff set");
-        let delay = until.saturating_duration_since(Instant::now());
-        assert!(delay <= Duration::from_secs(5));
-    }
-
-    #[test]
-    fn semantic_tokens_error_does_not_clear_previous_highlight() {
-        struct NoopExecutor;
-
-        impl AsyncExecutor for NoopExecutor {
-            fn spawn(&self, _task: BoxFuture) {}
-        }
-
-        let mut host = KernelServiceHost::new(Arc::new(NoopExecutor));
-        let ctx = host.context();
-
-        handle_response(
-            LspRequestKind::SemanticTokens {
-                path: PathBuf::from("a.rs"),
-                version: 42,
-            },
-            Response {
-                id: RequestId::from(1),
-                result: None,
-                error: Some(lsp_server::ResponseError {
-                    code: 1,
-                    message: "stub error".to_string(),
-                    data: None,
-                }),
-            },
-            &ctx,
-        );
-
-        assert!(matches!(host.try_recv(), Err(TryRecvError::Empty)));
-    }
-
-    #[test]
-    fn semantic_tokens_null_result_does_not_clear_previous_highlight() {
-        struct NoopExecutor;
-
-        impl AsyncExecutor for NoopExecutor {
-            fn spawn(&self, _task: BoxFuture) {}
-        }
-
-        let mut host = KernelServiceHost::new(Arc::new(NoopExecutor));
-        let ctx = host.context();
-
-        handle_response(
-            LspRequestKind::SemanticTokens {
-                path: PathBuf::from("a.rs"),
-                version: 42,
-            },
-            Response {
-                id: RequestId::from(1),
-                result: Some(serde_json::Value::Null),
-                error: None,
-            },
-            &ctx,
-        );
-
-        assert!(matches!(host.try_recv(), Err(TryRecvError::Empty)));
-    }
-}
+#[path = "../../../../tests/unit/kernel/services/adapters/lsp.rs"]
+mod tests;

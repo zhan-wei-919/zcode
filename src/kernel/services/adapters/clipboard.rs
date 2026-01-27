@@ -193,12 +193,5 @@ impl Service for ClipboardService {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_clipboard_service_creation() {
-        let service = ClipboardService::new();
-        assert_eq!(service.name(), "ClipboardService");
-    }
-}
+#[path = "../../../../tests/unit/kernel/services/adapters/clipboard.rs"]
+mod tests;

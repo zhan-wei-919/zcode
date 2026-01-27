@@ -143,7 +143,8 @@ impl Workbench {
                     .last_bottom_panel_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
-                    return self.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+                    return self
+                        .dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
                 } else if self
                     .last_activity_bar_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
@@ -172,7 +173,8 @@ impl Workbench {
                     .last_bottom_panel_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
-                    return self.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+                    return self
+                        .dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
                 } else if self
                     .last_sidebar_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))

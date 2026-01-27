@@ -28,9 +28,9 @@ impl Workbench {
         self.pending_inlay_hints_deadline = None;
         self.pending_folding_range_deadline = None;
 
-        if let Some(service) =
-            self.kernel_services
-                .get_mut::<crate::kernel::services::adapters::LspService>()
+        if let Some(service) = self
+            .kernel_services
+            .get_mut::<crate::kernel::services::adapters::LspService>()
         {
             service.cancel_hover();
         }
@@ -790,9 +790,10 @@ impl Workbench {
                 if util::rect_contains(inner, event.column, event.row) {
                     if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
                         let idx = event.row.saturating_sub(inner.y) as usize;
-                        let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuSetSelected {
-                            index: idx,
-                        });
+                        let _ =
+                            self.dispatch_kernel(KernelAction::ExplorerContextMenuSetSelected {
+                                index: idx,
+                            });
                         let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuConfirm);
                     }
                     return Some(EventResult::Consumed);

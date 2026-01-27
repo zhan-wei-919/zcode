@@ -183,12 +183,14 @@ fn handle_request(
                     retrigger_characters: None,
                     work_done_progress_options: lsp_types::WorkDoneProgressOptions::default(),
                 }),
-                folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(true)),
+                folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(
+                    true,
+                )),
                 semantic_tokens_provider: Some(
                     lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
                         lsp_types::SemanticTokensOptions {
-                            work_done_progress_options:
-                                lsp_types::WorkDoneProgressOptions::default(),
+                            work_done_progress_options: lsp_types::WorkDoneProgressOptions::default(
+                            ),
                             legend: lsp_types::SemanticTokensLegend {
                                 token_types: vec![
                                     lsp_types::SemanticTokenType::KEYWORD,
@@ -318,8 +320,8 @@ fn handle_request(
             )
         }
         m if m == lsp_types::request::ResolveCompletionItem::METHOD => {
-            let item = serde_json::from_value::<lsp_types::CompletionItem>(req.params)
-                .unwrap_or_default();
+            let item =
+                serde_json::from_value::<lsp_types::CompletionItem>(req.params).unwrap_or_default();
             let id = item
                 .data
                 .as_ref()
@@ -345,18 +347,17 @@ fn handle_request(
             (Response::new_ok(req.id, out), None, Vec::new())
         }
         m if m == lsp_types::request::SignatureHelpRequest::METHOD => {
-            let params =
-                serde_json::from_value::<lsp_types::SignatureHelpParams>(req.params)
-                    .unwrap_or_else(|_| lsp_types::SignatureHelpParams {
-                        context: None,
-                        text_document_position_params: lsp_types::TextDocumentPositionParams {
-                            text_document: lsp_types::TextDocumentIdentifier {
-                                uri: lsp_types::Url::parse("file:///").unwrap(),
-                            },
-                            position: lsp_types::Position::new(0, 0),
+            let params = serde_json::from_value::<lsp_types::SignatureHelpParams>(req.params)
+                .unwrap_or_else(|_| lsp_types::SignatureHelpParams {
+                    context: None,
+                    text_document_position_params: lsp_types::TextDocumentPositionParams {
+                        text_document: lsp_types::TextDocumentIdentifier {
+                            uri: lsp_types::Url::parse("file:///").unwrap(),
                         },
-                        work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
-                    });
+                        position: lsp_types::Position::new(0, 0),
+                    },
+                    work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+                });
 
             if let Ok(delay) = std::env::var("ZCODE_LSP_STUB_SIGNATURE_HELP_DELAY_MS") {
                 if let Ok(delay) = delay.trim().parse::<u64>() {
@@ -468,19 +469,18 @@ fn handle_request(
             )
         }
         m if m == lsp_types::request::SemanticTokensRangeRequest::METHOD => {
-            let params =
-                serde_json::from_value::<lsp_types::SemanticTokensRangeParams>(req.params)
-                    .unwrap_or_else(|_| lsp_types::SemanticTokensRangeParams {
-                        work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
-                        partial_result_params: lsp_types::PartialResultParams::default(),
-                        text_document: lsp_types::TextDocumentIdentifier {
-                            uri: lsp_types::Url::parse("file:///").unwrap(),
-                        },
-                        range: lsp_types::Range::new(
-                            lsp_types::Position::new(0, 0),
-                            lsp_types::Position::new(1, 0),
-                        ),
-                    });
+            let params = serde_json::from_value::<lsp_types::SemanticTokensRangeParams>(req.params)
+                .unwrap_or_else(|_| lsp_types::SemanticTokensRangeParams {
+                    work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+                    partial_result_params: lsp_types::PartialResultParams::default(),
+                    text_document: lsp_types::TextDocumentIdentifier {
+                        uri: lsp_types::Url::parse("file:///").unwrap(),
+                    },
+                    range: lsp_types::Range::new(
+                        lsp_types::Position::new(0, 0),
+                        lsp_types::Position::new(1, 0),
+                    ),
+                });
 
             let target_line = params.range.start.line;
             let keyword_len = position_encoding.col_units_for_str("fn");
@@ -587,9 +587,7 @@ fn handle_request(
                 .and_then(|path| path.parent().map(|dir| dir.join("b.rs")))
                 .and_then(|path| lsp_types::Url::from_file_path(path).ok())
                 .or_else(|| {
-                    root.and_then(|root| {
-                        lsp_types::Url::from_file_path(root.join("b.rs")).ok()
-                    })
+                    root.and_then(|root| lsp_types::Url::from_file_path(root.join("b.rs")).ok())
                 });
             if let Some(uri) = b_uri {
                 locations.push(lsp_types::Location {
@@ -601,11 +599,7 @@ fn handle_request(
                 });
             }
 
-            (
-                Response::new_ok(req.id, Some(locations)),
-                None,
-                Vec::new(),
-            )
+            (Response::new_ok(req.id, Some(locations)), None, Vec::new())
         }
         m if m == lsp_types::request::DocumentSymbolRequest::METHOD => {
             let _params =
@@ -706,10 +700,8 @@ fn handle_request(
                 );
             };
 
-            let a_uri =
-                lsp_types::Url::from_file_path(root.join("a.rs")).ok();
-            let b_uri =
-                lsp_types::Url::from_file_path(root.join("b.rs")).ok();
+            let a_uri = lsp_types::Url::from_file_path(root.join("a.rs")).ok();
+            let b_uri = lsp_types::Url::from_file_path(root.join("b.rs")).ok();
             let Some(a_uri) = a_uri else {
                 return (
                     Response::new_ok(req.id, Option::<lsp_types::WorkspaceSymbolResponse>::None),
@@ -783,7 +775,9 @@ fn handle_request(
                     .ok()
                     .and_then(|path| path.parent().map(|dir| dir.join("b.rs")))
                     .and_then(|path| lsp_types::Url::from_file_path(path).ok())
-                    .or_else(|| root.and_then(|root| lsp_types::Url::from_file_path(root.join("b.rs")).ok()));
+                    .or_else(|| {
+                        root.and_then(|root| lsp_types::Url::from_file_path(root.join("b.rs")).ok())
+                    });
                 if let Some(b_uri) = b_uri {
                     let start_col = position_encoding.col_units_for_str("😀");
                     let end_col = start_col + position_encoding.col_units_for_str("hello");
@@ -805,16 +799,18 @@ fn handle_request(
                         change_annotations: None,
                     };
 
-                    actions.push(lsp_types::CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
-                        title: "Stub: Edit unopened file (multibyte)".to_string(),
-                        kind: None,
-                        diagnostics: None,
-                        edit: Some(edit),
-                        command: None,
-                        is_preferred: Some(true),
-                        disabled: None,
-                        data: None,
-                    }));
+                    actions.push(lsp_types::CodeActionOrCommand::CodeAction(
+                        lsp_types::CodeAction {
+                            title: "Stub: Edit unopened file (multibyte)".to_string(),
+                            kind: None,
+                            diagnostics: None,
+                            edit: Some(edit),
+                            command: None,
+                            is_preferred: Some(true),
+                            disabled: None,
+                            data: None,
+                        },
+                    ));
                 }
             }
 
@@ -871,10 +867,12 @@ fn handle_request(
                 .and_then(|path| path.parent().map(|dir| dir.to_path_buf()))
                 .or_else(|| root.cloned());
             if let Some(base_dir) = base_dir {
-                let create_uri = lsp_types::Url::from_file_path(base_dir.join("resource_created.rs")).ok();
+                let create_uri =
+                    lsp_types::Url::from_file_path(base_dir.join("resource_created.rs")).ok();
                 let old_uri = lsp_types::Url::from_file_path(base_dir.join("resource_old.rs")).ok();
                 let new_uri = lsp_types::Url::from_file_path(base_dir.join("resource_new.rs")).ok();
-                let delete_uri = lsp_types::Url::from_file_path(base_dir.join("resource_delete.rs")).ok();
+                let delete_uri =
+                    lsp_types::Url::from_file_path(base_dir.join("resource_delete.rs")).ok();
                 if let (Some(create_uri), Some(old_uri), Some(new_uri), Some(delete_uri)) =
                     (create_uri, old_uri, new_uri, delete_uri)
                 {
@@ -906,37 +904,39 @@ fn handle_request(
                         document_changes: Some(lsp_types::DocumentChanges::Operations(ops)),
                         change_annotations: None,
                     };
-                    actions.push(lsp_types::CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
-                        title: "Stub: Resource operations".to_string(),
-                        kind: None,
-                        diagnostics: None,
-                        edit: Some(edit),
-                        command: None,
-                        is_preferred: Some(false),
-                        disabled: None,
-                        data: None,
-                    }));
+                    actions.push(lsp_types::CodeActionOrCommand::CodeAction(
+                        lsp_types::CodeAction {
+                            title: "Stub: Resource operations".to_string(),
+                            kind: None,
+                            diagnostics: None,
+                            edit: Some(edit),
+                            command: None,
+                            is_preferred: Some(false),
+                            disabled: None,
+                            data: None,
+                        },
+                    ));
                 }
             }
 
             (Response::new_ok(req.id, Some(actions)), None, Vec::new())
         }
         m if m == lsp_types::request::ExecuteCommand::METHOD => {
-            let params =
-                match serde_json::from_value::<lsp_types::ExecuteCommandParams>(req.params) {
-                    Ok(params) => params,
-                    Err(err) => {
-                        return (
-                            Response::new_err(
-                                req.id,
-                                lsp_server::ErrorCode::InvalidParams as i32,
-                                format!("invalid params: {err}"),
-                            ),
-                            None,
-                            Vec::new(),
-                        );
-                    }
-                };
+            let params = match serde_json::from_value::<lsp_types::ExecuteCommandParams>(req.params)
+            {
+                Ok(params) => params,
+                Err(err) => {
+                    return (
+                        Response::new_err(
+                            req.id,
+                            lsp_server::ErrorCode::InvalidParams as i32,
+                            format!("invalid params: {err}"),
+                        ),
+                        None,
+                        Vec::new(),
+                    );
+                }
+            };
 
             let mut extra = Vec::new();
             if params.command == "stub.insert_cmd" {
@@ -1101,7 +1101,9 @@ fn handle_request(
 
             (Response::new_ok(req.id, Some(edit)), None, Vec::new())
         }
-        m if m == lsp_types::request::Shutdown::METHOD => (Response::new_ok(req.id, ()), None, Vec::new()),
+        m if m == lsp_types::request::Shutdown::METHOD => {
+            (Response::new_ok(req.id, ()), None, Vec::new())
+        }
         _ => (
             Response::new_err(
                 req.id,
@@ -1258,10 +1260,7 @@ fn line_starts(text: &str) -> Vec<usize> {
 
 fn line_end(text: &str, line: usize, starts: &[usize]) -> usize {
     let start = starts.get(line).copied().unwrap_or(0);
-    let mut end = starts
-        .get(line + 1)
-        .copied()
-        .unwrap_or_else(|| text.len());
+    let mut end = starts.get(line + 1).copied().unwrap_or_else(|| text.len());
     if end > 0 && end <= text.len() && text.as_bytes().get(end - 1) == Some(&b'\n') {
         end = end.saturating_sub(1);
     }

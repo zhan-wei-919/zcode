@@ -144,4 +144,3 @@ impl SymbolsState {
         self.clamp_scroll();
     }
 }
-

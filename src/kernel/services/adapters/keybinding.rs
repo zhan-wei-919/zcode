@@ -210,7 +210,10 @@ fn default_editor_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::ctrl(KeyCode::Char('.')), Command::LspCompletion);
     bindings.insert(Key::ctrl(KeyCode::Char(' ')), Command::LspCompletion);
     bindings.insert(Key::ctrl_shift(KeyCode::Char('r')), Command::LspRename);
-    bindings.insert(Key::ctrl_shift(KeyCode::Char('o')), Command::LspDocumentSymbols);
+    bindings.insert(
+        Key::ctrl_shift(KeyCode::Char('o')),
+        Command::LspDocumentSymbols,
+    );
     bindings.insert(Key::ctrl(KeyCode::Char('t')), Command::LspWorkspaceSymbols);
     bindings.insert(Key::ctrl_shift(KeyCode::Char('[')), Command::EditorFold);
     bindings.insert(Key::ctrl_shift(KeyCode::Char(']')), Command::EditorUnfold);
@@ -384,62 +387,5 @@ fn default_bottom_panel_keybindings() -> FxHashMap<Key, Command> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn editor_has_cursor_bindings() {
-        let service = KeybindingService::new();
-        assert_eq!(
-            service.resolve(KeybindingContext::Editor, &Key::simple(KeyCode::Left)),
-            Some(&Command::CursorLeft)
-        );
-    }
-
-    #[test]
-    fn global_commands_fall_through_in_editor() {
-        let service = KeybindingService::new();
-        assert_eq!(
-            service.resolve(KeybindingContext::Editor, &Key::ctrl(KeyCode::Char('b'))),
-            Some(&Command::ToggleSidebar)
-        );
-    }
-
-    #[test]
-    fn esc_resolves_to_escape_in_all_contexts() {
-        let service = KeybindingService::new();
-        let esc = Key::simple(KeyCode::Esc);
-        assert_eq!(
-            service.resolve(KeybindingContext::Editor, &esc),
-            Some(&Command::Escape)
-        );
-        assert_eq!(
-            service.resolve(KeybindingContext::CommandPalette, &esc),
-            Some(&Command::Escape)
-        );
-        assert_eq!(
-            service.resolve(KeybindingContext::EditorSearchBar, &esc),
-            Some(&Command::Escape)
-        );
-        assert_eq!(
-            service.resolve(KeybindingContext::SidebarSearch, &esc),
-            Some(&Command::Escape)
-        );
-        assert_eq!(
-            service.resolve(KeybindingContext::BottomPanel, &esc),
-            Some(&Command::Escape)
-        );
-    }
-
-    #[test]
-    fn searchbar_overrides_backspace() {
-        let service = KeybindingService::new();
-        assert_eq!(
-            service.resolve(
-                KeybindingContext::EditorSearchBar,
-                &Key::simple(KeyCode::Backspace)
-            ),
-            Some(&Command::EditorSearchBarBackspace)
-        );
-    }
-}
+#[path = "../../../../tests/unit/kernel/services/adapters/keybinding.rs"]
+mod tests;

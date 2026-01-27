@@ -2,15 +2,15 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::core::Command;
-use crate::kernel::services::ports::LspCodeAction;
 use crate::kernel::editor::EditorAction;
 use crate::kernel::locations::LocationItem;
 use crate::kernel::problems::ProblemItem;
 use crate::kernel::search::SearchViewport;
-use crate::kernel::services::ports::LspCommand;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::GlobalSearchMessage;
+use crate::kernel::services::ports::LspCodeAction;
+use crate::kernel::services::ports::LspCommand;
 use crate::kernel::services::ports::LspCompletionItem;
 use crate::kernel::services::ports::LspFoldingRange;
 use crate::kernel::services::ports::LspInlayHint;
@@ -18,8 +18,8 @@ use crate::kernel::services::ports::LspSemanticToken;
 use crate::kernel::services::ports::LspServerCapabilities;
 use crate::kernel::services::ports::LspTextEdit;
 use crate::kernel::services::ports::LspWorkspaceEdit;
-use crate::kernel::symbols::SymbolItem;
 use crate::kernel::state::BottomPanelTab;
+use crate::kernel::symbols::SymbolItem;
 
 #[derive(Debug, Clone)]
 pub enum Action {

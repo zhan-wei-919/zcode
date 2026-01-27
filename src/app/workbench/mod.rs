@@ -31,6 +31,7 @@ mod mouse;
 mod palette;
 mod render;
 #[cfg(test)]
+#[path = "../../../tests/unit/app/workbench.rs"]
 mod tests;
 mod tick;
 mod util;

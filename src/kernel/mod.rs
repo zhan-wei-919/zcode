@@ -22,7 +22,8 @@ pub use problems::{ProblemItem, ProblemRange, ProblemSeverity, ProblemsState};
 pub use search::{SearchResultItem, SearchResultsSnapshot, SearchState, SearchViewport};
 pub use state::{
     AppState, BottomPanelTab, ConfirmDialogState, EditorLayoutState, ExplorerState, FocusTarget,
-    InputDialogKind, InputDialogState, LspState, PendingAction, SidebarTab, SplitDirection, UiState,
+    InputDialogKind, InputDialogState, LspState, PendingAction, SidebarTab, SplitDirection,
+    UiState,
 };
 pub use store::{DispatchResult, Store};
 pub use symbols::{SymbolItem, SymbolsState};

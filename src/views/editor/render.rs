@@ -498,7 +498,9 @@ impl Widget for EditorGutterWidget<'_> {
             // Reserve last 2 columns: " " + gap.
             let mut x = right.saturating_sub(2);
             if area.width >= 2 {
-                if let Some(marker) = self.tab.fold_marker_char(line.min(u32::MAX as usize) as u32)
+                if let Some(marker) = self
+                    .tab
+                    .fold_marker_char(line.min(u32::MAX as usize) as u32)
                 {
                     buf[(x, y)].set_char(marker).set_style(style);
                 }
@@ -633,15 +635,17 @@ impl Widget for EditorContentWidget<'_> {
                     && selection_range.0 != selection_range.1
                 {
                     style = selection_style;
-                } else if let Some(hl) = style_for_highlight(
-                    semantic_spans,
-                    &mut semantic_idx,
-                    g_start,
-                    self.theme,
-                )
-                .or_else(|| {
-                    style_for_highlight(highlight_spans, &mut highlight_idx, g_start, self.theme)
-                }) {
+                } else if let Some(hl) =
+                    style_for_highlight(semantic_spans, &mut semantic_idx, g_start, self.theme)
+                        .or_else(|| {
+                            style_for_highlight(
+                                highlight_spans,
+                                &mut highlight_idx,
+                                g_start,
+                                self.theme,
+                            )
+                        })
+                {
                     style = base_style.patch(hl);
                 }
 

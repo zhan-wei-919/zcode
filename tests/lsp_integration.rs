@@ -9,9 +9,9 @@ use tempfile::tempdir;
 use zcode::app::Workbench;
 use zcode::core::event::{InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use zcode::kernel::editor::{HighlightKind, HighlightSpan};
-use zcode::kernel::{BottomPanelTab, FocusTarget};
 use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use zcode::kernel::services::ports::LspPositionEncoding;
+use zcode::kernel::{BottomPanelTab, FocusTarget};
 use zcode::tui::view::View;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -222,7 +222,11 @@ fn test_lsp_spawn_sync_requests_and_diagnostics_are_wired() {
 fn test_lsp_rename_applies_workspace_edit() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -280,7 +284,11 @@ fn test_lsp_rename_applies_workspace_edit() {
 fn test_lsp_references_populates_locations_and_opens_selected_item() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -358,7 +366,11 @@ fn test_lsp_references_populates_locations_and_opens_selected_item() {
 fn test_lsp_code_action_applies_edit_and_execute_command() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -444,7 +456,11 @@ fn test_lsp_code_action_applies_edit_and_execute_command() {
 fn test_lsp_range_format_replaces_selection() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -518,7 +534,11 @@ fn test_lsp_range_format_replaces_selection() {
 fn test_lsp_document_symbols_populates_symbols_and_jumps_to_item() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -599,7 +619,11 @@ fn test_lsp_document_symbols_populates_symbols_and_jumps_to_item() {
 fn test_lsp_workspace_symbols_opens_selected_item() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -701,7 +725,11 @@ fn test_lsp_workspace_symbols_opens_selected_item() {
 fn test_lsp_utf8_position_encoding_applies_workspace_edit_to_unopened_file() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -752,9 +780,11 @@ fn test_lsp_utf8_position_encoding_applies_workspace_edit_to_unopened_file() {
     assert_eq!(workbench.state().ui.focus, FocusTarget::BottomPanel);
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().code_actions.items().iter().any(|item| {
-            item.title == "Stub: Edit unopened file (multibyte)"
-        })
+        w.state()
+            .code_actions
+            .items()
+            .iter()
+            .any(|item| item.title == "Stub: Edit unopened file (multibyte)")
     });
 
     let enter = KeyEvent {
@@ -775,7 +805,11 @@ fn test_lsp_utf8_position_encoding_applies_workspace_edit_to_unopened_file() {
 fn test_lsp_resource_operations_create_rename_delete() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -853,7 +887,11 @@ fn test_lsp_resource_operations_create_rename_delete() {
 fn test_lsp_completion_resolve_and_confirm_applies_snippet_and_auto_import() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -949,7 +987,11 @@ fn test_lsp_completion_resolve_and_confirm_applies_snippet_and_auto_import() {
 fn test_lsp_quit_sends_shutdown_and_exit() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -989,7 +1031,11 @@ fn test_lsp_quit_sends_shutdown_and_exit() {
 fn test_lsp_completion_session_reuse_skips_extra_requests() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -1067,7 +1113,11 @@ fn test_lsp_completion_session_reuse_skips_extra_requests() {
 fn test_lsp_completion_incomplete_disables_session_reuse() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -1121,7 +1171,11 @@ fn test_lsp_completion_incomplete_disables_session_reuse() {
 fn test_completion_popup_does_not_close_on_background_lsp_requests() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -1166,10 +1220,7 @@ fn test_completion_popup_does_not_close_on_background_lsp_requests() {
     let started = Instant::now();
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         if !w.state().ui.completion.visible {
-            panic!(
-                "completion popup closed after {:?}",
-                started.elapsed()
-            );
+            panic!("completion popup closed after {:?}", started.elapsed());
         }
         started.elapsed() >= Duration::from_millis(350)
     });
@@ -1179,7 +1230,11 @@ fn test_completion_popup_does_not_close_on_background_lsp_requests() {
 fn test_idle_hover_does_not_trigger_when_cursor_not_on_identifier() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -1231,7 +1286,11 @@ fn test_idle_hover_does_not_trigger_when_cursor_not_on_identifier() {
 fn test_hover_response_does_not_show_after_user_input() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -1242,10 +1301,7 @@ fn test_hover_response_does_not_show_after_user_input() {
         .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
         .remove("ZCODE_LSP_ARGS")
         .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str())
-        .set(
-            "ZCODE_LSP_STUB_HOVER_DELAY_MS",
-            std::ffi::OsStr::new("200"),
-        );
+        .set("ZCODE_LSP_STUB_HOVER_DELAY_MS", std::ffi::OsStr::new("200"));
 
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
@@ -1308,7 +1364,11 @@ fn test_hover_response_does_not_show_after_user_input() {
 fn test_completion_closes_after_deleting_trigger() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -1343,7 +1403,12 @@ fn test_completion_closes_after_deleting_trigger() {
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state().ui.completion.visible
-            && w.state().ui.completion.items.iter().any(|item| item.label == "stubItem")
+            && w.state()
+                .ui
+                .completion
+                .items
+                .iter()
+                .any(|item| item.label == "stubItem")
     });
 
     let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
@@ -1369,7 +1434,11 @@ fn test_completion_closes_after_deleting_trigger() {
 fn test_completion_filters_items_while_typing() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -1405,7 +1474,12 @@ fn test_completion_filters_items_while_typing() {
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state().ui.completion.visible
-            && w.state().ui.completion.items.iter().any(|item| item.label == "stubSnippet")
+            && w.state()
+                .ui
+                .completion
+                .items
+                .iter()
+                .any(|item| item.label == "stubSnippet")
     });
 
     for ch in "stubI".chars() {
@@ -1431,7 +1505,11 @@ fn test_completion_filters_items_while_typing() {
 fn test_semantic_tokens_apply_expected_highlight_kinds() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -1498,7 +1576,11 @@ fn test_semantic_tokens_apply_expected_highlight_kinds() {
 fn test_semantic_tokens_range_is_used_for_large_files() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
@@ -1592,7 +1674,11 @@ fn test_semantic_tokens_range_is_used_for_large_files() {
 fn test_signature_help_closes_after_cursor_leaves_call() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(stub_path.is_file(), "stub binary missing at {}", stub_path.display());
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
 
     let dir = tempdir().unwrap();
     let a_path = dir.path().join("a.rs");
