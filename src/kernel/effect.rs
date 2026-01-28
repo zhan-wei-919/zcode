@@ -140,6 +140,9 @@ pub enum Effect {
     GitListWorktrees {
         repo_root: PathBuf,
     },
+    GitListBranches {
+        repo_root: PathBuf,
+    },
     GitWorktreeAdd {
         repo_root: PathBuf,
         branch: String,

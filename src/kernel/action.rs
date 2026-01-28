@@ -20,7 +20,7 @@ use crate::kernel::services::ports::LspTextEdit;
 use crate::kernel::services::ports::LspWorkspaceEdit;
 use crate::kernel::state::BottomPanelTab;
 use crate::kernel::symbols::SymbolItem;
-use crate::kernel::{GitFileStatusKind, GitGutterMarks, GitHead, GitWorktreeItem};
+use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem};
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -36,7 +36,7 @@ pub enum Action {
     },
     GitRepoCleared,
     GitStatusUpdated {
-        statuses: Vec<(PathBuf, GitFileStatusKind)>,
+        statuses: Vec<(PathBuf, GitFileStatus)>,
     },
     GitDiffUpdated {
         path: PathBuf,
@@ -45,8 +45,14 @@ pub enum Action {
     GitWorktreesUpdated {
         worktrees: Vec<GitWorktreeItem>,
     },
+    GitBranchesUpdated {
+        branches: Vec<String>,
+    },
     GitWorktreeResolved {
         path: PathBuf,
+    },
+    GitCheckoutBranch {
+        branch: String,
     },
     EditorConfigUpdated {
         config: EditorConfig,

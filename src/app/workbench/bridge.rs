@@ -378,6 +378,10 @@ impl Workbench {
                 let _scope = perf::scope("effect.git_worktrees");
                 self.runtime.git_list_worktrees(repo_root);
             }
+            KernelEffect::GitListBranches { repo_root } => {
+                let _scope = perf::scope("effect.git_branches");
+                self.runtime.git_list_branches(repo_root);
+            }
             KernelEffect::GitWorktreeAdd { repo_root, branch } => {
                 let _scope = perf::scope("effect.git_worktree_add");
                 self.runtime.git_worktree_add(repo_root, branch);

@@ -213,6 +213,35 @@ impl AsyncRuntime {
         });
     }
 
+    pub fn git_list_branches(&self, repo_root: PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let output = match git_output(repo_root.as_path(), |cmd| {
+                cmd.arg("for-each-ref")
+                    .arg("--format=%(refname:short)")
+                    .arg("refs/heads");
+            })
+            .await
+            {
+                Ok(out) => out,
+                Err(e) => {
+                    tracing::debug!(error = %e, "git for-each-ref failed");
+                    return;
+                }
+            };
+
+            if !output.status.success() {
+                return;
+            }
+
+            let text = String::from_utf8_lossy(&output.stdout);
+            let mut branches = git_helpers::parse_branch_list(&text);
+            branches.sort();
+            branches.dedup();
+            let _ = tx.send(AppMessage::GitBranchesUpdated { branches });
+        });
+    }
+
     pub fn git_worktree_add(&self, repo_root: PathBuf, branch: String) {
         let tx = self.tx.clone();
         self.runtime.spawn(async move {

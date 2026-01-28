@@ -8,7 +8,7 @@ use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::LspCompletionItem;
 use crate::kernel::services::ports::LspServerCapabilities;
 use crate::kernel::{CodeActionsState, LocationsState, ProblemsState, SymbolsState};
-use crate::kernel::{GitFileStatusKind, GitState};
+use crate::kernel::{GitFileStatus, GitState};
 use crate::models::{should_ignore, FileTree, FileTreeRow, LoadState, NodeId, NodeKind};
 
 use super::editor::EditorState;
@@ -300,7 +300,7 @@ pub struct ExplorerState {
     pub view_height: usize,
     pub scroll_offset: usize,
     pub rows: Vec<FileTreeRow>,
-    pub git_status_by_id: FxHashMap<NodeId, GitFileStatusKind>,
+    pub git_status_by_id: FxHashMap<NodeId, GitFileStatus>,
     index_by_id: FxHashMap<NodeId, usize>,
     last_click: Option<(Instant, NodeId)>,
 }
@@ -332,7 +332,7 @@ impl ExplorerState {
         state
     }
 
-    pub fn set_git_statuses(&mut self, statuses: &FxHashMap<PathBuf, GitFileStatusKind>) -> bool {
+    pub fn set_git_statuses(&mut self, statuses: &FxHashMap<PathBuf, GitFileStatus>) -> bool {
         if statuses.is_empty() {
             if self.git_status_by_id.is_empty() {
                 return false;
@@ -341,7 +341,7 @@ impl ExplorerState {
             return true;
         }
 
-        let mut next: FxHashMap<NodeId, GitFileStatusKind> = FxHashMap::default();
+        let mut next: FxHashMap<NodeId, GitFileStatus> = FxHashMap::default();
         for row in &self.rows {
             let path = self.tree.full_path(row.id);
             if let Some(status) = statuses.get(&path) {

@@ -1,5 +1,5 @@
 use crate::kernel::services::ports::DirEntryInfo;
-use crate::kernel::{GitFileStatusKind, GitGutterMarks, GitHead, GitWorktreeItem};
+use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem};
 use std::path::PathBuf;
 
 pub enum AppMessage {
@@ -48,7 +48,7 @@ pub enum AppMessage {
     },
     GitRepoCleared,
     GitStatusUpdated {
-        statuses: Vec<(PathBuf, GitFileStatusKind)>,
+        statuses: Vec<(PathBuf, GitFileStatus)>,
     },
     GitDiffUpdated {
         path: PathBuf,
@@ -56,6 +56,9 @@ pub enum AppMessage {
     },
     GitWorktreesUpdated {
         worktrees: Vec<GitWorktreeItem>,
+    },
+    GitBranchesUpdated {
+        branches: Vec<String>,
     },
     GitWorktreeResolved {
         path: PathBuf,

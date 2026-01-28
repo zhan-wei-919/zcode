@@ -150,7 +150,7 @@ pub struct Workbench {
     last_sidebar_tabs_area: Option<Rect>,
     last_sidebar_content_area: Option<Rect>,
     last_git_panel_area: Option<Rect>,
-    last_git_worktree_areas: Vec<(usize, Rect)>,
+    last_git_branch_areas: Vec<(String, Rect)>,
     last_explorer_context_menu_area: Option<Rect>,
     last_bottom_panel_area: Option<Rect>,
     last_editor_areas: Vec<Rect>,
@@ -276,7 +276,7 @@ impl Workbench {
             last_sidebar_tabs_area: None,
             last_sidebar_content_area: None,
             last_git_panel_area: None,
-            last_git_worktree_areas: Vec::new(),
+            last_git_branch_areas: Vec::new(),
             last_explorer_context_menu_area: None,
             last_bottom_panel_area: None,
             last_editor_areas: Vec::new(),
@@ -436,6 +436,9 @@ impl Workbench {
             }
             AppMessage::GitWorktreesUpdated { worktrees } => {
                 let _ = self.dispatch_kernel(KernelAction::GitWorktreesUpdated { worktrees });
+            }
+            AppMessage::GitBranchesUpdated { branches } => {
+                let _ = self.dispatch_kernel(KernelAction::GitBranchesUpdated { branches });
             }
             AppMessage::GitWorktreeResolved { path } => {
                 let _ = self.dispatch_kernel(KernelAction::GitWorktreeResolved { path });

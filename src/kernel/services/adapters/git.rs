@@ -1,5 +1,5 @@
 use crate::kernel::git::{
-    GitFileStatusKind, GitGutterMarkKind, GitGutterMarkRange, GitGutterMarks,
+    GitFileStatus, GitFileStatusKind, GitGutterMarkKind, GitGutterMarkRange, GitGutterMarks,
 };
 use crate::kernel::{GitHead, GitWorktreeItem};
 use std::path::{Path, PathBuf};
@@ -73,10 +73,18 @@ pub fn parse_worktree_list(text: &str) -> Vec<GitWorktreeItem> {
     items
 }
 
+pub fn parse_branch_list(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| line.to_string())
+        .collect()
+}
+
 pub fn parse_status_porcelain_z(
     data: &[u8],
     repo_root: &Path,
-) -> Vec<(PathBuf, GitFileStatusKind)> {
+) -> Vec<(PathBuf, GitFileStatus)> {
     let mut out = Vec::new();
     let mut tokens = data.split(|b| *b == 0).filter(|t| !t.is_empty()).peekable();
     while let Some(token) = tokens.next() {
@@ -99,7 +107,6 @@ pub fn parse_status_porcelain_z(
         let path1_raw = &token[3..];
         let path1 = PathBuf::from(String::from_utf8_lossy(path1_raw).to_string());
 
-        let mut status = status_from_xy(x, y);
         let mut path = path1;
 
         if x == 'R' || x == 'C' {
@@ -107,31 +114,43 @@ pub fn parse_status_porcelain_z(
                 let path2 = PathBuf::from(String::from_utf8_lossy(next).to_string());
                 path = path2;
             }
-            if status == GitFileStatusKind::Added {
-                status = GitFileStatusKind::Modified;
-            }
         }
 
-        out.push((repo_root.join(path), status));
+        out.push((repo_root.join(path), status_from_xy(x, y)));
     }
     out
 }
 
-fn status_from_xy(x: char, y: char) -> GitFileStatusKind {
+fn status_from_xy(x: char, y: char) -> GitFileStatus {
     if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
-        return GitFileStatusKind::Conflict;
+        return GitFileStatus {
+            index: Some(GitFileStatusKind::Conflict),
+            worktree: Some(GitFileStatusKind::Conflict),
+        };
     }
+
     if x == '?' && y == '?' {
-        return GitFileStatusKind::Untracked;
+        return GitFileStatus {
+            index: Some(GitFileStatusKind::Untracked),
+            worktree: Some(GitFileStatusKind::Untracked),
+        };
     }
-    if x == 'A' || y == 'A' {
-        return GitFileStatusKind::Added;
+
+    GitFileStatus {
+        index: kind_from_status_char(x),
+        worktree: kind_from_status_char(y),
     }
-    if x == 'M' || y == 'M' || x == 'R' || y == 'R' || x == 'C' || y == 'C' || x == 'D' || y == 'D'
-    {
-        return GitFileStatusKind::Modified;
+}
+
+fn kind_from_status_char(ch: char) -> Option<GitFileStatusKind> {
+    match ch {
+        ' ' => None,
+        '?' => Some(GitFileStatusKind::Untracked),
+        'A' => Some(GitFileStatusKind::Added),
+        'U' => Some(GitFileStatusKind::Conflict),
+        'M' | 'R' | 'C' | 'D' => Some(GitFileStatusKind::Modified),
+        _ => Some(GitFileStatusKind::Modified),
     }
-    GitFileStatusKind::Modified
 }
 
 pub fn parse_diff_hunks_to_gutter_marks(text: &str) -> GitGutterMarks {

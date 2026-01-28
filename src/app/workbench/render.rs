@@ -452,20 +452,20 @@ impl Workbench {
         match active_tab {
             SidebarTab::Explorer => {
                 self.last_git_panel_area = None;
-                self.last_git_worktree_areas.clear();
+                self.last_git_branch_areas.clear();
 
-                let (show_git_panel, worktrees_len) = {
+                let (show_git_panel, branches_len) = {
                     let state = self.store.state();
                     (
                         state.git.repo_root.is_some() && state.ui.git_panel_expanded,
-                        state.git.worktrees.len(),
+                        state.git.branches.len(),
                     )
                 };
 
                 let (tree_area, git_area) = if show_git_panel && content_area.height >= 3 {
-                    let worktrees_len = worktrees_len.max(1) as u16;
+                    let branches_len = branches_len.max(1).min(8) as u16;
                     let max_git_height = content_area.height.saturating_sub(1);
-                    let git_height = (1 + worktrees_len).min(max_git_height);
+                    let git_height = (1 + branches_len).min(max_git_height);
                     let tree_height = content_area.height.saturating_sub(git_height);
                     let tree_area = Rect::new(
                         content_area.x,
@@ -518,7 +518,7 @@ impl Workbench {
         }
 
         let state = self.store.state();
-        let Some(repo_root) = state.git.repo_root.as_ref() else {
+        if state.git.repo_root.is_none() {
             return;
         };
         if !state.ui.git_panel_expanded {
@@ -552,7 +552,16 @@ impl Workbench {
         let inactive_style = base_style;
 
         let max_items = (area.height - 1) as usize;
-        if state.git.worktrees.is_empty() {
+
+        let active_branch = state.git.head.as_ref().and_then(|head| {
+            if head.detached {
+                None
+            } else {
+                head.branch.as_deref()
+            }
+        });
+
+        if state.git.branches.is_empty() {
             if let Some(head) = state.git.head.as_ref() {
                 let mut label = head.display();
                 let end = text_window::truncate_to_width(&label, area.width as usize);
@@ -566,16 +575,27 @@ impl Workbench {
             return;
         }
 
-        for (idx, item) in state.git.worktrees.iter().take(max_items).enumerate() {
+        let mut branches: Vec<&str> =
+            Vec::with_capacity(state.git.branches.len().saturating_add(1));
+        if let Some(active) = active_branch {
+            branches.push(active);
+        }
+        for branch in &state.git.branches {
+            if Some(branch.as_str()) != active_branch {
+                branches.push(branch);
+            }
+        }
+
+        for (idx, branch) in branches.into_iter().take(max_items).enumerate() {
             let y = area.y + 1 + idx as u16;
             if y >= area.y.saturating_add(area.height) {
                 break;
             }
-            let mut label = item.head.display();
+            let mut label = branch.to_string();
             let end = text_window::truncate_to_width(&label, area.width as usize);
             label.truncate(end);
 
-            let is_active = repo_root == &item.path;
+            let is_active = Some(branch) == active_branch;
             let style = if is_active {
                 active_style
             } else {
@@ -586,7 +606,8 @@ impl Workbench {
                 Paragraph::new(Line::from(Span::styled(label, style))),
                 line_area,
             );
-            self.last_git_worktree_areas.push((idx, line_area));
+            self.last_git_branch_areas
+                .push((branch.to_string(), line_area));
         }
     }
 

@@ -3,7 +3,7 @@
 use crate::app::theme::UiTheme;
 use crate::core::event::MouseEvent;
 use crate::core::text_window;
-use crate::kernel::GitFileStatusKind;
+use crate::kernel::{GitFileStatus, GitFileStatusKind};
 use crate::models::{FileTreeRow, NodeId};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -49,7 +49,7 @@ impl ExplorerView {
         &self,
         row: &FileTreeRow,
         is_selected: bool,
-        git_status: Option<GitFileStatusKind>,
+        git_status: Option<GitFileStatus>,
         width: u16,
         theme: &UiTheme,
     ) -> Line<'static> {
@@ -76,21 +76,12 @@ impl ExplorerView {
             Style::default().fg(theme.palette_fg)
         };
 
-        let status_char = git_status.map(|s| s.marker()).unwrap_or(' ');
-        let status_style = match git_status {
-            Some(GitFileStatusKind::Modified) => row_style.fg(theme.header_fg),
-            Some(GitFileStatusKind::Added) => row_style.fg(Color::Green),
-            Some(GitFileStatusKind::Untracked) => row_style.fg(theme.palette_muted_fg),
-            Some(GitFileStatusKind::Conflict) => row_style.fg(theme.error_fg),
-            None => row_style,
-        };
-
         let width = width as usize;
         if width == 0 {
             return Line::default();
         }
 
-        let trailing_width = if width >= 2 { 2 } else { 1 };
+        let trailing_width = 1usize;
         let left_target_width = width.saturating_sub(trailing_width);
 
         let mut left = format!("{indent}{icon}{name}");
@@ -103,19 +94,20 @@ impl ExplorerView {
         let left_width = left.width();
         let pad = " ".repeat(left_target_width.saturating_sub(left_width));
 
-        if trailing_width == 1 {
-            return Line::from(vec![
-                Span::styled(left, row_style),
-                Span::styled(pad, row_style),
-                Span::styled(status_char.to_string(), status_style),
-            ]);
-        }
+        let kind = git_status.and_then(|s| s.primary_kind());
+        let marker = kind.map(|k| k.marker()).unwrap_or(' ');
+        let marker_style = match kind {
+            Some(GitFileStatusKind::Conflict) => row_style.fg(theme.error_fg),
+            Some(GitFileStatusKind::Untracked) => row_style.fg(theme.palette_muted_fg),
+            Some(GitFileStatusKind::Added) => row_style.fg(Color::Green),
+            Some(GitFileStatusKind::Modified) => row_style.fg(theme.header_fg),
+            None => row_style,
+        };
 
         Line::from(vec![
             Span::styled(left, row_style),
             Span::styled(pad, row_style),
-            Span::styled(" ", row_style),
-            Span::styled(status_char.to_string(), status_style),
+            Span::styled(marker.to_string(), marker_style),
         ])
     }
 
@@ -126,7 +118,7 @@ impl ExplorerView {
         rows: &[FileTreeRow],
         selected_id: Option<NodeId>,
         scroll_offset: usize,
-        git_status_by_id: &FxHashMap<NodeId, GitFileStatusKind>,
+        git_status_by_id: &FxHashMap<NodeId, GitFileStatus>,
         theme: &UiTheme,
     ) {
         self.area = Some(area);

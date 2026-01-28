@@ -380,6 +380,7 @@ impl Store {
 
                 if repo_changed {
                     self.state.git.file_status.clear();
+                    self.state.git.branches.clear();
                     let _ = self
                         .state
                         .explorer
@@ -395,7 +396,10 @@ impl Store {
                 effects.push(Effect::GitRefreshStatus {
                     repo_root: repo_root.clone(),
                 });
-                effects.push(Effect::GitListWorktrees { repo_root });
+                effects.push(Effect::GitListWorktrees {
+                    repo_root: repo_root.clone(),
+                });
+                effects.push(Effect::GitListBranches { repo_root });
 
                 DispatchResult {
                     effects,
@@ -406,9 +410,11 @@ impl Store {
                 let had_repo = self.state.git.repo_root.take().is_some();
                 let had_head = self.state.git.head.take().is_some();
                 let had_worktrees = !self.state.git.worktrees.is_empty();
+                let had_branches = !self.state.git.branches.is_empty();
                 let had_status = !self.state.git.file_status.is_empty();
 
                 self.state.git.worktrees.clear();
+                self.state.git.branches.clear();
                 self.state.git.file_status.clear();
                 let explorer_git_changed = self
                     .state
@@ -425,6 +431,7 @@ impl Store {
                     state_changed: had_repo
                         || had_head
                         || had_worktrees
+                        || had_branches
                         || had_status
                         || explorer_git_changed,
                 }
@@ -485,10 +492,56 @@ impl Store {
                     state_changed: true,
                 }
             }
+            Action::GitBranchesUpdated { branches } => {
+                if self.state.git.branches == branches {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+                self.state.git.branches = branches;
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
+                }
+            }
             Action::GitWorktreeResolved { path } => DispatchResult {
                 effects: vec![Effect::Restart { path, hard: false }],
                 state_changed: false,
             },
+            Action::GitCheckoutBranch { branch } => {
+                let Some(repo_root) = self.state.git.repo_root.clone() else {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                };
+
+                let branch = branch.trim();
+                if branch.is_empty() {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                if let Some(head) = self.state.git.head.as_ref() {
+                    if !head.detached && head.branch.as_deref() == Some(branch) {
+                        return DispatchResult {
+                            effects: Vec::new(),
+                            state_changed: false,
+                        };
+                    }
+                }
+
+                DispatchResult {
+                    effects: vec![Effect::GitWorktreeAdd {
+                        repo_root,
+                        branch: branch.to_string(),
+                    }],
+                    state_changed: false,
+                }
+            }
             Action::EditorConfigUpdated { config } => {
                 if self.state.editor.config == config {
                     DispatchResult {
@@ -2021,7 +2074,13 @@ impl Store {
                 },
             },
             Action::ExplorerPathCreated { path, is_dir } => DispatchResult {
-                effects: Vec::new(),
+                effects: self
+                    .state
+                    .git
+                    .repo_root
+                    .clone()
+                    .map(|repo_root| vec![Effect::GitRefreshStatus { repo_root }])
+                    .unwrap_or_default(),
                 state_changed: {
                     let changed = self.state.explorer.apply_path_created(path, is_dir);
                     let git_changed = if changed {
@@ -2035,7 +2094,13 @@ impl Store {
                 },
             },
             Action::ExplorerPathDeleted { path } => DispatchResult {
-                effects: Vec::new(),
+                effects: self
+                    .state
+                    .git
+                    .repo_root
+                    .clone()
+                    .map(|repo_root| vec![Effect::GitRefreshStatus { repo_root }])
+                    .unwrap_or_default(),
                 state_changed: {
                     let changed = self.state.explorer.apply_path_deleted(path);
                     let git_changed = if changed {
@@ -2088,7 +2153,15 @@ impl Store {
                 }
 
                 DispatchResult {
-                    effects: Vec::new(),
+                    effects: if state_changed {
+                        if let Some(repo_root) = self.state.git.repo_root.clone() {
+                            vec![Effect::GitRefreshStatus { repo_root }]
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    },
                     state_changed,
                 }
             }

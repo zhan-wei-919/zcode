@@ -19,8 +19,8 @@ pub use code_actions::CodeActionsState;
 pub use editor::{EditorAction, EditorState};
 pub use effect::Effect;
 pub use git::{
-    GitFileStatusKind, GitGutterMarkKind, GitGutterMarkRange, GitGutterMarks, GitHead, GitState,
-    GitWorktreeItem,
+    GitFileStatus, GitFileStatusKind, GitGutterMarkKind, GitGutterMarkRange, GitGutterMarks,
+    GitHead, GitState, GitWorktreeItem,
 };
 pub use locations::{LocationItem, LocationsState};
 pub use problems::{ProblemItem, ProblemRange, ProblemSeverity, ProblemsState};

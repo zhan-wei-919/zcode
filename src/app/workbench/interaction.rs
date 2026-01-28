@@ -733,8 +733,8 @@ impl Workbench {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if in_git {
-                    let Some((idx, _)) = self
-                        .last_git_worktree_areas
+                    let Some((branch, _)) = self
+                        .last_git_branch_areas
                         .iter()
                         .find(|(_, rect)| util::rect_contains(*rect, event.column, event.row))
                     else {
@@ -742,12 +742,12 @@ impl Workbench {
                     };
 
                     let state = self.store.state();
-                    let Some(item) = state.git.worktrees.get(*idx) else {
-                        return EventResult::Consumed;
-                    };
-                    if state.git.repo_root.as_ref() != Some(&item.path) {
-                        let _ = self.dispatch_kernel(KernelAction::GitWorktreeResolved {
-                            path: item.path.clone(),
+                    let is_active = state.git.head.as_ref().is_some_and(|head| {
+                        !head.detached && head.branch.as_deref() == Some(branch.as_str())
+                    });
+                    if !is_active {
+                        let _ = self.dispatch_kernel(KernelAction::GitCheckoutBranch {
+                            branch: branch.clone(),
                         });
                     }
                     return EventResult::Consumed;
