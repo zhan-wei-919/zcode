@@ -1,5 +1,5 @@
 use crate::kernel::services::ports::DirEntryInfo;
-use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem};
+use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem, TerminalId};
 use std::path::PathBuf;
 
 pub enum AppMessage {
@@ -62,5 +62,17 @@ pub enum AppMessage {
     },
     GitWorktreeResolved {
         path: PathBuf,
+    },
+    TerminalSpawned {
+        id: TerminalId,
+        title: String,
+    },
+    TerminalOutput {
+        id: TerminalId,
+        bytes: Vec<u8>,
+    },
+    TerminalExited {
+        id: TerminalId,
+        code: Option<i32>,
     },
 }

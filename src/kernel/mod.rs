@@ -13,6 +13,7 @@ pub mod services;
 pub mod state;
 pub mod store;
 pub mod symbols;
+pub mod terminal;
 
 pub use action::Action;
 pub use code_actions::CodeActionsState;
@@ -32,3 +33,4 @@ pub use state::{
 };
 pub use store::{DispatchResult, Store};
 pub use symbols::{SymbolItem, SymbolsState};
+pub use terminal::{TerminalId, TerminalSession, TerminalState};

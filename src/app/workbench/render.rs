@@ -232,7 +232,55 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
             let layout = compute_editor_pane_layout(area, pane_state, config);
             cursor_position_editor(&layout, pane_state, config)
         }
-        FocusTarget::BottomPanel | FocusTarget::CommandPalette => None,
+        FocusTarget::BottomPanel => match workbench.store.state().ui.bottom_panel.active_tab {
+            BottomPanelTab::Terminal => cursor_position_terminal(workbench),
+            _ => None,
+        },
+        FocusTarget::CommandPalette => None,
+    }
+}
+
+fn cursor_position_terminal(workbench: &Workbench) -> Option<(u16, u16)> {
+    if !workbench.terminal_cursor_visible {
+        return None;
+    }
+
+    let panel = workbench.last_bottom_panel_area?;
+    if panel.width == 0 || panel.height <= 1 {
+        return None;
+    }
+
+    let content = Rect::new(
+        panel.x,
+        panel.y.saturating_add(1),
+        panel.width,
+        panel.height.saturating_sub(1),
+    );
+    if content.width == 0 || content.height == 0 {
+        return None;
+    }
+
+    let session = workbench.store.state().terminal.active_session()?;
+    if session.scroll_offset > 0 {
+        return None;
+    }
+
+    #[cfg(feature = "terminal")]
+    {
+        if session.parser.screen().hide_cursor() {
+            return None;
+        }
+        let (row, col) = session.parser.screen().cursor_position();
+        let max_x = content.x.saturating_add(content.width.saturating_sub(1));
+        let max_y = content.y.saturating_add(content.height.saturating_sub(1));
+        let x = content.x.saturating_add(col).min(max_x);
+        let y = content.y.saturating_add(row).min(max_y);
+        return Some((x, y));
+    }
+
+    #[cfg(not(feature = "terminal"))]
+    {
+        None
     }
 }
 
@@ -642,6 +690,7 @@ impl Workbench {
                 self.render_bottom_panel_search_results(frame, content_area)
             }
             BottomPanelTab::Logs => self.render_bottom_panel_logs(frame, content_area),
+            BottomPanelTab::Terminal => self.render_bottom_panel_terminal(frame, content_area),
         }
     }
 
@@ -971,6 +1020,51 @@ impl Workbench {
         }
 
         frame.render_widget(Paragraph::new(lines).style(base_style), inner);
+    }
+
+    fn render_bottom_panel_terminal(&mut self, frame: &mut Frame, area: Rect) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let base_style = Style::default()
+            .bg(self.theme.palette_bg)
+            .fg(self.theme.palette_fg);
+
+        let Some(session_id) = self
+            .store
+            .state()
+            .terminal
+            .active_session()
+            .map(|s| s.id)
+        else {
+            let msg = Line::from(Span::styled(
+                "Terminal starting...",
+                Style::default().fg(self.theme.palette_muted_fg),
+            ));
+            frame.render_widget(Paragraph::new(msg).style(base_style), area);
+            return;
+        };
+        self.sync_terminal_view_size(session_id, area.width, area.height);
+
+        #[cfg(feature = "terminal")]
+        {
+            let Some(session) = self.store.state().terminal.active_session() else {
+                return;
+            };
+            let rows = session.visible_rows(area.width, area.height);
+            let lines = rows.into_iter().map(Line::from).collect::<Vec<_>>();
+            frame.render_widget(Paragraph::new(lines).style(base_style), area);
+        }
+
+        #[cfg(not(feature = "terminal"))]
+        {
+            let msg = Line::from(Span::styled(
+                "Terminal disabled",
+                Style::default().fg(self.theme.palette_muted_fg),
+            ));
+            frame.render_widget(Paragraph::new(msg).style(base_style), area);
+        }
     }
 
     fn render_hover_popup(&self, frame: &mut Frame, area: Rect) {
@@ -1829,6 +1923,24 @@ impl Workbench {
         self.last_symbols_panel_height = Some(height);
         let _ = self.dispatch_kernel(KernelAction::SymbolsSetViewHeight {
             height: height as usize,
+        });
+    }
+
+    fn sync_terminal_view_size(&mut self, id: crate::kernel::TerminalId, width: u16, height: u16) {
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        let next = Some((width, height));
+        if self.last_terminal_panel_size == next {
+            return;
+        }
+        self.last_terminal_panel_size = next;
+
+        let _ = self.dispatch_kernel(KernelAction::TerminalResize {
+            id,
+            cols: width,
+            rows: height,
         });
     }
 }

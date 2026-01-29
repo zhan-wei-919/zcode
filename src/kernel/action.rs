@@ -20,7 +20,7 @@ use crate::kernel::services::ports::LspTextEdit;
 use crate::kernel::services::ports::LspWorkspaceEdit;
 use crate::kernel::state::BottomPanelTab;
 use crate::kernel::symbols::SymbolItem;
-use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem};
+use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem, TerminalId};
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -154,6 +154,31 @@ pub enum Action {
     },
     SymbolsSetViewHeight {
         height: usize,
+    },
+    TerminalWrite {
+        id: TerminalId,
+        bytes: Vec<u8>,
+    },
+    TerminalResize {
+        id: TerminalId,
+        cols: u16,
+        rows: u16,
+    },
+    TerminalScroll {
+        id: TerminalId,
+        delta: isize,
+    },
+    TerminalSpawned {
+        id: TerminalId,
+        title: String,
+    },
+    TerminalOutput {
+        id: TerminalId,
+        bytes: Vec<u8>,
+    },
+    TerminalExited {
+        id: TerminalId,
+        code: Option<i32>,
     },
     LspDiagnostics {
         path: PathBuf,

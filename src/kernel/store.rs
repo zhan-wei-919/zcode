@@ -1108,9 +1108,16 @@ impl Store {
                 let next = tab.clone();
                 self.state.ui.bottom_panel.visible = true;
                 self.state.ui.bottom_panel.active_tab = tab;
+                let mut effects = Vec::new();
+                let mut state_changed = !prev_visible || prev != next;
+                if next == BottomPanelTab::Terminal {
+                    let (changed, terminal_effects) = self.ensure_terminal_session();
+                    state_changed |= changed;
+                    effects.extend(terminal_effects);
+                }
                 DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: !prev_visible || prev != next,
+                    effects,
+                    state_changed,
                 }
             }
             Action::SearchSetViewHeight { viewport, height } => DispatchResult {
@@ -1217,6 +1224,101 @@ impl Store {
                 effects: Vec::new(),
                 state_changed: self.state.symbols.set_view_height(height),
             },
+            Action::TerminalWrite { id, bytes } => {
+                if self.state.terminal.session_mut(id).is_none() {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+                DispatchResult {
+                    effects: vec![Effect::TerminalWrite { id, bytes }],
+                    state_changed: false,
+                }
+            }
+            Action::TerminalResize { id, cols, rows } => {
+                let Some(session) = self.state.terminal.session_mut(id) else {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                };
+                let changed = session.resize(cols, rows);
+                DispatchResult {
+                    effects: if changed {
+                        vec![Effect::TerminalResize { id, cols, rows }]
+                    } else {
+                        Vec::new()
+                    },
+                    state_changed: changed,
+                }
+            }
+            Action::TerminalScroll { id, delta } => {
+                let Some(session) = self.state.terminal.session_mut(id) else {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                };
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: session.scroll(delta),
+                }
+            }
+            Action::TerminalSpawned { id, title } => {
+                let Some(session) = self.state.terminal.session_mut(id) else {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                };
+
+                let title_changed = if session.title != title {
+                    session.title = title;
+                    true
+                } else {
+                    false
+                };
+                session.exited = false;
+                session.exit_code = None;
+
+                DispatchResult {
+                    effects: vec![Effect::TerminalResize {
+                        id,
+                        cols: session.cols,
+                        rows: session.rows,
+                    }],
+                    state_changed: title_changed,
+                }
+            }
+            Action::TerminalOutput { id, bytes } => {
+                let Some(session) = self.state.terminal.session_mut(id) else {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                };
+
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: session.process_output(&bytes),
+                }
+            }
+            Action::TerminalExited { id, code } => {
+                let Some(session) = self.state.terminal.session_mut(id) else {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                };
+
+                session.exited = true;
+                session.exit_code = code;
+                DispatchResult {
+                    effects: vec![Effect::TerminalKill { id }],
+                    state_changed: true,
+                }
+            }
             Action::LspDiagnostics { path, items } => DispatchResult {
                 effects: Vec::new(),
                 state_changed: self.state.problems.update_path(path, items),
@@ -2865,11 +2967,31 @@ impl Store {
                     self.state.ui.focus = FocusTarget::Editor;
                 }
                 state_changed = true;
+                let mut effects = effects;
+                if visible && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
+                    let (changed, terminal_effects) = self.ensure_terminal_session();
+                    state_changed |= changed;
+                    effects.extend(terminal_effects);
+                }
+                return DispatchResult {
+                    effects,
+                    state_changed,
+                };
             }
             Command::FocusBottomPanel => {
                 self.state.ui.bottom_panel.visible = true;
                 self.state.ui.focus = FocusTarget::BottomPanel;
                 state_changed = true;
+                let mut effects = effects;
+                if self.state.ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
+                    let (changed, terminal_effects) = self.ensure_terminal_session();
+                    state_changed |= changed;
+                    effects.extend(terminal_effects);
+                }
+                return DispatchResult {
+                    effects,
+                    state_changed,
+                };
             }
             Command::NextBottomPanelTab => {
                 self.state.ui.bottom_panel.visible = true;
@@ -2882,6 +3004,16 @@ impl Store {
                         state_changed = true;
                     }
                 }
+                let mut effects = effects;
+                if self.state.ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
+                    let (changed, terminal_effects) = self.ensure_terminal_session();
+                    state_changed |= changed;
+                    effects.extend(terminal_effects);
+                }
+                return DispatchResult {
+                    effects,
+                    state_changed,
+                };
             }
             Command::PrevBottomPanelTab => {
                 self.state.ui.bottom_panel.visible = true;
@@ -2894,6 +3026,16 @@ impl Store {
                         state_changed = true;
                     }
                 }
+                let mut effects = effects;
+                if self.state.ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
+                    let (changed, terminal_effects) = self.ensure_terminal_session();
+                    state_changed |= changed;
+                    effects.extend(terminal_effects);
+                }
+                return DispatchResult {
+                    effects,
+                    state_changed,
+                };
             }
             Command::CommandPalette => {
                 let visible = !self.state.ui.command_palette.visible;
@@ -4709,6 +4851,37 @@ impl Store {
 
         any_changed || open_paths_changed
     }
+
+    fn ensure_terminal_session(&mut self) -> (bool, Vec<Effect>) {
+        let cwd = self.state.workspace_root.clone();
+        let cols = 80;
+        let rows = 24;
+        let Some(id) = self
+            .state
+            .terminal
+            .ensure_session(cwd.clone(), cols, rows)
+        else {
+            return (false, Vec::new());
+        };
+
+        let args = if cfg!(windows) {
+            Vec::new()
+        } else {
+            vec!["-l".to_string()]
+        };
+
+        (
+            true,
+            vec![Effect::TerminalSpawn {
+                id,
+                cwd,
+                shell: None,
+                args,
+                cols,
+                rows,
+            }],
+        )
+    }
 }
 
 fn resolve_renamed_path(
@@ -4749,6 +4922,7 @@ fn bottom_panel_tabs() -> Vec<BottomPanelTab> {
         BottomPanelTab::Symbols,
         BottomPanelTab::SearchResults,
         BottomPanelTab::Logs,
+        BottomPanelTab::Terminal,
     ]
 }
 

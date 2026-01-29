@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::kernel::services::ports::{
     LspCompletionItem, LspPositionEncoding, LspRange, LspResourceOp, LspWorkspaceFileEdit,
 };
+use crate::kernel::TerminalId;
 
 #[derive(Debug, Clone)]
 pub enum Effect {
@@ -150,6 +151,26 @@ pub enum Effect {
     GitWorktreeResolve {
         repo_root: PathBuf,
         branch: String,
+    },
+    TerminalSpawn {
+        id: TerminalId,
+        cwd: PathBuf,
+        shell: Option<String>,
+        args: Vec<String>,
+        cols: u16,
+        rows: u16,
+    },
+    TerminalWrite {
+        id: TerminalId,
+        bytes: Vec<u8>,
+    },
+    TerminalResize {
+        id: TerminalId,
+        cols: u16,
+        rows: u16,
+    },
+    TerminalKill {
+        id: TerminalId,
     },
     Restart {
         path: PathBuf,

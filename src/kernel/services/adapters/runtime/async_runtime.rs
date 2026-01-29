@@ -4,16 +4,34 @@ use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::{
     LspPositionEncoding, LspResourceOp, LspTextEdit, LspWorkspaceFileEdit,
 };
+use crate::kernel::TerminalId;
 use crate::models::should_ignore;
 use ropey::Rope;
+#[cfg(feature = "terminal")]
+use std::collections::HashMap;
 use std::io::{self, Write};
+#[cfg(feature = "terminal")]
+use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+#[cfg(feature = "terminal")]
+use std::sync::{Arc, Mutex};
+#[cfg(feature = "terminal")]
+use portable_pty::{CommandBuilder, PtySize};
 
 pub struct AsyncRuntime {
     runtime: tokio::runtime::Runtime,
     tx: Sender<AppMessage>,
+    #[cfg(feature = "terminal")]
+    terminals: Arc<Mutex<HashMap<TerminalId, TerminalHandle>>>,
+}
+
+#[cfg(feature = "terminal")]
+struct TerminalHandle {
+    master: Box<dyn portable_pty::MasterPty + Send>,
+    writer: Box<dyn std::io::Write + Send>,
+    killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
 }
 
 impl AsyncRuntime {
@@ -31,7 +49,12 @@ impl AsyncRuntime {
                     .enable_all()
                     .build()
             })?;
-        Ok(Self { runtime, tx })
+        Ok(Self {
+            runtime,
+            tx,
+            #[cfg(feature = "terminal")]
+            terminals: Arc::new(Mutex::new(HashMap::new())),
+        })
     }
 
     pub fn tokio_handle(&self) -> tokio::runtime::Handle {
@@ -683,6 +706,198 @@ impl AsyncRuntime {
             }
         });
     }
+
+    #[cfg(feature = "terminal")]
+    pub fn terminal_spawn(
+        &self,
+        id: TerminalId,
+        cwd: PathBuf,
+        shell: Option<String>,
+        args: Vec<String>,
+        cols: u16,
+        rows: u16,
+    ) {
+        let tx = self.tx.clone();
+        let terminals = self.terminals.clone();
+        self.runtime.spawn(async move {
+            let tx_for_spawn = tx.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                spawn_terminal_session(id, cwd, shell, args, cols, rows, tx_for_spawn)
+            })
+            .await;
+
+            match result {
+                Ok(Ok((handle, title))) => {
+                    let mut guard = terminals.lock().unwrap();
+                    guard.insert(id, handle);
+                    let _ = tx.send(AppMessage::TerminalSpawned { id, title });
+                }
+                Ok(Err(e)) => {
+                    tracing::error!(error = %e, "terminal spawn failed");
+                    let _ = tx.send(AppMessage::TerminalExited { id, code: None });
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "terminal spawn join failed");
+                    let _ = tx.send(AppMessage::TerminalExited { id, code: None });
+                }
+            }
+        });
+    }
+
+    #[cfg(not(feature = "terminal"))]
+    pub fn terminal_spawn(
+        &self,
+        _id: TerminalId,
+        _cwd: PathBuf,
+        _shell: Option<String>,
+        _args: Vec<String>,
+        _cols: u16,
+        _rows: u16,
+    ) {
+    }
+
+    #[cfg(feature = "terminal")]
+    pub fn terminal_write(&self, id: TerminalId, bytes: Vec<u8>) {
+        if bytes.is_empty() {
+            return;
+        }
+
+        let mut guard = self.terminals.lock().unwrap();
+        let Some(handle) = guard.get_mut(&id) else {
+            return;
+        };
+
+        let _ = handle.writer.write_all(&bytes);
+        let _ = handle.writer.flush();
+    }
+
+    #[cfg(not(feature = "terminal"))]
+    pub fn terminal_write(&self, _id: TerminalId, _bytes: Vec<u8>) {}
+
+    #[cfg(feature = "terminal")]
+    pub fn terminal_resize(&self, id: TerminalId, cols: u16, rows: u16) {
+        if cols == 0 || rows == 0 {
+            return;
+        }
+
+        let guard = self.terminals.lock().unwrap();
+        let Some(handle) = guard.get(&id) else {
+            return;
+        };
+
+        let _ = handle.master.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        });
+    }
+
+    #[cfg(not(feature = "terminal"))]
+    pub fn terminal_resize(&self, _id: TerminalId, _cols: u16, _rows: u16) {}
+
+    #[cfg(feature = "terminal")]
+    pub fn terminal_kill(&self, id: TerminalId) {
+        let mut guard = self.terminals.lock().unwrap();
+        if let Some(mut handle) = guard.remove(&id) {
+            let _ = handle.killer.kill();
+        }
+    }
+
+    #[cfg(not(feature = "terminal"))]
+    pub fn terminal_kill(&self, _id: TerminalId) {}
+}
+
+#[cfg(feature = "terminal")]
+fn spawn_terminal_session(
+    id: TerminalId,
+    cwd: PathBuf,
+    shell: Option<String>,
+    args: Vec<String>,
+    cols: u16,
+    rows: u16,
+    tx: Sender<AppMessage>,
+) -> Result<(TerminalHandle, String), String> {
+    let shell = shell.unwrap_or_else(default_shell);
+    let title = terminal_title(&shell);
+    let pty_system = portable_pty::native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: rows.max(1),
+            cols: cols.max(1),
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut cmd = CommandBuilder::new(&shell);
+    if !args.is_empty() {
+        cmd.args(args);
+    }
+    cmd.cwd(cwd);
+    cmd.env("TERM", "xterm-256color");
+
+    let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let killer = child.clone_killer();
+
+    let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
+    let tx_output = tx.clone();
+    std::thread::spawn(move || {
+        let mut reader = reader;
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let _ = tx_output.send(AppMessage::TerminalOutput {
+                        id,
+                        bytes: buf[..n].to_vec(),
+                    });
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let tx_exit = tx.clone();
+    std::thread::spawn(move || {
+        let code = child
+            .wait()
+            .ok()
+            .map(|status| status.exit_code() as i32);
+        let _ = tx_exit.send(AppMessage::TerminalExited { id, code });
+    });
+
+    let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+    Ok((
+        TerminalHandle {
+            master: pair.master,
+            writer,
+            killer,
+        },
+        title,
+    ))
+}
+
+#[cfg(feature = "terminal")]
+fn default_shell() -> String {
+    #[cfg(windows)]
+    {
+        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+    }
+}
+
+#[cfg(feature = "terminal")]
+fn terminal_title(shell: &str) -> String {
+    std::path::Path::new(shell)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| shell.to_string())
 }
 
 async fn git_output(

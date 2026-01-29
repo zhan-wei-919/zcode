@@ -390,6 +390,29 @@ impl Workbench {
                 let _scope = perf::scope("effect.git_worktree_resolve");
                 self.runtime.git_worktree_resolve(repo_root, branch);
             }
+            KernelEffect::TerminalSpawn {
+                id,
+                cwd,
+                shell,
+                args,
+                cols,
+                rows,
+            } => {
+                let _scope = perf::scope("effect.terminal_spawn");
+                self.runtime.terminal_spawn(id, cwd, shell, args, cols, rows);
+            }
+            KernelEffect::TerminalWrite { id, bytes } => {
+                let _scope = perf::scope("effect.terminal_write");
+                self.runtime.terminal_write(id, bytes);
+            }
+            KernelEffect::TerminalResize { id, cols, rows } => {
+                let _scope = perf::scope("effect.terminal_resize");
+                self.runtime.terminal_resize(id, cols, rows);
+            }
+            KernelEffect::TerminalKill { id } => {
+                let _scope = perf::scope("effect.terminal_kill");
+                self.runtime.terminal_kill(id);
+            }
             KernelEffect::Restart { path, hard } => {
                 self.pending_restart = Some(super::PendingRestart { path, hard });
             }

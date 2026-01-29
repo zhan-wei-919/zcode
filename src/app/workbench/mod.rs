@@ -53,6 +53,7 @@ const COMPLETION_DEBOUNCE_DELAY: Duration = Duration::from_millis(60);
 const SEMANTIC_TOKENS_DEBOUNCE_DELAY: Duration = Duration::from_millis(200);
 const INLAY_HINTS_DEBOUNCE_DELAY: Duration = Duration::from_millis(200);
 const FOLDING_RANGE_DEBOUNCE_DELAY: Duration = Duration::from_millis(250);
+const TERMINAL_CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 struct PendingRestart {
@@ -163,6 +164,9 @@ pub struct Workbench {
     last_locations_panel_height: Option<u16>,
     last_code_actions_panel_height: Option<u16>,
     last_symbols_panel_height: Option<u16>,
+    last_terminal_panel_size: Option<(u16, u16)>,
+    terminal_cursor_visible: bool,
+    terminal_cursor_last_blink: Instant,
     last_editor_container_area: Option<Rect>,
     last_editor_splitter_area: Option<Rect>,
     editor_split_dragging: bool,
@@ -289,6 +293,9 @@ impl Workbench {
             last_locations_panel_height: None,
             last_code_actions_panel_height: None,
             last_symbols_panel_height: None,
+            last_terminal_panel_size: None,
+            terminal_cursor_visible: true,
+            terminal_cursor_last_blink: Instant::now(),
             last_editor_container_area: None,
             last_editor_splitter_area: None,
             editor_split_dragging: false,
@@ -443,6 +450,15 @@ impl Workbench {
             AppMessage::GitWorktreeResolved { path } => {
                 let _ = self.dispatch_kernel(KernelAction::GitWorktreeResolved { path });
             }
+            AppMessage::TerminalSpawned { id, title } => {
+                let _ = self.dispatch_kernel(KernelAction::TerminalSpawned { id, title });
+            }
+            AppMessage::TerminalOutput { id, bytes } => {
+                let _ = self.dispatch_kernel(KernelAction::TerminalOutput { id, bytes });
+            }
+            AppMessage::TerminalExited { id, code } => {
+                let _ = self.dispatch_kernel(KernelAction::TerminalExited { id, code });
+            }
         }
     }
 
@@ -506,6 +522,7 @@ impl Workbench {
                 " SEARCH RESULTS ".to_string(),
             ),
             (BottomPanelTab::Logs, " LOGS ".to_string()),
+            (BottomPanelTab::Terminal, " TERMINAL ".to_string()),
         ]
     }
 

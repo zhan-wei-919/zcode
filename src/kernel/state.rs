@@ -14,6 +14,7 @@ use crate::models::{should_ignore, FileTree, FileTreeRow, LoadState, NodeId, Nod
 use super::editor::EditorState;
 use super::effect::Effect;
 use super::search::SearchState;
+use super::terminal::TerminalState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusTarget {
@@ -37,6 +38,7 @@ pub enum BottomPanelTab {
     Symbols,
     SearchResults,
     Logs,
+    Terminal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +270,7 @@ pub struct AppState {
     pub code_actions: CodeActionsState,
     pub locations: LocationsState,
     pub symbols: SymbolsState,
+    pub terminal: TerminalState,
 }
 
 impl AppState {
@@ -285,6 +288,7 @@ impl AppState {
             code_actions: CodeActionsState::default(),
             locations: LocationsState::default(),
             symbols: SymbolsState::default(),
+            terminal: TerminalState::default(),
         }
     }
 }

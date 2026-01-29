@@ -27,6 +27,12 @@ impl Workbench {
         self.pending_completion_deadline = None;
         self.pending_inlay_hints_deadline = None;
         self.pending_folding_range_deadline = None;
+        if self.store.state().ui.focus == FocusTarget::BottomPanel
+            && self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal
+        {
+            self.terminal_cursor_visible = true;
+            self.terminal_cursor_last_blink = Instant::now();
+        }
 
         if let Some(service) = self
             .kernel_services
@@ -169,6 +175,30 @@ impl Workbench {
             .kernel_services
             .get::<KeybindingService>()
             .and_then(|service| service.resolve(context, &key).cloned());
+
+        let terminal_active = self.store.state().ui.focus == FocusTarget::BottomPanel
+            && self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal;
+
+        if terminal_active
+            && !matches!(
+                cmd.as_ref(),
+                Some(Command::ToggleBottomPanel | Command::FocusBottomPanel)
+            )
+        {
+            if let Some(bytes) = terminal_bytes_for_key_event(key_event) {
+                if let Some(id) = self
+                    .store
+                    .state()
+                    .terminal
+                    .active_session()
+                    .map(|s| s.id)
+                {
+                    let _ = self.dispatch_kernel(KernelAction::TerminalWrite { id, bytes });
+                }
+                return EventResult::Consumed;
+            }
+        }
+
         if let Some(cmd) = cmd {
             if cmd == Command::Copy
                 && self.store.state().ui.focus == FocusTarget::BottomPanel
@@ -271,6 +301,24 @@ impl Workbench {
                     let _ = self.dispatch_kernel(KernelAction::PaletteAppend(ch));
                 }
                 EventResult::Consumed
+            }
+            KeybindingContext::BottomPanel => {
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
+                    if let Some(id) = self
+                        .store
+                        .state()
+                        .terminal
+                        .active_session()
+                        .map(|s| s.id)
+                    {
+                        let _ = self.dispatch_kernel(KernelAction::TerminalWrite {
+                            id,
+                            bytes: text.as_bytes().to_vec(),
+                        });
+                        return EventResult::Consumed;
+                    }
+                }
+                EventResult::Ignored
             }
             _ => EventResult::Ignored,
         }
@@ -1129,6 +1177,18 @@ impl Workbench {
                 EventResult::Ignored
             }
             MouseEventKind::ScrollUp => {
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
+                    if let Some(id) = self
+                        .store
+                        .state()
+                        .terminal
+                        .active_session()
+                        .map(|s| s.id)
+                    {
+                        let _ = self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: -3 });
+                    }
+                    return EventResult::Consumed;
+                }
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::SearchResults {
                     let _ = self.dispatch_kernel(KernelAction::SearchScroll {
                         delta: -3,
@@ -1159,6 +1219,18 @@ impl Workbench {
                 EventResult::Ignored
             }
             MouseEventKind::ScrollDown => {
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
+                    if let Some(id) = self
+                        .store
+                        .state()
+                        .terminal
+                        .active_session()
+                        .map(|s| s.id)
+                    {
+                        let _ = self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: 3 });
+                    }
+                    return EventResult::Consumed;
+                }
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::SearchResults {
                     let _ = self.dispatch_kernel(KernelAction::SearchScroll {
                         delta: 3,
@@ -1236,4 +1308,33 @@ fn completion_debounce_context_allowed(tab: &crate::kernel::editor::EditorTabSta
     }
 
     false
+}
+
+fn terminal_bytes_for_key_event(event: &KeyEvent) -> Option<Vec<u8>> {
+    match (event.code, event.modifiers) {
+        (KeyCode::Char(ch), KeyModifiers::CONTROL) => {
+            let ch = ch.to_ascii_lowercase();
+            Some(vec![(ch as u8) & 0x1f])
+        }
+        (KeyCode::Char(ch), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
+            let mut buf = [0u8; 4];
+            let s = ch.encode_utf8(&mut buf);
+            Some(s.as_bytes().to_vec())
+        }
+        (KeyCode::Enter, _) => Some(vec![b'\r']),
+        (KeyCode::Backspace, _) => Some(vec![0x7f]),
+        (KeyCode::Tab, _) => Some(vec![b'\t']),
+        (KeyCode::BackTab, _) => Some(b"\x1b[Z".to_vec()),
+        (KeyCode::Esc, _) => Some(vec![0x1b]),
+        (KeyCode::Up, _) => Some(b"\x1b[A".to_vec()),
+        (KeyCode::Down, _) => Some(b"\x1b[B".to_vec()),
+        (KeyCode::Right, _) => Some(b"\x1b[C".to_vec()),
+        (KeyCode::Left, _) => Some(b"\x1b[D".to_vec()),
+        (KeyCode::Home, _) => Some(b"\x1b[H".to_vec()),
+        (KeyCode::End, _) => Some(b"\x1b[F".to_vec()),
+        (KeyCode::Delete, _) => Some(b"\x1b[3~".to_vec()),
+        (KeyCode::PageUp, _) => Some(b"\x1b[5~".to_vec()),
+        (KeyCode::PageDown, _) => Some(b"\x1b[6~".to_vec()),
+        _ => None,
+    }
 }

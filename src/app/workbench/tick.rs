@@ -4,7 +4,7 @@ use crate::core::Command;
 use crate::kernel::services::adapters::{ConfigService, KeybindingContext, KeybindingService};
 use crate::kernel::services::ports::{GlobalSearchMessage, SearchMessage};
 use crate::kernel::services::KernelMessage;
-use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget};
+use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget};
 use std::sync::mpsc;
 use std::time::Instant;
 
@@ -23,6 +23,7 @@ impl Workbench {
         changed |= self.poll_inlay_hints_debounce();
         changed |= self.poll_folding_range_debounce();
         changed |= self.poll_idle_hover();
+        changed |= self.poll_terminal_cursor_blink();
 
         changed
     }
@@ -411,6 +412,49 @@ impl Workbench {
             .and_then(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
 
         true
+    }
+
+    fn poll_terminal_cursor_blink(&mut self) -> bool {
+        if self.store.state().ui.focus != FocusTarget::BottomPanel
+            || self.store.state().ui.bottom_panel.active_tab != BottomPanelTab::Terminal
+        {
+            if self.terminal_cursor_visible {
+                self.terminal_cursor_visible = false;
+                return true;
+            }
+            return false;
+        }
+
+        let Some(session) = self.store.state().terminal.active_session() else {
+            return false;
+        };
+
+        if session.scroll_offset > 0 {
+            if self.terminal_cursor_visible {
+                self.terminal_cursor_visible = false;
+                return true;
+            }
+            return false;
+        }
+
+        #[cfg(feature = "terminal")]
+        {
+            if session.parser.screen().hide_cursor() {
+                if self.terminal_cursor_visible {
+                    self.terminal_cursor_visible = false;
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        if self.terminal_cursor_last_blink.elapsed() >= super::TERMINAL_CURSOR_BLINK_INTERVAL {
+            self.terminal_cursor_last_blink = Instant::now();
+            self.terminal_cursor_visible = !self.terminal_cursor_visible;
+            return true;
+        }
+
+        false
     }
 }
 
