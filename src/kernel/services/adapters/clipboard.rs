@@ -12,6 +12,12 @@ const PASTE_MAX_SIZE: usize = 10 * 1024 * 1024; // 10MB
 enum ClipboardProvider {
     #[cfg(target_os = "macos")]
     MacOsPasteboard,
+    #[cfg(target_os = "linux")]
+    LinuxWayland,
+    #[cfg(target_os = "linux")]
+    LinuxX11Xclip,
+    #[cfg(target_os = "linux")]
+    LinuxX11Xsel,
     None,
 }
 
@@ -30,7 +36,10 @@ pub enum ClipboardError {
 impl std::fmt::Display for ClipboardError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ClipboardError::NotAvailable => write!(f, "剪贴板不可用"),
+            ClipboardError::NotAvailable => write!(
+                f,
+                "剪贴板不可用（macOS: pbcopy/pbpaste；Linux: wl-clipboard 或 xclip/xsel）"
+            ),
             ClipboardError::GetFailed(e) => write!(f, "读取剪贴板失败: {}", e),
             ClipboardError::SetFailed(e) => write!(f, "写入剪贴板失败: {}", e),
             ClipboardError::TooLarge(size) => {
@@ -52,7 +61,28 @@ impl ClipboardService {
                 }
             }
 
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "linux")]
+            {
+                // We intentionally depend on external clipboard helpers (like `wl-copy`/`xclip`)
+                // to keep the binary light and avoid pulling in platform-specific libs.
+                //
+                // Wayland
+                if env_is_set("WAYLAND_DISPLAY")
+                    && command_exists("wl-copy")
+                    && command_exists("wl-paste")
+                {
+                    ClipboardProvider::LinuxWayland
+                // X11 (also works under XWayland if DISPLAY is available)
+                } else if env_is_set("DISPLAY") && command_exists("xclip") {
+                    ClipboardProvider::LinuxX11Xclip
+                } else if env_is_set("DISPLAY") && command_exists("xsel") {
+                    ClipboardProvider::LinuxX11Xsel
+                } else {
+                    ClipboardProvider::None
+                }
+            }
+
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             {
                 ClipboardProvider::None
             }
@@ -69,6 +99,12 @@ impl ClipboardService {
         match self.provider {
             #[cfg(target_os = "macos")]
             ClipboardProvider::MacOsPasteboard => macos::pbpaste_text(),
+            #[cfg(target_os = "linux")]
+            ClipboardProvider::LinuxWayland => linux::wl_paste_text(),
+            #[cfg(target_os = "linux")]
+            ClipboardProvider::LinuxX11Xclip => linux::xclip_paste_text(),
+            #[cfg(target_os = "linux")]
+            ClipboardProvider::LinuxX11Xsel => linux::xsel_paste_text(),
             ClipboardProvider::None => Err(ClipboardError::NotAvailable),
         }
     }
@@ -77,9 +113,19 @@ impl ClipboardService {
         match self.provider {
             #[cfg(target_os = "macos")]
             ClipboardProvider::MacOsPasteboard => macos::pbcopy_text(text),
+            #[cfg(target_os = "linux")]
+            ClipboardProvider::LinuxWayland => linux::wl_copy_text(text),
+            #[cfg(target_os = "linux")]
+            ClipboardProvider::LinuxX11Xclip => linux::xclip_copy_text(text),
+            #[cfg(target_os = "linux")]
+            ClipboardProvider::LinuxX11Xsel => linux::xsel_copy_text(text),
             ClipboardProvider::None => Err(ClipboardError::NotAvailable),
         }
     }
+}
+
+fn env_is_set(name: &str) -> bool {
+    std::env::var_os(name).is_some()
 }
 
 fn command_exists(name: &str) -> bool {
@@ -177,6 +223,118 @@ mod macos {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::{ClipboardError, PASTE_MAX_SIZE};
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+
+    fn read_command_text(mut cmd: Command) -> Result<String, ClipboardError> {
+        let mut child = cmd
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| ClipboardError::GetFailed(e.to_string()))?;
+
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ClipboardError::GetFailed("clipboard missing stdout".to_string()))?;
+
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 8192];
+        loop {
+            let n = stdout
+                .read(&mut chunk)
+                .map_err(|e| ClipboardError::GetFailed(e.to_string()))?;
+            if n == 0 {
+                break;
+            }
+            if buf.len().saturating_add(n) > PASTE_MAX_SIZE {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ClipboardError::TooLarge(buf.len().saturating_add(n)));
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+
+        let status = child
+            .wait()
+            .map_err(|e| ClipboardError::GetFailed(e.to_string()))?;
+        if !status.success() {
+            return Err(ClipboardError::GetFailed(format!(
+                "clipboard command failed: {}",
+                status
+            )));
+        }
+
+        String::from_utf8(buf).map_err(|e| ClipboardError::GetFailed(e.to_string()))
+    }
+
+    fn write_command_text(mut cmd: Command, text: &str) -> Result<(), ClipboardError> {
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| ClipboardError::SetFailed(e.to_string()))?;
+
+        {
+            let stdin = child
+                .stdin
+                .as_mut()
+                .ok_or_else(|| ClipboardError::SetFailed("clipboard missing stdin".to_string()))?;
+            stdin
+                .write_all(text.as_bytes())
+                .map_err(|e| ClipboardError::SetFailed(e.to_string()))?;
+        }
+
+        let status = child
+            .wait()
+            .map_err(|e| ClipboardError::SetFailed(e.to_string()))?;
+        if !status.success() {
+            return Err(ClipboardError::SetFailed(format!(
+                "clipboard command failed: {}",
+                status
+            )));
+        }
+        Ok(())
+    }
+
+    pub(super) fn wl_paste_text() -> Result<String, ClipboardError> {
+        read_command_text(Command::new("wl-paste"))
+    }
+
+    pub(super) fn wl_copy_text(text: &str) -> Result<(), ClipboardError> {
+        write_command_text(Command::new("wl-copy"), text)
+    }
+
+    pub(super) fn xclip_paste_text() -> Result<String, ClipboardError> {
+        let mut cmd = Command::new("xclip");
+        cmd.arg("-selection").arg("clipboard").arg("-o");
+        read_command_text(cmd)
+    }
+
+    pub(super) fn xclip_copy_text(text: &str) -> Result<(), ClipboardError> {
+        let mut cmd = Command::new("xclip");
+        cmd.arg("-selection").arg("clipboard").arg("-i");
+        write_command_text(cmd, text)
+    }
+
+    pub(super) fn xsel_paste_text() -> Result<String, ClipboardError> {
+        let mut cmd = Command::new("xsel");
+        cmd.arg("--clipboard").arg("--output");
+        read_command_text(cmd)
+    }
+
+    pub(super) fn xsel_copy_text(text: &str) -> Result<(), ClipboardError> {
+        let mut cmd = Command::new("xsel");
+        cmd.arg("--clipboard").arg("--input");
+        write_command_text(cmd, text)
     }
 }
 
