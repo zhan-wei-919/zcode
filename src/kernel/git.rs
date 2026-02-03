@@ -61,7 +61,8 @@ impl GitFileStatus {
         {
             return Some(GitFileStatusKind::Untracked);
         }
-        if self.index == Some(GitFileStatusKind::Added) || self.worktree == Some(GitFileStatusKind::Added)
+        if self.index == Some(GitFileStatusKind::Added)
+            || self.worktree == Some(GitFileStatusKind::Added)
         {
             return Some(GitFileStatusKind::Added);
         }

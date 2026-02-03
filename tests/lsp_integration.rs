@@ -7,7 +7,9 @@ use std::time::{Duration, Instant};
 
 use tempfile::tempdir;
 use zcode::app::Workbench;
-use zcode::core::event::{InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use zcode::core::event::{
+    InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use zcode::kernel::editor::{HighlightKind, HighlightSpan};
 use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use zcode::kernel::services::ports::LspPositionEncoding;
@@ -1569,6 +1571,207 @@ fn test_semantic_tokens_apply_expected_highlight_kinds() {
                 kind: HighlightKind::Function,
             })
         })
+    });
+}
+
+#[test]
+fn test_inlay_hints_are_applied_for_single_line_file() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "let mut logging_guard = logging::init();").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
+            return false;
+        };
+        let Some(lines) = tab.inlay_hint_lines(0, 1) else {
+            return false;
+        };
+        lines
+            .get(0)
+            .is_some_and(|hints| hints.iter().any(|hint| hint == ": hint0"))
+    });
+
+    let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+    assert!(
+        trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/inlayHint"),
+        "expected inlayHint request in lsp trace"
+    );
+}
+
+#[test]
+fn test_inlay_hints_refresh_after_viewport_size_change() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    let mut content = String::new();
+    for i in 0..60usize {
+        content.push_str(&format!("// line {i}\n"));
+    }
+    std::fs::write(&a_path, content).unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    // Render once so `SetViewportSize` is dispatched; the follow-up inlay-hints request should
+    // expand beyond the default viewport height (20 lines).
+    {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let backend = TestBackend::new(120, 80);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| workbench.render(f, f.area()))
+            .expect("render");
+    }
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
+            return false;
+        };
+        let Some(lines) = tab.inlay_hint_lines(22, 23) else {
+            return false;
+        };
+        lines
+            .get(0)
+            .is_some_and(|hints| hints.iter().any(|hint| hint == ": hint22"))
+    });
+}
+
+#[test]
+fn test_inlay_hints_refresh_after_mouse_scroll() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    let mut content = String::new();
+    for i in 0..200usize {
+        content.push_str(&format!("// line {i}\n"));
+    }
+    std::fs::write(&a_path, content).unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    // Render once so editor mouse events have a hit-testable area.
+    {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let backend = TestBackend::new(120, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| workbench.render(f, f.area()))
+            .expect("render");
+    }
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
+            return false;
+        };
+        let Some(lines) = tab.inlay_hint_lines(0, 1) else {
+            return false;
+        };
+        lines
+            .get(0)
+            .is_some_and(|hints| hints.iter().any(|hint| hint == ": hint0"))
+    });
+
+    let scroll = MouseEvent {
+        kind: MouseEventKind::ScrollDown,
+        column: 10,
+        row: 10,
+        modifiers: KeyModifiers::NONE,
+    };
+    let _ = workbench.handle_input(&InputEvent::Mouse(scroll));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
+            return false;
+        };
+
+        // Ensure the viewport moved and a follow-up inlay-hints request replaced the range.
+        if tab.viewport.line_offset == 0 {
+            return false;
+        }
+
+        let start = tab.viewport.line_offset;
+        let target = format!(": hint{start}");
+
+        tab.inlay_hint_lines(0, 1).is_none()
+            && tab
+                .inlay_hint_lines(start, start + 1)
+                .and_then(|lines| lines.first())
+                .is_some_and(|hints| hints.iter().any(|hint| hint == &target))
     });
 }
 

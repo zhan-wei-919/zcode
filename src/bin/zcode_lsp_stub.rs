@@ -537,7 +537,12 @@ fn handle_request(
                 });
 
             let mut out = Vec::new();
-            for line in params.range.start.line..params.range.end.line {
+            let end_line_exclusive = if params.range.end.character == 0 {
+                params.range.end.line
+            } else {
+                params.range.end.line.saturating_add(1)
+            };
+            for line in params.range.start.line..end_line_exclusive {
                 out.push(lsp_types::InlayHint {
                     position: lsp_types::Position::new(line, 0),
                     label: lsp_types::InlayHintLabel::String(format!(": hint{line}")),

@@ -6,19 +6,19 @@ use crate::kernel::services::ports::{
 };
 use crate::kernel::TerminalId;
 use crate::models::should_ignore;
+#[cfg(feature = "terminal")]
+use portable_pty::{CommandBuilder, PtySize};
 use ropey::Rope;
 #[cfg(feature = "terminal")]
 use std::collections::HashMap;
-use std::io::{self, Write};
 #[cfg(feature = "terminal")]
 use std::io::Read;
+use std::io::{self, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 #[cfg(feature = "terminal")]
 use std::sync::{Arc, Mutex};
-#[cfg(feature = "terminal")]
-use portable_pty::{CommandBuilder, PtySize};
 
 pub struct AsyncRuntime {
     runtime: tokio::runtime::Runtime,
@@ -861,10 +861,7 @@ fn spawn_terminal_session(
 
     let tx_exit = tx.clone();
     std::thread::spawn(move || {
-        let code = child
-            .wait()
-            .ok()
-            .map(|status| status.exit_code() as i32);
+        let code = child.wait().ok().map(|status| status.exit_code() as i32);
         let _ = tx_exit.send(AppMessage::TerminalExited { id, code });
     });
 

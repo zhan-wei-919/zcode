@@ -399,7 +399,8 @@ impl Workbench {
                 rows,
             } => {
                 let _scope = perf::scope("effect.terminal_spawn");
-                self.runtime.terminal_spawn(id, cwd, shell, args, cols, rows);
+                self.runtime
+                    .terminal_spawn(id, cwd, shell, args, cols, rows);
             }
             KernelEffect::TerminalWrite { id, bytes } => {
                 let _scope = perf::scope("effect.terminal_write");

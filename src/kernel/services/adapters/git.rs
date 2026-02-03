@@ -81,10 +81,7 @@ pub fn parse_branch_list(text: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn parse_status_porcelain_z(
-    data: &[u8],
-    repo_root: &Path,
-) -> Vec<(PathBuf, GitFileStatus)> {
+pub fn parse_status_porcelain_z(data: &[u8], repo_root: &Path) -> Vec<(PathBuf, GitFileStatus)> {
     let mut out = Vec::new();
     let mut tokens = data.split(|b| *b == 0).filter(|t| !t.is_empty()).peekable();
     while let Some(token) = tokens.next() {

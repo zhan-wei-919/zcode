@@ -116,7 +116,10 @@ fn terminal_tab_spawns_session_on_activation() {
     });
 
     assert!(store.state.ui.bottom_panel.visible);
-    assert_eq!(store.state.ui.bottom_panel.active_tab, BottomPanelTab::Terminal);
+    assert_eq!(
+        store.state.ui.bottom_panel.active_tab,
+        BottomPanelTab::Terminal
+    );
     assert_eq!(store.state.terminal.active, Some(1));
     assert!(matches!(
         result.effects.as_slice(),
