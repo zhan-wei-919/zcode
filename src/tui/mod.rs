@@ -4,4 +4,6 @@
 //! other frontends (e.g. Web) without depending on terminal crates.
 
 pub mod crossterm;
+pub mod osc52;
+pub mod terminal_guard;
 pub mod view;

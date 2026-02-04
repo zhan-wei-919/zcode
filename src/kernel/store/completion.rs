@@ -6,11 +6,12 @@ use crate::kernel::EditorAction;
 use crate::models::{Granularity, Selection};
 
 pub(super) fn should_close_completion_on_editor_action(action: &EditorAction) -> bool {
-    match action {
-        EditorAction::SetViewportSize { .. } => false,
-        EditorAction::SearchStarted { .. } | EditorAction::SearchMessage { .. } => false,
-        _ => true,
-    }
+    !matches!(
+        action,
+        EditorAction::SetViewportSize { .. }
+            | EditorAction::SearchStarted { .. }
+            | EditorAction::SearchMessage { .. }
+    )
 }
 
 pub(super) fn should_close_completion_on_command(cmd: &Command) -> bool {
@@ -27,7 +28,7 @@ fn completion_keeps_open_on_inserted_char(inserted: char) -> bool {
     inserted.is_alphanumeric() || inserted == '_' || inserted == '.'
 }
 
-pub(super) fn sort_completion_items(items: &mut Vec<LspCompletionItem>) {
+pub(super) fn sort_completion_items(items: &mut [LspCompletionItem]) {
     items.sort_by(|a, b| {
         let a_key = a.sort_text.as_deref().unwrap_or(a.label.as_str());
         let b_key = b.sort_text.as_deref().unwrap_or(b.label.as_str());
@@ -225,7 +226,7 @@ pub(super) fn apply_completion_insertion_cursor(
     let rope = tab.buffer.rope();
     let end_char = cursor_end.min(rope.len_chars());
     let start_char = start_char.min(end_char);
-    if rope.slice(start_char..end_char).to_string() != insertion.text {
+    if rope.slice(start_char..end_char) != insertion.text.as_str() {
         return;
     }
 
@@ -281,7 +282,7 @@ pub(super) fn expand_snippet(snippet: &str) -> SnippetExpansion {
                     let _ = it.next();
                     let mut content = String::new();
                     let mut depth = 0usize;
-                    while let Some(c) = it.next() {
+                    for c in it.by_ref() {
                         match c {
                             '{' => {
                                 depth = depth.saturating_add(1);

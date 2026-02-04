@@ -28,8 +28,7 @@ impl SearchView {
     }
 
     pub fn contains(&self, x: u16, y: u16) -> bool {
-        self.area
-            .is_some_and(|a| a.contains(Pos::new(x, y)))
+        self.area.is_some_and(|a| a.contains(Pos::new(x, y)))
     }
 
     pub fn results_view_height(&self) -> Option<usize> {
@@ -84,16 +83,10 @@ impl SearchView {
         let results_height = area.h.saturating_sub(search_box_height);
 
         let search_area = Rect::new(area.x, area.y, area.w, search_box_height);
-        let results_area = Rect::new(
-            area.x,
-            area.y + search_box_height,
-            area.w,
-            results_height,
-        );
+        let results_area = Rect::new(area.x, area.y + search_box_height, area.w, results_height);
 
         self.search_area = (!search_area.is_empty()).then_some(search_area);
-        self.results_area =
-            (!results_area.is_empty()).then_some(results_area);
+        self.results_area = (!results_area.is_empty()).then_some(results_area);
 
         let bg = Style::default().bg(theme.palette_bg);
         painter.fill_rect(area, bg);
@@ -135,23 +128,31 @@ impl SearchView {
             let row0 = Rect::new(search_area.x, search_area.y, search_area.w, 1);
             let mut x = search_area.x;
             painter.text_clipped(Pos::new(x, search_area.y), SEARCH_LABEL, label_style, row0);
-            x = x.saturating_add(UnicodeWidthStr::width(SEARCH_LABEL).min(u16::MAX as usize) as u16);
+            x = x
+                .saturating_add(UnicodeWidthStr::width(SEARCH_LABEL).min(u16::MAX as usize) as u16);
             painter.text_clipped(Pos::new(x, search_area.y), visible_query, query_style, row0);
-            x = x.saturating_add(UnicodeWidthStr::width(visible_query).min(u16::MAX as usize) as u16);
+            x =
+                x.saturating_add(
+                    UnicodeWidthStr::width(visible_query).min(u16::MAX as usize) as u16
+                );
             painter.text_clipped(
                 Pos::new(x, search_area.y),
                 indicators.pad_between_query,
                 indicator_style,
                 row0,
             );
-            x = x.saturating_add(UnicodeWidthStr::width(indicators.pad_between_query).min(u16::MAX as usize) as u16);
+            x = x.saturating_add(
+                UnicodeWidthStr::width(indicators.pad_between_query).min(u16::MAX as usize) as u16,
+            );
             painter.text_clipped(
                 Pos::new(x, search_area.y),
                 indicators.case_label,
                 indicator_style,
                 row0,
             );
-            x = x.saturating_add(UnicodeWidthStr::width(indicators.case_label).min(u16::MAX as usize) as u16);
+            x = x.saturating_add(
+                UnicodeWidthStr::width(indicators.case_label).min(u16::MAX as usize) as u16,
+            );
             painter.text_clipped(
                 Pos::new(x, search_area.y),
                 indicators.regex_label,
@@ -174,7 +175,12 @@ impl SearchView {
 
         if state.items.is_empty() {
             let row = Rect::new(results_area.x, results_area.y, results_area.w, 1);
-            painter.text_clipped(Pos::new(results_area.x, results_area.y), "No results", muted_style, row);
+            painter.text_clipped(
+                Pos::new(results_area.x, results_area.y),
+                "No results",
+                muted_style,
+                row,
+            );
             return;
         }
 
@@ -190,13 +196,19 @@ impl SearchView {
             if out_row >= height {
                 break;
             }
-            let y = results_area.y.saturating_add(out_row.min(u16::MAX as usize) as u16);
+            let y = results_area
+                .y
+                .saturating_add(out_row.min(u16::MAX as usize) as u16);
             if y >= results_area.bottom() {
                 break;
             }
 
             let is_selected = row == selected;
-            let bg = if is_selected { theme.palette_selected_bg } else { theme.palette_bg };
+            let bg = if is_selected {
+                theme.palette_selected_bg
+            } else {
+                theme.palette_bg
+            };
             let row_bg = Style::default().bg(bg);
             let clip = Rect::new(results_area.x, y, results_area.w, 1);
             painter.fill_rect(clip, row_bg);
@@ -227,15 +239,16 @@ impl SearchView {
                     let icon = if file.expanded { "▼ " } else { "▶ " };
                     let match_count = file.matches.len();
                     let icon_style = Style::default();
-                    let file_style =
-                        Style::default().fg(theme.accent_fg).add_mod(Mod::BOLD);
+                    let file_style = Style::default().fg(theme.accent_fg).add_mod(Mod::BOLD);
                     let count_style = Style::default().fg(theme.palette_muted_fg);
 
                     painter.text_clipped(Pos::new(x, y), " ", Style::default(), clip);
                     x = x.saturating_add(1);
                     painter.text_clipped(Pos::new(x, y), icon, icon_style, clip);
-                    x = x.saturating_add(UnicodeWidthStr::width(icon).min(u16::MAX as usize) as u16);
-                    let file_w = UnicodeWidthStr::width(file_name.as_str()).min(u16::MAX as usize) as u16;
+                    x = x
+                        .saturating_add(UnicodeWidthStr::width(icon).min(u16::MAX as usize) as u16);
+                    let file_w =
+                        UnicodeWidthStr::width(file_name.as_str()).min(u16::MAX as usize) as u16;
                     painter.text_clipped(Pos::new(x, y), file_name, file_style, clip);
                     x = x.saturating_add(file_w);
                     painter.text_clipped(

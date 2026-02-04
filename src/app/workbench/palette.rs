@@ -1,6 +1,6 @@
+use super::paint::centered_rect_ui;
 use super::util;
 use super::Workbench;
-use super::paint::centered_rect_ui;
 use crate::core::text_window;
 use crate::kernel::palette::match_items;
 use crate::ui::core::geom::{Pos, Rect as UiRect};
@@ -58,12 +58,7 @@ pub(super) fn render(workbench: &Workbench, painter: &mut Painter, area: UiRect)
 
     let mut y = inner.y;
     if inner.h >= 1 {
-        painter.text_clipped(
-            Pos::new(inner.x, y),
-            "Command Palette",
-            title_style,
-            inner,
-        );
+        painter.text_clipped(Pos::new(inner.x, y), "Command Palette", title_style, inner);
         y = y.saturating_add(1);
     }
 
@@ -115,7 +110,8 @@ pub(super) fn render(workbench: &Workbench, painter: &mut Painter, area: UiRect)
         let mut label = item.label.to_string();
         let max_w = inner
             .w
-            .saturating_sub(prefix.width().min(u16::MAX as usize) as u16) as usize;
+            .saturating_sub(prefix.width().min(u16::MAX as usize) as u16)
+            as usize;
         if label.width() > max_w {
             let end = text_window::truncate_to_width(&label, max_w);
             label.truncate(end);

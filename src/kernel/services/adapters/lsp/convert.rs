@@ -92,7 +92,7 @@ pub(super) fn server_capabilities_from_lsp(
             .and_then(|p| p.trigger_characters.clone()),
     );
 
-    let semantic_tokens_legend = caps.semantic_tokens_provider.as_ref().and_then(|provider| {
+    let semantic_tokens_legend = caps.semantic_tokens_provider.as_ref().map(|provider| {
         let options = match provider {
             lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => options,
             lsp_types::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
@@ -113,10 +113,10 @@ pub(super) fn server_capabilities_from_lsp(
             .map(|t| t.as_str().to_string())
             .collect::<Vec<_>>();
 
-        Some(LspSemanticTokensLegend {
+        LspSemanticTokensLegend {
             token_types,
             token_modifiers,
-        })
+        }
     });
 
     let (semantic_tokens_range, semantic_tokens_full) = caps
@@ -663,18 +663,20 @@ pub(super) fn completion_item_kind_from_u32(kind: u32) -> Option<lsp_types::Comp
 }
 
 pub(super) fn completion_item_to_lsp(item: &LspCompletionItem) -> lsp_types::CompletionItem {
-    let mut out = lsp_types::CompletionItem::default();
-    out.label = item.label.clone();
-    out.detail = item.detail.clone();
-    out.kind = item.kind.and_then(completion_item_kind_from_u32);
-    out.sort_text = item.sort_text.clone();
-    out.filter_text = item.filter_text.clone();
-    out.insert_text = Some(item.insert_text.clone());
-    out.insert_text_format = Some(match item.insert_text_format {
-        LspInsertTextFormat::PlainText => lsp_types::InsertTextFormat::PLAIN_TEXT,
-        LspInsertTextFormat::Snippet => lsp_types::InsertTextFormat::SNIPPET,
-    });
-    out.data = item.data.clone();
+    let mut out = lsp_types::CompletionItem {
+        label: item.label.clone(),
+        detail: item.detail.clone(),
+        kind: item.kind.and_then(completion_item_kind_from_u32),
+        sort_text: item.sort_text.clone(),
+        filter_text: item.filter_text.clone(),
+        insert_text: Some(item.insert_text.clone()),
+        insert_text_format: Some(match item.insert_text_format {
+            LspInsertTextFormat::PlainText => lsp_types::InsertTextFormat::PLAIN_TEXT,
+            LspInsertTextFormat::Snippet => lsp_types::InsertTextFormat::SNIPPET,
+        }),
+        data: item.data.clone(),
+        ..Default::default()
+    };
 
     if let Some(range) = item.replace_range {
         out.text_edit = Some(lsp_types::CompletionTextEdit::Edit(lsp_types::TextEdit {

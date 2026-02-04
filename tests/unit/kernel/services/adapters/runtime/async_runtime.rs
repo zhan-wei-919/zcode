@@ -134,3 +134,65 @@ fn apply_text_edits_to_rope_sorts_edits_from_bottom_to_top() {
 
     assert_eq!(rope.to_string(), "YXef\n");
 }
+
+#[test]
+fn move_path_rejects_overwrite_by_default() {
+    let dir = tempdir().unwrap();
+    let from = dir.path().join("from.txt");
+    let to = dir.path().join("to.txt");
+    std::fs::write(&from, "FROM").unwrap();
+    std::fs::write(&to, "TO").unwrap();
+
+    let err = move_path(&from, &to, false).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+
+    assert!(from.exists());
+    assert_eq!(std::fs::read_to_string(&to).unwrap(), "TO");
+}
+
+#[test]
+fn move_path_overwrite_replaces_destination() {
+    let dir = tempdir().unwrap();
+    let from = dir.path().join("from.txt");
+    let to = dir.path().join("to.txt");
+    std::fs::write(&from, "FROM").unwrap();
+    std::fs::write(&to, "TO").unwrap();
+
+    move_path(&from, &to, true).unwrap();
+
+    assert!(!from.exists());
+    assert_eq!(std::fs::read_to_string(&to).unwrap(), "FROM");
+}
+
+#[test]
+fn move_path_cross_device_falls_back_to_copy_remove() {
+    let dir = tempdir().unwrap();
+    let from = dir.path().join("from.txt");
+    let to = dir.path().join("to.txt");
+    std::fs::write(&from, "FROM").unwrap();
+
+    move_path_impl(&from, &to, false, |_from, _to| {
+        Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices))
+    })
+    .unwrap();
+
+    assert!(!from.exists());
+    assert_eq!(std::fs::read_to_string(&to).unwrap(), "FROM");
+}
+
+#[test]
+fn move_dir_cross_device_falls_back_to_copy_remove() {
+    let dir = tempdir().unwrap();
+    let from = dir.path().join("src");
+    let to = dir.path().join("dst");
+    std::fs::create_dir_all(&from).unwrap();
+    std::fs::write(from.join("a.txt"), "hello").unwrap();
+
+    move_path_impl(&from, &to, false, |_from, _to| {
+        Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices))
+    })
+    .unwrap();
+
+    assert!(!from.exists());
+    assert_eq!(std::fs::read_to_string(to.join("a.txt")).unwrap(), "hello");
+}

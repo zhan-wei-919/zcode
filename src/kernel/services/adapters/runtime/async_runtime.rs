@@ -435,6 +435,7 @@ impl AsyncRuntime {
                     let _ = tx_for_error.send(AppMessage::FsOpError {
                         op: "write_file",
                         path: path_for_error,
+                        to: None,
                         error: e.to_string(),
                     });
                     false
@@ -443,6 +444,7 @@ impl AsyncRuntime {
                     let _ = tx_for_error.send(AppMessage::FsOpError {
                         op: "write_file",
                         path: path_for_error,
+                        to: None,
                         error: e.to_string(),
                     });
                     false
@@ -477,6 +479,7 @@ impl AsyncRuntime {
                     let _ = tx.send(AppMessage::FsOpError {
                         op: "create_file",
                         path,
+                        to: None,
                         error: e.to_string(),
                     });
                 }
@@ -495,6 +498,7 @@ impl AsyncRuntime {
                     let _ = tx.send(AppMessage::FsOpError {
                         op: "create_dir",
                         path,
+                        to: None,
                         error: e.to_string(),
                     });
                 }
@@ -502,17 +506,37 @@ impl AsyncRuntime {
         });
     }
 
-    pub fn rename_path(&self, from: PathBuf, to: PathBuf) {
+    pub fn rename_path(&self, from: PathBuf, to: PathBuf, overwrite: bool) {
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
-            match tokio::fs::rename(&from, &to).await {
-                Ok(_) => {
+            let tx_for_error = tx.clone();
+            let from_for_error = from.clone();
+            let to_for_error = to.clone();
+            let from_for_work = from.clone();
+            let to_for_work = to.clone();
+
+            let result = tokio::task::spawn_blocking(move || {
+                move_path(from_for_work.as_path(), to_for_work.as_path(), overwrite)
+            })
+            .await;
+
+            match result {
+                Ok(Ok(())) => {
                     let _ = tx.send(AppMessage::PathRenamed { from, to });
                 }
-                Err(e) => {
-                    let _ = tx.send(AppMessage::FsOpError {
+                Ok(Err(e)) => {
+                    let _ = tx_for_error.send(AppMessage::FsOpError {
                         op: "rename_path",
-                        path: from,
+                        path: from_for_error,
+                        to: Some(to_for_error),
+                        error: e.to_string(),
+                    });
+                }
+                Err(e) => {
+                    let _ = tx_for_error.send(AppMessage::FsOpError {
+                        op: "rename_path",
+                        path: from_for_error,
+                        to: Some(to_for_error),
                         error: e.to_string(),
                     });
                 }
@@ -536,6 +560,7 @@ impl AsyncRuntime {
                     let _ = tx.send(AppMessage::FsOpError {
                         op: "delete_path",
                         path,
+                        to: None,
                         error: e.to_string(),
                     });
                 }
@@ -580,6 +605,7 @@ impl AsyncRuntime {
                                 let _ = tx_for_error.send(AppMessage::FsOpError {
                                     op: "apply_create_file",
                                     path,
+                                    to: None,
                                     error: e,
                                 });
                             }
@@ -587,6 +613,7 @@ impl AsyncRuntime {
                                 let _ = tx_for_error.send(AppMessage::FsOpError {
                                     op: "apply_create_file",
                                     path,
+                                    to: None,
                                     error: e.to_string(),
                                 });
                             }
@@ -621,6 +648,7 @@ impl AsyncRuntime {
                                 let _ = tx_for_error.send(AppMessage::FsOpError {
                                     op: "apply_rename_file",
                                     path: old_path,
+                                    to: Some(new_path),
                                     error: e,
                                 });
                             }
@@ -628,6 +656,7 @@ impl AsyncRuntime {
                                 let _ = tx_for_error.send(AppMessage::FsOpError {
                                     op: "apply_rename_file",
                                     path: old_path,
+                                    to: Some(new_path),
                                     error: e.to_string(),
                                 });
                             }
@@ -656,6 +685,7 @@ impl AsyncRuntime {
                                 let _ = tx_for_error.send(AppMessage::FsOpError {
                                     op: "apply_delete_file",
                                     path,
+                                    to: None,
                                     error: e,
                                 });
                             }
@@ -663,6 +693,7 @@ impl AsyncRuntime {
                                 let _ = tx_for_error.send(AppMessage::FsOpError {
                                     op: "apply_delete_file",
                                     path,
+                                    to: None,
                                     error: e.to_string(),
                                 });
                             }
@@ -692,6 +723,7 @@ impl AsyncRuntime {
                         let _ = tx_for_error.send(AppMessage::FsOpError {
                             op: "apply_file_edits",
                             path,
+                            to: None,
                             error: e,
                         });
                     }
@@ -699,6 +731,7 @@ impl AsyncRuntime {
                         let _ = tx_for_error.send(AppMessage::FsOpError {
                             op: "apply_file_edits",
                             path,
+                            to: None,
                             error: e.to_string(),
                         });
                     }
@@ -909,6 +942,136 @@ async fn git_output(
     cmd.output().await
 }
 
+fn move_path(from: &std::path::Path, to: &std::path::Path, overwrite: bool) -> io::Result<()> {
+    move_path_impl(from, to, overwrite, |from, to| std::fs::rename(from, to))
+}
+
+fn move_path_impl(
+    from: &std::path::Path,
+    to: &std::path::Path,
+    overwrite: bool,
+    rename_fn: impl FnOnce(&std::path::Path, &std::path::Path) -> io::Result<()>,
+) -> io::Result<()> {
+    if from == to {
+        return Ok(());
+    }
+
+    let from_meta = std::fs::symlink_metadata(from)?;
+    if from_meta.is_dir() && to.starts_with(from) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot move a directory into itself",
+        ));
+    }
+
+    let Some(parent) = to.parent() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destination has no parent directory",
+        ));
+    };
+    if !std::fs::metadata(parent).is_ok_and(|m| m.is_dir()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destination parent is not a directory",
+        ));
+    }
+
+    if !overwrite && std::fs::symlink_metadata(to).is_ok() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "destination exists",
+        ));
+    }
+
+    if overwrite {
+        remove_existing_path(to)?;
+    }
+
+    match rename_fn(from, to) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::CrossesDevices => move_across_devices(from, to),
+        Err(e) => Err(e),
+    }
+}
+
+fn remove_existing_path(path: &std::path::Path) -> io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if meta.is_dir() {
+                std::fs::remove_dir_all(path)
+            } else {
+                std::fs::remove_file(path)
+            }
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+fn move_across_devices(from: &std::path::Path, to: &std::path::Path) -> io::Result<()> {
+    let from_meta = std::fs::symlink_metadata(from)?;
+    if from_meta.file_type().is_symlink() {
+        copy_symlink(from, to)?;
+        std::fs::remove_file(from)?;
+        return Ok(());
+    }
+
+    if from_meta.is_dir() {
+        copy_dir_recursive(from, to)?;
+        std::fs::remove_dir_all(from)?;
+        return Ok(());
+    }
+
+    std::fs::copy(from, to)?;
+    std::fs::remove_file(from)?;
+    Ok(())
+}
+
+fn copy_dir_recursive(from: &std::path::Path, to: &std::path::Path) -> io::Result<()> {
+    std::fs::create_dir(to)?;
+
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let from_child = entry.path();
+        let to_child = to.join(entry.file_name());
+        let meta = std::fs::symlink_metadata(&from_child)?;
+
+        if meta.file_type().is_symlink() {
+            copy_symlink(&from_child, &to_child)?;
+        } else if meta.is_dir() {
+            copy_dir_recursive(&from_child, &to_child)?;
+        } else {
+            std::fs::copy(&from_child, &to_child)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn copy_symlink(from: &std::path::Path, to: &std::path::Path) -> io::Result<()> {
+    let target = std::fs::read_link(from)?;
+    std::os::unix::fs::symlink(target, to)
+}
+
+#[cfg(windows)]
+fn copy_symlink(from: &std::path::Path, to: &std::path::Path) -> io::Result<()> {
+    let target = std::fs::read_link(from)?;
+    match std::fs::metadata(from) {
+        Ok(meta) if meta.is_dir() => std::os::windows::fs::symlink_dir(target, to),
+        _ => std::os::windows::fs::symlink_file(target, to),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn copy_symlink(_from: &std::path::Path, _to: &std::path::Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "symlinks are not supported on this platform",
+    ))
+}
+
 fn apply_create_file(
     path: &std::path::Path,
     overwrite: bool,
@@ -950,10 +1113,8 @@ fn apply_rename_file(
     overwrite: bool,
     ignore_if_exists: bool,
 ) -> Result<(), String> {
-    if ignore_if_exists {
-        if std::fs::metadata(new_path).is_ok() {
-            return Ok(());
-        }
+    if ignore_if_exists && std::fs::metadata(new_path).is_ok() {
+        return Ok(());
     }
 
     if overwrite {

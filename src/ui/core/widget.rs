@@ -1,5 +1,5 @@
-use super::layout::Insets;
 use super::geom::Rect;
+use super::layout::Insets;
 use super::painter::Painter;
 use super::tree::UiTree;
 
@@ -11,7 +11,11 @@ pub struct Ui<'a> {
 
 impl<'a> Ui<'a> {
     pub fn new(rect: Rect, painter: &'a mut Painter, tree: &'a mut UiTree) -> Self {
-        Self { rect, painter, tree }
+        Self {
+            rect,
+            painter,
+            tree,
+        }
     }
 
     pub fn with_rect<R>(&mut self, rect: Rect, f: impl FnOnce(&mut Ui<'_>) -> R) -> R {

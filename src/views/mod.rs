@@ -14,5 +14,5 @@ pub use editor::{
     hit_test_tab_hover, paint_editor_pane, tab_insertion_index, tab_insertion_x, EditorPaneLayout,
     TabHitResult,
 };
-pub use explorer::ExplorerView;
+pub use explorer::{ExplorerPaintCtx, ExplorerView};
 pub use search::SearchView;

@@ -65,12 +65,7 @@ impl Rect {
         let bottom_h = h.min(self.h);
         let rest_h = self.h.saturating_sub(bottom_h);
         let rest = Rect::new(self.x, self.y, self.w, rest_h);
-        let bottom = Rect::new(
-            self.x,
-            self.y.saturating_add(rest_h),
-            self.w,
-            bottom_h,
-        );
+        let bottom = Rect::new(self.x, self.y.saturating_add(rest_h), self.w, bottom_h);
         (rest, bottom)
     }
 
@@ -90,12 +85,7 @@ impl Rect {
         let right_w = w.min(self.w);
         let rest_w = self.w.saturating_sub(right_w);
         let rest = Rect::new(self.x, self.y, rest_w, self.h);
-        let right = Rect::new(
-            self.x.saturating_add(rest_w),
-            self.y,
-            right_w,
-            self.h,
-        );
+        let right = Rect::new(self.x.saturating_add(rest_w), self.y, right_w, self.h);
         (rest, right)
     }
 
@@ -111,4 +101,3 @@ impl Rect {
 #[cfg(test)]
 #[path = "../../../tests/unit/ui/core/layout.rs"]
 mod tests;
-

@@ -44,13 +44,15 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
                                         state_changed |= workbench.dispatch_kernel(
                                             crate::kernel::Action::ContextMenuSetSelected { index },
                                         );
-                                        state_changed |= workbench
-                                            .dispatch_kernel(crate::kernel::Action::ContextMenuConfirm);
+                                        state_changed |= workbench.dispatch_kernel(
+                                            crate::kernel::Action::ContextMenuConfirm,
+                                        );
                                     }
                                     _ => {
                                         if id == overlay_id {
-                                            state_changed |= workbench
-                                                .dispatch_kernel(crate::kernel::Action::ContextMenuClose);
+                                            state_changed |= workbench.dispatch_kernel(
+                                                crate::kernel::Action::ContextMenuClose,
+                                            );
                                         }
                                     }
                                 }

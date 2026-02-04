@@ -37,14 +37,15 @@ impl super::Store {
                     }
                 }
 
-                let mut effects = Vec::new();
-                effects.push(Effect::GitRefreshStatus {
-                    repo_root: repo_root.clone(),
-                });
-                effects.push(Effect::GitListWorktrees {
-                    repo_root: repo_root.clone(),
-                });
-                effects.push(Effect::GitListBranches { repo_root });
+                let effects = vec![
+                    Effect::GitRefreshStatus {
+                        repo_root: repo_root.clone(),
+                    },
+                    Effect::GitListWorktrees {
+                        repo_root: repo_root.clone(),
+                    },
+                    Effect::GitListBranches { repo_root },
+                ];
 
                 super::DispatchResult {
                     effects,

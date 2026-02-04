@@ -75,7 +75,7 @@ pub fn snapshot() -> Vec<PerfSample> {
                 .borrow()
                 .iter()
                 .map(|(label, stats)| PerfSample {
-                    label: *label,
+                    label,
                     count: stats.count,
                     total: stats.total,
                     max: stats.max,

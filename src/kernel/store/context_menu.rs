@@ -58,9 +58,8 @@ impl super::Store {
                         self.state.ui.context_menu.anchor = (x, y);
                         self.state.ui.context_menu.selected = 0;
                         self.state.ui.context_menu.items = items;
-                        self.state.ui.context_menu.request = Some(ContextMenuRequest::Explorer {
-                            tree_row,
-                        });
+                        self.state.ui.context_menu.request =
+                            Some(ContextMenuRequest::Explorer { tree_row });
                         state_changed |= self.state.ui.context_menu != prev;
 
                         super::DispatchResult {
@@ -87,7 +86,8 @@ impl super::Store {
                         self.state.ui.context_menu.anchor = (x, y);
                         self.state.ui.context_menu.selected = 0;
                         self.state.ui.context_menu.items = items;
-                        self.state.ui.context_menu.request = Some(ContextMenuRequest::Tab { pane, index });
+                        self.state.ui.context_menu.request =
+                            Some(ContextMenuRequest::Tab { pane, index });
                         state_changed |= self.state.ui.context_menu != prev;
 
                         super::DispatchResult {
@@ -213,7 +213,8 @@ impl super::Store {
 
                 match (item, request) {
                     (ContextMenuItem::ExplorerNewFile, _) => {
-                        let mut result = self.dispatch(Action::RunCommand(Command::ExplorerNewFile));
+                        let mut result =
+                            self.dispatch(Action::RunCommand(Command::ExplorerNewFile));
                         result.state_changed = true;
                         result
                     }
@@ -252,10 +253,8 @@ impl super::Store {
                             };
                         }
 
-                        let mut result = self.dispatch(Action::Editor(EditorAction::CloseTabAt {
-                            pane,
-                            index,
-                        }));
+                        let mut result =
+                            self.dispatch(Action::Editor(EditorAction::CloseTabAt { pane, index }));
                         result.state_changed = true;
                         result
                     }

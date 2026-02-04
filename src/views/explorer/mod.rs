@@ -2,4 +2,4 @@
 
 mod explorer_view;
 
-pub use explorer_view::ExplorerView;
+pub use explorer_view::{ExplorerPaintCtx, ExplorerView};

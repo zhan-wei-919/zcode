@@ -57,4 +57,3 @@ fn menu_registers_overlay_and_item_nodes() {
         .iter()
         .any(|c| matches!(c, PaintCmd::Border { .. })));
 }
-

@@ -126,25 +126,21 @@ impl Workbench {
                 layer: 0,
                 z: 0,
                 sense: Sense::HOVER | Sense::DRAG_SOURCE,
-                kind: NodeKind::Splitter { axis: Axis::Vertical },
+                kind: NodeKind::Splitter {
+                    axis: Axis::Vertical,
+                },
             });
 
-            let hovered = self.ui_runtime.hovered() == Some(splitter_id) || self.sidebar_split_dragging;
+            let hovered =
+                self.ui_runtime.hovered() == Some(splitter_id) || self.sidebar_split_dragging;
             let fg = if hovered {
                 self.ui_theme.focus_border
             } else {
                 self.ui_theme.separator
             };
-            let style = UiStyle::default()
-                .bg(self.ui_theme.palette_bg)
-                .fg(fg);
+            let style = UiStyle::default().bg(self.ui_theme.palette_bg).fg(fg);
             for dx in 0..sep.w {
-                painter.vline(
-                    Pos::new(sep.x.saturating_add(dx), sep.y),
-                    sep.h,
-                    '│',
-                    style,
-                );
+                painter.vline(Pos::new(sep.x.saturating_add(dx), sep.y), sep.h, '│', style);
             }
         }
 
@@ -156,10 +152,7 @@ impl Workbench {
         }
 
         // Clear the sidebar background so old content doesn't leak through on partial redraws.
-        painter.fill_rect(
-            inner,
-            UiStyle::default().bg(self.ui_theme.palette_bg),
-        );
+        painter.fill_rect(inner, UiStyle::default().bg(self.ui_theme.palette_bg));
 
         let tab_height = 1u16;
         if inner.h <= tab_height {
@@ -201,7 +194,9 @@ impl Workbench {
             let y = ui_tabs.y;
             let mut x = ui_tabs.x;
             painter.text_clipped(Pos::new(x, y), EXPLORER_LABEL, explorer_style, ui_tabs);
-            x = x.saturating_add(UnicodeWidthStr::width(EXPLORER_LABEL).min(u16::MAX as usize) as u16);
+            x = x.saturating_add(
+                UnicodeWidthStr::width(EXPLORER_LABEL).min(u16::MAX as usize) as u16,
+            );
             painter.text_clipped(Pos::new(x, y), SEARCH_LABEL, search_style, ui_tabs);
         }
 
@@ -219,7 +214,7 @@ impl Workbench {
                 };
 
                 let (tree_area, git_area) = if show_git_panel && content_area.h >= 3 {
-                    let branches_len = branches_len.max(1).min(8) as u16;
+                    let branches_len = branches_len.clamp(1, 8) as u16;
                     let max_git_height = content_area.h.saturating_sub(1);
                     let git_height = (1 + branches_len).min(max_git_height);
                     let (tree_area, git_area) = content_area.split_bottom(git_height);
@@ -234,12 +229,14 @@ impl Workbench {
                 let ui_area = tree_area;
                 self.explorer.paint(
                     &mut painter,
-                    ui_area,
-                    &explorer_state.rows,
-                    explorer_state.selected(),
-                    explorer_state.scroll_offset,
-                    &explorer_state.git_status_by_id,
-                    &self.ui_theme,
+                    crate::views::ExplorerPaintCtx {
+                        area: ui_area,
+                        rows: &explorer_state.rows,
+                        selected_id: explorer_state.selected(),
+                        scroll_offset: explorer_state.scroll_offset,
+                        git_status_by_id: &explorer_state.git_status_by_id,
+                        theme: &self.ui_theme,
+                    },
                 );
                 push_explorer_nodes(
                     &mut self.ui_tree,
@@ -259,7 +256,8 @@ impl Workbench {
                 self.sync_search_view_height(SearchViewport::Sidebar, results_height);
                 let search_state = &self.store.state().search;
                 let ui_area = content_area;
-                self.search_view.paint(&mut painter, ui_area, search_state, &self.ui_theme);
+                self.search_view
+                    .paint(&mut painter, ui_area, search_state, &self.ui_theme);
             }
         }
 
@@ -329,8 +327,15 @@ fn push_explorer_nodes(
 
     let visible_height = area.h as usize;
     let visible_end = (scroll_offset + visible_height).min(rows.len());
-    for (i, row) in rows.iter().enumerate().take(visible_end).skip(scroll_offset) {
-        let y = area.y.saturating_add((i - scroll_offset).min(u16::MAX as usize) as u16);
+    for (i, row) in rows
+        .iter()
+        .enumerate()
+        .take(visible_end)
+        .skip(scroll_offset)
+    {
+        let y = area
+            .y
+            .saturating_add((i - scroll_offset).min(u16::MAX as usize) as u16);
         if y >= area.bottom() {
             break;
         }

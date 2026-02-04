@@ -223,9 +223,7 @@ impl FileTree {
         }
 
         // Validate early so we don't return the root path for invalid ids.
-        if self.arena.get(id).is_none() {
-            return None;
-        }
+        self.arena.get(id)?;
 
         let mut current = id;
         let mut components: Vec<OsString> = Vec::new();

@@ -1,9 +1,4 @@
-use crossterm::{
-    cursor,
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use crossterm::event::{self, Event};
 use std::{
     env, io,
     path::Path,
@@ -17,6 +12,7 @@ use zcode::app::Workbench;
 use zcode::core::event::InputEvent;
 use zcode::kernel::services::adapters::AsyncRuntime;
 use zcode::tui::view::{EventResult, View};
+use zcode::tui::{self, terminal_guard::TerminationSignal};
 use zcode::ui::backend::terminal::RatatuiTerminal;
 
 fn main() -> io::Result<()> {
@@ -40,28 +36,39 @@ fn main() -> io::Result<()> {
     }
     let path_to_open = Path::new(&args[1]);
     tracing::info!(path = %path_to_open.display(), "starting");
-    enable_raw_mode().inspect_err(|e| tracing::error!(error = ?e, "enable_raw_mode failed"))?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        cursor::SetCursorStyle::BlinkingBar
-    )
-    .inspect_err(|e| tracing::error!(error = ?e, "enter alternate screen failed"))?;
-    let mut terminal =
-        RatatuiTerminal::new(stdout).inspect_err(|e| tracing::error!(error = ?e, "terminal init failed"))?;
+
+    let guard = tui::terminal_guard::TerminalGuard::new()
+        .inspect_err(|e| tracing::error!(error = ?e, "terminal setup failed"))?;
+    let restorer = guard.restorer();
+
+    {
+        let prev = std::panic::take_hook();
+        let restorer = restorer.clone();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = restorer.restore();
+            prev(info);
+        }));
+    }
+
+    let (term_tx, term_rx) = mpsc::channel::<TerminationSignal>();
+    #[cfg(unix)]
+    {
+        let _ = tui::terminal_guard::install_termination_signals(restorer.clone(), term_tx);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = term_tx;
+    }
+
+    let mut terminal = RatatuiTerminal::new(io::stdout())
+        .inspect_err(|e| tracing::error!(error = ?e, "terminal init failed"))?;
     let log_rx = logging_guard.as_mut().and_then(|guard| guard.take_log_rx());
-    let result = run_app(&mut terminal, path_to_open, log_rx);
+    let result = run_app(&mut terminal, path_to_open, log_rx, &term_rx);
     drop(terminal);
-    disable_raw_mode().inspect_err(|e| tracing::error!(error = ?e, "disable_raw_mode failed"))?;
-    execute!(
-        io::stdout(),
-        LeaveAlternateScreen,
-        DisableMouseCapture,
-        cursor::SetCursorStyle::DefaultUserShape
-    )
-    .inspect_err(|e| tracing::error!(error = ?e, "leave alternate screen failed"))?;
+    let _ = restorer
+        .restore()
+        .inspect_err(|e| tracing::error!(error = ?e, "terminal restore failed"));
+    drop(guard);
     if let Err(e) = result {
         tracing::error!(error = ?e, "application error");
         if let Some(guard) = &logging_guard {
@@ -89,6 +96,7 @@ fn run_app(
     terminal: &mut RatatuiTerminal,
     path: &Path,
     log_rx: Option<mpsc::Receiver<String>>,
+    term_rx: &mpsc::Receiver<TerminationSignal>,
 ) -> io::Result<()> {
     let mut root_path = path.to_path_buf();
     let (mut tx, mut rx) = mpsc::channel();
@@ -100,6 +108,11 @@ fn run_app(
     let tick_rate = Duration::from_millis(50);
 
     'app: loop {
+        if let Ok(signal) = term_rx.try_recv() {
+            tracing::info!(?signal, "termination signal received");
+            return Ok(());
+        }
+
         if dirty {
             terminal.draw(|backend, area| workbench.render(backend, area))?;
             dirty = false;

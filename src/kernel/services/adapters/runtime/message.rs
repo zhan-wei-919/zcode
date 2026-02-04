@@ -39,6 +39,7 @@ pub enum AppMessage {
     FsOpError {
         op: &'static str,
         path: PathBuf,
+        to: Option<PathBuf>,
         error: String,
     },
     GitRepoDetected {

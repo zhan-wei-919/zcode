@@ -125,8 +125,19 @@ pub struct PendingEditorNavigation {
 
 #[derive(Debug, Clone)]
 pub enum PendingAction {
-    CloseTab { pane: usize, index: usize },
-    DeletePath { path: PathBuf, is_dir: bool },
+    CloseTab {
+        pane: usize,
+        index: usize,
+    },
+    DeletePath {
+        path: PathBuf,
+        is_dir: bool,
+    },
+    RenamePath {
+        from: PathBuf,
+        to: PathBuf,
+        overwrite: bool,
+    },
 }
 
 #[derive(Debug, Clone, Default)]

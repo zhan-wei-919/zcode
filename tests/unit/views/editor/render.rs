@@ -23,9 +23,10 @@ fn paint_editor_pane_no_tab_renders_empty_message() {
         false,
     );
 
-    let has_message = painter.cmds().iter().any(|cmd| {
-        matches!(cmd, PaintCmd::Text { text, .. } if text.contains("No file open"))
-    });
+    let has_message = painter
+        .cmds()
+        .iter()
+        .any(|cmd| matches!(cmd, PaintCmd::Text { text, .. } if text.contains("No file open")));
     assert!(has_message);
 }
 
@@ -59,7 +60,6 @@ fn paint_editor_pane_search_bar_draws_find_label() {
         })
         .collect();
 
-    assert!(texts.iter().any(|t| *t == "Find: "));
+    assert!(texts.contains(&"Find: "));
     assert!(texts.iter().any(|t| t.contains("abc")));
 }
-

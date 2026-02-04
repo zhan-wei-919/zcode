@@ -18,7 +18,9 @@ pub struct IdPath {
 
 impl IdPath {
     pub fn root(ns: &'static str) -> Self {
-        Self { h: fnv1a64(ns.as_bytes()) }
+        Self {
+            h: fnv1a64(ns.as_bytes()),
+        }
     }
 
     pub fn push_str(mut self, s: &str) -> Self {
@@ -57,4 +59,3 @@ fn fnv1a64_continue(mut h: u64, bytes: &[u8]) -> u64 {
 #[cfg(test)]
 #[path = "../../../tests/unit/ui/core/id.rs"]
 mod tests;
-

@@ -20,7 +20,10 @@ pub struct RatatuiBackend<'a, 'f> {
 
 impl<'a, 'f> RatatuiBackend<'a, 'f> {
     pub fn new(frame: &'a mut Frame<'f>) -> Self {
-        Self { frame, cursor: None }
+        Self {
+            frame,
+            cursor: None,
+        }
     }
 }
 
@@ -96,8 +99,18 @@ impl Widget for PaintWidget<'_> {
             match cmd {
                 PaintCmd::FillRect { rect, style } => fill_rect(buf, *rect, *style),
                 PaintCmd::StyleRect { rect, style } => style_rect(buf, *rect, *style),
-                PaintCmd::HLine { pos, len, ch, style } => draw_hline(buf, *pos, *len, *ch, *style),
-                PaintCmd::VLine { pos, len, ch, style } => draw_vline(buf, *pos, *len, *ch, *style),
+                PaintCmd::HLine {
+                    pos,
+                    len,
+                    ch,
+                    style,
+                } => draw_hline(buf, *pos, *len, *ch, *style),
+                PaintCmd::VLine {
+                    pos,
+                    len,
+                    ch,
+                    style,
+                } => draw_vline(buf, *pos, *len, *ch, *style),
                 PaintCmd::Text {
                     pos,
                     text,
@@ -213,7 +226,8 @@ fn draw_vline(buf: &mut Buffer, pos: Pos, len: u16, ch: char, style: Style) {
 fn draw_text(buf: &mut Buffer, pos: Pos, text: &str, style: Style, clip: Option<Rect>) {
     let style = to_ratatui_style(style);
     // Default clip is the buffer area so we never partially render wide glyphs at the edge.
-    let clip = clip.unwrap_or_else(|| Rect::new(buf.area.x, buf.area.y, buf.area.width, buf.area.height));
+    let clip =
+        clip.unwrap_or_else(|| Rect::new(buf.area.x, buf.area.y, buf.area.width, buf.area.height));
     let mut x = pos.x;
     let y = pos.y;
     if y < clip.y || y >= clip.bottom() {

@@ -5,8 +5,12 @@ use std::path::PathBuf;
 #[test]
 fn test_rust_brace_pair_and_electric_enter() {
     let config = EditorConfig::default();
-    let mut tab =
-        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "fn main() ", &config);
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "fn main() ",
+        &config,
+    );
 
     let end = tab.buffer.line_grapheme_len(0);
     tab.buffer.set_cursor(0, end);
@@ -23,8 +27,12 @@ fn test_rust_brace_pair_and_electric_enter() {
 #[test]
 fn test_electric_enter_with_whitespace_between_braces() {
     let config = EditorConfig::default();
-    let mut tab =
-        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "fn main() ", &config);
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "fn main() ",
+        &config,
+    );
 
     let end = tab.buffer.line_grapheme_len(0);
     tab.buffer.set_cursor(0, end);
@@ -42,12 +50,8 @@ fn test_electric_enter_with_whitespace_between_braces() {
 #[test]
 fn test_replace_is_undoable() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(
-        TabId::new(1),
-        PathBuf::from("test.txt"),
-        "foo foo",
-        &config,
-    );
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.txt"), "foo foo", &config);
 
     let m = Match::new(0, 3, 0, 0);
     assert!(tab.replace_current_match(&m, "bar", config.tab_size));
@@ -61,12 +65,8 @@ fn test_replace_is_undoable() {
 #[test]
 fn test_replace_with_empty_string_deletes_and_undo() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(
-        TabId::new(1),
-        PathBuf::from("test.txt"),
-        "foo foo",
-        &config,
-    );
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.txt"), "foo foo", &config);
 
     let m = Match::new(4, 7, 0, 4);
     assert!(tab.replace_current_match(&m, "", config.tab_size));
@@ -99,8 +99,7 @@ fn test_paste_over_selection_single_undo() {
 #[test]
 fn test_auto_pair_and_skip_closing() {
     let config = EditorConfig::default();
-    let mut tab =
-        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "", &config);
+    let mut tab = EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "", &config);
 
     let _ = tab.apply_command(Command::InsertChar('('), 0, &config);
     assert_eq!(tab.buffer.text(), "()");

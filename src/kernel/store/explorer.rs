@@ -64,10 +64,14 @@ impl super::Store {
                 }
             }
             Action::ExplorerMovePath { from, to } => {
+                let root = self.state.workspace_root.as_path();
                 if self.state.ui.input_dialog.visible
                     || self.state.ui.confirm_dialog.visible
                     || from == to
-                    || from == self.state.workspace_root
+                    || from.as_path() == root
+                    || to.as_path() == root
+                    || !from.starts_with(root)
+                    || !to.starts_with(root)
                 {
                     return super::DispatchResult {
                         effects: Vec::new(),
@@ -76,7 +80,11 @@ impl super::Store {
                 }
 
                 super::DispatchResult {
-                    effects: vec![Effect::RenamePath { from, to }],
+                    effects: vec![Effect::RenamePath {
+                        from,
+                        to,
+                        overwrite: false,
+                    }],
                     state_changed: false,
                 }
             }

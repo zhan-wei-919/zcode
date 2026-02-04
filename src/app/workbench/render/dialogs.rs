@@ -1,5 +1,5 @@
-use super::super::Workbench;
 use super::super::paint::centered_rect_ui;
+use super::super::Workbench;
 use crate::core::text_window;
 use crate::ui::core::geom::{Pos, Rect as UiRect};
 use crate::ui::core::id::IdPath;
@@ -64,7 +64,7 @@ pub(super) fn render_confirm_dialog(workbench: &Workbench, painter: &mut Painter
 
         let parts: [(&str, UiStyle); 4] = [
             ("[Enter]", accent),
-            (" Close  ", base_style),
+            (" Confirm", base_style),
             ("[Esc]", muted),
             (" Cancel", base_style),
         ];
@@ -95,7 +95,9 @@ pub(super) fn render_context_menu(workbench: &mut Workbench, painter: &mut Paint
         base: UiStyle::default()
             .bg(workbench.ui_theme.palette_bg)
             .fg(workbench.ui_theme.palette_fg),
-        border: UiStyle::default().fg(workbench.ui_theme.focus_border).bg(workbench.ui_theme.palette_bg),
+        border: UiStyle::default()
+            .fg(workbench.ui_theme.focus_border)
+            .bg(workbench.ui_theme.palette_bg),
         selected: UiStyle::default()
             .bg(workbench.ui_theme.palette_selected_bg)
             .fg(workbench.ui_theme.palette_selected_fg),

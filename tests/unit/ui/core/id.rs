@@ -30,4 +30,3 @@ fn idpath_push_order_matters() {
     let b = IdPath::root("ns").push_str("ab").push_str("c").finish();
     assert_ne!(a, b);
 }
-

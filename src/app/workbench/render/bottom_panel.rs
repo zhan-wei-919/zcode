@@ -43,7 +43,12 @@ impl Workbench {
         }
     }
 
-    fn paint_bottom_panel_tabs(&self, painter: &mut Painter, area: UiRect, active: &BottomPanelTab) {
+    fn paint_bottom_panel_tabs(
+        &self,
+        painter: &mut Painter,
+        area: UiRect,
+        active: &BottomPanelTab,
+    ) {
         if area.is_empty() {
             return;
         }
@@ -148,7 +153,12 @@ impl Workbench {
             painter.text_clipped(Pos::new(x, y), sev.as_str(), severity_style, row_clip);
             x = x.saturating_add(sev.width().min(u16::MAX as usize) as u16);
 
-            painter.text_clipped(Pos::new(x, y), item.message.as_str(), UiStyle::default(), row_clip);
+            painter.text_clipped(
+                Pos::new(x, y),
+                item.message.as_str(),
+                UiStyle::default(),
+                row_clip,
+            );
         }
     }
 
@@ -235,13 +245,7 @@ impl Workbench {
             .selected_index()
             .min(actions.len().saturating_sub(1));
 
-        for (row, (i, action)) in actions
-            .iter()
-            .enumerate()
-            .take(end)
-            .skip(start)
-            .enumerate()
-        {
+        for (row, (i, action)) in actions.iter().enumerate().take(end).skip(start).enumerate() {
             let y = area.y.saturating_add(row.min(u16::MAX as usize) as u16);
             if y >= area.bottom() {
                 break;
@@ -294,13 +298,7 @@ impl Workbench {
             .selected_index()
             .min(symbols.len().saturating_sub(1));
 
-        for (row, (i, item)) in symbols
-            .iter()
-            .enumerate()
-            .take(end)
-            .skip(start)
-            .enumerate()
-        {
+        for (row, (i, item)) in symbols.iter().enumerate().take(end).skip(start).enumerate() {
             let y = area.y.saturating_add(row.min(u16::MAX as usize) as u16);
             if y >= area.bottom() {
                 break;
@@ -341,7 +339,12 @@ impl Workbench {
             painter.text_clipped(Pos::new(x, y), kind_text.as_str(), kind_style, row_clip);
             x = x.saturating_add(kind_text.width().min(u16::MAX as usize) as u16);
 
-            painter.text_clipped(Pos::new(x, y), indent.as_str(), UiStyle::default(), row_clip);
+            painter.text_clipped(
+                Pos::new(x, y),
+                indent.as_str(),
+                UiStyle::default(),
+                row_clip,
+            );
             x = x.saturating_add(indent.width().min(u16::MAX as usize) as u16);
 
             let name_style = UiStyle::default().fg(self.ui_theme.palette_fg);
@@ -395,7 +398,12 @@ impl Workbench {
                 break;
             }
             let row_clip = UiRect::new(inner.x, y, inner.w, 1);
-            painter.text_clipped(Pos::new(inner.x, y), line.as_str(), UiStyle::default(), row_clip);
+            painter.text_clipped(
+                Pos::new(inner.x, y),
+                line.as_str(),
+                UiStyle::default(),
+                row_clip,
+            );
         }
     }
 
@@ -471,7 +479,9 @@ impl Workbench {
             .skip(start)
             .enumerate()
         {
-            let y = list_area.y.saturating_add(row.min(u16::MAX as usize) as u16);
+            let y = list_area
+                .y
+                .saturating_add(row.min(u16::MAX as usize) as u16);
             if y >= list_area.bottom() {
                 break;
             }
@@ -503,7 +513,12 @@ impl Workbench {
                     x = x.saturating_add(1);
 
                     let icon_text = format!("{} ", icon);
-                    painter.text_clipped(Pos::new(x, y), icon_text.as_str(), UiStyle::default(), row_clip);
+                    painter.text_clipped(
+                        Pos::new(x, y),
+                        icon_text.as_str(),
+                        UiStyle::default(),
+                        row_clip,
+                    );
                     x = x.saturating_add(icon_text.width().min(u16::MAX as usize) as u16);
 
                     let file_style = UiStyle::default().fg(self.ui_theme.accent_fg);

@@ -53,4 +53,3 @@ fn draw_vline_writes_characters() {
     assert_eq!(buf.cell(0, 1).unwrap().symbol, "|");
     assert_eq!(buf.cell(0, 2).unwrap().symbol, "|");
 }
-

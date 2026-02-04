@@ -63,13 +63,6 @@ impl Workbench {
     }
 
     pub(super) fn copy_logs_to_clipboard(&mut self) {
-        let Some(clipboard) = self
-            .kernel_services
-            .get_mut::<crate::kernel::services::adapters::ClipboardService>()
-        else {
-            return;
-        };
-
         if self.logs.is_empty() {
             return;
         }
@@ -81,12 +74,60 @@ impl Workbench {
             }
             text.push_str(line);
         }
+        self.set_clipboard_text(&text);
+    }
 
-        if let Err(err) = clipboard.set_text(&text) {
-            self.logs.push_back(format!("[clipboard] {err}"));
-            while self.logs.len() > super::super::LOG_BUFFER_CAP {
-                self.logs.pop_front();
+    pub(in super::super) fn maybe_warn_clipboard_unavailable(&mut self) {
+        if self.clipboard_unavailable_warned {
+            return;
+        }
+
+        let available = self
+            .kernel_services
+            .get::<crate::kernel::services::adapters::ClipboardService>()
+            .is_some_and(|svc| svc.is_available());
+        if available {
+            return;
+        }
+
+        self.push_log_line(
+            "[clipboard] Clipboard unavailable. Linux: install wl-clipboard (wl-copy/wl-paste) or xclip/xsel. Paste via terminal (Ctrl+Shift+V).".to_string(),
+        );
+        self.clipboard_unavailable_warned = true;
+    }
+
+    pub(in super::super) fn set_clipboard_text(&mut self, text: &str) {
+        let set_result = self
+            .kernel_services
+            .get_mut::<crate::kernel::services::adapters::ClipboardService>()
+            .map(|svc| svc.set_text(text));
+
+        match set_result {
+            Some(Ok(())) => {}
+            Some(Err(err)) => {
+                self.maybe_warn_clipboard_unavailable();
+
+                match crate::tui::osc52::copy_to_clipboard(text) {
+                    Ok(()) => {
+                        // This is a user-visible behavior change; keep a breadcrumb in Logs.
+                        self.push_log_line("[clipboard] Copied via OSC52 fallback.".to_string());
+                    }
+                    Err(osc52_err) => {
+                        self.push_log_line(format!("[clipboard] {err}"));
+                        self.push_log_line(format!("[clipboard:osc52] {osc52_err}"));
+                    }
+                }
             }
+            None => {
+                self.maybe_warn_clipboard_unavailable();
+            }
+        }
+    }
+
+    pub(in super::super) fn push_log_line(&mut self, line: String) {
+        self.logs.push_back(line);
+        while self.logs.len() > super::super::LOG_BUFFER_CAP {
+            self.logs.pop_front();
         }
     }
 

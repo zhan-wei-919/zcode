@@ -44,19 +44,19 @@ impl Default for UiTheme {
             error_fg: Color::Indexed(1),            // Red
             warning_fg: Color::Indexed(3),          // Yellow
             activity_bg: Color::Reset,
-            activity_fg: Color::Indexed(8),        // DarkGray
-            activity_active_bg: Color::Indexed(8), // DarkGray
-            activity_active_fg: Color::Indexed(15), // White
-            sidebar_tab_active_bg: Color::Indexed(8), // DarkGray
-            sidebar_tab_active_fg: Color::Indexed(15), // White
+            activity_fg: Color::Indexed(8),             // DarkGray
+            activity_active_bg: Color::Indexed(8),      // DarkGray
+            activity_active_fg: Color::Indexed(15),     // White
+            sidebar_tab_active_bg: Color::Indexed(8),   // DarkGray
+            sidebar_tab_active_fg: Color::Indexed(15),  // White
             sidebar_tab_inactive_fg: Color::Indexed(8), // DarkGray
-            header_fg: Color::Indexed(6),          // Cyan
-            palette_border: Color::Indexed(6),     // Cyan
+            header_fg: Color::Indexed(6),               // Cyan
+            palette_border: Color::Indexed(6),          // Cyan
             palette_bg: Color::Reset,
-            palette_fg: Color::Indexed(15), // White
-            palette_selected_bg: Color::Indexed(8), // DarkGray
+            palette_fg: Color::Indexed(15),          // White
+            palette_selected_bg: Color::Indexed(8),  // DarkGray
             palette_selected_fg: Color::Indexed(15), // White
-            palette_muted_fg: Color::Indexed(8),   // DarkGray
+            palette_muted_fg: Color::Indexed(8),     // DarkGray
         }
     }
 }

@@ -98,9 +98,7 @@ impl UiRuntime {
         match me.kind {
             MouseEventKind::Down(button) => {
                 let click = tree.hit_test_with_sense(pos, Sense::CLICK).map(|n| n.id);
-                let drag_source = tree
-                    .hit_test_with_sense(pos, Sense::DRAG_SOURCE)
-                    .copied();
+                let drag_source = tree.hit_test_with_sense(pos, Sense::DRAG_SOURCE).copied();
                 self.pressed = Some(PressedState {
                     button,
                     start: pos,
@@ -115,10 +113,16 @@ impl UiRuntime {
                 let drag = self.drag.take();
 
                 if let Some(drag) = drag {
-                    if pressed.is_some_and(|p| p.button == button) || self.capture == Some(drag.source) {
+                    if pressed.is_some_and(|p| p.button == button)
+                        || self.capture == Some(drag.source)
+                    {
                         // Drop (if any) happens before DragEnd.
                         if let (Some(payload), Some(target)) = (drag.payload, drag.over) {
-                            out.events.push(UiEvent::Drop { payload, target, pos });
+                            out.events.push(UiEvent::Drop {
+                                payload,
+                                target,
+                                pos,
+                            });
                         }
                         out.events.push(UiEvent::DragEnd {
                             id: drag.source,
@@ -129,8 +133,9 @@ impl UiRuntime {
                 } else if let Some(pressed) = pressed {
                     if pressed.button == button {
                         if button == MouseButton::Right {
-                            if let Some(id) =
-                                tree.hit_test_with_sense(pos, Sense::CONTEXT_MENU).map(|n| n.id)
+                            if let Some(id) = tree
+                                .hit_test_with_sense(pos, Sense::CONTEXT_MENU)
+                                .map(|n| n.id)
                             {
                                 out.events.push(UiEvent::ContextMenu { id, pos });
                                 out.needs_redraw = true;
@@ -223,22 +228,33 @@ fn drag_payload_from_node(node: &Node) -> Option<DragPayload> {
             from_pane: pane,
             tab_id,
         }),
-        super::tree::NodeKind::ExplorerRow { node_id } => Some(DragPayload::ExplorerNode { node_id }),
+        super::tree::NodeKind::ExplorerRow { node_id } => {
+            Some(DragPayload::ExplorerNode { node_id })
+        }
         _ => None,
     }
 }
 
 fn can_drop(payload: &DragPayload, target: &Node) -> bool {
-    match (payload, target.kind) {
-        (DragPayload::Tab { .. }, super::tree::NodeKind::TabBar { .. }) => true,
-        (DragPayload::Tab { .. }, super::tree::NodeKind::EditorSplitDrop { .. }) => true,
-        (DragPayload::ExplorerNode { .. }, super::tree::NodeKind::EditorArea { .. }) => true,
-        (DragPayload::ExplorerNode { .. }, super::tree::NodeKind::ExplorerRow { .. }) => true,
-        (DragPayload::ExplorerNode { .. }, super::tree::NodeKind::ExplorerFolderDrop { .. }) => {
-            true
-        }
-        _ => false,
-    }
+    matches!(
+        (payload, target.kind),
+        (
+            DragPayload::Tab { .. },
+            super::tree::NodeKind::TabBar { .. }
+        ) | (
+            DragPayload::Tab { .. },
+            super::tree::NodeKind::EditorSplitDrop { .. }
+        ) | (
+            DragPayload::ExplorerNode { .. },
+            super::tree::NodeKind::EditorArea { .. }
+        ) | (
+            DragPayload::ExplorerNode { .. },
+            super::tree::NodeKind::ExplorerRow { .. }
+        ) | (
+            DragPayload::ExplorerNode { .. },
+            super::tree::NodeKind::ExplorerFolderDrop { .. }
+        )
+    )
 }
 
 #[cfg(test)]

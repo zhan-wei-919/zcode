@@ -22,4 +22,3 @@ fn rect_empty_never_contains() {
     let r = Rect::new(0, 0, 10, 0);
     assert!(!r.contains(Pos::new(0, 0)));
 }
-

@@ -62,9 +62,10 @@ pub fn cursor_position_editor(
     let cursor_x_abs = cursor_display_x_abs(&tab.buffer, config.tab_size);
     let cursor_x_rel = cursor_x_abs.saturating_sub(horiz_offset);
 
-    let x = layout.content_area.x.saturating_add(
-        cursor_x_rel.min(layout.content_area.w.saturating_sub(1) as u32) as u16,
-    );
+    let x = layout
+        .content_area
+        .x
+        .saturating_add(cursor_x_rel.min(layout.content_area.w.saturating_sub(1) as u32) as u16);
     let y = layout
         .content_area
         .y
@@ -315,7 +316,12 @@ fn paint_search_bar(painter: &mut Painter, area: Rect, state: &SearchBarState, t
                     replace_area,
                 );
                 x = x.saturating_add("Replace: ".width() as u16);
-                painter.text_clipped(Pos::new(x, replace_area.y), visible_replace, replace_style, replace_area);
+                painter.text_clipped(
+                    Pos::new(x, replace_area.y),
+                    visible_replace,
+                    replace_style,
+                    replace_area,
+                );
             }
         }
     }
@@ -360,7 +366,12 @@ fn windowed_search_text<'a>(
     (&text[start..end], start)
 }
 
-fn windowed_replace_text(text: &str, cursor_pos: usize, focused: bool, area_width: u16) -> (&str, usize) {
+fn windowed_replace_text(
+    text: &str,
+    cursor_pos: usize,
+    focused: bool,
+    area_width: u16,
+) -> (&str, usize) {
     let prefix = "Replace: ";
     let prefix_w = prefix.width() as u16;
     let available = area_width.saturating_sub(prefix_w) as usize;
@@ -385,12 +396,24 @@ fn paint_editor_body(
     painter.fill_rect(layout.editor_area, base_style);
 
     let Some(tab) = pane.active_tab() else {
-        let style = Style::default().bg(theme.palette_bg).fg(theme.palette_muted_fg);
-        let msg = if workspace_empty { "Folder is empty" } else { "No file open" };
+        let style = Style::default()
+            .bg(theme.palette_bg)
+            .fg(theme.palette_muted_fg);
+        let msg = if workspace_empty {
+            "Folder is empty"
+        } else {
+            "No file open"
+        };
 
-        let y = layout.editor_area.y.saturating_add(layout.editor_area.h / 2);
+        let y = layout
+            .editor_area
+            .y
+            .saturating_add(layout.editor_area.h / 2);
         let msg_w = UnicodeWidthStr::width(msg).min(u16::MAX as usize) as u16;
-        let x = layout.editor_area.x.saturating_add(layout.editor_area.w.saturating_sub(msg_w) / 2);
+        let x = layout
+            .editor_area
+            .x
+            .saturating_add(layout.editor_area.w.saturating_sub(msg_w) / 2);
         let row_clip = Rect::new(layout.editor_area.x, y, layout.editor_area.w, 1);
         painter.text_clipped(Pos::new(x, y), msg, style, row_clip);
         return;
@@ -418,13 +441,15 @@ fn paint_editor_body(
 
     paint_content(
         painter,
-        layout.content_area,
         tab,
-        &visible_lines,
-        horiz_offset,
-        syntax.as_deref(),
-        config.tab_size,
-        theme,
+        ContentPaintCtx {
+            area: layout.content_area,
+            visible_lines: &visible_lines,
+            horiz_offset,
+            highlight_lines: syntax.as_deref(),
+            tab_size: config.tab_size,
+            theme,
+        },
     );
 }
 
@@ -467,7 +492,9 @@ fn paint_gutter(
         return;
     }
 
-    let base_style = Style::default().bg(theme.palette_bg).fg(theme.palette_muted_fg);
+    let base_style = Style::default()
+        .bg(theme.palette_bg)
+        .fg(theme.palette_muted_fg);
     painter.fill_rect(area, base_style);
 
     let digits_width = area.w.saturating_sub(2) as usize;
@@ -499,7 +526,12 @@ fn paint_gutter(
         if area.w >= 2 {
             let x = right.saturating_sub(2);
             if let Some(marker) = tab.fold_marker_char(line.min(u32::MAX as usize) as u32) {
-                painter.text_clipped(Pos::new(x, y), marker.to_string(), style, Rect::new(x, y, 1, 1));
+                painter.text_clipped(
+                    Pos::new(x, y),
+                    marker.to_string(),
+                    style,
+                    Rect::new(x, y, 1, 1),
+                );
             }
         }
         if area.w >= 1 {
@@ -569,16 +601,24 @@ fn flush_text_segment(
     painter.text_clipped(Pos::new(seg.x, y), &line[start..end], seg.style, clip);
 }
 
-fn paint_content(
-    painter: &mut Painter,
+struct ContentPaintCtx<'a> {
     area: Rect,
-    tab: &EditorTabState,
-    visible_lines: &[usize],
+    visible_lines: &'a [usize],
     horiz_offset: u32,
-    highlight_lines: Option<&[Vec<HighlightSpan>]>,
+    highlight_lines: Option<&'a [Vec<HighlightSpan>]>,
     tab_size: u8,
-    theme: &Theme,
-) {
+    theme: &'a Theme,
+}
+
+fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintCtx<'_>) {
+    let ContentPaintCtx {
+        area,
+        visible_lines,
+        horiz_offset,
+        highlight_lines,
+        tab_size,
+        theme,
+    } = ctx;
     if area.is_empty() {
         return;
     }
@@ -631,7 +671,8 @@ fn paint_content(
         if horiz_offset > 0 {
             let start = (horiz_offset as usize).min(line.len());
             let prefix = &line.as_bytes()[..start];
-            if line.is_char_boundary(start) && prefix.is_ascii() && memchr(b'\t', prefix).is_none() {
+            if line.is_char_boundary(start) && prefix.is_ascii() && memchr(b'\t', prefix).is_none()
+            {
                 visible = &line[start..];
                 g_idx_base = start;
                 display_col = start.min(u32::MAX as usize) as u32;
@@ -679,9 +720,9 @@ fn paint_content(
             {
                 style = selection_style;
             } else if let Some(hl) =
-                style_for_highlight(semantic_spans, &mut semantic_idx, g_start, theme).or_else(|| {
-                    style_for_highlight(highlight_spans, &mut highlight_idx, g_start, theme)
-                })
+                style_for_highlight(semantic_spans, &mut semantic_idx, g_start, theme).or_else(
+                    || style_for_highlight(highlight_spans, &mut highlight_idx, g_start, theme),
+                )
             {
                 style = base_style.patch(hl);
             }

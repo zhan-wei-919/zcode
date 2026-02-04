@@ -8,13 +8,15 @@ use crate::kernel::services::adapters::perf;
 use crate::kernel::{BottomPanelTab, FocusTarget, SidebarTab};
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::{Pos, Rect};
-use crate::ui::core::layout::Insets;
-use crate::ui::core::painter::Painter;
-use crate::ui::core::painter::BorderKind;
-use crate::ui::core::style::{Mod as UiMod, Style as UiStyle};
 use crate::ui::core::input::DragPayload;
+use crate::ui::core::layout::Insets;
+use crate::ui::core::painter::BorderKind;
+use crate::ui::core::painter::Painter;
+use crate::ui::core::style::{Mod as UiMod, Style as UiStyle};
 use crate::ui::core::tree::NodeKind;
-use crate::views::{compute_editor_pane_layout, cursor_position_editor, tab_insertion_index, tab_insertion_x};
+use crate::views::{
+    compute_editor_pane_layout, cursor_position_editor, tab_insertion_index, tab_insertion_x,
+};
 
 pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area: Rect) {
     let _scope = perf::scope("render.frame");
@@ -32,8 +34,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
 
     let (activity_area, content_area) = body_area.split_left(super::super::ACTIVITY_BAR_WIDTH);
 
-    workbench.last_activity_bar_area =
-        (!activity_area.is_empty()).then_some(activity_area);
+    workbench.last_activity_bar_area = (!activity_area.is_empty()).then_some(activity_area);
     if !activity_area.is_empty() {
         let _scope = perf::scope("render.activity");
         let mut painter = Painter::new();
@@ -65,8 +66,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         let sidebar_width = super::super::util::clamp_sidebar_width(available, desired);
         let (sidebar_area, editor_area) = main_area.split_left(sidebar_width);
 
-        workbench.last_sidebar_area =
-            (!sidebar_area.is_empty()).then_some(sidebar_area);
+        workbench.last_sidebar_area = (!sidebar_area.is_empty()).then_some(sidebar_area);
 
         if !sidebar_area.is_empty() {
             let _scope = perf::scope("render.sidebar");
@@ -181,21 +181,20 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
                 .state()
                 .explorer
                 .path_and_kind_for(*node_id)
-                .and_then(|(path, is_dir)| {
+                .map(|(path, is_dir)| {
                     let name = path
                         .file_name()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_else(|| path.to_string_lossy().to_string());
                     let suffix = if is_dir { "/" } else { "" };
-                    Some(format!("{name}{suffix}"))
+                    format!("{name}{suffix}")
                 }),
         };
 
         if let Some(label) = label {
             let text = format!(" {label} ");
             let text_w =
-                unicode_width::UnicodeWidthStr::width(text.as_str()).min(u16::MAX as usize)
-                    as u16;
+                unicode_width::UnicodeWidthStr::width(text.as_str()).min(u16::MAX as usize) as u16;
             let w = text_w.saturating_add(2).min(area.w);
             let h = 3u16;
 
@@ -268,13 +267,9 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
                             .hovered_tab
                             .filter(|(hp, _)| *hp == pane)
                             .map(|(_, i)| i);
-                        if let Some(insertion_index) = tab_insertion_index(
-                            &layout,
-                            pane_state,
-                            pos.x,
-                            pos.y,
-                            hovered_to,
-                        ) {
+                        if let Some(insertion_index) =
+                            tab_insertion_index(&layout, pane_state, pos.x, pos.y, hovered_to)
+                        {
                             if let Some(x) =
                                 tab_insertion_x(&layout, pane_state, hovered_to, insertion_index)
                             {
@@ -335,7 +330,8 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
                 crate::ui::core::tree::SplitDrop::Right => "Split Right",
                 crate::ui::core::tree::SplitDrop::Down => "Split Down",
             };
-            let label_w = unicode_width::UnicodeWidthStr::width(label).min(u16::MAX as usize) as u16;
+            let label_w =
+                unicode_width::UnicodeWidthStr::width(label).min(u16::MAX as usize) as u16;
             let x = target
                 .rect
                 .x

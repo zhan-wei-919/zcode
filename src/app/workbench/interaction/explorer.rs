@@ -54,11 +54,15 @@ impl Workbench {
                 }
 
                 // Arm the UI runtime so we can detect click vs drag.
-                let _ = self.ui_runtime.on_input(&InputEvent::Mouse(*event), &self.ui_tree);
+                let _ = self
+                    .ui_runtime
+                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
                 EventResult::Consumed
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                let out = self.ui_runtime.on_input(&InputEvent::Mouse(*event), &self.ui_tree);
+                let out = self
+                    .ui_runtime
+                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
 
                 let captured_is_explorer_row = self
                     .ui_runtime
@@ -73,12 +77,14 @@ impl Workbench {
                 EventResult::Ignored
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                let out = self.ui_runtime.on_input(&InputEvent::Mouse(*event), &self.ui_tree);
+                let out = self
+                    .ui_runtime
+                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
 
                 let mut handled = false;
                 for ev in out.events {
                     match ev {
-                        UiEvent::Click { id, button, .. } if button == MouseButton::Left => {
+                        UiEvent::Click { id, .. } => {
                             let Some(node) = self.ui_tree.node(id) else {
                                 continue;
                             };
@@ -102,7 +108,9 @@ impl Workbench {
                             });
                             handled = true;
                         }
-                        UiEvent::Drop { payload, target, .. } => {
+                        UiEvent::Drop {
+                            payload, target, ..
+                        } => {
                             let Some(target_node) = self.ui_tree.node(target) else {
                                 continue;
                             };
@@ -113,11 +121,8 @@ impl Workbench {
 
                             match target_node.kind {
                                 NodeKind::EditorArea { pane } => {
-                                    let Some((path, is_dir)) = self
-                                        .store
-                                        .state()
-                                        .explorer
-                                        .path_and_kind_for(node_id)
+                                    let Some((path, is_dir)) =
+                                        self.store.state().explorer.path_and_kind_for(node_id)
                                     else {
                                         continue;
                                     };
@@ -133,20 +138,14 @@ impl Workbench {
                                     handled = true;
                                 }
                                 NodeKind::ExplorerFolderDrop { node_id: to_dir_id } => {
-                                    let Some((from_path, from_is_dir)) = self
-                                        .store
-                                        .state()
-                                        .explorer
-                                        .path_and_kind_for(node_id)
+                                    let Some((from_path, from_is_dir)) =
+                                        self.store.state().explorer.path_and_kind_for(node_id)
                                     else {
                                         continue;
                                     };
 
-                                    let Some((to_dir_path, to_is_dir)) = self
-                                        .store
-                                        .state()
-                                        .explorer
-                                        .path_and_kind_for(to_dir_id)
+                                    let Some((to_dir_path, to_is_dir)) =
+                                        self.store.state().explorer.path_and_kind_for(to_dir_id)
                                     else {
                                         continue;
                                     };
@@ -187,9 +186,7 @@ impl Workbench {
                                     let to_dir = if to_is_dir {
                                         to_path.as_path()
                                     } else {
-                                        to_path
-                                            .parent()
-                                            .unwrap_or(state.workspace_root.as_path())
+                                        to_path.parent().unwrap_or(state.workspace_root.as_path())
                                     };
 
                                     let Some(to) = compute_explorer_move_target(
@@ -224,11 +221,15 @@ impl Workbench {
                 if in_git {
                     return EventResult::Consumed;
                 }
-                let _ = self.ui_runtime.on_input(&InputEvent::Mouse(*event), &self.ui_tree);
+                let _ = self
+                    .ui_runtime
+                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
                 EventResult::Consumed
             }
             MouseEventKind::Up(MouseButton::Right) => {
-                let out = self.ui_runtime.on_input(&InputEvent::Mouse(*event), &self.ui_tree);
+                let out = self
+                    .ui_runtime
+                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
 
                 let mut handled = false;
                 for ev in out.events {
@@ -256,7 +257,11 @@ impl Workbench {
                     handled = true;
                 }
 
-                handled.then_some(EventResult::Consumed).unwrap_or(EventResult::Ignored)
+                if handled {
+                    EventResult::Consumed
+                } else {
+                    EventResult::Ignored
+                }
             }
             MouseEventKind::ScrollUp => {
                 let _ = self.dispatch_kernel(KernelAction::ExplorerScroll { delta: -3 });
@@ -271,7 +276,11 @@ impl Workbench {
     }
 }
 
-fn compute_explorer_move_target(from: &Path, from_is_dir: bool, to_dir: &Path) -> Option<std::path::PathBuf> {
+fn compute_explorer_move_target(
+    from: &Path,
+    from_is_dir: bool,
+    to_dir: &Path,
+) -> Option<std::path::PathBuf> {
     if from_is_dir && (to_dir == from || to_dir.starts_with(from)) {
         return None;
     }

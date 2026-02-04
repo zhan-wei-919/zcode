@@ -14,14 +14,22 @@ pub struct ExplorerView {
     area: Option<Rect>,
 }
 
+pub struct ExplorerPaintCtx<'a> {
+    pub area: Rect,
+    pub rows: &'a [FileTreeRow],
+    pub selected_id: Option<NodeId>,
+    pub scroll_offset: usize,
+    pub git_status_by_id: &'a FxHashMap<NodeId, GitFileStatus>,
+    pub theme: &'a Theme,
+}
+
 impl ExplorerView {
     pub fn new() -> Self {
         Self { area: None }
     }
 
     pub fn contains(&self, x: u16, y: u16) -> bool {
-        self.area
-            .is_some_and(|a| a.contains(Pos::new(x, y)))
+        self.area.is_some_and(|a| a.contains(Pos::new(x, y)))
     }
 
     pub fn view_height(&self) -> Option<usize> {
@@ -92,16 +100,15 @@ impl ExplorerView {
         (left_pad, marker, row_style, marker_style)
     }
 
-    pub fn paint(
-        &mut self,
-        painter: &mut Painter,
-        area: Rect,
-        rows: &[FileTreeRow],
-        selected_id: Option<NodeId>,
-        scroll_offset: usize,
-        git_status_by_id: &FxHashMap<NodeId, GitFileStatus>,
-        theme: &Theme,
-    ) {
+    pub fn paint(&mut self, painter: &mut Painter, ctx: ExplorerPaintCtx<'_>) {
+        let ExplorerPaintCtx {
+            area,
+            rows,
+            selected_id,
+            scroll_offset,
+            git_status_by_id,
+            theme,
+        } = ctx;
         self.area = Some(area);
 
         if area.is_empty() {

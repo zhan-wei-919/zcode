@@ -36,7 +36,11 @@ fn hover_change_triggers_redraw() {
     assert!(out.needs_redraw);
     assert!(matches!(
         out.events.as_slice(),
-        [UiEvent::HoverChanged { from: None, to: Some(_), .. }]
+        [UiEvent::HoverChanged {
+            from: None,
+            to: Some(_),
+            ..
+        }]
     ));
     assert_eq!(rt.hovered(), Some(Id::raw(1)));
 }
@@ -78,10 +82,7 @@ fn right_click_emits_context_menu_when_supported() {
         &mouse(MouseEventKind::Down(MouseButton::Right), 2, 2),
         &tree,
     );
-    let out = rt.on_input(
-        &mouse(MouseEventKind::Up(MouseButton::Right), 2, 2),
-        &tree,
-    );
+    let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Right), 2, 2), &tree);
 
     assert!(out.needs_redraw);
     assert!(out.events.iter().any(|e| matches!(
@@ -104,17 +105,29 @@ fn drag_threshold_prevents_accidental_drag() {
 
     // Small move: dist == 1 -> no drag.
     let out = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 1, 0), &tree);
-    assert!(!out.events.iter().any(|e| matches!(e, UiEvent::DragStart { .. })));
+    assert!(!out
+        .events
+        .iter()
+        .any(|e| matches!(e, UiEvent::DragStart { .. })));
 
     // Move >= threshold: dist == 2 -> drag start.
     let out = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 2, 0), &tree);
-    assert!(out.events.iter().any(|e| matches!(e, UiEvent::DragStart { .. })));
-    assert!(out.events.iter().any(|e| matches!(e, UiEvent::DragMove { .. })));
+    assert!(out
+        .events
+        .iter()
+        .any(|e| matches!(e, UiEvent::DragStart { .. })));
+    assert!(out
+        .events
+        .iter()
+        .any(|e| matches!(e, UiEvent::DragMove { .. })));
     assert_eq!(rt.capture(), Some(Id::raw(1)));
 
     // Release ends drag and clears capture.
     let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Left), 2, 0), &tree);
-    assert!(out.events.iter().any(|e| matches!(e, UiEvent::DragEnd { .. })));
+    assert!(out
+        .events
+        .iter()
+        .any(|e| matches!(e, UiEvent::DragEnd { .. })));
     assert_eq!(rt.capture(), None);
 }
 
@@ -150,7 +163,10 @@ fn drag_drop_emits_drop_for_supported_targets() {
     // Start drag.
     let _ = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 3, 1), &tree);
     // Move over editor drop target.
-    let _ = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 12, 1), &tree);
+    let _ = rt.on_input(
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 12, 1),
+        &tree,
+    );
 
     let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Left), 12, 1), &tree);
     assert!(out.events.iter().any(|e| matches!(
@@ -158,7 +174,10 @@ fn drag_drop_emits_drop_for_supported_targets() {
         UiEvent::Drop { target, payload, .. }
             if *target == Id::raw(2) && matches!(payload, DragPayload::ExplorerNode { .. })
     )));
-    assert!(out.events.iter().any(|e| matches!(e, UiEvent::DragEnd { .. })));
+    assert!(out
+        .events
+        .iter()
+        .any(|e| matches!(e, UiEvent::DragEnd { .. })));
 }
 
 #[test]
@@ -205,7 +224,10 @@ fn drag_drop_prefers_topmost_compatible_target_when_overlapping() {
     // Start drag.
     let _ = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 3, 1), &tree);
     // Move over the overlapping drop targets.
-    let _ = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 12, 1), &tree);
+    let _ = rt.on_input(
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 12, 1),
+        &tree,
+    );
 
     let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Left), 12, 1), &tree);
     assert!(out.events.iter().any(|e| matches!(
@@ -251,7 +273,10 @@ fn drag_drop_emits_drop_for_tab_split_targets() {
     // Start drag.
     let _ = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 3, 1), &tree);
     // Move over editor split drop target.
-    let _ = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 12, 1), &tree);
+    let _ = rt.on_input(
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 12, 1),
+        &tree,
+    );
 
     let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Left), 12, 1), &tree);
     assert!(out.events.iter().any(|e| matches!(

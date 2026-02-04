@@ -181,10 +181,7 @@ impl SearchService {
         is_regex: bool,
     ) -> SearchResult<Option<Match>> {
         let matches = Self::search_sync(rope, pattern, case_sensitive, is_regex)?;
-        Ok(matches
-            .into_iter()
-            .filter(|m| m.start < from_byte)
-            .next_back())
+        Ok(matches.into_iter().rfind(|m| m.start < from_byte))
     }
 }
 

@@ -1,6 +1,6 @@
 use super::super::Workbench;
-use crate::core::Command;
 use crate::core::event::{InputEvent, MouseButton, MouseEvent, MouseEventKind};
+use crate::core::Command;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::{Action as KernelAction, EditorAction, PendingAction};
 use crate::tui::view::EventResult;
@@ -36,7 +36,7 @@ impl Workbench {
             return EventResult::Ignored;
         };
         let config = &self.store.state().editor.config;
-        let layout = compute_editor_pane_layout(area.into(), pane_state, config);
+        let layout = compute_editor_pane_layout(area, pane_state, config);
 
         let hovered_idx = self
             .store
@@ -159,15 +159,13 @@ impl Workbench {
                 let mut handled = false;
                 for ev in out.events {
                     match ev {
-                        UiEvent::Click { id, button, .. } if button == MouseButton::Left => {
+                        UiEvent::Click { id, .. } => {
                             if let Some(node) = self.ui_tree.node(id) {
                                 if let NodeKind::Tab { pane, tab_id } = node.kind {
-                                    let Some(index) = self
-                                        .store
-                                        .state()
-                                        .editor
-                                        .pane(pane)
-                                        .and_then(|p| p.tabs.iter().position(|t| t.id == tab_id))
+                                    let Some(index) =
+                                        self.store.state().editor.pane(pane).and_then(|p| {
+                                            p.tabs.iter().position(|t| t.id == tab_id)
+                                        })
                                     else {
                                         continue;
                                     };
@@ -187,7 +185,11 @@ impl Workbench {
                                 handled = true;
                             }
                         }
-                        UiEvent::Drop { payload, target, pos } => {
+                        UiEvent::Drop {
+                            payload,
+                            target,
+                            pos,
+                        } => {
                             let Some(target_node) = self.ui_tree.node(target) else {
                                 continue;
                             };
@@ -197,20 +199,21 @@ impl Workbench {
 
                             match target_node.kind {
                                 NodeKind::TabBar { pane: to_pane } => {
-                                    let Some(to_pane_state) = self.store.state().editor.pane(to_pane) else {
+                                    let Some(to_pane_state) =
+                                        self.store.state().editor.pane(to_pane)
+                                    else {
                                         continue;
                                     };
-                                    let Some(to_area) = self
-                                        .last_editor_inner_areas
-                                        .get(to_pane)
-                                        .copied()
-                                        .or_else(|| self.last_editor_inner_areas.first().copied())
+                                    let Some(to_area) =
+                                        self.last_editor_inner_areas.get(to_pane).copied().or_else(
+                                            || self.last_editor_inner_areas.first().copied(),
+                                        )
                                     else {
                                         continue;
                                     };
                                     let config = &self.store.state().editor.config;
                                     let to_layout =
-                                        compute_editor_pane_layout(to_area.into(), to_pane_state, config);
+                                        compute_editor_pane_layout(to_area, to_pane_state, config);
 
                                     let hovered_to = self
                                         .store
@@ -238,9 +241,10 @@ impl Workbench {
                                             to_index,
                                         },
                                     ));
-                                    let _ = self.dispatch_kernel(KernelAction::EditorSetActivePane {
-                                        pane: to_pane,
-                                    });
+                                    let _ =
+                                        self.dispatch_kernel(KernelAction::EditorSetActivePane {
+                                            pane: to_pane,
+                                        });
                                     handled = true;
                                 }
                                 NodeKind::EditorSplitDrop { drop, .. } => {
@@ -270,9 +274,10 @@ impl Workbench {
                                             to_index,
                                         },
                                     ));
-                                    let _ = self.dispatch_kernel(KernelAction::EditorSetActivePane {
-                                        pane: to_pane,
-                                    });
+                                    let _ =
+                                        self.dispatch_kernel(KernelAction::EditorSetActivePane {
+                                            pane: to_pane,
+                                        });
                                     handled = true;
                                 }
                                 _ => {}
@@ -338,7 +343,11 @@ impl Workbench {
                     }
                 }
 
-                handled.then_some(EventResult::Consumed).unwrap_or(EventResult::Ignored)
+                if handled {
+                    EventResult::Consumed
+                } else {
+                    EventResult::Ignored
+                }
             }
             MouseEventKind::Moved => {
                 if let Some(index) =

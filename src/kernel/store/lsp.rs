@@ -853,7 +853,9 @@ impl super::Store {
                             .is_none_or(|d| d.trim().is_empty())
                     {
                         self.state.ui.completion.resolve_inflight = Some(item.id);
-                        effects.push(Effect::LspCompletionResolveRequest { item: item.clone() });
+                        effects.push(Effect::LspCompletionResolveRequest {
+                            item: Box::new(item.clone()),
+                        });
                     }
                 }
                 super::DispatchResult {

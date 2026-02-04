@@ -54,17 +54,12 @@ impl BitOrAssign for KeyModifiers {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum KeyEventKind {
+    #[default]
     Press,
     Release,
     Repeat,
-}
-
-impl Default for KeyEventKind {
-    fn default() -> Self {
-        Self::Press
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

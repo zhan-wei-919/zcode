@@ -16,9 +16,9 @@ impl TerminalParser {
     pub fn new(rows: u16, cols: u16, scrollback_len: usize) -> Self {
         #[cfg(feature = "terminal")]
         {
-            return Self {
+            Self {
                 inner: vt100::Parser::new(rows, cols, scrollback_len),
-            };
+            }
         }
 
         #[cfg(not(feature = "terminal"))]

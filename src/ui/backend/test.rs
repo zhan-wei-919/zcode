@@ -92,12 +92,18 @@ impl Backend for TestBackend {
             match cmd {
                 PaintCmd::FillRect { rect, style } => fill_rect(&mut self.buf, *rect, *style),
                 PaintCmd::StyleRect { rect, style } => style_rect(&mut self.buf, *rect, *style),
-                PaintCmd::HLine { pos, len, ch, style } => {
-                    draw_hline(&mut self.buf, *pos, *len, *ch, *style)
-                }
-                PaintCmd::VLine { pos, len, ch, style } => {
-                    draw_vline(&mut self.buf, *pos, *len, *ch, *style)
-                }
+                PaintCmd::HLine {
+                    pos,
+                    len,
+                    ch,
+                    style,
+                } => draw_hline(&mut self.buf, *pos, *len, *ch, *style),
+                PaintCmd::VLine {
+                    pos,
+                    len,
+                    ch,
+                    style,
+                } => draw_vline(&mut self.buf, *pos, *len, *ch, *style),
                 PaintCmd::Text {
                     pos,
                     text,
@@ -293,4 +299,3 @@ fn draw_border(buf: &mut TestBuffer, rect: Rect, style: Style, kind: BorderKind)
 #[cfg(test)]
 #[path = "../../../tests/unit/ui/backend/test.rs"]
 mod tests;
-

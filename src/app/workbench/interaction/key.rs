@@ -48,15 +48,13 @@ impl Workbench {
                     return EventResult::Consumed;
                 }
                 KeyCode::Up => {
-                    let _ = self.dispatch_kernel(KernelAction::ContextMenuMoveSelection {
-                        delta: -1,
-                    });
+                    let _ =
+                        self.dispatch_kernel(KernelAction::ContextMenuMoveSelection { delta: -1 });
                     return EventResult::Consumed;
                 }
                 KeyCode::Down => {
-                    let _ = self.dispatch_kernel(KernelAction::ContextMenuMoveSelection {
-                        delta: 1,
-                    });
+                    let _ =
+                        self.dispatch_kernel(KernelAction::ContextMenuMoveSelection { delta: 1 });
                     return EventResult::Consumed;
                 }
                 KeyCode::Enter => {

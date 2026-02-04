@@ -11,8 +11,8 @@ mod viewport;
 
 pub use action::EditorAction;
 pub use state::{
-    EditorMouseState, EditorPaneState, EditorState, EditorTabState, EditorViewportState, TabId,
-    SearchBarField, SearchBarMode, SearchBarState,
+    EditorMouseState, EditorPaneState, EditorState, EditorTabState, EditorViewportState,
+    SearchBarField, SearchBarMode, SearchBarState, TabId,
 };
 pub use syntax::{HighlightKind, HighlightSpan, LanguageId};
 pub(crate) use viewport::clamp_and_follow;

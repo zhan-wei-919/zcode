@@ -46,4 +46,3 @@ impl Rect {
 #[cfg(test)]
 #[path = "../../../tests/unit/ui/core/geom.rs"]
 mod tests;
-

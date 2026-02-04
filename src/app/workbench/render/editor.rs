@@ -1,6 +1,6 @@
 use super::super::Workbench;
-use crate::kernel::SplitDirection;
 use crate::kernel::editor::EditorPaneState;
+use crate::kernel::SplitDirection;
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::Pos;
 use crate::ui::core::geom::Rect as UiRect;
@@ -23,7 +23,9 @@ impl Workbench {
             SplitDirection::Vertical => Axis::Vertical,
             SplitDirection::Horizontal => Axis::Horizontal,
         };
-        let id = IdPath::root("workbench").push_str("editor_splitter").finish();
+        let id = IdPath::root("workbench")
+            .push_str("editor_splitter")
+            .finish();
         self.ui_tree.push(Node {
             id,
             rect: sep_area,
@@ -336,7 +338,11 @@ impl Workbench {
             }
 
             let mut x = inner.x;
-            let marker_style = if is_selected { marker_selected } else { marker_normal };
+            let marker_style = if is_selected {
+                marker_selected
+            } else {
+                marker_normal
+            };
             painter.text_clipped(Pos::new(x, y), marker, marker_style, row_area);
             x = x.saturating_add(1);
             painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_area);
@@ -411,7 +417,13 @@ impl Workbench {
                         hovered_for_pane(0),
                     );
                     push_editor_split_drop_zones(&mut self.ui_tree, 0, &layout);
-                    self.draw_editor_pane(backend, &layout, pane_state, hovered_for_pane(0), workspace_empty);
+                    self.draw_editor_pane(
+                        backend,
+                        &layout,
+                        pane_state,
+                        hovered_for_pane(0),
+                        workspace_empty,
+                    );
                 }
             }
             2 => {
@@ -804,7 +816,12 @@ fn push_editor_split_drop_zones(
         });
     }
 
-    let right = UiRect::new(area.right().saturating_sub(right_w), area.y, right_w, area.h);
+    let right = UiRect::new(
+        area.right().saturating_sub(right_w),
+        area.y,
+        right_w,
+        area.h,
+    );
     if !right.is_empty() {
         let id = IdPath::root("workbench")
             .push_str("editor_split_drop")
@@ -886,7 +903,11 @@ fn push_editor_tab_nodes(
 
         // Avoid making the close button draggable: if it is visible, exclude it from the tab's
         // interactive rect.
-        let tab_end = if hovered_tab == Some(i) { close_start } else { end };
+        let tab_end = if hovered_tab == Some(i) {
+            close_start
+        } else {
+            end
+        };
         if tab_end > start {
             let node_id = IdPath::root("workbench")
                 .push_str("tab")

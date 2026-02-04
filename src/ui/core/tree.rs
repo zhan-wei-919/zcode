@@ -47,17 +47,33 @@ pub enum SplitDrop {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeKind {
     Unknown,
-    Splitter { axis: Axis },
+    Splitter {
+        axis: Axis,
+    },
     Tab {
         pane: usize,
         tab_id: crate::kernel::editor::TabId,
     },
-    TabBar { pane: usize },
-    ExplorerRow { node_id: crate::models::NodeId },
-    ExplorerFolderDrop { node_id: crate::models::NodeId },
-    EditorArea { pane: usize },
-    EditorSplitDrop { pane: usize, drop: SplitDrop },
-    MenuItem { menu_id: u32, index: usize },
+    TabBar {
+        pane: usize,
+    },
+    ExplorerRow {
+        node_id: crate::models::NodeId,
+    },
+    ExplorerFolderDrop {
+        node_id: crate::models::NodeId,
+    },
+    EditorArea {
+        pane: usize,
+    },
+    EditorSplitDrop {
+        pane: usize,
+        drop: SplitDrop,
+    },
+    MenuItem {
+        menu_id: u32,
+        index: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,7 +137,12 @@ impl UiTree {
             .max_by(|a, b| (a.layer, a.z).cmp(&(b.layer, b.z)))
     }
 
-    pub fn hit_test_with_sense_where<F>(&self, p: Pos, required: Sense, mut pred: F) -> Option<&Node>
+    pub fn hit_test_with_sense_where<F>(
+        &self,
+        p: Pos,
+        required: Sense,
+        mut pred: F,
+    ) -> Option<&Node>
     where
         F: FnMut(&Node) -> bool,
     {

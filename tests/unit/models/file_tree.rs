@@ -101,7 +101,10 @@ fn test_full_path_ro_builds_paths_without_cache_mutation() {
         .unwrap();
 
     assert_eq!(tree.full_path_ro(root), Some(PathBuf::from("/root")));
-    assert_eq!(tree.full_path_ro(dir_id), Some(PathBuf::from("/root/subdir")));
+    assert_eq!(
+        tree.full_path_ro(dir_id),
+        Some(PathBuf::from("/root/subdir"))
+    );
     assert_eq!(
         tree.full_path_ro(file_id),
         Some(PathBuf::from("/root/subdir/file.txt"))

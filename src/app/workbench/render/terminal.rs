@@ -38,7 +38,7 @@ pub(super) fn cursor_position_terminal(workbench: &Workbench) -> Option<(u16, u1
         let max_y = content.y.saturating_add(content.h.saturating_sub(1));
         let x = content.x.saturating_add(col).min(max_x);
         let y = content.y.saturating_add(row).min(max_y);
-        return Some((x, y));
+        Some((x, y))
     }
 
     #[cfg(not(feature = "terminal"))]

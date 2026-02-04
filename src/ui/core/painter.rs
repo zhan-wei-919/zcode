@@ -8,9 +8,15 @@ pub enum BorderKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PaintCmd {
-    FillRect { rect: Rect, style: Style },
+    FillRect {
+        rect: Rect,
+        style: Style,
+    },
     /// Apply a style to the existing buffer cells without changing their symbols.
-    StyleRect { rect: Rect, style: Style },
+    StyleRect {
+        rect: Rect,
+        style: Style,
+    },
     HLine {
         pos: Pos,
         len: u16,
@@ -67,11 +73,21 @@ impl Painter {
     }
 
     pub fn hline(&mut self, pos: Pos, len: u16, ch: char, style: Style) {
-        self.cmds.push(PaintCmd::HLine { pos, len, ch, style });
+        self.cmds.push(PaintCmd::HLine {
+            pos,
+            len,
+            ch,
+            style,
+        });
     }
 
     pub fn vline(&mut self, pos: Pos, len: u16, ch: char, style: Style) {
-        self.cmds.push(PaintCmd::VLine { pos, len, ch, style });
+        self.cmds.push(PaintCmd::VLine {
+            pos,
+            len,
+            ch,
+            style,
+        });
     }
 
     pub fn text(&mut self, pos: Pos, text: impl Into<String>, style: Style) {
@@ -83,13 +99,7 @@ impl Painter {
         });
     }
 
-    pub fn text_clipped(
-        &mut self,
-        pos: Pos,
-        text: impl Into<String>,
-        style: Style,
-        clip: Rect,
-    ) {
+    pub fn text_clipped(&mut self, pos: Pos, text: impl Into<String>, style: Style, clip: Rect) {
         self.cmds.push(PaintCmd::Text {
             pos,
             text: text.into(),

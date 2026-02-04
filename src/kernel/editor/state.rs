@@ -569,7 +569,7 @@ impl EditorTabState {
         if state.is_folded(start_line)
             && end_line.is_some_and(|end| cursor_line > start_line && cursor_line <= end)
         {
-            let target_row = start_line.min(u32::MAX) as usize;
+            let target_row = start_line as usize;
             let len = self.buffer.line_grapheme_len(target_row);
             self.buffer.set_cursor(target_row, col.min(len));
             self.buffer.update_selection_cursor(self.buffer.cursor());
@@ -596,7 +596,7 @@ impl EditorTabState {
         }
 
         if end_line.is_some_and(|end| cursor_line > start_line && cursor_line <= end) {
-            let target_row = start_line.min(u32::MAX) as usize;
+            let target_row = start_line as usize;
             let len = self.buffer.line_grapheme_len(target_row);
             self.buffer.set_cursor(target_row, col.min(len));
             self.buffer.update_selection_cursor(self.buffer.cursor());
@@ -1093,10 +1093,11 @@ impl FoldingState {
 
         let mut best: Option<u32> = None;
         for range in &self.ranges {
-            if range.start_line < cursor_line && range.end_line >= cursor_line {
-                if best.is_none_or(|b| range.start_line > b) {
-                    best = Some(range.start_line);
-                }
+            if range.start_line < cursor_line
+                && range.end_line >= cursor_line
+                && best.is_none_or(|b| range.start_line > b)
+            {
+                best = Some(range.start_line);
             }
         }
         best

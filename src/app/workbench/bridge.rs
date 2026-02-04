@@ -4,6 +4,7 @@ use crate::kernel::services::adapters::{
     ClipboardService, GlobalSearchService, LspService, SearchService,
 };
 use crate::kernel::services::ports::{LspPosition, LspPositionEncoding, LspRange, LspTextChange};
+use crate::kernel::state::PendingAction;
 use crate::kernel::{Action as KernelAction, EditorAction, Effect as KernelEffect};
 use crate::models::OpKind;
 use ropey::Rope;
@@ -67,12 +68,68 @@ impl Workbench {
                 let _scope = perf::scope("effect.create_dir");
                 self.runtime.create_dir(path)
             }
-            KernelEffect::RenamePath { from, to } => {
+            KernelEffect::RenamePath {
+                from,
+                to,
+                overwrite,
+            } => {
                 let _scope = perf::scope("effect.rename_path");
-                self.runtime.rename_path(from, to)
+                let root = self.store.state().workspace_root.clone();
+                let root = root.as_path();
+                if from.as_path() == root
+                    || to.as_path() == root
+                    || !from.starts_with(root)
+                    || !to.starts_with(root)
+                {
+                    self.push_log_line(format!(
+                        "[fs:rename_path] rejected out-of-workspace path: {} -> {}",
+                        from.display(),
+                        to.display()
+                    ));
+                    return;
+                }
+
+                // Default behavior: do not overwrite the destination.
+                if !overwrite {
+                    if let Ok(meta) = std::fs::symlink_metadata(&to) {
+                        let rel = to
+                            .strip_prefix(root)
+                            .ok()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|| to.to_string_lossy().to_string());
+
+                        let message = if meta.is_dir() {
+                            format!("Overwrite folder \"{}\" and all contents?", rel)
+                        } else {
+                            format!("Overwrite file \"{}\"?", rel)
+                        };
+
+                        let _ = self.dispatch_kernel(KernelAction::ShowConfirmDialog {
+                            message,
+                            on_confirm: PendingAction::RenamePath {
+                                from,
+                                to,
+                                overwrite: true,
+                            },
+                        });
+                        return;
+                    }
+                }
+
+                self.runtime.rename_path(from, to, overwrite)
             }
             KernelEffect::DeletePath { path, is_dir } => {
                 let _scope = perf::scope("effect.delete_path");
+                let root = self.store.state().workspace_root.clone();
+                let root = root.as_path();
+                if path.as_path() == root || !path.starts_with(root) {
+                    self.push_log_line(format!(
+                        "[fs:delete_path] rejected out-of-workspace path: {}",
+                        path.display()
+                    ));
+                    return;
+                }
+
                 self.runtime.delete_path(path, is_dir)
             }
             KernelEffect::ReloadSettings => {
@@ -169,24 +226,29 @@ impl Workbench {
             }
             KernelEffect::SetClipboardText(text) => {
                 let _scope = perf::scope("effect.clipboard_set");
-                if let Some(service) = self.kernel_services.get_mut::<ClipboardService>() {
-                    if let Err(e) = service.set_text(&text) {
-                        tracing::warn!(error = %e, "clipboard.set_text failed");
-                    }
-                }
+                self.set_clipboard_text(&text);
             }
             KernelEffect::RequestClipboardText { pane } => {
                 let _scope = perf::scope("effect.clipboard_get");
-                if let Some(service) = self.kernel_services.get_mut::<ClipboardService>() {
-                    match service.get_text() {
-                        Ok(text) if !text.is_empty() => {
-                            let _ = self.dispatch_kernel(KernelAction::Editor(
-                                EditorAction::InsertText { pane, text },
-                            ));
-                        }
-                        Ok(_) => {}
-                        Err(e) => tracing::warn!(error = %e, "clipboard.get_text failed"),
+                let get_result = self
+                    .kernel_services
+                    .get_mut::<ClipboardService>()
+                    .map(|svc| svc.get_text());
+
+                match get_result {
+                    Some(Ok(text)) if !text.is_empty() => {
+                        let _ =
+                            self.dispatch_kernel(KernelAction::Editor(EditorAction::InsertText {
+                                pane,
+                                text,
+                            }));
                     }
+                    Some(Ok(_)) => {}
+                    Some(Err(err)) => {
+                        self.maybe_warn_clipboard_unavailable();
+                        self.push_log_line(format!("[clipboard] {err}"));
+                    }
+                    None => self.maybe_warn_clipboard_unavailable(),
                 }
             }
             KernelEffect::LspHoverRequest { path, line, column } => {
@@ -252,7 +314,7 @@ impl Workbench {
             KernelEffect::LspCompletionResolveRequest { item } => {
                 let _scope = perf::scope("effect.lsp_completion_resolve");
                 if let Some(service) = self.kernel_services.get_mut::<LspService>() {
-                    service.request_completion_resolve(item);
+                    service.request_completion_resolve(*item);
                 }
             }
             KernelEffect::LspSemanticTokensRequest { path, version } => {

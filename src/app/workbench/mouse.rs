@@ -203,7 +203,9 @@ impl Workbench {
 
     pub(super) fn handle_editor_split_mouse(&mut self, event: &MouseEvent) -> Option<EventResult> {
         let _scope = perf::scope("input.mouse.split");
-        let splitter_id = IdPath::root("workbench").push_str("editor_splitter").finish();
+        let splitter_id = IdPath::root("workbench")
+            .push_str("editor_splitter")
+            .finish();
 
         // Arm dragging on mouse down if we hit the splitter node from the last rendered tree.
         if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
@@ -213,8 +215,10 @@ impl Workbench {
                 return None;
             }
 
-            self.ui_runtime
-                .on_input(&crate::core::event::InputEvent::Mouse(*event), &self.ui_tree);
+            self.ui_runtime.on_input(
+                &crate::core::event::InputEvent::Mouse(*event),
+                &self.ui_tree,
+            );
 
             self.editor_split_dragging = true;
             let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::FocusEditor));
@@ -228,9 +232,10 @@ impl Workbench {
             return None;
         }
 
-        let out = self
-            .ui_runtime
-            .on_input(&crate::core::event::InputEvent::Mouse(*event), &self.ui_tree);
+        let out = self.ui_runtime.on_input(
+            &crate::core::event::InputEvent::Mouse(*event),
+            &self.ui_tree,
+        );
 
         let mut handled = false;
         for ev in out.events {
@@ -277,8 +282,10 @@ impl Workbench {
                 return None;
             }
 
-            self.ui_runtime
-                .on_input(&crate::core::event::InputEvent::Mouse(*event), &self.ui_tree);
+            self.ui_runtime.on_input(
+                &crate::core::event::InputEvent::Mouse(*event),
+                &self.ui_tree,
+            );
 
             self.sidebar_split_dragging = true;
             self.update_sidebar_width(event.column);
@@ -289,9 +296,10 @@ impl Workbench {
             return None;
         }
 
-        let out = self
-            .ui_runtime
-            .on_input(&crate::core::event::InputEvent::Mouse(*event), &self.ui_tree);
+        let out = self.ui_runtime.on_input(
+            &crate::core::event::InputEvent::Mouse(*event),
+            &self.ui_tree,
+        );
 
         let mut handled = false;
         for ev in out.events {

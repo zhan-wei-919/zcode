@@ -1265,7 +1265,7 @@ fn line_starts(text: &str) -> Vec<usize> {
 
 fn line_end(text: &str, line: usize, starts: &[usize]) -> usize {
     let start = starts.get(line).copied().unwrap_or(0);
-    let mut end = starts.get(line + 1).copied().unwrap_or_else(|| text.len());
+    let mut end = starts.get(line + 1).copied().unwrap_or(text.len());
     if end > 0 && end <= text.len() && text.as_bytes().get(end - 1) == Some(&b'\n') {
         end = end.saturating_sub(1);
     }

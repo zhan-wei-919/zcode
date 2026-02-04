@@ -27,4 +27,3 @@ fn compute_explorer_move_target_rejects_moving_dir_into_itself_or_descendant() {
     let to_dir = PathBuf::from("/ws/foo/bar");
     assert!(compute_explorer_move_target(&from, true, &to_dir).is_none());
 }
-

@@ -20,14 +20,11 @@ pub fn kernel_bus() -> (KernelBusSender, KernelBusReceiver) {
 }
 
 impl KernelBusSender {
-    pub fn send(&self, msg: KernelMessage) -> Result<(), mpsc::SendError<KernelMessage>> {
-        self.tx.send(msg)
+    pub fn send(&self, msg: KernelMessage) -> Result<(), mpsc::SendError<()>> {
+        self.tx.send(msg).map_err(|_| mpsc::SendError(()))
     }
 
-    pub fn send_action(
-        &self,
-        action: crate::kernel::Action,
-    ) -> Result<(), mpsc::SendError<KernelMessage>> {
+    pub fn send_action(&self, action: crate::kernel::Action) -> Result<(), mpsc::SendError<()>> {
         self.send(KernelMessage::Action(action))
     }
 }

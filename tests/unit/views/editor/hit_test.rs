@@ -26,11 +26,20 @@ fn tab_insertion_index_none_outside_tab_row_or_area() {
 
     // Different row.
     assert_eq!(
-        tab_insertion_index(&layout, &pane, layout.tab_area.x, layout.tab_area.y + 1, None),
+        tab_insertion_index(
+            &layout,
+            &pane,
+            layout.tab_area.x,
+            layout.tab_area.y + 1,
+            None
+        ),
         None
     );
     // Outside column.
-    assert_eq!(tab_insertion_index(&layout, &pane, 999, layout.tab_area.y, None), None);
+    assert_eq!(
+        tab_insertion_index(&layout, &pane, 999, layout.tab_area.y, None),
+        None
+    );
 }
 
 #[test]

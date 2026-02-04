@@ -9,6 +9,7 @@ use crate::kernel::state::{
 };
 use crate::models::{FileTree, Granularity, Selection};
 use std::ffi::OsString;
+use tempfile::tempdir;
 
 fn new_store() -> Store {
     let root = std::env::temp_dir();
@@ -220,6 +221,60 @@ fn explorer_new_file_flow_creates_effect() {
 }
 
 #[test]
+fn explorer_move_path_rejects_out_of_workspace_paths() {
+    let ws = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+
+    let root = ws.path().to_path_buf();
+    let tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
+    let mut store = Store::new(AppState::new(root.clone(), tree, EditorConfig::default()));
+
+    let result = store.dispatch(Action::ExplorerMovePath {
+        from: outside.path().join("from.txt"),
+        to: root.join("to.txt"),
+    });
+    assert!(result.effects.is_empty());
+
+    let result = store.dispatch(Action::ExplorerMovePath {
+        from: root.join("from2.txt"),
+        to: outside.path().join("to2.txt"),
+    });
+    assert!(result.effects.is_empty());
+}
+
+#[test]
+fn confirm_dialog_rejects_out_of_workspace_file_operations() {
+    let ws = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+
+    let root = ws.path().to_path_buf();
+    let tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
+    let mut store = Store::new(AppState::new(root.clone(), tree, EditorConfig::default()));
+
+    let outside_path = outside.path().join("x.txt");
+    let _ = store.dispatch(Action::ShowConfirmDialog {
+        message: "delete".to_string(),
+        on_confirm: PendingAction::DeletePath {
+            path: outside_path.clone(),
+            is_dir: false,
+        },
+    });
+    let result = store.dispatch(Action::ConfirmDialogAccept);
+    assert!(result.effects.is_empty());
+
+    let _ = store.dispatch(Action::ShowConfirmDialog {
+        message: "rename".to_string(),
+        on_confirm: PendingAction::RenamePath {
+            from: outside_path,
+            to: root.join("dst.txt"),
+            overwrite: true,
+        },
+    });
+    let result = store.dispatch(Action::ConfirmDialogAccept);
+    assert!(result.effects.is_empty());
+}
+
+#[test]
 fn auto_closes_split_when_second_pane_becomes_empty_after_move_tab() {
     let mut store = new_store();
 
@@ -253,7 +308,15 @@ fn auto_closes_split_when_second_pane_becomes_empty_after_move_tab() {
     assert_eq!(store.state.ui.editor_layout.panes, 1);
     assert_eq!(store.state.editor.panes.len(), 1);
 
-    let titles: Vec<_> = store.state.editor.pane(0).unwrap().tabs.iter().map(|t| t.title.as_str()).collect();
+    let titles: Vec<_> = store
+        .state
+        .editor
+        .pane(0)
+        .unwrap()
+        .tabs
+        .iter()
+        .map(|t| t.title.as_str())
+        .collect();
     assert!(titles.contains(&"a.rs"));
     assert!(titles.contains(&"b.rs"));
 }
@@ -289,7 +352,10 @@ fn auto_closes_split_when_first_pane_becomes_empty_after_move_tab() {
     assert!(result.state_changed);
     assert_eq!(store.state.ui.editor_layout.panes, 1);
     assert_eq!(store.state.ui.editor_layout.active_pane, 0);
-    assert_eq!(store.state.ui.editor_layout.split_direction, SplitDirection::Vertical);
+    assert_eq!(
+        store.state.ui.editor_layout.split_direction,
+        SplitDirection::Vertical
+    );
     assert_eq!(store.state.editor.panes.len(), 1);
 
     let pane = store.state.editor.pane(0).unwrap();
@@ -320,7 +386,10 @@ fn auto_closes_split_when_last_tab_in_second_pane_is_closed() {
         content: "b".to_string(),
     }));
 
-    let result = store.dispatch(Action::Editor(EditorAction::CloseTabAt { pane: 1, index: 0 }));
+    let result = store.dispatch(Action::Editor(EditorAction::CloseTabAt {
+        pane: 1,
+        index: 0,
+    }));
     assert!(result.state_changed);
     assert_eq!(store.state.ui.editor_layout.panes, 1);
     assert_eq!(store.state.editor.panes.len(), 1);
@@ -403,7 +472,11 @@ fn explorer_context_menu_confirm_rename_opens_rename_dialog() {
     let result = store.dispatch(Action::InputDialogAccept);
     assert!(matches!(
         result.effects.as_slice(),
-        [Effect::RenamePath { from, to }]
+        [Effect::RenamePath {
+            from,
+            to,
+            overwrite: false
+        }]
             if from == &root.join("a.txt") && to == &root.join("b.txt")
     ));
 }
@@ -474,12 +547,7 @@ fn tab_context_menu_confirm_close_closes_tab_when_clean() {
         path,
         content: "hello".to_string(),
     }));
-    assert!(!store
-        .state
-        .editor
-        .pane(0)
-        .unwrap()
-        .is_tab_dirty(0));
+    assert!(!store.state.editor.pane(0).unwrap().is_tab_dirty(0));
 
     let _ = store.dispatch(Action::ContextMenuOpen {
         request: ContextMenuRequest::Tab { pane: 0, index: 0 },
@@ -1172,7 +1240,7 @@ fn fuzz_workspace_edit_application_does_not_break_cursor_invariants() {
         content: "line0\nline1\nline2\n".to_string(),
     }));
 
-    let mut rng = Rng::new(0xBAD5_EED);
+    let mut rng = Rng::new(0x0BAD_5EED);
 
     const STEPS: usize = 300;
     for _ in 0..STEPS {

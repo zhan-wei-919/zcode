@@ -291,10 +291,7 @@ pub fn hit_test_editor_mouse(
     if layout.content_area.is_empty() {
         return None;
     }
-    if !layout
-        .content_area
-        .contains(Pos::new(column, row))
-    {
+    if !layout.content_area.contains(Pos::new(column, row)) {
         return None;
     }
     Some((

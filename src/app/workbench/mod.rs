@@ -14,9 +14,9 @@ use crate::kernel::services::KernelServiceHost;
 use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, Store};
 use crate::models::build_file_tree;
 use crate::tui::view::{EventResult, View};
-use crate::views::{ExplorerView, SearchView};
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::Rect;
+use crate::views::{ExplorerView, SearchView};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -28,8 +28,8 @@ mod bridge;
 mod input;
 mod interaction;
 mod mouse;
-mod palette;
 mod paint;
+mod palette;
 mod render;
 #[cfg(test)]
 #[path = "../../../tests/unit/app/workbench.rs"]
@@ -129,6 +129,7 @@ pub struct Workbench {
     editor_search_rx: Vec<Option<Receiver<SearchMessage>>>,
     log_rx: Option<Receiver<String>>,
     logs: VecDeque<String>,
+    clipboard_unavailable_warned: bool,
     settings_path: Option<PathBuf>,
     last_settings_check: Instant,
     last_settings_modified: Option<SystemTime>,
@@ -263,6 +264,7 @@ impl Workbench {
             editor_search_rx: std::iter::repeat_with(|| None).take(panes).collect(),
             log_rx,
             logs: VecDeque::with_capacity(LOG_BUFFER_CAP.min(256)),
+            clipboard_unavailable_warned: false,
             settings_path,
             last_settings_check: Instant::now(),
             last_settings_modified,
@@ -319,6 +321,7 @@ impl Workbench {
             let _ = workbench.dispatch_kernel(KernelAction::GitInit);
         }
 
+        workbench.maybe_warn_clipboard_unavailable();
         Ok(workbench)
     }
 
@@ -423,9 +426,18 @@ impl Workbench {
             AppMessage::PathRenamed { from, to } => {
                 let _ = self.dispatch_kernel(KernelAction::ExplorerPathRenamed { from, to });
             }
-            AppMessage::FsOpError { op, path, error } => {
-                self.logs
-                    .push_back(format!("[fs:{op}] {}: {error}", path.display()));
+            AppMessage::FsOpError {
+                op,
+                path,
+                to,
+                error,
+            } => {
+                let msg = if let Some(to) = to {
+                    format!("[fs:{op}] {} -> {}: {error}", path.display(), to.display())
+                } else {
+                    format!("[fs:{op}] {}: {error}", path.display())
+                };
+                self.logs.push_back(msg);
                 while self.logs.len() > LOG_BUFFER_CAP {
                     self.logs.pop_front();
                 }

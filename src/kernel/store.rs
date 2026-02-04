@@ -95,12 +95,7 @@ impl Store {
         let _ = self.state.editor.ensure_panes(1);
 
         // Drop any UI state tied to the removed pane(s) to avoid stale indices.
-        if self
-            .state
-            .ui
-            .hovered_tab
-            .is_some_and(|(pane, _)| pane >= 1)
-        {
+        if self.state.ui.hovered_tab.is_some_and(|(pane, _)| pane >= 1) {
             self.state.ui.hovered_tab = None;
         }
         if self
@@ -113,20 +108,20 @@ impl Store {
             self.state.ui.pending_editor_nav = None;
         }
 
-        let should_close_context_menu = self
-            .state
-            .ui
-            .context_menu
-            .request
-            .as_ref()
-            .is_some_and(|req| {
-                matches!(
-                    req,
-                    super::state::ContextMenuRequest::Tab { pane, .. }
-                        | super::state::ContextMenuRequest::EditorArea { pane }
-                        if *pane >= 1
-                )
-            });
+        let should_close_context_menu =
+            self.state
+                .ui
+                .context_menu
+                .request
+                .as_ref()
+                .is_some_and(|req| {
+                    matches!(
+                        req,
+                        super::state::ContextMenuRequest::Tab { pane, .. }
+                            | super::state::ContextMenuRequest::EditorArea { pane }
+                            if *pane >= 1
+                    )
+                });
         if should_close_context_menu {
             self.state.ui.context_menu = super::state::ContextMenuState::default();
         }
@@ -737,7 +732,22 @@ impl Store {
                                 state_changed: true,
                             };
                         }
-                        Effect::RenamePath { from, to }
+                        let root = self.state.workspace_root.as_path();
+                        if from.as_path() == root
+                            || to.as_path() == root
+                            || !from.starts_with(root)
+                            || !to.starts_with(root)
+                        {
+                            return DispatchResult {
+                                effects: Vec::new(),
+                                state_changed: true,
+                            };
+                        }
+                        Effect::RenamePath {
+                            from,
+                            to,
+                            overwrite: false,
+                        }
                     }
                     InputDialogKind::LspRename { path, line, column } => Effect::LspRenameRequest {
                         path,
@@ -997,8 +1007,9 @@ impl Store {
                             && self.state.ui.completion.resolve_inflight != Some(item.id)
                         {
                             self.state.ui.completion.resolve_inflight = Some(item.id);
-                            effects
-                                .push(Effect::LspCompletionResolveRequest { item: item.clone() });
+                            effects.push(Effect::LspCompletionResolveRequest {
+                                item: Box::new(item.clone()),
+                            });
                         }
                     }
                 }
@@ -1402,8 +1413,41 @@ impl Store {
                             };
                         }
                         super::PendingAction::DeletePath { path, is_dir } => {
+                            let root = self.state.workspace_root.as_path();
+                            if path.as_path() == root || !path.starts_with(root) {
+                                return DispatchResult {
+                                    effects: Vec::new(),
+                                    state_changed: true,
+                                };
+                            }
                             return DispatchResult {
                                 effects: vec![Effect::DeletePath { path, is_dir }],
+                                state_changed: true,
+                            };
+                        }
+                        super::PendingAction::RenamePath {
+                            from,
+                            to,
+                            overwrite,
+                        } => {
+                            let root = self.state.workspace_root.as_path();
+                            if from.as_path() == root
+                                || to.as_path() == root
+                                || !from.starts_with(root)
+                                || !to.starts_with(root)
+                            {
+                                return DispatchResult {
+                                    effects: Vec::new(),
+                                    state_changed: true,
+                                };
+                            }
+
+                            return DispatchResult {
+                                effects: vec![Effect::RenamePath {
+                                    from,
+                                    to,
+                                    overwrite,
+                                }],
                                 state_changed: true,
                             };
                         }
@@ -1679,7 +1723,7 @@ impl Store {
                                 {
                                     self.state.ui.completion.resolve_inflight = Some(item.id);
                                     effects.push(Effect::LspCompletionResolveRequest {
-                                        item: item.clone(),
+                                        item: Box::new(item.clone()),
                                     });
                                     changed = true;
                                 }
@@ -2227,7 +2271,8 @@ impl Store {
                         state_changed: false,
                     };
                 };
-                if path == self.state.workspace_root {
+                let root = self.state.workspace_root.as_path();
+                if path.as_path() == root || !path.starts_with(root) {
                     return DispatchResult {
                         effects,
                         state_changed: false,
@@ -2268,7 +2313,8 @@ impl Store {
                         state_changed: false,
                     };
                 };
-                if path == self.state.workspace_root {
+                let root = self.state.workspace_root.as_path();
+                if path.as_path() == root || !path.starts_with(root) {
                     return DispatchResult {
                         effects,
                         state_changed: false,
@@ -2936,7 +2982,7 @@ impl Store {
                             {
                                 self.state.ui.completion.resolve_inflight = Some(item.id);
                                 effects.push(Effect::LspCompletionResolveRequest {
-                                    item: item.clone(),
+                                    item: Box::new(item.clone()),
                                 });
                                 changed = true;
                             }
@@ -3643,7 +3689,7 @@ impl Store {
                             {
                                 self.state.ui.completion.resolve_inflight = Some(item.id);
                                 effects.push(Effect::LspCompletionResolveRequest {
-                                    item: item.clone(),
+                                    item: Box::new(item.clone()),
                                 });
                                 changed = true;
                             }

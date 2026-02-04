@@ -1560,7 +1560,7 @@ fn test_semantic_tokens_apply_expected_highlight_kinds() {
         let Some(lines) = tab.semantic_highlight_lines(0, 1) else {
             return false;
         };
-        lines.get(0).is_some_and(|spans| {
+        lines.first().is_some_and(|spans| {
             spans.contains(&HighlightSpan {
                 start: 0,
                 end: 2,
@@ -1613,7 +1613,7 @@ fn test_inlay_hints_are_applied_for_single_line_file() {
             return false;
         };
         lines
-            .get(0)
+            .first()
             .is_some_and(|hints| hints.iter().any(|hint| hint == ": hint0"))
     });
 
@@ -1665,7 +1665,10 @@ fn test_inlay_hints_refresh_after_viewport_size_change() {
     // expand beyond the default viewport height (20 lines).
     {
         let mut backend = zcode::ui::backend::test::TestBackend::new(120, 80);
-        workbench.render(&mut backend, zcode::ui::core::geom::Rect::new(0, 0, 120, 80));
+        workbench.render(
+            &mut backend,
+            zcode::ui::core::geom::Rect::new(0, 0, 120, 80),
+        );
     }
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
@@ -1676,7 +1679,7 @@ fn test_inlay_hints_refresh_after_viewport_size_change() {
             return false;
         };
         lines
-            .get(0)
+            .first()
             .is_some_and(|hints| hints.iter().any(|hint| hint == ": hint22"))
     });
 }
@@ -1719,7 +1722,10 @@ fn test_inlay_hints_refresh_after_mouse_scroll() {
     // Render once so editor mouse events have a hit-testable area.
     {
         let mut backend = zcode::ui::backend::test::TestBackend::new(120, 50);
-        workbench.render(&mut backend, zcode::ui::core::geom::Rect::new(0, 0, 120, 50));
+        workbench.render(
+            &mut backend,
+            zcode::ui::core::geom::Rect::new(0, 0, 120, 50),
+        );
     }
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
@@ -1730,7 +1736,7 @@ fn test_inlay_hints_refresh_after_mouse_scroll() {
             return false;
         };
         lines
-            .get(0)
+            .first()
             .is_some_and(|hints| hints.iter().any(|hint| hint == ": hint0"))
     });
 
@@ -1831,7 +1837,7 @@ fn test_semantic_tokens_range_is_used_for_large_files() {
         let Some(lines) = tab.semantic_highlight_lines(0, 1) else {
             return false;
         };
-        lines.get(0).is_some_and(|spans| {
+        lines.first().is_some_and(|spans| {
             spans.contains(&HighlightSpan {
                 start: 0,
                 end: 2,

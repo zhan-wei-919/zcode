@@ -3,17 +3,12 @@
 use serde_json::Value;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LspPositionEncoding {
     Utf8,
+    #[default]
     Utf16,
     Utf32,
-}
-
-impl Default for LspPositionEncoding {
-    fn default() -> Self {
-        Self::Utf16
-    }
 }
 
 #[derive(Debug, Clone, Copy)]

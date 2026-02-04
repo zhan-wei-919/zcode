@@ -16,6 +16,7 @@ pub enum Effect {
     RenamePath {
         from: PathBuf,
         to: PathBuf,
+        overwrite: bool,
     },
     DeletePath {
         path: PathBuf,
@@ -80,7 +81,7 @@ pub enum Effect {
         column: u32,
     },
     LspCompletionResolveRequest {
-        item: LspCompletionItem,
+        item: Box<LspCompletionItem>,
     },
     LspSignatureHelpRequest {
         path: PathBuf,

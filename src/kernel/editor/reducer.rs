@@ -373,13 +373,16 @@ impl EditorState {
                     .map(|idx| (from_pane, idx))
             })
             .or_else(|| {
-                self.panes.iter().enumerate().find_map(|(pane, pane_state)| {
-                    pane_state
-                        .tabs
-                        .iter()
-                        .position(|t| t.id == tab_id)
-                        .map(|idx| (pane, idx))
-                })
+                self.panes
+                    .iter()
+                    .enumerate()
+                    .find_map(|(pane, pane_state)| {
+                        pane_state
+                            .tabs
+                            .iter()
+                            .position(|t| t.id == tab_id)
+                            .map(|idx| (pane, idx))
+                    })
             })
         else {
             return (false, Vec::new());
