@@ -9,21 +9,27 @@
 
 </div>
 
-`zcode` 是一个基于 Rust 开发的高性能、现代化 TUI（终端用户界面）文本编辑器。它采用了类 Flux/Redux 的状态管理架构，并结合 Tokio 异步运行时，实现了高效的 I/O 处理，旨在提供流畅的终端编码体验。
+`zcode` 是一个基于 Rust 开发的现代化、高性能 TUI（终端用户界面）文本编辑器。
 
 ## 目录
 
 - [快速开始](#快速开始)
+- [安装](#安装)
 - [操作指南](#操作指南)
+  - [常用快捷键 (Keybindings)](#常用快捷键-keybindings)
+  - [鼠标操作](#鼠标操作)
 - [核心功能](#核心功能)
-- [项目架构](#项目架构)
-- [模块详解](#模块详解)
+- [配置](#配置)
+- [常见问题](#常见问题)
+- [开发](#开发)
+- [License](#license)
 
 ## 快速开始
 
 ### 环境依赖
 
-*   [Rust Toolchain](https://rustup.rs/) (1.70+)
+*   [Rust toolchain](https://rustup.rs/)（推荐使用 `rust-toolchain.toml` 固定的版本）
+*   Linux: 需要 C 工具链用于链接（例如 `cc`/`gcc`）
 *   终端字体建议使用 Nerd Font（用于显示 UI 图标）
 
 ### 启动编辑器
@@ -44,6 +50,15 @@ TUI 编辑器在 Debug 模式下可能会因为大量绘制计算显得略有卡
 
 ```bash
 cargo run --release -- .
+```
+
+## 安装
+
+从源码构建并安装到 Cargo 的 bin 目录（通常是 `~/.cargo/bin`）：
+
+```bash
+cargo install --path . --locked
+zcode .
 ```
 
 ## 操作指南
@@ -78,6 +93,7 @@ cargo run --release -- .
     *   `Ctrl + c` / `x` / `v`: 复制 / 剪切 / 粘贴
     *   `Ctrl + z`: 撤销
     *   `Ctrl + y`: 重做
+
 ### 鼠标操作
 
 `zcode` 对鼠标操作有完善的支持：
@@ -98,58 +114,46 @@ cargo run --release -- .
 *   **键位映射**: 支持灵活的键位绑定配置 (Keybindings)，用户可自定义快捷键。
 *   **剪贴板集成**: 与系统剪贴板无缝互通。
 
-## 项目架构
+## 配置
 
-本项目采用了清晰的分层架构，主要遵循 **Model-View-Intent (MVI)** 或类 **Flux/Redux** 的单向数据流模式。
+配置文件位置：
 
-### 核心数据流
+*   Linux: `~/.cache/.zcode/setting.json`
+*   macOS: `~/Library/Caches/.zcode/setting.json`
 
-1.  **Event**: 用户输入（键盘、鼠标）或系统消息。
-2.  **Dispatcher**: 将 Event 转换为业务含义的 `Action`。
-3.  **Store**: 接收 `Action`，更新全局 `State`。
-4.  **View**: 根据最新的 `State` 渲染 UI。
+## 常见问题
 
-## 模块详解
+### `error: linker cc not found`
 
-### 1. 核心层 (Kernel) - `src/kernel/`
+请安装 C 工具链。
 
-这是编辑器的"大脑"，纯逻辑层，不依赖具体的 UI 渲染库。
+*   Ubuntu/Debian: `sudo apt install build-essential`
+*   Fedora/RHEL: `sudo dnf install gcc`
+*   Arch: `sudo pacman -S base-devel`
 
-*   **State (`state.rs`)**:
-    *   这是单一事实来源 (Single Source of Truth)。包含 UI 布局状态（哪个 Sidebar 可见、哪个 Tab 激活）、编辑器数据（打开的文件、光标位置）、数据缓存等。
-*   **Store (`store.rs`)**:
-    *   状态容器。它不仅持有 State，还负责接收 Actions 并执行状态转换（Reducers）。
-    *   它也管理副作用 (Side Effects) 的触发。
-*   **Actions (`action.rs`)**:
-    *   定义了所有可能改变状态的操作枚举，例如 `EditorAction::InsertText`, `WorkbenchAction::ToggleSidebar` 等。
+### Linux 上剪贴板不可用
 
-### 2. 应用层 (App) - `src/app/`
+请安装以下任意一个：
 
-这层负责将 Kernel 与 TUI 渲染连接起来，其中最核心的是 **Workbench**。
+*   Wayland: `wl-clipboard`（`wl-copy` / `wl-paste`）
+*   X11: `xclip` 或 `xsel`
 
-*   **Workbench (`src/app/workbench/`)**:
-    *   **生命周期管理**: 初始化服务、加载配置、启动并维持主事件循环 (Event Loop)。
-    *   **事件分发**: 监听 `crossterm` 的底层事件，转换为 Kernel能理解的 `InputEvent` 并分发。
-    *   **整体布局**: 负责计算屏幕上各个区域（侧边栏、编辑器、状态栏）的大小和位置 (Rect)，并将绘制任务分发给子组件。
+### Rust LSP（`rust-analyzer`）找不到
 
-### 3. 视图层 (Views) - `src/views/`
+确保系统存在 `rust-analyzer` 且在 PATH 中。如果你用 `rustup`：
 
-负责具体的 UI 组件绘制逻辑。
+```bash
+rustup component add rust-analyzer rust-src
+```
 
-*   **Editor**: 复杂的文本渲染逻辑，处理滚动、行号绘制、语法高亮（基础）、光标跟随等。
-*   **Explorer**: 文件资源管理器树状视图，处理文件夹的展开/折叠逻辑。
-*   **Search**: 搜索面板视图，展示全局搜索结果列表。
+## 开发
 
-### 4. 服务与适配器 (Services & Adapters) - `src/kernel/services/`
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+```
 
-负责与操作系统和外部世界交互，通常涉及 IO 操作和异步任务。
+## License
 
-*   **AsyncRuntime**: 封装 `tokio` 运行时，允许在同步的 TUI 绘制循环之外执行耗时任务。
-*   **GlobalSearchService**: 封装底层搜索工具（如 `ignore` 和 `grep` crate），提供异步搜索能力。
-*   **Clipboard**: 使用原生剪贴板 provider（macOS: `pbcopy`/`pbpaste`；Linux/Windows 逐步补齐）。
-
-### 5. 数据模型 (Models) - `src/models/`
-
-*   **TextBuffer**: 基于 `ropey` (Rope 数据结构) 实现。这对于文本编辑器至关重要，它能高效地处理大文本文件的插入和删除操作（O(log N) 复杂度），避免了普通 String 的大量内存拷贝。
-*   **EditHistory**: 管理撤销栈 (Undo Stack) 和重做栈 (Redo Stack)。
-*   **FileTree**: 递归的文件树结构，用于资源管理器的数据展示。
+GPL-3.0，详见 `LICENSE`。

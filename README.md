@@ -9,21 +9,27 @@
 
 </div>
 
-`zcode` is a high-performance, modern TUI (Terminal User Interface) text editor written in Rust. It features a Flux/Redux-like state management architecture combined with the Tokio asynchronous runtime, delivering efficient I/O handling for a smooth terminal coding experience.
+`zcode` is a modern, high-performance TUI (Terminal User Interface) text editor written in Rust.
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Install](#install)
 - [Usage Guide](#usage-guide)
+  - [Keybindings](#keybindings)
+  - [Mouse Support](#mouse-support)
 - [Core Features](#core-features)
-- [Architecture](#architecture)
-- [Modules](#modules)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [License](#license)
 
 ## Quick Start
 
 ### Prerequisites
 
-*   [Rust Toolchain](https://rustup.rs/) (1.70+)
+*   [Rust toolchain](https://rustup.rs/) (recommended: the version pinned in `rust-toolchain.toml`)
+*   Linux: a C toolchain for linking (e.g. `cc`/`gcc`)
 *   A terminal font with Nerd Font glyphs (recommended for UI icons)
 
 ### Launching the Editor
@@ -44,6 +50,15 @@ For the best performance and smoothest experience (avoiding potential debug-buil
 
 ```bash
 cargo run --release -- .
+```
+
+## Install
+
+Build and install `zcode` to your Cargo bin directory (usually `~/.cargo/bin`):
+
+```bash
+cargo install --path . --locked
+zcode .
 ```
 
 ## Usage Guide
@@ -99,58 +114,46 @@ Default key mappings are as follows:
 *   **⌨️ Key Mapping**: Flexible keybinding configuration support.
 *   **📋 Clipboard Integration**: Seamless system clipboard support.
 
-## Architecture
+## Configuration
 
-This project follows a clear layered architecture, primarily adhering to the **Model-View-Intent (MVI)** or **Flux/Redux** unidirectional data flow pattern.
+Settings are stored in:
 
-### Core Data Flow
+*   Linux: `~/.cache/.zcode/setting.json`
+*   macOS: `~/Library/Caches/.zcode/setting.json`
 
-1.  **Event**: User input (keyboard, mouse) or system messages.
-2.  **Dispatcher**: Converts Events into business-logic `Action`s.
-3.  **Store**: Receives `Action`s and updates the global `State`.
-4.  **View**: Renders the UI based on the latest `State`.
+## Troubleshooting
 
-## Modules
+### `error: linker cc not found`
 
-### 1. Kernel - `src/kernel/`
+Install a C toolchain.
 
-The "brain" of the editor. Pure logic, independent of specific UI rendering libraries.
+*   Ubuntu/Debian: `sudo apt install build-essential`
+*   Fedora/RHEL: `sudo dnf install gcc`
+*   Arch: `sudo pacman -S base-devel`
 
-*   **State (`state.rs`)**:
-    *   The Single Source of Truth. Contains UI layout state (visible sidebars, active tabs), editor data (open files, cursor positions), and caches.
-*   **Store (`store.rs`)**:
-    *   State container. Holds the State, receives Actions, and executes state transitions (Reducers).
-    *   Manages Side Effect triggers.
-*   **Actions (`action.rs`)**:
-    *   Defines all operations that can mutate state, e.g., `EditorAction::InsertText`, `WorkbenchAction::ToggleSidebar`.
+### Clipboard unavailable on Linux
 
-### 2. App Layer - `src/app/`
+Install one of the following:
 
-Connects the Kernel to the TUI rendering, with the **Workbench** being the core component.
+*   Wayland: `wl-clipboard` (`wl-copy` / `wl-paste`)
+*   X11: `xclip` or `xsel`
 
-*   **Workbench (`src/app/workbench/`)**:
-    *   **Lifecycle Management**: Initializes services, loads config, starts and maintains the main Event Loop.
-    *   **Event Dispatch**: Listens to raw `crossterm` events, converts them to `InputEvent`s, and dispatches them to the Kernel.
-    *   **Layout**: Calculates the size and position (Rect) of screen areas (Sidebar, Editor, Status Bar) and delegates rendering tasks.
+### Rust LSP (`rust-analyzer`) not found
 
-### 3. Views - `src/views/`
+Make sure `rust-analyzer` is installed and available in PATH. If you use `rustup`:
 
-Responsible for specific UI component rendering logic.
+```bash
+rustup component add rust-analyzer rust-src
+```
 
-*   **Editor**: Complex text rendering, scrolling, line numbers, syntax highlighting (basic), cursor tracking.
-*   **Explorer**: Tree view for the file system, handling folder expansion/collapse.
-*   **Search**: Search panel view, displaying global search results.
+## Development
 
-### 4. Services & Adapters - `src/kernel/services/`
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+```
 
-Handles interactions with the OS and the external world, typically involving I/O and async tasks.
+## License
 
-*   **AsyncRuntime**: Wraps the `tokio` runtime, allowing expensive tasks to run outside the synchronous TUI render loop.
-*   **GlobalSearchService**: Wraps underlying search tools (like `ignore` and `grep` crates) to provide async search capabilities.
-*   **Clipboard**: Uses native clipboard providers (macOS: `pbcopy`/`pbpaste`; Linux/Windows planned).
-
-### 5. Models - `src/models/`
-
-*   **TextBuffer**: Implemented using `ropey` (Rope data structure). Critical for high-performance editing of large files (O(log N) complexity for inserts/deletes), avoiding massive memory copies associated with standard Strings.
-*   **EditHistory**: Manages the Undo and Redo stacks.
-*   **FileTree**: Recursive file tree structure for the Explorer.
+GPL-3.0. See `LICENSE`.
