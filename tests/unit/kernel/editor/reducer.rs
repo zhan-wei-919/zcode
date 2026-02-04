@@ -3,6 +3,7 @@ use crate::core::Command;
 use crate::kernel::editor::action::EditorAction;
 use crate::kernel::editor::EditorState;
 use crate::kernel::editor::EditorTabState;
+use crate::kernel::editor::TabId;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::Effect;
 use ropey::Rope;
@@ -11,7 +12,7 @@ use std::path::PathBuf;
 #[test]
 fn test_goto_byte_offset_eof_multibyte() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::untitled(&config);
+    let mut tab = EditorTabState::untitled(TabId::new(1), &config);
     tab.buffer.set_rope(Rope::from_str("é"));
 
     let byte_offset = tab.buffer.rope().len_bytes();

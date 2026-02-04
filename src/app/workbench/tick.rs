@@ -388,6 +388,7 @@ impl Workbench {
 
         let mut theme = UiTheme::default();
         theme.apply_settings(&settings.theme);
+        let ui_theme = crate::app::theme::to_core_theme(&theme);
 
         let _ = self.store.dispatch(KernelAction::EditorConfigUpdated {
             config: editor_config.clone(),
@@ -406,6 +407,7 @@ impl Workbench {
                 .register(ConfigService::with_editor_config(editor_config));
         }
         self.theme = theme;
+        self.ui_theme = ui_theme;
         self.last_settings_modified = self
             .settings_path
             .as_ref()

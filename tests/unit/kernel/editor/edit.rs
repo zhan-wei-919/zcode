@@ -1,11 +1,12 @@
 use super::*;
-use crate::kernel::editor::{HighlightKind, HighlightSpan};
+use crate::kernel::editor::{HighlightKind, HighlightSpan, TabId};
 use std::path::PathBuf;
 
 #[test]
 fn test_rust_brace_pair_and_electric_enter() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "fn main() ", &config);
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "fn main() ", &config);
 
     let end = tab.buffer.line_grapheme_len(0);
     tab.buffer.set_cursor(0, end);
@@ -22,7 +23,8 @@ fn test_rust_brace_pair_and_electric_enter() {
 #[test]
 fn test_electric_enter_with_whitespace_between_braces() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "fn main() ", &config);
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "fn main() ", &config);
 
     let end = tab.buffer.line_grapheme_len(0);
     tab.buffer.set_cursor(0, end);
@@ -40,7 +42,12 @@ fn test_electric_enter_with_whitespace_between_braces() {
 #[test]
 fn test_replace_is_undoable() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(PathBuf::from("test.txt"), "foo foo", &config);
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.txt"),
+        "foo foo",
+        &config,
+    );
 
     let m = Match::new(0, 3, 0, 0);
     assert!(tab.replace_current_match(&m, "bar", config.tab_size));
@@ -54,7 +61,12 @@ fn test_replace_is_undoable() {
 #[test]
 fn test_replace_with_empty_string_deletes_and_undo() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(PathBuf::from("test.txt"), "foo foo", &config);
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.txt"),
+        "foo foo",
+        &config,
+    );
 
     let m = Match::new(4, 7, 0, 4);
     assert!(tab.replace_current_match(&m, "", config.tab_size));
@@ -68,7 +80,8 @@ fn test_replace_with_empty_string_deletes_and_undo() {
 #[test]
 fn test_paste_over_selection_single_undo() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(PathBuf::from("test.txt"), "abc", &config);
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.txt"), "abc", &config);
 
     tab.buffer.set_cursor(0, 1);
     tab.buffer
@@ -86,7 +99,8 @@ fn test_paste_over_selection_single_undo() {
 #[test]
 fn test_auto_pair_and_skip_closing() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "", &config);
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "", &config);
 
     let _ = tab.apply_command(Command::InsertChar('('), 0, &config);
     assert_eq!(tab.buffer.text(), "()");
@@ -96,7 +110,7 @@ fn test_auto_pair_and_skip_closing() {
     assert_eq!(tab.buffer.text(), "()");
     assert_eq!(tab.buffer.cursor(), (0, 2));
 
-    tab = EditorTabState::from_file(PathBuf::from("test.rs"), "", &config);
+    tab = EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "", &config);
     let _ = tab.apply_command(Command::InsertChar('"'), 0, &config);
     assert_eq!(tab.buffer.text(), "\"\"");
     assert_eq!(tab.buffer.cursor(), (0, 1));
@@ -105,7 +119,7 @@ fn test_auto_pair_and_skip_closing() {
     assert_eq!(tab.buffer.text(), "\"\"");
     assert_eq!(tab.buffer.cursor(), (0, 2));
 
-    tab = EditorTabState::from_file(PathBuf::from("test.rs"), "", &config);
+    tab = EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "", &config);
     let _ = tab.apply_command(Command::InsertChar('\''), 0, &config);
     assert_eq!(tab.buffer.text(), "''");
     assert_eq!(tab.buffer.cursor(), (0, 1));
@@ -118,7 +132,12 @@ fn test_auto_pair_and_skip_closing() {
 #[test]
 fn semantic_highlight_and_inlay_hints_do_not_flicker_on_edit() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "fn main() {}", &config);
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "fn main() {}",
+        &config,
+    );
 
     tab.set_semantic_highlight(
         0,
@@ -142,7 +161,8 @@ fn semantic_highlight_and_inlay_hints_do_not_flicker_on_edit() {
 #[test]
 fn semantic_highlight_is_shifted_on_line_edit() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "foo\nbar", &config);
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "foo\nbar", &config);
     tab.set_semantic_highlight(
         0,
         vec![
@@ -178,7 +198,12 @@ fn semantic_highlight_is_shifted_on_line_edit() {
 #[test]
 fn semantic_highlight_keeps_existing_lines_on_newline_edit() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "foo\nbar\nbaz", &config);
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "foo\nbar\nbaz",
+        &config,
+    );
     tab.set_semantic_highlight(
         0,
         vec![
@@ -217,7 +242,8 @@ fn semantic_highlight_keeps_existing_lines_on_newline_edit() {
 #[test]
 fn semantic_highlight_is_not_invalidated_when_appending_punctuation() {
     let config = EditorConfig::default();
-    let mut tab = EditorTabState::from_file(PathBuf::from("test.rs"), "String", &config);
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "String", &config);
     tab.set_semantic_highlight(
         0,
         vec![vec![HighlightSpan {
@@ -290,7 +316,7 @@ fn fuzz_editing_undo_redo_roundtrip() {
         ..Default::default()
     };
 
-    let mut tab = EditorTabState::untitled(&config);
+    let mut tab = EditorTabState::untitled(TabId::new(1), &config);
     let mut rng = Rng::new(0xC0FFEE);
 
     const STEPS: usize = 2000;

@@ -1,4 +1,5 @@
 use super::*;
+use slotmap::Key;
 
 #[test]
 fn test_new_tree() {
@@ -85,4 +86,26 @@ fn test_flatten_for_view() {
     tree.expand(dir_id);
     let rows = tree.flatten_for_view();
     assert_eq!(rows.len(), 3);
+}
+
+#[test]
+fn test_full_path_ro_builds_paths_without_cache_mutation() {
+    let mut tree = FileTree::new_with_root("root".into(), PathBuf::from("/root"));
+    let root = tree.root();
+
+    let dir_id = tree
+        .insert_child(root, "subdir".into(), NodeKind::Dir)
+        .unwrap();
+    let file_id = tree
+        .insert_child(dir_id, "file.txt".into(), NodeKind::File)
+        .unwrap();
+
+    assert_eq!(tree.full_path_ro(root), Some(PathBuf::from("/root")));
+    assert_eq!(tree.full_path_ro(dir_id), Some(PathBuf::from("/root/subdir")));
+    assert_eq!(
+        tree.full_path_ro(file_id),
+        Some(PathBuf::from("/root/subdir/file.txt"))
+    );
+
+    assert_eq!(tree.full_path_ro(NodeId::null()), None);
 }

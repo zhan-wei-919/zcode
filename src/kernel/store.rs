@@ -7,6 +7,7 @@ use crate::kernel::services::ports::{
 use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding};
 
 mod completion;
+mod context_menu;
 mod explorer;
 mod git;
 mod lsp;
@@ -66,6 +67,103 @@ impl Store {
         }
     }
 
+    fn maybe_close_empty_editor_split(&mut self, effects: &mut Vec<Effect>) -> bool {
+        // Currently zcode supports at most a single editor split (2 panes).
+        if self.state.ui.editor_layout.panes != 2 {
+            return false;
+        }
+        if self.state.editor.panes.len() < 2 {
+            return false;
+        }
+
+        let pane0_empty = self.state.editor.panes[0].tabs.is_empty();
+        let pane1_empty = self.state.editor.panes[1].tabs.is_empty();
+        if !pane0_empty && !pane1_empty {
+            return false;
+        }
+
+        // Keep the non-empty pane in slot 0 before truncating.
+        if pane0_empty && !pane1_empty {
+            self.state.editor.panes.swap(0, 1);
+        }
+
+        self.state.ui.editor_layout.panes = 1;
+        self.state.ui.editor_layout.active_pane = 0;
+        self.state.ui.editor_layout.split_direction = SplitDirection::Vertical;
+        self.state.ui.focus = FocusTarget::Editor;
+
+        let _ = self.state.editor.ensure_panes(1);
+
+        // Drop any UI state tied to the removed pane(s) to avoid stale indices.
+        if self
+            .state
+            .ui
+            .hovered_tab
+            .is_some_and(|(pane, _)| pane >= 1)
+        {
+            self.state.ui.hovered_tab = None;
+        }
+        if self
+            .state
+            .ui
+            .pending_editor_nav
+            .as_ref()
+            .is_some_and(|nav| nav.pane >= 1)
+        {
+            self.state.ui.pending_editor_nav = None;
+        }
+
+        let should_close_context_menu = self
+            .state
+            .ui
+            .context_menu
+            .request
+            .as_ref()
+            .is_some_and(|req| {
+                matches!(
+                    req,
+                    super::state::ContextMenuRequest::Tab { pane, .. }
+                        | super::state::ContextMenuRequest::EditorArea { pane }
+                        if *pane >= 1
+                )
+            });
+        if should_close_context_menu {
+            self.state.ui.context_menu = super::state::ContextMenuState::default();
+        }
+
+        let should_close_confirm = self
+            .state
+            .ui
+            .confirm_dialog
+            .on_confirm
+            .as_ref()
+            .is_some_and(|pending| matches!(pending, super::state::PendingAction::CloseTab { pane, .. } if *pane >= 1));
+        if should_close_confirm {
+            self.state.ui.confirm_dialog = super::state::ConfirmDialogState::default();
+        }
+
+        // Popups are positioned relative to the editor pane; reset them after collapsing.
+        self.state.ui.signature_help = super::state::SignatureHelpPopupState::default();
+        self.state.ui.completion = super::state::CompletionPopupState::default();
+
+        if let Some(repo_root) = self.state.git.repo_root.clone() {
+            let path = self
+                .state
+                .editor
+                .pane(0)
+                .and_then(|pane_state| pane_state.active_tab())
+                .and_then(|tab| tab.path.clone());
+            if let Some(path) = path {
+                effects.push(Effect::GitRefreshStatus {
+                    repo_root: repo_root.clone(),
+                });
+                effects.push(Effect::GitRefreshDiff { repo_root, path });
+            }
+        }
+
+        true
+    }
+
     pub fn dispatch(&mut self, action: Action) -> DispatchResult {
         match action {
             Action::RunCommand(cmd) => {
@@ -106,6 +204,11 @@ impl Store {
                 } else {
                     false
                 };
+
+                let should_auto_close_editor_split = matches!(
+                    &editor_action,
+                    EditorAction::CloseTabAt { .. } | EditorAction::MoveTab { .. }
+                );
 
                 let mut result =
                     match editor_action {
@@ -376,7 +479,12 @@ impl Store {
                         }
                     };
 
+                let editor_changed = result.state_changed;
                 result.state_changed |= completion_changed;
+                if should_auto_close_editor_split && editor_changed {
+                    let collapsed = self.maybe_close_empty_editor_split(&mut result.effects);
+                    result.state_changed |= collapsed;
+                }
                 result
             }
             Action::OpenPath(path) => DispatchResult {
@@ -739,17 +847,28 @@ impl Store {
                     state_changed: ratio != prev,
                 }
             }
+            Action::SidebarSetWidth { width } => {
+                let width = width.max(1);
+                let prev = self.state.ui.sidebar_width;
+                let next = Some(width);
+                self.state.ui.sidebar_width = next;
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: prev != next,
+                }
+            }
+            action @ Action::ContextMenuOpen { .. }
+            | action @ Action::ContextMenuClose
+            | action @ Action::ContextMenuMoveSelection { .. }
+            | action @ Action::ContextMenuSetSelected { .. }
+            | action @ Action::ContextMenuConfirm => self.reduce_context_menu_action(action),
             action @ Action::ExplorerSetViewHeight { .. }
             | action @ Action::ExplorerMoveSelection { .. }
             | action @ Action::ExplorerScroll { .. }
             | action @ Action::ExplorerActivate
             | action @ Action::ExplorerCollapse
             | action @ Action::ExplorerClickRow { .. }
-            | action @ Action::ExplorerContextMenuOpen { .. }
-            | action @ Action::ExplorerContextMenuClose
-            | action @ Action::ExplorerContextMenuMoveSelection { .. }
-            | action @ Action::ExplorerContextMenuSetSelected { .. }
-            | action @ Action::ExplorerContextMenuConfirm => self.reduce_explorer_action(action),
+            | action @ Action::ExplorerMovePath { .. } => self.reduce_explorer_action(action),
             Action::BottomPanelSetActiveTab { tab } => {
                 let prev_visible = self.state.ui.bottom_panel.visible;
                 let prev = self.state.ui.bottom_panel.active_tab.clone();
@@ -3560,6 +3679,7 @@ impl Store {
             }
             other => {
                 let pane = self.state.ui.editor_layout.active_pane;
+                let is_close_tab = matches!(other, Command::CloseTab);
                 let should_git_refresh = matches!(
                     other,
                     Command::NextTab | Command::PrevTab | Command::CloseTab
@@ -3572,7 +3692,13 @@ impl Store {
                 let mut effects = effects;
                 effects.extend(cmd_effects);
 
-                if should_git_refresh {
+                let mut collapsed = false;
+                if changed && is_close_tab {
+                    collapsed = self.maybe_close_empty_editor_split(&mut effects);
+                    state_changed |= collapsed;
+                }
+
+                if should_git_refresh && !collapsed {
                     if let Some(repo_root) = self.state.git.repo_root.clone() {
                         let path = self
                             .state
@@ -3593,6 +3719,7 @@ impl Store {
                     || self.state.ui.signature_help.request.is_some()
                     || !self.state.ui.signature_help.text.is_empty();
                 if had_signature_help {
+                    let pane = self.state.ui.editor_layout.active_pane;
                     let keep = self
                         .state
                         .editor

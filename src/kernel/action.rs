@@ -73,6 +73,9 @@ pub enum Action {
     EditorSetSplitRatio {
         ratio: u16,
     },
+    SidebarSetWidth {
+        width: u16,
+    },
     ExplorerSetViewHeight {
         height: usize,
     },
@@ -88,19 +91,23 @@ pub enum Action {
         row: usize,
         now: Instant,
     },
-    ExplorerContextMenuOpen {
-        tree_row: Option<usize>,
+    ContextMenuOpen {
+        request: crate::kernel::state::ContextMenuRequest,
         x: u16,
         y: u16,
     },
-    ExplorerContextMenuClose,
-    ExplorerContextMenuMoveSelection {
+    ContextMenuClose,
+    ContextMenuMoveSelection {
         delta: isize,
     },
-    ExplorerContextMenuSetSelected {
+    ContextMenuSetSelected {
         index: usize,
     },
-    ExplorerContextMenuConfirm,
+    ContextMenuConfirm,
+    ExplorerMovePath {
+        from: PathBuf,
+        to: PathBuf,
+    },
     BottomPanelSetActiveTab {
         tab: BottomPanelTab,
     },

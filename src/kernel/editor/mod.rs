@@ -11,7 +11,7 @@ mod viewport;
 
 pub use action::EditorAction;
 pub use state::{
-    EditorMouseState, EditorPaneState, EditorState, EditorTabState, EditorViewportState,
+    EditorMouseState, EditorPaneState, EditorState, EditorTabState, EditorViewportState, TabId,
     SearchBarField, SearchBarMode, SearchBarState,
 };
 pub use syntax::{HighlightKind, HighlightSpan, LanguageId};

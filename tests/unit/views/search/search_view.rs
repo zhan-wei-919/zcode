@@ -1,6 +1,5 @@
 use super::*;
 use crate::core::event::{KeyModifiers, MouseButton, MouseEventKind};
-use ratatui::layout::Rect;
 
 #[test]
 fn test_hit_test_results_row() {

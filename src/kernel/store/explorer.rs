@@ -1,5 +1,4 @@
-use crate::kernel::state::{ExplorerContextMenuItem, ExplorerContextMenuState};
-use crate::kernel::{Action, Effect, FocusTarget, SidebarTab};
+use crate::kernel::{Action, Effect};
 
 impl super::Store {
     pub(super) fn reduce_explorer_action(&mut self, action: Action) -> super::DispatchResult {
@@ -64,10 +63,11 @@ impl super::Store {
                     state_changed: state_changed || explorer_git_changed,
                 }
             }
-            Action::ExplorerContextMenuOpen { tree_row, x, y } => {
-                if self.state.ui.command_palette.visible
-                    || self.state.ui.input_dialog.visible
+            Action::ExplorerMovePath { from, to } => {
+                if self.state.ui.input_dialog.visible
                     || self.state.ui.confirm_dialog.visible
+                    || from == to
+                    || from == self.state.workspace_root
                 {
                     return super::DispatchResult {
                         effects: Vec::new(),
@@ -75,149 +75,10 @@ impl super::Store {
                     };
                 }
 
-                let mut state_changed = false;
-                if !self.state.ui.sidebar_visible {
-                    self.state.ui.sidebar_visible = true;
-                    state_changed = true;
-                }
-                if self.state.ui.sidebar_tab != SidebarTab::Explorer {
-                    self.state.ui.sidebar_tab = SidebarTab::Explorer;
-                    state_changed = true;
-                }
-                if self.state.ui.focus != FocusTarget::Explorer {
-                    self.state.ui.focus = FocusTarget::Explorer;
-                    state_changed = true;
-                }
-
-                if let Some(row) = tree_row {
-                    state_changed |= self.state.explorer.select_row(row);
-                }
-
-                let selected_is_root = self
-                    .state
-                    .explorer
-                    .selected_path_and_kind()
-                    .map(|(path, _)| path == self.state.workspace_root)
-                    .unwrap_or(true);
-
-                let mut items = vec![
-                    ExplorerContextMenuItem::NewFile,
-                    ExplorerContextMenuItem::NewFolder,
-                ];
-                if !selected_is_root {
-                    items.push(ExplorerContextMenuItem::Rename);
-                    items.push(ExplorerContextMenuItem::Delete);
-                }
-
-                let prev = self.state.ui.explorer_context_menu.clone();
-                self.state.ui.explorer_context_menu.visible = true;
-                self.state.ui.explorer_context_menu.anchor = (x, y);
-                self.state.ui.explorer_context_menu.selected = 0;
-                self.state.ui.explorer_context_menu.items = items;
-                state_changed |= self.state.ui.explorer_context_menu != prev;
-
                 super::DispatchResult {
-                    effects: Vec::new(),
-                    state_changed,
+                    effects: vec![Effect::RenamePath { from, to }],
+                    state_changed: false,
                 }
-            }
-            Action::ExplorerContextMenuClose => {
-                if !self.state.ui.explorer_context_menu.visible {
-                    return super::DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-                self.state.ui.explorer_context_menu = ExplorerContextMenuState::default();
-                super::DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ExplorerContextMenuMoveSelection { delta } => {
-                if !self.state.ui.explorer_context_menu.visible || delta == 0 {
-                    return super::DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let len = self.state.ui.explorer_context_menu.items.len();
-                if len == 0 {
-                    return super::DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let current = self.state.ui.explorer_context_menu.selected.min(len - 1) as isize;
-                let len_i = len as isize;
-                let mut next = (current + delta) % len_i;
-                if next < 0 {
-                    next += len_i;
-                }
-                let next = next as usize;
-                let changed = next != self.state.ui.explorer_context_menu.selected;
-                self.state.ui.explorer_context_menu.selected = next;
-                super::DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: changed,
-                }
-            }
-            Action::ExplorerContextMenuSetSelected { index } => {
-                if !self.state.ui.explorer_context_menu.visible {
-                    return super::DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let len = self.state.ui.explorer_context_menu.items.len();
-                if len == 0 {
-                    return super::DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let next = index.min(len - 1);
-                let changed = next != self.state.ui.explorer_context_menu.selected;
-                self.state.ui.explorer_context_menu.selected = next;
-                super::DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: changed,
-                }
-            }
-            Action::ExplorerContextMenuConfirm => {
-                if !self.state.ui.explorer_context_menu.visible {
-                    return super::DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let selected = self.state.ui.explorer_context_menu.selected;
-                let cmd = self
-                    .state
-                    .ui
-                    .explorer_context_menu
-                    .items
-                    .get(selected)
-                    .copied()
-                    .map(|item| item.command());
-
-                self.state.ui.explorer_context_menu = ExplorerContextMenuState::default();
-
-                let Some(cmd) = cmd else {
-                    return super::DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: true,
-                    };
-                };
-
-                let mut result = self.dispatch(Action::RunCommand(cmd));
-                result.state_changed = true;
-                result
             }
             Action::DirLoaded { path, entries } => super::DispatchResult {
                 effects: Vec::new(),

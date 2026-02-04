@@ -4,7 +4,7 @@ use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::core::Command;
 use crate::kernel::{Action as KernelAction, BottomPanelTab, SearchResultItem, SearchViewport};
 use crate::tui::view::EventResult;
-use ratatui::layout::Rect;
+use crate::ui::core::geom::Rect;
 use std::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
@@ -21,22 +21,22 @@ impl Workbench {
         }
 
         let inner = panel_area;
-        if inner.width == 0 || inner.height == 0 {
+        if inner.is_empty() {
             return EventResult::Ignored;
         }
 
-        let tabs_area = Rect::new(inner.x, inner.y, inner.width, 1.min(inner.height));
+        let tabs_area = Rect::new(inner.x, inner.y, inner.w, 1.min(inner.h));
         let content_area = Rect::new(
             inner.x,
             inner.y.saturating_add(1),
-            inner.width,
-            inner.height.saturating_sub(1),
+            inner.w,
+            inner.h.saturating_sub(1),
         );
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if util::rect_contains(tabs_area, event.column, event.row) {
-                    if tabs_area.width == 0 {
+                    if tabs_area.w == 0 {
                         return EventResult::Consumed;
                     }
                     let rel = event.column.saturating_sub(tabs_area.x);
@@ -55,15 +55,15 @@ impl Workbench {
 
                 let active_tab = self.store.state().ui.bottom_panel.active_tab.clone();
                 if active_tab == BottomPanelTab::SearchResults {
-                    if content_area.width == 0 || content_area.height == 0 {
+                    if content_area.is_empty() {
                         return EventResult::Ignored;
                     }
 
                     let list_area = Rect::new(
                         content_area.x,
                         content_area.y.saturating_add(1),
-                        content_area.width,
-                        content_area.height.saturating_sub(1),
+                        content_area.w,
+                        content_area.h.saturating_sub(1),
                     );
 
                     if !util::rect_contains(list_area, event.column, event.row) {
@@ -97,7 +97,7 @@ impl Workbench {
                     return EventResult::Consumed;
                 }
                 if active_tab == BottomPanelTab::Problems {
-                    if content_area.width == 0 || content_area.height == 0 {
+                    if content_area.is_empty() {
                         return EventResult::Ignored;
                     }
 
@@ -135,7 +135,7 @@ impl Workbench {
                     return EventResult::Consumed;
                 }
                 if active_tab == BottomPanelTab::Locations {
-                    if content_area.width == 0 || content_area.height == 0 {
+                    if content_area.is_empty() {
                         return EventResult::Ignored;
                     }
 
@@ -173,7 +173,7 @@ impl Workbench {
                     return EventResult::Consumed;
                 }
                 if active_tab == BottomPanelTab::Symbols {
-                    if content_area.width == 0 || content_area.height == 0 {
+                    if content_area.is_empty() {
                         return EventResult::Ignored;
                     }
 
@@ -211,7 +211,7 @@ impl Workbench {
                     return EventResult::Consumed;
                 }
                 if active_tab == BottomPanelTab::CodeActions {
-                    if content_area.width == 0 || content_area.height == 0 {
+                    if content_area.is_empty() {
                         return EventResult::Ignored;
                     }
 

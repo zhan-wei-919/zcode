@@ -1,7 +1,7 @@
 use super::Workbench;
 use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, SearchViewport};
-use ratatui::layout::Rect;
-use ratatui::Frame;
+use crate::ui::backend::Backend;
+use crate::ui::core::geom::Rect;
 use std::time::Instant;
 
 mod bottom_panel;
@@ -13,8 +13,8 @@ mod sidebar;
 mod status;
 mod terminal;
 
-pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
-    layout::render(workbench, frame, area);
+pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area: Rect) {
+    layout::render(workbench, backend, area);
 }
 
 pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
@@ -27,8 +27,8 @@ impl Workbench {
             return;
         }
 
-        let width = layout.content_area.width;
-        let height = layout.editor_area.height;
+        let width = layout.content_area.w;
+        let height = layout.editor_area.h;
         if width == 0 || height == 0 {
             return;
         }

@@ -1,15 +1,12 @@
 //! 文件浏览器视图（纯渲染 + 命中测试）
 
-use crate::app::theme::UiTheme;
-use crate::core::event::MouseEvent;
 use crate::core::text_window;
 use crate::kernel::{GitFileStatus, GitFileStatusKind};
 use crate::models::{FileTreeRow, NodeId};
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use crate::ui::core::geom::{Pos, Rect};
+use crate::ui::core::painter::Painter;
+use crate::ui::core::style::Style;
+use crate::ui::core::theme::Theme;
 use rustc_hash::FxHashMap;
 use unicode_width::UnicodeWidthStr;
 
@@ -24,35 +21,22 @@ impl ExplorerView {
 
     pub fn contains(&self, x: u16, y: u16) -> bool {
         self.area
-            .map(|a| x >= a.x && x < a.x + a.width && y >= a.y && y < a.y + a.height)
-            .unwrap_or(false)
+            .is_some_and(|a| a.contains(Pos::new(x, y)))
     }
 
     pub fn view_height(&self) -> Option<usize> {
         let area = self.area?;
-        Some(area.height as usize)
+        Some(area.h as usize)
     }
 
-    pub fn hit_test_row(&self, event: &MouseEvent, scroll_offset: usize) -> Option<usize> {
-        let area = self.area?;
-        if event.column < area.x || event.column >= area.x + area.width {
-            return None;
-        }
-        if event.row < area.y || event.row >= area.y + area.height {
-            return None;
-        }
-
-        Some((event.row - area.y) as usize + scroll_offset)
-    }
-
-    fn render_row(
+    fn render_row_parts(
         &self,
         row: &FileTreeRow,
         is_selected: bool,
         git_status: Option<GitFileStatus>,
         width: u16,
-        theme: &UiTheme,
-    ) -> Line<'static> {
+        theme: &Theme,
+    ) -> (String, char, Style, Style) {
         let indent = "  ".repeat(row.depth as usize);
         let icon = if row.is_dir {
             if row.is_expanded {
@@ -78,7 +62,7 @@ impl ExplorerView {
 
         let width = width as usize;
         if width == 0 {
-            return Line::default();
+            return (String::new(), ' ', row_style, row_style);
         }
 
         let trailing_width = 1usize;
@@ -99,54 +83,65 @@ impl ExplorerView {
         let marker_style = match kind {
             Some(GitFileStatusKind::Conflict) => row_style.fg(theme.error_fg),
             Some(GitFileStatusKind::Untracked) => row_style.fg(theme.palette_muted_fg),
-            Some(GitFileStatusKind::Added) => row_style.fg(Color::Green),
+            Some(GitFileStatusKind::Added) => row_style.fg(theme.syntax_string_fg),
             Some(GitFileStatusKind::Modified) => row_style.fg(theme.header_fg),
             None => row_style,
         };
 
-        Line::from(vec![
-            Span::styled(left, row_style),
-            Span::styled(pad, row_style),
-            Span::styled(marker.to_string(), marker_style),
-        ])
+        let left_pad = format!("{left}{pad}");
+        (left_pad, marker, row_style, marker_style)
     }
 
-    pub fn render(
+    pub fn paint(
         &mut self,
-        frame: &mut Frame,
+        painter: &mut Painter,
         area: Rect,
         rows: &[FileTreeRow],
         selected_id: Option<NodeId>,
         scroll_offset: usize,
         git_status_by_id: &FxHashMap<NodeId, GitFileStatus>,
-        theme: &UiTheme,
+        theme: &Theme,
     ) {
         self.area = Some(area);
+
+        if area.is_empty() {
+            return;
+        }
+
+        let bg_style = Style::default().bg(theme.palette_bg);
+        painter.fill_rect(area, bg_style);
 
         if rows.is_empty() {
             let style = Style::default()
                 .bg(theme.palette_bg)
                 .fg(theme.palette_muted_fg);
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled("Empty folder", style))),
-                area,
-            );
+            painter.text_clipped(Pos::new(area.x, area.y), "Empty folder", style, area);
             return;
         }
 
-        let visible_height = area.height as usize;
+        let visible_height = area.h as usize;
         let visible_end = (scroll_offset + visible_height).min(rows.len());
+        let marker_x = area.x.saturating_add(area.w.saturating_sub(1));
+        for (idx, row) in rows[scroll_offset..visible_end].iter().enumerate() {
+            let y = area.y.saturating_add((idx.min(u16::MAX as usize)) as u16);
+            if y >= area.bottom() {
+                break;
+            }
 
-        let lines: Vec<Line> = rows[scroll_offset..visible_end]
-            .iter()
-            .map(|row| {
-                let is_selected = selected_id == Some(row.id);
-                let git_status = git_status_by_id.get(&row.id).copied();
-                self.render_row(row, is_selected, git_status, area.width, theme)
-            })
-            .collect();
+            let is_selected = selected_id == Some(row.id);
+            let git_status = git_status_by_id.get(&row.id).copied();
+            let (left_pad, marker, row_style, marker_style) =
+                self.render_row_parts(row, is_selected, git_status, area.w, theme);
 
-        frame.render_widget(Paragraph::new(lines), area);
+            let row_clip = Rect::new(area.x, y, area.w, 1);
+            painter.text_clipped(Pos::new(area.x, y), left_pad, row_style, row_clip);
+            painter.text_clipped(
+                Pos::new(marker_x, y),
+                marker.to_string(),
+                marker_style,
+                row_clip,
+            );
+        }
     }
 }
 

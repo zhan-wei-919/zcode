@@ -3,7 +3,7 @@ use crate::kernel::services::ports::SearchMessage;
 use crate::kernel::Effect;
 
 use super::action::EditorAction;
-use super::state::{EditorPaneState, EditorState, SearchBarMode};
+use super::state::{EditorPaneState, EditorState, SearchBarMode, TabId};
 use super::viewport;
 
 impl EditorState {
@@ -67,6 +67,12 @@ impl EditorState {
                 version,
             } => self.saved(pane, path, success, version),
             EditorAction::CloseTabAt { pane, index } => self.close_tab_at(pane, index),
+            EditorAction::MoveTab {
+                tab_id,
+                from_pane,
+                to_pane,
+                to_index,
+            } => self.move_tab(tab_id, from_pane, to_pane, to_index),
         }
     }
 
@@ -148,6 +154,7 @@ impl EditorState {
             .flat_map(|pane| pane.tabs.iter())
             .any(|tab| tab.path.as_ref() == Some(&path));
 
+        let tab_id = self.alloc_tab_id();
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
         };
@@ -157,7 +164,7 @@ impl EditorState {
             .map(|t| (t.viewport.width, t.viewport.height))
             .unwrap_or((80, default_height));
 
-        let changed = pane_state.open_file(path, &content, &config);
+        let changed = pane_state.open_file(tab_id, path, &content, &config);
         if changed && !already_open {
             self.open_paths_version = self.open_paths_version.saturating_add(1);
         }
@@ -339,6 +346,123 @@ impl EditorState {
         if pane_state.search_bar.visible && pane_state.search_bar.begin_search() {
             if let Some(effect) = pane_state.trigger_search(pane) {
                 effects.push(effect);
+            }
+        }
+        (true, effects)
+    }
+
+    fn move_tab(
+        &mut self,
+        tab_id: TabId,
+        from_pane: usize,
+        to_pane: usize,
+        to_index: usize,
+    ) -> (bool, Vec<Effect>) {
+        if to_pane >= self.panes.len() {
+            return (false, Vec::new());
+        }
+
+        let Some((from_pane, from_index)) = self
+            .panes
+            .get(from_pane)
+            .and_then(|pane_state| {
+                pane_state
+                    .tabs
+                    .iter()
+                    .position(|t| t.id == tab_id)
+                    .map(|idx| (from_pane, idx))
+            })
+            .or_else(|| {
+                self.panes.iter().enumerate().find_map(|(pane, pane_state)| {
+                    pane_state
+                        .tabs
+                        .iter()
+                        .position(|t| t.id == tab_id)
+                        .map(|idx| (pane, idx))
+                })
+            })
+        else {
+            return (false, Vec::new());
+        };
+
+        if from_pane == to_pane {
+            let pane_state = &mut self.panes[from_pane];
+            let len = pane_state.tabs.len();
+            if len == 0 || from_index >= len {
+                return (false, Vec::new());
+            }
+
+            let mut to_index = to_index.min(len);
+            if to_index > from_index {
+                to_index = to_index.saturating_sub(1);
+            }
+            if to_index == from_index {
+                return (false, Vec::new());
+            }
+
+            let moving_active = pane_state.active == from_index;
+
+            let tab = pane_state.tabs.remove(from_index);
+            if !moving_active && pane_state.active > from_index {
+                pane_state.active = pane_state.active.saturating_sub(1);
+            }
+
+            to_index = to_index.min(pane_state.tabs.len());
+            pane_state.tabs.insert(to_index, tab);
+
+            if moving_active {
+                pane_state.active = to_index;
+            } else if pane_state.active >= to_index {
+                pane_state.active = pane_state.active.saturating_add(1);
+            }
+
+            let mut effects = Vec::new();
+            if pane_state.search_bar.visible && pane_state.search_bar.begin_search() {
+                if let Some(effect) = pane_state.trigger_search(from_pane) {
+                    effects.push(effect);
+                }
+            }
+            return (true, effects);
+        }
+
+        let tab = {
+            let from_state = &mut self.panes[from_pane];
+            if from_index >= from_state.tabs.len() {
+                return (false, Vec::new());
+            }
+
+            let moving_active = from_state.active == from_index;
+            let tab = from_state.tabs.remove(from_index);
+
+            if moving_active {
+                if from_state.tabs.is_empty() {
+                    from_state.active = 0;
+                } else if from_state.active >= from_state.tabs.len() {
+                    from_state.active = from_state.tabs.len().saturating_sub(1);
+                }
+            } else if from_state.active > from_index {
+                from_state.active = from_state.active.saturating_sub(1);
+            }
+
+            tab
+        };
+
+        {
+            let to_state = &mut self.panes[to_pane];
+            let idx = to_index.min(to_state.tabs.len());
+            to_state.tabs.insert(idx, tab);
+            to_state.active = idx;
+        }
+
+        let mut effects = Vec::new();
+        for pane in [from_pane, to_pane] {
+            let Some(pane_state) = self.panes.get_mut(pane) else {
+                continue;
+            };
+            if pane_state.search_bar.visible && pane_state.search_bar.begin_search() {
+                if let Some(effect) = pane_state.trigger_search(pane) {
+                    effects.push(effect);
+                }
             }
         }
         (true, effects)
@@ -999,3 +1123,7 @@ fn goto_byte_offset(tab: &mut super::state::EditorTabState, byte_offset: usize, 
 #[cfg(test)]
 #[path = "../../../tests/unit/kernel/editor/reducer.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../tests/unit/kernel/editor/move_tab.rs"]
+mod move_tab_tests;

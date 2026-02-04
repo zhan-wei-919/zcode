@@ -1,28 +1,29 @@
 use super::super::Workbench;
-use super::layout::ThinVSeparator;
 use crate::kernel::{BottomPanelTab, SearchViewport, SidebarTab};
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
-use ratatui::Frame;
+use crate::models::{FileTreeRow, NodeId};
+use crate::ui::backend::Backend;
+use crate::ui::core::geom::Pos;
+use crate::ui::core::geom::Rect as UiRect;
+use crate::ui::core::id::IdPath;
+use crate::ui::core::painter::Painter;
+use crate::ui::core::style::{Mod, Style as UiStyle};
+use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, UiTree};
+use slotmap::Key;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 impl Workbench {
-    pub(super) fn render_activity_bar(&self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
+    pub(super) fn paint_activity_bar(&self, painter: &mut Painter, area: UiRect) {
+        if area.is_empty() {
             return;
         }
 
-        let base = Style::default()
-            .bg(self.theme.activity_bg)
-            .fg(self.theme.activity_fg);
-        let active_style = Style::default()
-            .bg(self.theme.activity_active_bg)
-            .fg(self.theme.activity_active_fg)
-            .add_modifier(Modifier::BOLD);
-
-        let content = area;
-        frame.render_widget(Block::default().style(base), content);
+        let base = UiStyle::default()
+            .bg(self.ui_theme.activity_bg)
+            .fg(self.ui_theme.activity_fg);
+        let active_style = UiStyle::default()
+            .bg(self.ui_theme.activity_active_bg)
+            .fg(self.ui_theme.activity_active_fg)
+            .add_mod(Mod::BOLD);
 
         let state = self.store.state();
         let active_pane = state.ui.editor_layout.active_pane;
@@ -35,10 +36,12 @@ impl Workbench {
                 .is_some_and(|p| p == settings_path)
         });
 
-        let slot_h = super::super::util::activity_slot_height(content.height);
+        painter.fill_rect(area, base);
+
+        let slot_h = super::super::util::activity_slot_height(area.h);
         for (i, item) in super::super::util::activity_items().iter().enumerate() {
-            let slot_top = content.y.saturating_add((i as u16).saturating_mul(slot_h));
-            if slot_top >= content.y.saturating_add(content.height) {
+            let slot_top = area.y.saturating_add((i as u16).saturating_mul(slot_h));
+            if slot_top >= area.bottom() {
                 break;
             }
 
@@ -74,85 +77,108 @@ impl Workbench {
                 super::super::util::ActivityItem::Settings => settings_active,
             };
 
-            let remaining = content
-                .y
-                .saturating_add(content.height)
-                .saturating_sub(slot_top);
+            let remaining = area.bottom().saturating_sub(slot_top);
             let h = slot_h.min(remaining).max(1);
-            let slot = Rect::new(content.x, slot_top, content.width, h);
-            if slot.width == 0 || slot.height == 0 {
+            let slot = UiRect::new(area.x, slot_top, area.w, h);
+            if slot.is_empty() {
                 continue;
             }
 
             if active {
-                frame.render_widget(Block::default().style(active_style), slot);
+                painter.fill_rect(slot, active_style);
             }
 
-            let icon_y = slot.y.saturating_add(slot.height / 2);
-            let style = if active { active_style } else { base };
-            let cell = Rect::new(slot.x, icon_y, slot.width, 1);
+            let icon_y = slot.y.saturating_add(slot.h / 2);
+            let icon = item.icon();
+            let icon_w = icon.width().unwrap_or(1).min(u16::MAX as usize) as u16;
+            let x = slot.x.saturating_add(slot.w.saturating_sub(icon_w) / 2);
 
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(item.icon().to_string(), style)))
-                    .alignment(Alignment::Center),
-                cell,
-            );
+            let style = if active { active_style } else { base };
+            let row_clip = UiRect::new(slot.x, icon_y, slot.w, 1);
+            painter.text_clipped(Pos::new(x, icon_y), icon.to_string(), style, row_clip);
         }
     }
 
-    pub(super) fn render_sidebar(&mut self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
+    pub(super) fn render_sidebar(&mut self, backend: &mut dyn Backend, area: UiRect) {
+        if area.is_empty() {
             self.last_sidebar_tabs_area = None;
             self.last_sidebar_content_area = None;
             return;
         }
 
-        let inner = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
-        let sep = Rect::new(
-            area.x.saturating_add(area.width.saturating_sub(1)),
+        let mut painter = Painter::new();
+        let ui_full = area;
+
+        let inner = UiRect::new(area.x, area.y, area.w.saturating_sub(1), area.h);
+        let sep = UiRect::new(
+            area.x.saturating_add(area.w.saturating_sub(1)),
             area.y,
-            1.min(area.width),
-            area.height,
+            1.min(area.w),
+            area.h,
         );
-        if sep.width > 0 {
-            frame.render_widget(
-                ThinVSeparator {
-                    fg: self.theme.separator,
-                    bg: self.theme.palette_bg,
-                },
-                sep,
-            );
+        if !sep.is_empty() {
+            let splitter_id = IdPath::root("workbench")
+                .push_str("sidebar_splitter")
+                .finish();
+            self.ui_tree.push(Node {
+                id: splitter_id,
+                rect: sep,
+                layer: 0,
+                z: 0,
+                sense: Sense::HOVER | Sense::DRAG_SOURCE,
+                kind: NodeKind::Splitter { axis: Axis::Vertical },
+            });
+
+            let hovered = self.ui_runtime.hovered() == Some(splitter_id) || self.sidebar_split_dragging;
+            let fg = if hovered {
+                self.ui_theme.focus_border
+            } else {
+                self.ui_theme.separator
+            };
+            let style = UiStyle::default()
+                .bg(self.ui_theme.palette_bg)
+                .fg(fg);
+            for dx in 0..sep.w {
+                painter.vline(
+                    Pos::new(sep.x.saturating_add(dx), sep.y),
+                    sep.h,
+                    '│',
+                    style,
+                );
+            }
         }
 
-        if inner.width == 0 || inner.height == 0 {
+        if inner.is_empty() {
             self.last_sidebar_tabs_area = None;
             self.last_sidebar_content_area = None;
+            backend.draw(ui_full, painter.cmds());
             return;
         }
+
+        // Clear the sidebar background so old content doesn't leak through on partial redraws.
+        painter.fill_rect(
+            inner,
+            UiStyle::default().bg(self.ui_theme.palette_bg),
+        );
 
         let tab_height = 1u16;
-        if inner.height <= tab_height {
+        if inner.h <= tab_height {
             self.last_sidebar_tabs_area = Some(inner);
             self.last_sidebar_content_area = None;
+            backend.draw(ui_full, painter.cmds());
             return;
         }
 
-        let areas = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(tab_height), Constraint::Min(0)])
-            .split(inner);
-
-        let tabs_area = areas[0];
-        let content_area = areas[1];
+        let (tabs_area, content_area) = inner.split_top(tab_height);
 
         self.last_sidebar_tabs_area = Some(tabs_area);
         self.last_sidebar_content_area = Some(content_area);
 
         let active_tab = self.store.state().ui.sidebar_tab;
-        let tab_active = Style::default()
-            .fg(self.theme.header_fg)
-            .add_modifier(Modifier::BOLD);
-        let tab_inactive = Style::default().fg(self.theme.palette_muted_fg);
+        let tab_active = UiStyle::default()
+            .fg(self.ui_theme.header_fg)
+            .add_mod(Mod::BOLD);
+        let tab_inactive = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
 
         let explorer_style = if active_tab == SidebarTab::Explorer {
             tab_active
@@ -165,12 +191,19 @@ impl Workbench {
             tab_inactive
         };
 
-        let tab_line = Line::from(vec![
-            Span::styled(" EXPLORER ", explorer_style),
-            Span::styled(" SEARCH ", search_style),
-        ]);
+        let ui_tabs = tabs_area;
+        if !ui_tabs.is_empty() {
+            painter.fill_rect(ui_tabs, UiStyle::default().bg(self.ui_theme.palette_bg));
 
-        frame.render_widget(Paragraph::new(tab_line), tabs_area);
+            const EXPLORER_LABEL: &str = " EXPLORER ";
+            const SEARCH_LABEL: &str = " SEARCH ";
+
+            let y = ui_tabs.y;
+            let mut x = ui_tabs.x;
+            painter.text_clipped(Pos::new(x, y), EXPLORER_LABEL, explorer_style, ui_tabs);
+            x = x.saturating_add(UnicodeWidthStr::width(EXPLORER_LABEL).min(u16::MAX as usize) as u16);
+            painter.text_clipped(Pos::new(x, y), SEARCH_LABEL, search_style, ui_tabs);
+        }
 
         match active_tab {
             SidebarTab::Explorer => {
@@ -185,53 +218,152 @@ impl Workbench {
                     )
                 };
 
-                let (tree_area, git_area) = if show_git_panel && content_area.height >= 3 {
+                let (tree_area, git_area) = if show_git_panel && content_area.h >= 3 {
                     let branches_len = branches_len.max(1).min(8) as u16;
-                    let max_git_height = content_area.height.saturating_sub(1);
+                    let max_git_height = content_area.h.saturating_sub(1);
                     let git_height = (1 + branches_len).min(max_git_height);
-                    let tree_height = content_area.height.saturating_sub(git_height);
-                    let tree_area = Rect::new(
-                        content_area.x,
-                        content_area.y,
-                        content_area.width,
-                        tree_height,
-                    );
-                    let git_area = Rect::new(
-                        content_area.x,
-                        content_area.y.saturating_add(tree_height),
-                        content_area.width,
-                        content_area.height.saturating_sub(tree_height),
-                    );
+                    let (tree_area, git_area) = content_area.split_bottom(git_height);
                     (tree_area, Some(git_area))
                 } else {
                     (content_area, None)
                 };
 
-                self.sync_explorer_view_height(tree_area.height);
+                self.sync_explorer_view_height(tree_area.h);
                 let state = self.store.state();
                 let explorer_state = &state.explorer;
-                self.explorer.render(
-                    frame,
-                    tree_area,
+                let ui_area = tree_area;
+                self.explorer.paint(
+                    &mut painter,
+                    ui_area,
                     &explorer_state.rows,
                     explorer_state.selected(),
                     explorer_state.scroll_offset,
                     &explorer_state.git_status_by_id,
-                    &self.theme,
+                    &self.ui_theme,
+                );
+                push_explorer_nodes(
+                    &mut self.ui_tree,
+                    tree_area,
+                    explorer_state.root_id(),
+                    &explorer_state.rows,
+                    explorer_state.scroll_offset,
                 );
 
                 if let Some(git_area) = git_area {
-                    self.render_git_panel(frame, git_area);
+                    self.paint_git_panel(&mut painter, git_area);
                 }
             }
             SidebarTab::Search => {
-                let search_box_height = 2u16.min(content_area.height);
-                let results_height = content_area.height.saturating_sub(search_box_height);
+                let search_box_height = 2u16.min(content_area.h);
+                let results_height = content_area.h.saturating_sub(search_box_height);
                 self.sync_search_view_height(SearchViewport::Sidebar, results_height);
                 let search_state = &self.store.state().search;
-                self.search_view
-                    .render(frame, content_area, search_state, &self.theme);
+                let ui_area = content_area;
+                self.search_view.paint(&mut painter, ui_area, search_state, &self.ui_theme);
             }
+        }
+
+        backend.draw(ui_full, painter.cmds());
+    }
+}
+
+fn push_explorer_nodes(
+    ui_tree: &mut UiTree,
+    area: UiRect,
+    root_id: NodeId,
+    rows: &[FileTreeRow],
+    scroll_offset: usize,
+) {
+    if area.is_empty() {
+        return;
+    }
+
+    // Allow right-click on empty space in the explorer tree.
+    let id = IdPath::root("workbench").push_str("explorer_area").finish();
+    ui_tree.push(Node {
+        id,
+        rect: area,
+        layer: 0,
+        z: 0,
+        sense: Sense::CONTEXT_MENU,
+        kind: NodeKind::Unknown,
+    });
+
+    // Allow dropping into the workspace root by dropping onto empty space in the explorer tree.
+    // Row-level drop targets (folder/file rows) win due to higher z-order.
+    if !rows.is_empty() {
+        let visible_height = area.h as usize;
+        let visible_end = (scroll_offset + visible_height).min(rows.len());
+        let used_h = visible_end
+            .saturating_sub(scroll_offset)
+            .min(u16::MAX as usize) as u16;
+        let y = area.y.saturating_add(used_h);
+        let h = area.bottom().saturating_sub(y);
+        if h > 0 {
+            let id = IdPath::root("workbench")
+                .push_str("explorer_root_drop")
+                .finish();
+            ui_tree.push(Node {
+                id,
+                rect: UiRect::new(area.x, y, area.w, h),
+                layer: 0,
+                z: 0,
+                sense: Sense::DROP_TARGET,
+                kind: NodeKind::ExplorerFolderDrop { node_id: root_id },
+            });
+        }
+    } else {
+        let id = IdPath::root("workbench")
+            .push_str("explorer_root_drop")
+            .finish();
+        ui_tree.push(Node {
+            id,
+            rect: area,
+            layer: 0,
+            z: 0,
+            sense: Sense::DROP_TARGET,
+            kind: NodeKind::ExplorerFolderDrop { node_id: root_id },
+        });
+        return;
+    }
+
+    let visible_height = area.h as usize;
+    let visible_end = (scroll_offset + visible_height).min(rows.len());
+    for (i, row) in rows.iter().enumerate().take(visible_end).skip(scroll_offset) {
+        let y = area.y.saturating_add((i - scroll_offset).min(u16::MAX as usize) as u16);
+        if y >= area.bottom() {
+            break;
+        }
+
+        let row_id = row.id.data().as_ffi();
+        let rect = UiRect::new(area.x, y, area.w, 1);
+
+        let id = IdPath::root("workbench")
+            .push_str("explorer_row")
+            .push_u64(row_id)
+            .finish();
+        ui_tree.push(Node {
+            id,
+            rect,
+            layer: 0,
+            z: 0,
+            sense: Sense::CLICK | Sense::DRAG_SOURCE | Sense::CONTEXT_MENU | Sense::DROP_TARGET,
+            kind: NodeKind::ExplorerRow { node_id: row.id },
+        });
+
+        if row.is_dir {
+            let id = IdPath::root("workbench")
+                .push_str("explorer_folder_drop")
+                .push_u64(row_id)
+                .finish();
+            ui_tree.push(Node {
+                id,
+                rect,
+                layer: 0,
+                z: 0,
+                sense: Sense::DROP_TARGET,
+                kind: NodeKind::ExplorerFolderDrop { node_id: row.id },
+            });
         }
     }
 }

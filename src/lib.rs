@@ -9,4 +9,6 @@ pub mod app;
 #[cfg(feature = "tui")]
 pub mod tui;
 #[cfg(feature = "tui")]
+pub mod ui;
+#[cfg(feature = "tui")]
 pub mod views;

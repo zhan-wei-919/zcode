@@ -4,7 +4,8 @@ use crate::kernel::services::ports::{
     LspPosition, LspRange, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{
-    ExplorerContextMenuItem, PendingEditorNavigation, PendingEditorNavigationTarget,
+    ContextMenuItem, ContextMenuRequest, PendingAction, PendingEditorNavigation,
+    PendingEditorNavigationTarget,
 };
 use crate::models::{FileTree, Granularity, Selection};
 use std::ffi::OsString;
@@ -219,23 +220,132 @@ fn explorer_new_file_flow_creates_effect() {
 }
 
 #[test]
+fn auto_closes_split_when_second_pane_becomes_empty_after_move_tab() {
+    let mut store = new_store();
+
+    let a = store.state.workspace_root.join("a.rs");
+    let b = store.state.workspace_root.join("b.rs");
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: a,
+        content: "a".to_string(),
+    }));
+    let _ = store.dispatch(Action::RunCommand(Command::SplitEditorVertical));
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 1,
+        path: b,
+        content: "b".to_string(),
+    }));
+
+    assert_eq!(store.state.ui.editor_layout.panes, 2);
+    assert_eq!(store.state.editor.panes.len(), 2);
+
+    let tab_id = store.state.editor.pane(1).unwrap().tabs[0].id;
+    let result = store.dispatch(Action::Editor(EditorAction::MoveTab {
+        tab_id,
+        from_pane: 1,
+        to_pane: 0,
+        to_index: 1,
+    }));
+
+    assert!(result.state_changed);
+    assert_eq!(store.state.ui.editor_layout.panes, 1);
+    assert_eq!(store.state.editor.panes.len(), 1);
+
+    let titles: Vec<_> = store.state.editor.pane(0).unwrap().tabs.iter().map(|t| t.title.as_str()).collect();
+    assert!(titles.contains(&"a.rs"));
+    assert!(titles.contains(&"b.rs"));
+}
+
+#[test]
+fn auto_closes_split_when_first_pane_becomes_empty_after_move_tab() {
+    let mut store = new_store();
+
+    let a = store.state.workspace_root.join("a.rs");
+    let b = store.state.workspace_root.join("b.rs");
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: a,
+        content: "a".to_string(),
+    }));
+    let _ = store.dispatch(Action::RunCommand(Command::SplitEditorVertical));
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 1,
+        path: b,
+        content: "b".to_string(),
+    }));
+
+    let tab_id = store.state.editor.pane(0).unwrap().tabs[0].id;
+    let to_index = store.state.editor.pane(1).unwrap().tabs.len();
+    let result = store.dispatch(Action::Editor(EditorAction::MoveTab {
+        tab_id,
+        from_pane: 0,
+        to_pane: 1,
+        to_index,
+    }));
+
+    assert!(result.state_changed);
+    assert_eq!(store.state.ui.editor_layout.panes, 1);
+    assert_eq!(store.state.ui.editor_layout.active_pane, 0);
+    assert_eq!(store.state.ui.editor_layout.split_direction, SplitDirection::Vertical);
+    assert_eq!(store.state.editor.panes.len(), 1);
+
+    let pane = store.state.editor.pane(0).unwrap();
+    assert_eq!(pane.tabs.len(), 2);
+    assert!(pane.active < pane.tabs.len());
+
+    let titles: Vec<_> = pane.tabs.iter().map(|t| t.title.as_str()).collect();
+    assert!(titles.contains(&"a.rs"));
+    assert!(titles.contains(&"b.rs"));
+}
+
+#[test]
+fn auto_closes_split_when_last_tab_in_second_pane_is_closed() {
+    let mut store = new_store();
+
+    let a = store.state.workspace_root.join("a.rs");
+    let b = store.state.workspace_root.join("b.rs");
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: a,
+        content: "a".to_string(),
+    }));
+    let _ = store.dispatch(Action::RunCommand(Command::SplitEditorVertical));
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 1,
+        path: b,
+        content: "b".to_string(),
+    }));
+
+    let result = store.dispatch(Action::Editor(EditorAction::CloseTabAt { pane: 1, index: 0 }));
+    assert!(result.state_changed);
+    assert_eq!(store.state.ui.editor_layout.panes, 1);
+    assert_eq!(store.state.editor.panes.len(), 1);
+    assert_eq!(store.state.editor.pane(0).unwrap().tabs.len(), 1);
+    assert_eq!(store.state.editor.pane(0).unwrap().tabs[0].title, "a.rs");
+}
+
+#[test]
 fn explorer_context_menu_root_only_shows_create_items() {
     let mut store = new_store();
 
-    let result = store.dispatch(Action::ExplorerContextMenuOpen {
-        tree_row: None,
+    let result = store.dispatch(Action::ContextMenuOpen {
+        request: ContextMenuRequest::Explorer { tree_row: None },
         x: 10,
         y: 5,
     });
 
     assert!(result.effects.is_empty());
     assert!(result.state_changed);
-    assert!(store.state.ui.explorer_context_menu.visible);
+    assert!(store.state.ui.context_menu.visible);
     assert_eq!(
-        store.state.ui.explorer_context_menu.items,
+        store.state.ui.context_menu.items,
         vec![
-            ExplorerContextMenuItem::NewFile,
-            ExplorerContextMenuItem::NewFolder
+            ContextMenuItem::ExplorerNewFile,
+            ContextMenuItem::ExplorerNewFolder
         ]
     );
 }
@@ -261,24 +371,26 @@ fn explorer_context_menu_confirm_rename_opens_rename_dialog() {
         .position(|row| row.id == file_id)
         .unwrap();
 
-    let _ = store.dispatch(Action::ExplorerContextMenuOpen {
-        tree_row: Some(tree_row),
+    let _ = store.dispatch(Action::ContextMenuOpen {
+        request: ContextMenuRequest::Explorer {
+            tree_row: Some(tree_row),
+        },
         x: 10,
         y: 5,
     });
 
     assert_eq!(
-        store.state.ui.explorer_context_menu.items,
+        store.state.ui.context_menu.items,
         vec![
-            ExplorerContextMenuItem::NewFile,
-            ExplorerContextMenuItem::NewFolder,
-            ExplorerContextMenuItem::Rename,
-            ExplorerContextMenuItem::Delete,
+            ContextMenuItem::ExplorerNewFile,
+            ContextMenuItem::ExplorerNewFolder,
+            ContextMenuItem::ExplorerRename,
+            ContextMenuItem::ExplorerDelete,
         ]
     );
 
-    let _ = store.dispatch(Action::ExplorerContextMenuSetSelected { index: 2 });
-    let result = store.dispatch(Action::ExplorerContextMenuConfirm);
+    let _ = store.dispatch(Action::ContextMenuSetSelected { index: 2 });
+    let result = store.dispatch(Action::ContextMenuConfirm);
     assert!(result.effects.is_empty());
     assert!(store.state.ui.input_dialog.visible);
     assert!(matches!(
@@ -294,6 +406,126 @@ fn explorer_context_menu_confirm_rename_opens_rename_dialog() {
         [Effect::RenamePath { from, to }]
             if from == &root.join("a.txt") && to == &root.join("b.txt")
     ));
+}
+
+#[test]
+fn tab_context_menu_open_sets_state() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+
+    let path = store.state.workspace_root.join("tab.txt");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "hello".to_string(),
+    }));
+
+    let result = store.dispatch(Action::ContextMenuOpen {
+        request: ContextMenuRequest::Tab { pane: 0, index: 0 },
+        x: 10,
+        y: 5,
+    });
+
+    assert!(result.effects.is_empty());
+    assert!(result.state_changed);
+    assert!(store.state.ui.context_menu.visible);
+    assert_eq!(
+        store.state.ui.context_menu.items,
+        vec![ContextMenuItem::TabClose]
+    );
+    assert_eq!(
+        store.state.ui.context_menu.request,
+        Some(ContextMenuRequest::Tab { pane: 0, index: 0 })
+    );
+}
+
+#[test]
+fn editor_area_context_menu_open_sets_items() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+
+    let result = store.dispatch(Action::ContextMenuOpen {
+        request: ContextMenuRequest::EditorArea { pane: 0 },
+        x: 10,
+        y: 5,
+    });
+
+    assert!(result.effects.is_empty());
+    assert!(result.state_changed);
+    assert!(store.state.ui.context_menu.visible);
+    assert_eq!(
+        store.state.ui.context_menu.items,
+        vec![ContextMenuItem::EditorCopy, ContextMenuItem::EditorPaste]
+    );
+    assert_eq!(
+        store.state.ui.context_menu.request,
+        Some(ContextMenuRequest::EditorArea { pane: 0 })
+    );
+}
+
+#[test]
+fn tab_context_menu_confirm_close_closes_tab_when_clean() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+
+    let path = store.state.workspace_root.join("tab.txt");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "hello".to_string(),
+    }));
+    assert!(!store
+        .state
+        .editor
+        .pane(0)
+        .unwrap()
+        .is_tab_dirty(0));
+
+    let _ = store.dispatch(Action::ContextMenuOpen {
+        request: ContextMenuRequest::Tab { pane: 0, index: 0 },
+        x: 10,
+        y: 5,
+    });
+    let result = store.dispatch(Action::ContextMenuConfirm);
+
+    assert!(result.effects.is_empty());
+    assert!(result.state_changed);
+    assert!(!store.state.ui.context_menu.visible);
+    assert_eq!(store.state.editor.pane(0).unwrap().tabs.len(), 0);
+}
+
+#[test]
+fn tab_context_menu_confirm_close_shows_confirm_dialog_when_dirty() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+
+    let path = store.state.workspace_root.join("tab.txt");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "hello".to_string(),
+    }));
+    let _ = store.dispatch(Action::Editor(EditorAction::InsertText {
+        pane: 0,
+        text: "x".to_string(),
+    }));
+    assert!(store.state.editor.pane(0).unwrap().is_tab_dirty(0));
+
+    let _ = store.dispatch(Action::ContextMenuOpen {
+        request: ContextMenuRequest::Tab { pane: 0, index: 0 },
+        x: 10,
+        y: 5,
+    });
+    let result = store.dispatch(Action::ContextMenuConfirm);
+
+    assert!(result.effects.is_empty());
+    assert!(result.state_changed);
+    assert!(store.state.ui.confirm_dialog.visible);
+    assert!(matches!(
+        store.state.ui.confirm_dialog.on_confirm,
+        Some(PendingAction::CloseTab { pane: 0, index: 0 })
+    ));
+    assert_eq!(store.state.editor.pane(0).unwrap().tabs.len(), 1);
 }
 
 #[test]

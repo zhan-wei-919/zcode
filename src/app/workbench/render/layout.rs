@@ -1,196 +1,358 @@
 use super::super::palette;
 use super::super::Workbench;
 use super::dialogs::{
-    input_dialog_cursor, render_confirm_dialog, render_explorer_context_menu, render_input_dialog,
+    input_dialog_cursor, render_confirm_dialog, render_context_menu, render_input_dialog,
 };
 use super::terminal::cursor_position_terminal;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::{BottomPanelTab, FocusTarget, SidebarTab};
-use crate::views::{compute_editor_pane_layout, cursor_position_editor};
-use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
-use ratatui::widgets::Widget;
-use ratatui::Frame;
+use crate::ui::backend::Backend;
+use crate::ui::core::geom::{Pos, Rect};
+use crate::ui::core::layout::Insets;
+use crate::ui::core::painter::Painter;
+use crate::ui::core::painter::BorderKind;
+use crate::ui::core::style::{Mod as UiMod, Style as UiStyle};
+use crate::ui::core::input::DragPayload;
+use crate::ui::core::tree::NodeKind;
+use crate::views::{compute_editor_pane_layout, cursor_position_editor, tab_insertion_index, tab_insertion_x};
 
-pub(super) fn render(workbench: &mut Workbench, frame: &mut Frame, area: Rect) {
+pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area: Rect) {
     let _scope = perf::scope("render.frame");
     workbench.last_render_area = Some(area);
+    workbench.ui_tree.clear();
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(0),
-            Constraint::Min(0),
-            Constraint::Length(super::super::STATUS_HEIGHT),
-        ])
-        .split(area);
+    let (body_area, status_area) = area.split_bottom(super::super::STATUS_HEIGHT);
 
-    let header_area = chunks[0];
-    let body_area = chunks[1];
-    let status_area = chunks[2];
-
-    {
-        let _scope = perf::scope("render.header");
-        workbench.render_header(frame, header_area);
-    }
-    {
+    if !status_area.is_empty() {
         let _scope = perf::scope("render.status");
-        workbench.render_status(frame, status_area);
+        let mut painter = Painter::new();
+        workbench.paint_status(&mut painter, status_area);
+        backend.draw(status_area, painter.cmds());
     }
 
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(super::super::ACTIVITY_BAR_WIDTH),
-            Constraint::Min(0),
-        ])
-        .split(body_area);
-
-    let activity_area = columns[0];
-    let content_area = columns[1];
+    let (activity_area, content_area) = body_area.split_left(super::super::ACTIVITY_BAR_WIDTH);
 
     workbench.last_activity_bar_area =
-        (activity_area.width > 0 && activity_area.height > 0).then_some(activity_area);
-    if activity_area.width > 0 && activity_area.height > 0 {
+        (!activity_area.is_empty()).then_some(activity_area);
+    if !activity_area.is_empty() {
         let _scope = perf::scope("render.activity");
-        workbench.render_activity_bar(frame, activity_area);
+        let mut painter = Painter::new();
+        workbench.paint_activity_bar(&mut painter, activity_area);
+        backend.draw(activity_area, painter.cmds());
     }
 
     let (main_area, bottom_panel_area) = if workbench.store.state().ui.bottom_panel.visible {
-        let panel_height = super::super::util::bottom_panel_height(content_area.height);
-        let areas = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(panel_height)])
-            .split(content_area);
-        let panel_area = (areas[1].height > 0).then_some(areas[1]);
-        (areas[0], panel_area)
+        let panel_height = super::super::util::bottom_panel_height(content_area.h);
+        let (main_area, panel_area) = content_area.split_bottom(panel_height);
+        let panel_area = (!panel_area.is_empty()).then_some(panel_area);
+        (main_area, panel_area)
     } else {
         (content_area, None)
     };
 
     workbench.last_bottom_panel_area = bottom_panel_area;
 
-    if workbench.store.state().ui.sidebar_visible && main_area.width > 0 {
-        let sidebar_width = super::super::util::sidebar_width(main_area.width);
-        let body_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(sidebar_width), Constraint::Min(0)])
-            .split(main_area);
+    if workbench.store.state().ui.sidebar_visible && main_area.w > 0 {
+        workbench.last_sidebar_container_area = Some(main_area);
+
+        let available = main_area.w;
+        let desired = workbench
+            .store
+            .state()
+            .ui
+            .sidebar_width
+            .unwrap_or_else(|| super::super::util::sidebar_width(available));
+        let sidebar_width = super::super::util::clamp_sidebar_width(available, desired);
+        let (sidebar_area, editor_area) = main_area.split_left(sidebar_width);
 
         workbench.last_sidebar_area =
-            (body_chunks[0].width > 0 && body_chunks[0].height > 0).then_some(body_chunks[0]);
+            (!sidebar_area.is_empty()).then_some(sidebar_area);
 
-        if body_chunks[0].width > 0 && body_chunks[0].height > 0 {
+        if !sidebar_area.is_empty() {
             let _scope = perf::scope("render.sidebar");
-            workbench.render_sidebar(frame, body_chunks[0]);
+            workbench.render_sidebar(backend, sidebar_area);
         } else {
             workbench.last_sidebar_tabs_area = None;
             workbench.last_sidebar_content_area = None;
         }
 
         let _scope = perf::scope("render.editors");
-        workbench.render_editor_panes(frame, body_chunks[1]);
+        workbench.render_editor_panes(backend, editor_area);
     } else {
         workbench.last_sidebar_area = None;
         workbench.last_sidebar_tabs_area = None;
         workbench.last_sidebar_content_area = None;
+        workbench.last_sidebar_container_area = None;
+        workbench.sidebar_split_dragging = false;
         let _scope = perf::scope("render.editors");
-        workbench.render_editor_panes(frame, main_area);
+        workbench.render_editor_panes(backend, main_area);
     }
 
     if let Some(panel_area) = bottom_panel_area {
         let _scope = perf::scope("render.panel");
-        workbench.render_bottom_panel(frame, panel_area);
+        let mut painter = Painter::new();
+        workbench.paint_bottom_panel(&mut painter, panel_area);
+        backend.draw(panel_area, painter.cmds());
     }
+
+    render_drag_preview(workbench, backend, area);
 
     if !workbench.store.state().ui.command_palette.visible
         && !workbench.store.state().ui.input_dialog.visible
         && !workbench.store.state().ui.confirm_dialog.visible
-        && !workbench.store.state().ui.explorer_context_menu.visible
+        && !workbench.store.state().ui.context_menu.visible
     {
         if workbench.store.state().ui.signature_help.visible {
-            workbench.render_signature_help_popup(frame, area);
+            let mut painter = Painter::new();
+            workbench.paint_signature_help_popup(&mut painter, area);
+            backend.draw(area, painter.cmds());
         }
         if workbench.store.state().ui.completion.visible {
-            workbench.render_completion_popup(frame, area);
+            let mut painter = Painter::new();
+            workbench.paint_completion_popup(&mut painter, area);
+            backend.draw(area, painter.cmds());
         } else if workbench.store.state().ui.hover_message.is_some() {
-            workbench.render_hover_popup(frame, area);
+            let mut painter = Painter::new();
+            workbench.paint_hover_popup(&mut painter, area);
+            backend.draw(area, painter.cmds());
         }
     }
 
-    if workbench.store.state().ui.explorer_context_menu.visible {
-        render_explorer_context_menu(workbench, frame, area);
-    } else {
-        workbench.last_explorer_context_menu_area = None;
+    if workbench.store.state().ui.context_menu.visible {
+        let mut painter = Painter::new();
+        render_context_menu(workbench, &mut painter, area);
+        backend.draw(area, painter.cmds());
     }
 
     if workbench.store.state().ui.command_palette.visible {
         let _scope = perf::scope("render.palette");
-        palette::render(workbench, frame, area);
+        let mut painter = Painter::new();
+        palette::render(workbench, &mut painter, area);
+        backend.draw(area, painter.cmds());
     }
 
     if workbench.store.state().ui.input_dialog.visible {
-        render_input_dialog(workbench, frame, area);
+        let mut painter = Painter::new();
+        render_input_dialog(workbench, &mut painter, area);
+        backend.draw(area, painter.cmds());
     }
 
     if workbench.store.state().ui.confirm_dialog.visible {
-        render_confirm_dialog(workbench, frame, area);
+        let mut painter = Painter::new();
+        render_confirm_dialog(workbench, &mut painter, area);
+        backend.draw(area, painter.cmds());
     }
 
     let cursor = {
         let _scope = perf::scope("render.cursor");
         cursor_position(workbench)
     };
-    if let Some((x, y)) = cursor {
-        frame.set_cursor_position((x, y));
-    }
+    backend.set_cursor(cursor.map(|(x, y)| Pos::new(x, y)));
 }
 
-pub(super) struct ThinVSeparator {
-    pub(super) fg: Color,
-    pub(super) bg: Color,
-}
+fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: Rect) {
+    let Some(payload) = workbench.ui_runtime.drag_payload() else {
+        return;
+    };
 
-impl Widget for ThinVSeparator {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 {
-            return;
-        }
+    let mut painter = Painter::new();
 
-        // Use box-drawing chars so the separator connects across cells (avoids "dashed" look).
-        let style = Style::default().fg(self.fg).bg(self.bg);
-        let right = area.x.saturating_add(area.width);
-        let bottom = area.y.saturating_add(area.height);
-        for y in area.y..bottom {
-            for x in area.x..right {
-                buf[(x, y)].set_char('│').set_style(style);
+    if let Some(pos) = workbench.ui_runtime.last_pos() {
+        let label = match payload {
+            DragPayload::Tab { from_pane, tab_id } => workbench
+                .store
+                .state()
+                .editor
+                .pane(*from_pane)
+                .and_then(|pane| pane.tabs.iter().find(|t| t.id == *tab_id))
+                .or_else(|| {
+                    workbench
+                        .store
+                        .state()
+                        .editor
+                        .panes
+                        .iter()
+                        .flat_map(|pane| pane.tabs.iter())
+                        .find(|t| t.id == *tab_id)
+                })
+                .map(|tab| tab.title.clone()),
+            DragPayload::ExplorerNode { node_id } => workbench
+                .store
+                .state()
+                .explorer
+                .path_and_kind_for(*node_id)
+                .and_then(|(path, is_dir)| {
+                    let name = path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| path.to_string_lossy().to_string());
+                    let suffix = if is_dir { "/" } else { "" };
+                    Some(format!("{name}{suffix}"))
+                }),
+        };
+
+        if let Some(label) = label {
+            let text = format!(" {label} ");
+            let text_w =
+                unicode_width::UnicodeWidthStr::width(text.as_str()).min(u16::MAX as usize)
+                    as u16;
+            let w = text_w.saturating_add(2).min(area.w);
+            let h = 3u16;
+
+            if w >= 3 && area.h >= h {
+                let mut x = pos.x.saturating_add(1);
+                let mut y = pos.y.saturating_add(1);
+                if x.saturating_add(w) > area.right() {
+                    x = area.right().saturating_sub(w);
+                }
+                if y.saturating_add(h) > area.bottom() {
+                    y = area.bottom().saturating_sub(h);
+                }
+                x = x.max(area.x);
+                y = y.max(area.y);
+
+                let rect = Rect::new(x, y, w, h);
+                let fill = UiStyle::default()
+                    .bg(workbench.ui_theme.palette_selected_bg)
+                    .fg(workbench.ui_theme.palette_selected_fg);
+                let border = UiStyle::default()
+                    .bg(workbench.ui_theme.palette_selected_bg)
+                    .fg(workbench.ui_theme.focus_border);
+                let text_style = UiStyle::default()
+                    .bg(workbench.ui_theme.palette_selected_bg)
+                    .fg(workbench.ui_theme.palette_selected_fg)
+                    .add_mod(UiMod::BOLD);
+
+                painter.fill_rect(rect, fill);
+                painter.border(rect, border, BorderKind::Plain);
+
+                let inner = rect.inset(Insets::all(1));
+                if !inner.is_empty() {
+                    painter.text_clipped(Pos::new(inner.x, inner.y), text, text_style, inner);
+                }
             }
         }
     }
-}
 
-pub(super) struct ThinHSeparator {
-    pub(super) fg: Color,
-    pub(super) bg: Color,
-}
-
-impl Widget for ThinHSeparator {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 {
+    let Some(over) = workbench.ui_runtime.drag_over() else {
+        if painter.cmds().is_empty() {
             return;
         }
+        backend.draw(area, painter.cmds());
+        return;
+    };
+    let Some(target) = workbench.ui_tree.node(over) else {
+        if painter.cmds().is_empty() {
+            return;
+        }
+        backend.draw(area, painter.cmds());
+        return;
+    };
 
-        // Use box-drawing chars so the separator connects across cells (avoids "dashed" look).
-        let style = Style::default().fg(self.fg).bg(self.bg);
-        let right = area.x.saturating_add(area.width);
-        let bottom = area.y.saturating_add(area.height);
-        for y in area.y..bottom {
-            for x in area.x..right {
-                buf[(x, y)].set_char('─').set_style(style);
+    match (payload, target.kind) {
+        (DragPayload::Tab { .. }, NodeKind::TabBar { pane }) => {
+            if let Some(pos) = workbench.ui_runtime.last_pos() {
+                if let Some(pane_state) = workbench.store.state().editor.pane(pane) {
+                    if let Some(to_area) = workbench
+                        .last_editor_inner_areas
+                        .get(pane)
+                        .copied()
+                        .or_else(|| workbench.last_editor_inner_areas.first().copied())
+                    {
+                        let config = &workbench.store.state().editor.config;
+                        let layout = compute_editor_pane_layout(to_area, pane_state, config);
+                        let hovered_to = workbench
+                            .store
+                            .state()
+                            .ui
+                            .hovered_tab
+                            .filter(|(hp, _)| *hp == pane)
+                            .map(|(_, i)| i);
+                        if let Some(insertion_index) = tab_insertion_index(
+                            &layout,
+                            pane_state,
+                            pos.x,
+                            pos.y,
+                            hovered_to,
+                        ) {
+                            if let Some(x) =
+                                tab_insertion_x(&layout, pane_state, hovered_to, insertion_index)
+                            {
+                                let marker_style = UiStyle::default()
+                                    .bg(workbench.ui_theme.focus_border)
+                                    .fg(workbench.ui_theme.palette_fg);
+                                painter.style_rect(
+                                    Rect::new(x, layout.tab_area.y, 1, 1),
+                                    marker_style,
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
+        (DragPayload::ExplorerNode { .. }, NodeKind::ExplorerFolderDrop { .. }) => {
+            let highlight = UiStyle::default()
+                .bg(workbench.ui_theme.palette_selected_bg)
+                .fg(workbench.ui_theme.palette_selected_fg);
+            painter.style_rect(target.rect, highlight);
+        }
+        (DragPayload::ExplorerNode { .. }, NodeKind::ExplorerRow { .. }) => {
+            let highlight = UiStyle::default()
+                .bg(workbench.ui_theme.palette_selected_bg)
+                .fg(workbench.ui_theme.palette_selected_fg);
+            painter.style_rect(target.rect, highlight);
+        }
+        (DragPayload::ExplorerNode { .. }, NodeKind::EditorArea { pane }) => {
+            if let Some(pane_state) = workbench.store.state().editor.pane(pane) {
+                if let Some(to_area) = workbench
+                    .last_editor_inner_areas
+                    .get(pane)
+                    .copied()
+                    .or_else(|| workbench.last_editor_inner_areas.first().copied())
+                {
+                    let config = &workbench.store.state().editor.config;
+                    let layout = compute_editor_pane_layout(to_area, pane_state, config);
+
+                    // Keep the preview subtle: tint only the tab row so we don't override editor content.
+                    let rect = layout.tab_area;
+                    if !rect.is_empty() {
+                        let highlight = UiStyle::default()
+                            .bg(workbench.ui_theme.palette_selected_bg)
+                            .fg(workbench.ui_theme.palette_selected_fg);
+                        painter.style_rect(rect, highlight);
+                    }
+                }
+            }
+        }
+        (DragPayload::Tab { .. }, NodeKind::EditorSplitDrop { drop, .. }) => {
+            let highlight = UiStyle::default()
+                .bg(workbench.ui_theme.palette_selected_bg)
+                .fg(workbench.ui_theme.palette_selected_fg);
+            painter.style_rect(target.rect, highlight);
+
+            let label = match drop {
+                crate::ui::core::tree::SplitDrop::Right => "Split Right",
+                crate::ui::core::tree::SplitDrop::Down => "Split Down",
+            };
+            let label_w = unicode_width::UnicodeWidthStr::width(label).min(u16::MAX as usize) as u16;
+            let x = target
+                .rect
+                .x
+                .saturating_add(target.rect.w.saturating_sub(label_w) / 2);
+            let y = target.rect.y.saturating_add(target.rect.h / 2);
+            let row = Rect::new(target.rect.x, y, target.rect.w, 1.min(target.rect.h));
+            if !row.is_empty() {
+                painter.text_clipped(Pos::new(x, y), label, highlight, row);
+            }
+        }
+        _ => {}
     }
+
+    if painter.cmds().is_empty() {
+        return;
+    }
+    backend.draw(area, painter.cmds());
 }
 
 pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
@@ -198,7 +360,7 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
         return input_dialog_cursor(workbench);
     }
 
-    if workbench.store.state().ui.explorer_context_menu.visible {
+    if workbench.store.state().ui.context_menu.visible {
         return None;
     }
 

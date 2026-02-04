@@ -1,8 +1,8 @@
 use super::super::Workbench;
 use crate::kernel::{FocusTarget, SidebarTab};
-use ratatui::layout::Rect;
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use crate::ui::core::geom::{Pos, Rect as UiRect};
+use crate::ui::core::painter::Painter;
+use crate::ui::core::style::Style as UiStyle;
 
 impl Workbench {
     fn active_label(&self) -> &'static str {
@@ -17,9 +17,11 @@ impl Workbench {
         }
     }
 
-    pub(super) fn render_header(&mut self, _frame: &mut Frame, _area: Rect) {}
+    pub(super) fn paint_status(&self, painter: &mut Painter, area: UiRect) {
+        if area.is_empty() {
+            return;
+        }
 
-    pub(super) fn render_status(&self, frame: &mut Frame, area: Rect) {
         let (mode, cursor_info) = if let Some(pane) = self
             .store
             .state()
@@ -50,6 +52,10 @@ impl Workbench {
         let active = self.active_label();
 
         let text = format!("{} | {} | {}", mode, cursor_info, active);
-        frame.render_widget(Paragraph::new(text), area);
+        let style = UiStyle::default()
+            .bg(self.ui_theme.palette_bg)
+            .fg(self.ui_theme.palette_fg);
+        painter.fill_rect(area, style);
+        painter.text_clipped(Pos::new(area.x, area.y), text, style, area);
     }
 }

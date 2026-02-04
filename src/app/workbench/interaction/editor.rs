@@ -1,12 +1,14 @@
 use super::super::Workbench;
 use crate::core::Command;
-use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
+use crate::core::event::{InputEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::kernel::services::adapters::perf;
 use crate::kernel::{Action as KernelAction, EditorAction, PendingAction};
 use crate::tui::view::EventResult;
+use crate::ui::core::input::{DragPayload, UiEvent};
+use crate::ui::core::tree::NodeKind;
 use crate::views::{
     compute_editor_pane_layout, hit_test_editor_mouse, hit_test_editor_tab, hit_test_tab_hover,
-    TabHitResult,
+    tab_insertion_index, TabHitResult,
 };
 use std::time::Instant;
 
@@ -34,7 +36,7 @@ impl Workbench {
             return EventResult::Ignored;
         };
         let config = &self.store.state().editor.config;
-        let layout = compute_editor_pane_layout(area, pane_state, config);
+        let layout = compute_editor_pane_layout(area.into(), pane_state, config);
 
         let hovered_idx = self
             .store
@@ -50,11 +52,6 @@ impl Workbench {
                     hit_test_editor_tab(&layout, pane_state, event.column, event.row, hovered_idx)
                 {
                     match result {
-                        TabHitResult::Title(index) => {
-                            let _ = self.dispatch_kernel(KernelAction::Editor(
-                                EditorAction::SetActiveTab { pane, index },
-                            ));
-                        }
                         TabHitResult::CloseButton(index) => {
                             let is_dirty = self
                                 .store
@@ -73,6 +70,13 @@ impl Workbench {
                                     EditorAction::CloseTabAt { pane, index },
                                 ));
                             }
+                        }
+                        // Title clicks are handled on MouseUp via UiRuntime so we can support
+                        // drag-and-drop without switching tabs on MouseDown.
+                        TabHitResult::Title(_index) => {
+                            let _ = self
+                                .ui_runtime
+                                .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
                         }
                     }
                     return EventResult::Consumed;
@@ -117,7 +121,26 @@ impl Workbench {
                 }
                 EventResult::Ignored
             }
+            MouseEventKind::Down(MouseButton::Right) => {
+                let _ = self
+                    .ui_runtime
+                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
+                EventResult::Consumed
+            }
             MouseEventKind::Drag(MouseButton::Left) => {
+                let _ = self
+                    .ui_runtime
+                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
+                let captured_is_tab = self
+                    .ui_runtime
+                    .capture()
+                    .and_then(|id| self.ui_tree.node(id))
+                    .is_some_and(|n| matches!(n.kind, NodeKind::Tab { .. }));
+                if captured_is_tab {
+                    // Tab drag: do not forward to the editor text selection logic.
+                    return EventResult::Consumed;
+                }
+
                 if let Some((x, y)) = hit_test_editor_mouse(&layout, event.column, event.row) {
                     let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::MouseDrag {
                         pane,
@@ -129,8 +152,193 @@ impl Workbench {
                 EventResult::Ignored
             }
             MouseEventKind::Up(MouseButton::Left) => {
+                let out = self
+                    .ui_runtime
+                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
+
+                let mut handled = false;
+                for ev in out.events {
+                    match ev {
+                        UiEvent::Click { id, button, .. } if button == MouseButton::Left => {
+                            if let Some(node) = self.ui_tree.node(id) {
+                                if let NodeKind::Tab { pane, tab_id } = node.kind {
+                                    let Some(index) = self
+                                        .store
+                                        .state()
+                                        .editor
+                                        .pane(pane)
+                                        .and_then(|p| p.tabs.iter().position(|t| t.id == tab_id))
+                                    else {
+                                        continue;
+                                    };
+                                    let _ = self.dispatch_kernel(KernelAction::Editor(
+                                        EditorAction::SetActiveTab { pane, index },
+                                    ));
+                                    handled = true;
+                                }
+                            }
+                        }
+                        UiEvent::DragEnd { id, .. } => {
+                            if self
+                                .ui_tree
+                                .node(id)
+                                .is_some_and(|n| matches!(n.kind, NodeKind::Tab { .. }))
+                            {
+                                handled = true;
+                            }
+                        }
+                        UiEvent::Drop { payload, target, pos } => {
+                            let Some(target_node) = self.ui_tree.node(target) else {
+                                continue;
+                            };
+                            let DragPayload::Tab { from_pane, tab_id } = payload else {
+                                continue;
+                            };
+
+                            match target_node.kind {
+                                NodeKind::TabBar { pane: to_pane } => {
+                                    let Some(to_pane_state) = self.store.state().editor.pane(to_pane) else {
+                                        continue;
+                                    };
+                                    let Some(to_area) = self
+                                        .last_editor_inner_areas
+                                        .get(to_pane)
+                                        .copied()
+                                        .or_else(|| self.last_editor_inner_areas.first().copied())
+                                    else {
+                                        continue;
+                                    };
+                                    let config = &self.store.state().editor.config;
+                                    let to_layout =
+                                        compute_editor_pane_layout(to_area.into(), to_pane_state, config);
+
+                                    let hovered_to = self
+                                        .store
+                                        .state()
+                                        .ui
+                                        .hovered_tab
+                                        .filter(|(hp, _)| *hp == to_pane)
+                                        .map(|(_, i)| i);
+
+                                    let Some(to_index) = tab_insertion_index(
+                                        &to_layout,
+                                        to_pane_state,
+                                        pos.x,
+                                        pos.y,
+                                        hovered_to,
+                                    ) else {
+                                        continue;
+                                    };
+
+                                    let _ = self.dispatch_kernel(KernelAction::Editor(
+                                        EditorAction::MoveTab {
+                                            tab_id,
+                                            from_pane,
+                                            to_pane,
+                                            to_index,
+                                        },
+                                    ));
+                                    let _ = self.dispatch_kernel(KernelAction::EditorSetActivePane {
+                                        pane: to_pane,
+                                    });
+                                    handled = true;
+                                }
+                                NodeKind::EditorSplitDrop { drop, .. } => {
+                                    let cmd = match drop {
+                                        crate::ui::core::tree::SplitDrop::Right => {
+                                            Command::SplitEditorVertical
+                                        }
+                                        crate::ui::core::tree::SplitDrop::Down => {
+                                            Command::SplitEditorHorizontal
+                                        }
+                                    };
+                                    let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd));
+
+                                    let to_pane = 1usize;
+                                    let to_index = self
+                                        .store
+                                        .state()
+                                        .editor
+                                        .pane(to_pane)
+                                        .map(|p| p.tabs.len())
+                                        .unwrap_or(0);
+                                    let _ = self.dispatch_kernel(KernelAction::Editor(
+                                        EditorAction::MoveTab {
+                                            tab_id,
+                                            from_pane,
+                                            to_pane,
+                                            to_index,
+                                        },
+                                    ));
+                                    let _ = self.dispatch_kernel(KernelAction::EditorSetActivePane {
+                                        pane: to_pane,
+                                    });
+                                    handled = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                if handled {
+                    return EventResult::Consumed;
+                }
+
                 let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::MouseUp { pane }));
                 EventResult::Consumed
+            }
+            MouseEventKind::Up(MouseButton::Right) => {
+                let out = self
+                    .ui_runtime
+                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
+
+                let mut handled = false;
+                for ev in out.events {
+                    let UiEvent::ContextMenu { id, pos } = ev else {
+                        continue;
+                    };
+
+                    let Some(node) = self.ui_tree.node(id) else {
+                        continue;
+                    };
+                    match node.kind {
+                        NodeKind::Tab { pane, tab_id } => {
+                            let Some(index) = self
+                                .store
+                                .state()
+                                .editor
+                                .pane(pane)
+                                .and_then(|p| p.tabs.iter().position(|t| t.id == tab_id))
+                            else {
+                                continue;
+                            };
+                            let _ = self.dispatch_kernel(KernelAction::ContextMenuOpen {
+                                request: crate::kernel::state::ContextMenuRequest::Tab {
+                                    pane,
+                                    index,
+                                },
+                                x: pos.x,
+                                y: pos.y,
+                            });
+                            handled = true;
+                        }
+                        NodeKind::EditorArea { pane } => {
+                            let _ = self.dispatch_kernel(KernelAction::ContextMenuOpen {
+                                request: crate::kernel::state::ContextMenuRequest::EditorArea {
+                                    pane,
+                                },
+                                x: pos.x,
+                                y: pos.y,
+                            });
+                            handled = true;
+                        }
+                        _ => {}
+                    }
+                }
+
+                handled.then_some(EventResult::Consumed).unwrap_or(EventResult::Ignored)
             }
             MouseEventKind::Moved => {
                 if let Some(index) =

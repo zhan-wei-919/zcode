@@ -2,6 +2,8 @@ use crate::kernel::services::ports::SearchMessage;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use super::TabId;
+
 #[derive(Debug, Clone)]
 pub enum EditorAction {
     OpenFile {
@@ -114,5 +116,11 @@ pub enum EditorAction {
     CloseTabAt {
         pane: usize,
         index: usize,
+    },
+    MoveTab {
+        tab_id: TabId,
+        from_pane: usize,
+        to_pane: usize,
+        to_index: usize,
     },
 }

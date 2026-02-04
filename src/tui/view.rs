@@ -1,12 +1,12 @@
 use crate::core::event::InputEvent;
-use ratatui::layout::Rect;
-use ratatui::Frame;
+use crate::ui::backend::Backend;
+use crate::ui::core::geom::Rect;
 use std::path::PathBuf;
 
 pub trait View {
     fn handle_input(&mut self, event: &InputEvent) -> EventResult;
 
-    fn render(&mut self, frame: &mut Frame, area: Rect);
+    fn render(&mut self, backend: &mut dyn Backend, area: Rect);
 
     fn focusable(&self) -> bool {
         true

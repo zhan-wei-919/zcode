@@ -1664,14 +1664,8 @@ fn test_inlay_hints_refresh_after_viewport_size_change() {
     // Render once so `SetViewportSize` is dispatched; the follow-up inlay-hints request should
     // expand beyond the default viewport height (20 lines).
     {
-        use ratatui::backend::TestBackend;
-        use ratatui::Terminal;
-
-        let backend = TestBackend::new(120, 80);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|f| workbench.render(f, f.area()))
-            .expect("render");
+        let mut backend = zcode::ui::backend::test::TestBackend::new(120, 80);
+        workbench.render(&mut backend, zcode::ui::core::geom::Rect::new(0, 0, 120, 80));
     }
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
@@ -1724,14 +1718,8 @@ fn test_inlay_hints_refresh_after_mouse_scroll() {
 
     // Render once so editor mouse events have a hit-testable area.
     {
-        use ratatui::backend::TestBackend;
-        use ratatui::Terminal;
-
-        let backend = TestBackend::new(120, 50);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|f| workbench.render(f, f.area()))
-            .expect("render");
+        let mut backend = zcode::ui::backend::test::TestBackend::new(120, 50);
+        workbench.render(&mut backend, zcode::ui::core::geom::Rect::new(0, 0, 120, 50));
     }
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {

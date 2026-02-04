@@ -2,7 +2,6 @@ use rustc_hash::FxHashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::core::Command;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::LspCompletionItem;
@@ -171,53 +170,59 @@ pub struct SignatureHelpPopupState {
     pub request: Option<SignatureHelpRequestContext>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExplorerContextMenuItem {
-    NewFile,
-    NewFolder,
-    Rename,
-    Delete,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextMenuRequest {
+    Explorer { tree_row: Option<usize> },
+    Tab { pane: usize, index: usize },
+    EditorArea { pane: usize },
 }
 
-impl ExplorerContextMenuItem {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMenuItem {
+    ExplorerNewFile,
+    ExplorerNewFolder,
+    ExplorerRename,
+    ExplorerDelete,
+    TabClose,
+    EditorCopy,
+    EditorPaste,
+}
+
+impl ContextMenuItem {
     pub fn label(self) -> &'static str {
         match self {
-            ExplorerContextMenuItem::NewFile => "New File",
-            ExplorerContextMenuItem::NewFolder => "New Folder",
-            ExplorerContextMenuItem::Rename => "Rename",
-            ExplorerContextMenuItem::Delete => "Delete",
-        }
-    }
-
-    pub fn command(self) -> Command {
-        match self {
-            ExplorerContextMenuItem::NewFile => Command::ExplorerNewFile,
-            ExplorerContextMenuItem::NewFolder => Command::ExplorerNewFolder,
-            ExplorerContextMenuItem::Rename => Command::ExplorerRename,
-            ExplorerContextMenuItem::Delete => Command::ExplorerDelete,
+            ContextMenuItem::ExplorerNewFile => "New File",
+            ContextMenuItem::ExplorerNewFolder => "New Folder",
+            ContextMenuItem::ExplorerRename => "Rename",
+            ContextMenuItem::ExplorerDelete => "Delete",
+            ContextMenuItem::TabClose => "Close",
+            ContextMenuItem::EditorCopy => "Copy",
+            ContextMenuItem::EditorPaste => "Paste",
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ExplorerContextMenuState {
+pub struct ContextMenuState {
     pub visible: bool,
     pub anchor: (u16, u16),
     pub selected: usize,
-    pub items: Vec<ExplorerContextMenuItem>,
+    pub items: Vec<ContextMenuItem>,
+    pub request: Option<ContextMenuRequest>,
 }
 
 #[derive(Debug, Clone)]
 pub struct UiState {
     pub sidebar_visible: bool,
     pub sidebar_tab: SidebarTab,
+    pub sidebar_width: Option<u16>,
     pub git_panel_expanded: bool,
     pub bottom_panel: BottomPanelState,
     pub focus: FocusTarget,
     pub editor_layout: EditorLayoutState,
     pub command_palette: CommandPaletteState,
     pub input_dialog: InputDialogState,
-    pub explorer_context_menu: ExplorerContextMenuState,
+    pub context_menu: ContextMenuState,
     pub pending_editor_nav: Option<PendingEditorNavigation>,
     pub should_quit: bool,
     pub hovered_tab: Option<(usize, usize)>,
@@ -232,6 +237,7 @@ impl Default for UiState {
         Self {
             sidebar_visible: true,
             sidebar_tab: SidebarTab::Explorer,
+            sidebar_width: None,
             git_panel_expanded: true,
             bottom_panel: BottomPanelState {
                 visible: false,
@@ -245,7 +251,7 @@ impl Default for UiState {
                 selected: 0,
             },
             input_dialog: InputDialogState::default(),
-            explorer_context_menu: ExplorerContextMenuState::default(),
+            context_menu: ContextMenuState::default(),
             pending_editor_nav: None,
             should_quit: false,
             hovered_tab: None,
@@ -362,6 +368,10 @@ impl ExplorerState {
 
     pub fn selected(&self) -> Option<NodeId> {
         self.tree.selected()
+    }
+
+    pub fn root_id(&self) -> NodeId {
+        self.tree.root()
     }
 
     pub fn set_view_height(&mut self, height: usize) -> bool {
@@ -509,23 +519,29 @@ impl ExplorerState {
         prev_selected != Some(node_id)
     }
 
-    pub fn selected_create_parent_dir(&mut self) -> PathBuf {
+    pub fn path_and_kind_for(&self, id: NodeId) -> Option<(PathBuf, bool)> {
+        let path = self.tree.full_path_ro(id)?;
+        Some((path, self.tree.is_dir(id)))
+    }
+
+    pub fn selected_create_parent_dir(&self) -> PathBuf {
         let root = self.tree.absolute_root().to_path_buf();
         let Some(id) = self.tree.selected() else {
             return root;
         };
 
-        let path = self.tree.full_path(id);
-        if self.tree.is_dir(id) {
+        let Some((path, is_dir)) = self.path_and_kind_for(id) else {
+            return root;
+        };
+        if is_dir {
             return path;
         }
         path.parent().unwrap_or(&root).to_path_buf()
     }
 
-    pub fn selected_path_and_kind(&mut self) -> Option<(PathBuf, bool)> {
+    pub fn selected_path_and_kind(&self) -> Option<(PathBuf, bool)> {
         let id = self.tree.selected()?;
-        let path = self.tree.full_path(id);
-        Some((path, self.tree.is_dir(id)))
+        self.path_and_kind_for(id)
     }
 
     pub fn apply_path_created(&mut self, path: PathBuf, is_dir: bool) -> bool {

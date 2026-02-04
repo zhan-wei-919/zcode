@@ -15,8 +15,8 @@ use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusT
 use crate::models::build_file_tree;
 use crate::tui::view::{EventResult, View};
 use crate::views::{ExplorerView, SearchView};
-use ratatui::layout::Rect;
-use ratatui::Frame;
+use crate::ui::backend::Backend;
+use crate::ui::core::geom::Rect;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -29,6 +29,7 @@ mod input;
 mod interaction;
 mod mouse;
 mod palette;
+mod paint;
 mod render;
 #[cfg(test)]
 #[path = "../../../tests/unit/app/workbench.rs"]
@@ -141,6 +142,9 @@ pub struct Workbench {
     lsp_open_paths_version: u64,
     lsp_open_paths: FxHashSet<PathBuf>,
     theme: UiTheme,
+    ui_theme: crate::ui::core::theme::Theme,
+    ui_runtime: crate::ui::core::runtime::UiRuntime,
+    ui_tree: crate::ui::core::tree::UiTree,
     runtime: AsyncRuntime,
     kernel_services: KernelServiceHost,
     global_search_task: Option<GlobalSearchTask>,
@@ -150,9 +154,9 @@ pub struct Workbench {
     last_sidebar_area: Option<Rect>,
     last_sidebar_tabs_area: Option<Rect>,
     last_sidebar_content_area: Option<Rect>,
+    last_sidebar_container_area: Option<Rect>,
     last_git_panel_area: Option<Rect>,
     last_git_branch_areas: Vec<(String, Rect)>,
-    last_explorer_context_menu_area: Option<Rect>,
     last_bottom_panel_area: Option<Rect>,
     last_editor_areas: Vec<Rect>,
     last_editor_inner_areas: Vec<Rect>,
@@ -168,8 +172,8 @@ pub struct Workbench {
     terminal_cursor_visible: bool,
     terminal_cursor_last_blink: Instant,
     last_editor_container_area: Option<Rect>,
-    last_editor_splitter_area: Option<Rect>,
     editor_split_dragging: bool,
+    sidebar_split_dragging: bool,
     last_problems_click: Option<(Instant, usize)>,
     last_locations_click: Option<(Instant, usize)>,
     last_code_actions_click: Option<(Instant, usize)>,
@@ -249,6 +253,8 @@ impl Workbench {
         let panes = store.state().ui.editor_layout.panes.max(1);
         let lsp_open_paths_version = store.state().editor.open_paths_version;
 
+        let ui_theme = crate::app::theme::to_core_theme(&theme);
+
         let mut workbench = Self {
             store,
             explorer: ExplorerView::new(),
@@ -270,6 +276,9 @@ impl Workbench {
             lsp_open_paths_version,
             lsp_open_paths: FxHashSet::default(),
             theme,
+            ui_theme,
+            ui_runtime: crate::ui::core::runtime::UiRuntime::new(),
+            ui_tree: crate::ui::core::tree::UiTree::new(),
             runtime,
             kernel_services,
             global_search_task: None,
@@ -279,9 +288,9 @@ impl Workbench {
             last_sidebar_area: None,
             last_sidebar_tabs_area: None,
             last_sidebar_content_area: None,
+            last_sidebar_container_area: None,
             last_git_panel_area: None,
             last_git_branch_areas: Vec::new(),
-            last_explorer_context_menu_area: None,
             last_bottom_panel_area: None,
             last_editor_areas: Vec::new(),
             last_editor_inner_areas: Vec::new(),
@@ -297,8 +306,8 @@ impl Workbench {
             terminal_cursor_visible: true,
             terminal_cursor_last_blink: Instant::now(),
             last_editor_container_area: None,
-            last_editor_splitter_area: None,
             editor_split_dragging: false,
+            sidebar_split_dragging: false,
             last_problems_click: None,
             last_locations_click: None,
             last_code_actions_click: None,
@@ -544,9 +553,9 @@ impl View for Workbench {
         result
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect) {
+    fn render(&mut self, backend: &mut dyn Backend, area: Rect) {
         let _scope = perf::scope("view.render");
-        render::render(self, frame, area);
+        render::render(self, backend, area);
     }
 
     fn cursor_position(&self) -> Option<(u16, u16)> {

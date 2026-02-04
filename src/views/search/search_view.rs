@@ -1,14 +1,12 @@
 //! 全局搜索视图（纯渲染 + 命中测试）
 
-use crate::app::theme::UiTheme;
 use crate::core::event::MouseEvent;
 use crate::core::text_window;
 use crate::kernel::{SearchResultItem, SearchState};
-use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use crate::ui::core::geom::{Pos, Rect};
+use crate::ui::core::painter::Painter;
+use crate::ui::core::style::{Mod, Style};
+use crate::ui::core::theme::Theme;
 use unicode_width::UnicodeWidthStr;
 
 const SEARCH_BOX_HEIGHT: u16 = 2;
@@ -31,20 +29,16 @@ impl SearchView {
 
     pub fn contains(&self, x: u16, y: u16) -> bool {
         self.area
-            .map(|a| x >= a.x && x < a.x + a.width && y >= a.y && y < a.y + a.height)
-            .unwrap_or(false)
+            .is_some_and(|a| a.contains(Pos::new(x, y)))
     }
 
     pub fn results_view_height(&self) -> Option<usize> {
-        self.results_area.map(|a| a.height as usize)
+        self.results_area.map(|a| a.h as usize)
     }
 
     pub fn hit_test_results_row(&self, event: &MouseEvent, scroll_offset: usize) -> Option<usize> {
         let area = self.results_area?;
-        if event.column < area.x || event.column >= area.x + area.width {
-            return None;
-        }
-        if event.row < area.y || event.row >= area.y + area.height {
+        if !area.contains(Pos::new(event.column, event.row)) {
             return None;
         }
 
@@ -59,12 +53,12 @@ impl SearchView {
         use_regex: bool,
     ) -> Option<(u16, u16)> {
         let area = self.search_area?;
-        if area.width == 0 || area.height == 0 {
+        if area.is_empty() {
             return None;
         }
 
         let (query_start, _query_end, indicators) =
-            query_window(query, cursor, area.width, case_sensitive, use_regex);
+            query_window(query, cursor, area.w, case_sensitive, use_regex);
         let cursor = cursor.min(query.len());
         let prefix_width = UnicodeWidthStr::width(&query[query_start..cursor]) as u16;
         let x = area
@@ -73,34 +67,42 @@ impl SearchView {
             .saturating_add(prefix_width)
             .min(
                 area.x
-                    .saturating_add(area.width.saturating_sub(indicators.width)),
+                    .saturating_add(area.w.saturating_sub(indicators.width)),
             );
         Some((x, area.y))
     }
 
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, state: &SearchState, theme: &UiTheme) {
+    pub fn paint(&mut self, painter: &mut Painter, area: Rect, state: &SearchState, theme: &Theme) {
         self.area = Some(area);
+        if area.is_empty() {
+            self.search_area = None;
+            self.results_area = None;
+            return;
+        }
 
-        let search_box_height = SEARCH_BOX_HEIGHT.min(area.height);
-        let results_height = area.height.saturating_sub(search_box_height);
+        let search_box_height = SEARCH_BOX_HEIGHT.min(area.h);
+        let results_height = area.h.saturating_sub(search_box_height);
 
-        let search_area = Rect::new(area.x, area.y, area.width, search_box_height);
+        let search_area = Rect::new(area.x, area.y, area.w, search_box_height);
         let results_area = Rect::new(
             area.x,
             area.y + search_box_height,
-            area.width,
+            area.w,
             results_height,
         );
 
-        self.search_area = (search_area.width > 0 && search_area.height > 0).then_some(search_area);
+        self.search_area = (!search_area.is_empty()).then_some(search_area);
         self.results_area =
-            (results_area.width > 0 && results_area.height > 0).then_some(results_area);
+            (!results_area.is_empty()).then_some(results_area);
+
+        let bg = Style::default().bg(theme.palette_bg);
+        painter.fill_rect(area, bg);
 
         let indicators = Indicators::new(state.case_sensitive, state.use_regex);
         let (query_start, query_end, _) = query_window(
             &state.query,
             state.query_cursor,
-            search_area.width,
+            search_area.w,
             state.case_sensitive,
             state.use_regex,
         );
@@ -124,56 +126,96 @@ impl SearchView {
             "Enter search term".to_string()
         };
 
-        let label_style = Style::default().fg(theme.header_fg);
-        let query_style = Style::default().fg(theme.palette_fg);
-        let indicator_style = Style::default().fg(theme.palette_muted_fg);
+        if !search_area.is_empty() {
+            let label_style = Style::default().fg(theme.header_fg);
+            let query_style = Style::default().fg(theme.palette_fg);
+            let indicator_style = Style::default().fg(theme.palette_muted_fg);
+            let muted_style = Style::default().fg(theme.palette_muted_fg);
+
+            let row0 = Rect::new(search_area.x, search_area.y, search_area.w, 1);
+            let mut x = search_area.x;
+            painter.text_clipped(Pos::new(x, search_area.y), SEARCH_LABEL, label_style, row0);
+            x = x.saturating_add(UnicodeWidthStr::width(SEARCH_LABEL).min(u16::MAX as usize) as u16);
+            painter.text_clipped(Pos::new(x, search_area.y), visible_query, query_style, row0);
+            x = x.saturating_add(UnicodeWidthStr::width(visible_query).min(u16::MAX as usize) as u16);
+            painter.text_clipped(
+                Pos::new(x, search_area.y),
+                indicators.pad_between_query,
+                indicator_style,
+                row0,
+            );
+            x = x.saturating_add(UnicodeWidthStr::width(indicators.pad_between_query).min(u16::MAX as usize) as u16);
+            painter.text_clipped(
+                Pos::new(x, search_area.y),
+                indicators.case_label,
+                indicator_style,
+                row0,
+            );
+            x = x.saturating_add(UnicodeWidthStr::width(indicators.case_label).min(u16::MAX as usize) as u16);
+            painter.text_clipped(
+                Pos::new(x, search_area.y),
+                indicators.regex_label,
+                indicator_style,
+                row0,
+            );
+
+            if search_area.h >= 2 {
+                let row1_y = search_area.y.saturating_add(1);
+                let row1 = Rect::new(search_area.x, row1_y, search_area.w, 1);
+                painter.text_clipped(Pos::new(search_area.x, row1_y), status, muted_style, row1);
+            }
+        }
+
+        if results_area.is_empty() {
+            return;
+        }
+
         let muted_style = Style::default().fg(theme.palette_muted_fg);
 
-        let search_line = Line::from(vec![
-            Span::styled(SEARCH_LABEL, label_style),
-            Span::styled(visible_query, query_style),
-            Span::raw(indicators.pad_between_query),
-            Span::styled(indicators.case_label, indicator_style),
-            Span::styled(indicators.regex_label, indicator_style),
-        ]);
-
-        let status_line = Line::from(Span::styled(status, muted_style));
-
-        frame.render_widget(Paragraph::new(vec![search_line, status_line]), search_area);
-
-        if results_area.width == 0 || results_area.height == 0 {
-            return;
-        }
-
         if state.items.is_empty() {
-            let msg = Line::from(Span::styled("No results", muted_style));
-            frame.render_widget(Paragraph::new(msg), results_area);
+            let row = Rect::new(results_area.x, results_area.y, results_area.w, 1);
+            painter.text_clipped(Pos::new(results_area.x, results_area.y), "No results", muted_style, row);
             return;
         }
 
-        let height = results_area.height as usize;
+        let height = results_area.h as usize;
         let start = state.sidebar_view.scroll_offset.min(state.items.len());
         let end = (start + height).min(state.items.len());
         let selected = state
             .selected_index
             .min(state.items.len().saturating_sub(1));
 
-        let mut lines = Vec::with_capacity(end.saturating_sub(start));
+        let mut out_row = 0usize;
         for (row, item) in state.items.iter().enumerate().take(end).skip(start) {
+            if out_row >= height {
+                break;
+            }
+            let y = results_area.y.saturating_add(out_row.min(u16::MAX as usize) as u16);
+            if y >= results_area.bottom() {
+                break;
+            }
+
             let is_selected = row == selected;
-            let bg = is_selected.then_some(theme.palette_selected_bg);
-            let marker_style = Style::default()
-                .fg(if is_selected {
-                    theme.focus_border
-                } else {
-                    theme.palette_muted_fg
-                })
-                .bg(bg.unwrap_or(Color::Reset));
+            let bg = if is_selected { theme.palette_selected_bg } else { theme.palette_bg };
+            let row_bg = Style::default().bg(bg);
+            let clip = Rect::new(results_area.x, y, results_area.w, 1);
+            painter.fill_rect(clip, row_bg);
+
+            let marker_style = Style::default().fg(if is_selected {
+                theme.focus_border
+            } else {
+                theme.palette_muted_fg
+            });
             let marker = if is_selected { ">" } else { " " };
+
+            let mut x = results_area.x;
+            painter.text_clipped(Pos::new(x, y), marker, marker_style, clip);
+            x = x.saturating_add(1);
 
             match *item {
                 SearchResultItem::FileHeader { file_index } => {
                     let Some(file) = state.files.get(file_index) else {
+                        out_row = out_row.saturating_add(1);
                         continue;
                     };
                     let file_name = file
@@ -184,51 +226,55 @@ impl SearchView {
 
                     let icon = if file.expanded { "▼ " } else { "▶ " };
                     let match_count = file.matches.len();
-                    let file_style = Style::default()
-                        .fg(theme.accent_fg)
-                        .add_modifier(Modifier::BOLD)
-                        .bg(bg.unwrap_or(Color::Reset));
-                    let count_style = Style::default()
-                        .fg(theme.palette_muted_fg)
-                        .bg(bg.unwrap_or(Color::Reset));
+                    let icon_style = Style::default();
+                    let file_style =
+                        Style::default().fg(theme.accent_fg).add_mod(Mod::BOLD);
+                    let count_style = Style::default().fg(theme.palette_muted_fg);
 
-                    lines.push(Line::from(vec![
-                        Span::styled(marker, marker_style),
-                        Span::raw(" "),
-                        Span::styled(icon, Style::default().bg(bg.unwrap_or(Color::Reset))),
-                        Span::styled(file_name, file_style),
-                        Span::styled(format!(" ({})", match_count), count_style),
-                    ]));
+                    painter.text_clipped(Pos::new(x, y), " ", Style::default(), clip);
+                    x = x.saturating_add(1);
+                    painter.text_clipped(Pos::new(x, y), icon, icon_style, clip);
+                    x = x.saturating_add(UnicodeWidthStr::width(icon).min(u16::MAX as usize) as u16);
+                    let file_w = UnicodeWidthStr::width(file_name.as_str()).min(u16::MAX as usize) as u16;
+                    painter.text_clipped(Pos::new(x, y), file_name, file_style, clip);
+                    x = x.saturating_add(file_w);
+                    painter.text_clipped(
+                        Pos::new(x, y),
+                        format!(" ({})", match_count),
+                        count_style,
+                        clip,
+                    );
                 }
                 SearchResultItem::MatchLine {
                     file_index,
                     match_index,
                 } => {
                     let Some(file) = state.files.get(file_index) else {
+                        out_row = out_row.saturating_add(1);
                         continue;
                     };
                     let Some(match_info) = file.matches.get(match_index) else {
+                        out_row = out_row.saturating_add(1);
                         continue;
                     };
-                    let line_style = Style::default()
-                        .fg(theme.palette_muted_fg)
-                        .bg(bg.unwrap_or(Color::Reset));
-                    let col_style = Style::default()
-                        .fg(theme.header_fg)
-                        .bg(bg.unwrap_or(Color::Reset));
+                    let line_style = Style::default().fg(theme.palette_muted_fg);
+                    let col_style = Style::default().fg(theme.header_fg);
 
-                    lines.push(Line::from(vec![
-                        Span::styled(marker, marker_style),
-                        Span::raw("  "),
-                        Span::styled(format!("L{}:", match_info.line + 1), line_style),
-                        Span::raw(" "),
-                        Span::styled(format!("col {}", match_info.col + 1), col_style),
-                    ]));
+                    painter.text_clipped(Pos::new(x, y), "  ", Style::default(), clip);
+                    x = x.saturating_add(2);
+                    let l = format!("L{}:", match_info.line + 1);
+                    let l_w = UnicodeWidthStr::width(l.as_str()).min(u16::MAX as usize) as u16;
+                    painter.text_clipped(Pos::new(x, y), l, line_style, clip);
+                    x = x.saturating_add(l_w);
+                    painter.text_clipped(Pos::new(x, y), " ", Style::default(), clip);
+                    x = x.saturating_add(1);
+                    let c = format!("col {}", match_info.col + 1);
+                    painter.text_clipped(Pos::new(x, y), c, col_style, clip);
                 }
             }
-        }
 
-        frame.render_widget(Paragraph::new(lines), results_area);
+            out_row = out_row.saturating_add(1);
+        }
     }
 }
 

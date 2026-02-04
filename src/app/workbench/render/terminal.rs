@@ -1,9 +1,7 @@
 use super::super::Workbench;
-use ratatui::layout::Rect;
-use ratatui::style::Style;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
+use crate::ui::core::geom::{Pos, Rect as UiRect};
+use crate::ui::core::painter::Painter;
+use crate::ui::core::style::Style as UiStyle;
 
 pub(super) fn cursor_position_terminal(workbench: &Workbench) -> Option<(u16, u16)> {
     if !workbench.terminal_cursor_visible {
@@ -11,17 +9,17 @@ pub(super) fn cursor_position_terminal(workbench: &Workbench) -> Option<(u16, u1
     }
 
     let panel = workbench.last_bottom_panel_area?;
-    if panel.width == 0 || panel.height <= 1 {
+    if panel.w == 0 || panel.h <= 1 {
         return None;
     }
 
-    let content = Rect::new(
+    let content = UiRect::new(
         panel.x,
         panel.y.saturating_add(1),
-        panel.width,
-        panel.height.saturating_sub(1),
+        panel.w,
+        panel.h.saturating_sub(1),
     );
-    if content.width == 0 || content.height == 0 {
+    if content.is_empty() {
         return None;
     }
 
@@ -36,8 +34,8 @@ pub(super) fn cursor_position_terminal(workbench: &Workbench) -> Option<(u16, u1
             return None;
         }
         let (row, col) = session.parser.screen().cursor_position();
-        let max_x = content.x.saturating_add(content.width.saturating_sub(1));
-        let max_y = content.y.saturating_add(content.height.saturating_sub(1));
+        let max_x = content.x.saturating_add(content.w.saturating_sub(1));
+        let max_y = content.y.saturating_add(content.h.saturating_sub(1));
         let x = content.x.saturating_add(col).min(max_x);
         let y = content.y.saturating_add(row).min(max_y);
         return Some((x, y));
@@ -50,42 +48,43 @@ pub(super) fn cursor_position_terminal(workbench: &Workbench) -> Option<(u16, u1
 }
 
 impl Workbench {
-    pub(super) fn render_bottom_panel_terminal(&mut self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
+    pub(super) fn paint_bottom_panel_terminal(&mut self, painter: &mut Painter, area: UiRect) {
+        if area.is_empty() {
             return;
         }
 
-        let base_style = Style::default()
-            .bg(self.theme.palette_bg)
-            .fg(self.theme.palette_fg);
-
         let Some(session_id) = self.store.state().terminal.active_session().map(|s| s.id) else {
-            let msg = Line::from(Span::styled(
+            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            painter.text_clipped(
+                Pos::new(area.x, area.y),
                 "Terminal starting...",
-                Style::default().fg(self.theme.palette_muted_fg),
-            ));
-            frame.render_widget(Paragraph::new(msg).style(base_style), area);
+                style,
+                area,
+            );
             return;
         };
-        self.sync_terminal_view_size(session_id, area.width, area.height);
+        self.sync_terminal_view_size(session_id, area.w, area.h);
 
         #[cfg(feature = "terminal")]
         {
             let Some(session) = self.store.state().terminal.active_session() else {
                 return;
             };
-            let rows = session.visible_rows(area.width, area.height);
-            let lines = rows.into_iter().map(Line::from).collect::<Vec<_>>();
-            frame.render_widget(Paragraph::new(lines).style(base_style), area);
+            let rows = session.visible_rows(area.w, area.h);
+            for (idx, row) in rows.into_iter().enumerate() {
+                let y = area.y.saturating_add(idx.min(u16::MAX as usize) as u16);
+                if y >= area.bottom() {
+                    break;
+                }
+                let row_clip = UiRect::new(area.x, y, area.w, 1);
+                painter.text_clipped(Pos::new(area.x, y), row, UiStyle::default(), row_clip);
+            }
         }
 
         #[cfg(not(feature = "terminal"))]
         {
-            let msg = Line::from(Span::styled(
-                "Terminal disabled",
-                Style::default().fg(self.theme.palette_muted_fg),
-            ));
-            frame.render_widget(Paragraph::new(msg).style(base_style), area);
+            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            painter.text_clipped(Pos::new(area.x, area.y), "Terminal disabled", style, area);
         }
     }
 }

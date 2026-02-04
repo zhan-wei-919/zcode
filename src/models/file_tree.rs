@@ -217,6 +217,32 @@ impl FileTree {
         path
     }
 
+    pub fn full_path_ro(&self, id: NodeId) -> Option<PathBuf> {
+        if id == self.root {
+            return Some(self.absolute_root.clone());
+        }
+
+        // Validate early so we don't return the root path for invalid ids.
+        if self.arena.get(id).is_none() {
+            return None;
+        }
+
+        let mut current = id;
+        let mut components: Vec<OsString> = Vec::new();
+        while current != self.root {
+            let node = self.arena.get(current)?;
+            let parent = node.parent?;
+            components.push(node.name.clone());
+            current = parent;
+        }
+
+        let mut path = self.absolute_root.clone();
+        for comp in components.iter().rev() {
+            path.push(comp);
+        }
+        Some(path)
+    }
+
     fn invalidate_path_cache_subtree(&mut self, id: NodeId) {
         let mut stack = vec![id];
         while let Some(node_id) = stack.pop() {

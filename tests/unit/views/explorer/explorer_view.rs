@@ -11,7 +11,7 @@ fn test_explorer_view_new() {
 #[test]
 fn test_explorer_view_renders_single_git_marker_at_row_end() {
     let view = ExplorerView::new();
-    let theme = UiTheme::default();
+    let theme = Theme::default();
     let row = FileTreeRow {
         id: NodeId::null(),
         depth: 0,
@@ -22,14 +22,9 @@ fn test_explorer_view_renders_single_git_marker_at_row_end() {
     };
 
     let render = |status: Option<GitFileStatus>| {
-        let line = view.render_row(&row, false, status, 20, &theme);
-        line.spans
-            .iter()
-            .map(|s| s.content.as_ref())
-            .collect::<String>()
-            .chars()
-            .next_back()
-            .unwrap_or('\0')
+        let (_left_pad, marker, _row_style, _marker_style) =
+            view.render_row_parts(&row, false, status, 20, &theme);
+        marker
     };
 
     assert_eq!(

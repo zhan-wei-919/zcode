@@ -1,5 +1,10 @@
 use super::*;
 use crate::core::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
+use crate::ui::backend::test::TestBackend;
+use crate::ui::core::geom::Rect;
+use crate::ui::core::id::IdPath;
+use crate::ui::core::tree::{NodeKind, SplitDrop};
 use std::ffi::{OsStr, OsString};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -37,6 +42,20 @@ fn drive_until(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn render_once(workbench: &mut Workbench, w: u16, h: u16) {
+    let mut backend = TestBackend::new(w, h);
+    workbench.render(&mut backend, Rect::new(0, 0, w, h));
+}
+
+fn mouse(kind: MouseEventKind, x: u16, y: u16) -> InputEvent {
+    InputEvent::Mouse(MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    })
 }
 
 #[test]
@@ -85,6 +104,700 @@ fn test_toggle_bottom_panel() {
 
     assert!(result.is_consumed());
     assert!(workbench.bottom_panel_visible());
+}
+
+#[test]
+fn test_drag_tab_to_split_right_creates_two_panes() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    let a_path = dir.path().join("a.rs");
+    let b_path = dir.path().join("b.rs");
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: a_path.clone(),
+        content: "fn a() {}\n".to_string(),
+    }));
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: b_path.clone(),
+        content: "fn b() {}\n".to_string(),
+    }));
+
+    render_once(&mut workbench, 120, 40);
+
+    let b_tab_id = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|p| p.tabs.iter().find(|t| t.path.as_ref() == Some(&b_path)).map(|t| t.id))
+        .expect("b tab");
+
+    let tab_node = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::Tab { pane: 0, tab_id } if tab_id == b_tab_id))
+        .expect("tab node");
+    let right_node = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::EditorSplitDrop { pane: 0, drop: SplitDrop::Right }))
+        .expect("right split drop node");
+
+    let start_x = tab_node.rect.x.saturating_add(1);
+    let start_y = tab_node.rect.y;
+    let drop_x = right_node.rect.x.saturating_add(1);
+    let drop_y = right_node.rect.y.saturating_add(1);
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    // Drag start threshold is 2.
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        start_x.saturating_add(2),
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        drop_x,
+        drop_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        drop_x,
+        drop_y,
+    ));
+
+    assert_eq!(workbench.store.state().ui.editor_layout.panes, 2);
+    assert_eq!(
+        workbench.store.state().ui.editor_layout.split_direction,
+        crate::kernel::SplitDirection::Vertical
+    );
+
+    let pane0_has_a = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .is_some_and(|p| p.tabs.iter().any(|t| t.path.as_ref() == Some(&a_path)));
+    let pane1_has_b = workbench
+        .store
+        .state()
+        .editor
+        .pane(1)
+        .is_some_and(|p| p.tabs.iter().any(|t| t.id == b_tab_id));
+    assert!(pane0_has_a);
+    assert!(pane1_has_b);
+}
+
+#[test]
+fn test_drag_tab_to_split_down_creates_two_panes() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    let a_path = dir.path().join("a.rs");
+    let b_path = dir.path().join("b.rs");
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: a_path.clone(),
+        content: "fn a() {}\n".to_string(),
+    }));
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: b_path.clone(),
+        content: "fn b() {}\n".to_string(),
+    }));
+
+    render_once(&mut workbench, 120, 40);
+
+    let b_tab_id = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|p| p.tabs.iter().find(|t| t.path.as_ref() == Some(&b_path)).map(|t| t.id))
+        .expect("b tab");
+
+    let tab_node = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::Tab { pane: 0, tab_id } if tab_id == b_tab_id))
+        .expect("tab node");
+    let down_node = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::EditorSplitDrop { pane: 0, drop: SplitDrop::Down }))
+        .expect("down split drop node");
+
+    let start_x = tab_node.rect.x.saturating_add(1);
+    let start_y = tab_node.rect.y;
+    // Drop on the left side of the down zone to avoid the overlapping right zone.
+    let drop_x = down_node.rect.x.saturating_add(1);
+    let drop_y = down_node.rect.y.saturating_add(1);
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        start_x.saturating_add(2),
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        drop_x,
+        drop_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        drop_x,
+        drop_y,
+    ));
+
+    assert_eq!(workbench.store.state().ui.editor_layout.panes, 2);
+    assert_eq!(
+        workbench.store.state().ui.editor_layout.split_direction,
+        crate::kernel::SplitDirection::Horizontal
+    );
+
+    let pane0_has_a = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .is_some_and(|p| p.tabs.iter().any(|t| t.path.as_ref() == Some(&a_path)));
+    let pane1_has_b = workbench
+        .store
+        .state()
+        .editor
+        .pane(1)
+        .is_some_and(|p| p.tabs.iter().any(|t| t.id == b_tab_id));
+    assert!(pane0_has_a);
+    assert!(pane1_has_b);
+}
+
+#[test]
+fn test_drag_tab_renders_ghost_label_near_cursor() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    let path = dir.path().join("ghost_drag.rs");
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "fn main() {}\n".to_string(),
+    }));
+
+    render_once(&mut workbench, 120, 40);
+
+    let tab_id = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|p| p.tabs.iter().find(|t| t.path.as_ref() == Some(&path)).map(|t| t.id))
+        .expect("tab id");
+
+    let tab_node = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::Tab { pane: 0, tab_id: id } if id == tab_id))
+        .expect("tab node");
+
+    let start_x = tab_node.rect.x.saturating_add(1);
+    let start_y = tab_node.rect.y;
+    let drag_x = 50u16;
+    let drag_y = 20u16;
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    // Drag start threshold is 2.
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        start_x.saturating_add(2),
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        drag_x,
+        drag_y,
+    ));
+
+    let mut backend = TestBackend::new(120, 40);
+    workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
+
+    let buf = backend.buffer();
+    let ghost_x = drag_x.saturating_add(1);
+    let ghost_y = drag_y.saturating_add(1);
+    assert_eq!(buf.cell(ghost_x, ghost_y).unwrap().symbol, "┌");
+    assert_eq!(
+        buf.cell(ghost_x.saturating_add(2), ghost_y.saturating_add(1))
+            .unwrap()
+            .symbol,
+        "g"
+    );
+}
+
+#[test]
+fn test_drag_sidebar_splitter_updates_sidebar_width() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    render_once(&mut workbench, 120, 40);
+
+    let splitter_id = IdPath::root("workbench")
+        .push_str("sidebar_splitter")
+        .finish();
+    let splitter = workbench.ui_tree.node(splitter_id).expect("sidebar splitter");
+    assert!(splitter.rect.w > 0 && splitter.rect.h > 0);
+
+    let start_x = splitter.rect.x;
+    let start_y = splitter.rect.y.saturating_add(1);
+    let drag_x = start_x.saturating_add(10);
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        drag_x,
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        drag_x,
+        start_y,
+    ));
+
+    let container = workbench
+        .last_sidebar_container_area
+        .expect("sidebar container");
+    let desired = drag_x.saturating_sub(container.x).saturating_add(1);
+    let expected = util::clamp_sidebar_width(container.w, desired);
+
+    assert_eq!(workbench.store.state().ui.sidebar_width, Some(expected));
+
+    render_once(&mut workbench, 120, 40);
+    assert_eq!(workbench.last_sidebar_area.expect("sidebar area").w, expected);
+}
+
+#[test]
+fn test_drag_explorer_file_into_folder_moves_path() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let dst_dir = dir.path().join("dst");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::create_dir_all(&dst_dir).unwrap();
+    let from = src_dir.join("a.txt");
+    std::fs::write(&from, "hello\n").unwrap();
+    let to = dst_dir.join("a.txt");
+
+    let (runtime, rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    // Expand `src` so its entries become visible and draggable.
+    let src_row = workbench
+        .store
+        .state()
+        .explorer
+        .rows
+        .iter()
+        .position(|r| r.is_dir && r.name.as_os_str() == OsStr::new("src"))
+        .expect("src row");
+    let _ = workbench.dispatch_kernel(KernelAction::ExplorerClickRow {
+        row: src_row,
+        now: Instant::now(),
+    });
+    let _ = workbench.dispatch_kernel(KernelAction::ExplorerClickRow {
+        row: src_row,
+        now: Instant::now(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
+        w.store
+            .state()
+            .explorer
+            .rows
+            .iter()
+            .any(|r| !r.is_dir && r.name.as_os_str() == OsStr::new("a.txt"))
+    });
+
+    render_once(&mut workbench, 120, 40);
+
+    let file_id = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find_map(|n| match n.kind {
+            NodeKind::ExplorerRow { node_id } => workbench
+                .store
+                .state()
+                .explorer
+                .path_and_kind_for(node_id)
+                .filter(|(path, is_dir)| !*is_dir && *path == from)
+                .map(|_| node_id),
+            _ => None,
+        })
+        .expect("explorer file node");
+    let file_node = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::ExplorerRow { node_id } if node_id == file_id))
+        .expect("file node rect");
+
+    let dst_drop = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| match n.kind {
+            NodeKind::ExplorerFolderDrop { node_id } => workbench
+                .store
+                .state()
+                .explorer
+                .path_and_kind_for(node_id)
+                .is_some_and(|(path, is_dir)| is_dir && path == dst_dir),
+            _ => false,
+        })
+        .expect("dst folder drop node");
+
+    let start_x = file_node.rect.x.saturating_add(1);
+    let start_y = file_node.rect.y;
+    let drop_x = dst_drop.rect.x.saturating_add(1);
+    let drop_y = dst_drop.rect.y;
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    // Drag start threshold is 2.
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        start_x.saturating_add(2),
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        drop_x,
+        drop_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        drop_x,
+        drop_y,
+    ));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |_| to.exists() && !from.exists());
+    assert_eq!(
+        workbench.store.state().explorer.path_and_kind_for(file_id),
+        Some((to, false))
+    );
+}
+
+#[test]
+fn test_drag_explorer_file_onto_file_row_moves_into_that_files_parent_dir() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    let from = src_dir.join("a.txt");
+    std::fs::write(&from, "hello\n").unwrap();
+    let root_target = dir.path().join("root.txt");
+    std::fs::write(&root_target, "target\n").unwrap();
+    let to = dir.path().join("a.txt");
+
+    let (runtime, rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    // Expand `src` so its entries become visible and draggable.
+    let src_row = workbench
+        .store
+        .state()
+        .explorer
+        .rows
+        .iter()
+        .position(|r| r.is_dir && r.name.as_os_str() == OsStr::new("src"))
+        .expect("src row");
+    let now = Instant::now();
+    let _ = workbench.dispatch_kernel(KernelAction::ExplorerClickRow { row: src_row, now });
+    let _ = workbench.dispatch_kernel(KernelAction::ExplorerClickRow { row: src_row, now });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
+        w.store
+            .state()
+            .explorer
+            .rows
+            .iter()
+            .any(|r| !r.is_dir && r.name.as_os_str() == OsStr::new("a.txt"))
+    });
+
+    render_once(&mut workbench, 120, 40);
+
+    let file_id = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find_map(|n| match n.kind {
+            NodeKind::ExplorerRow { node_id } => workbench
+                .store
+                .state()
+                .explorer
+                .path_and_kind_for(node_id)
+                .filter(|(path, is_dir)| !*is_dir && *path == from)
+                .map(|_| node_id),
+            _ => None,
+        })
+        .expect("explorer file node");
+    let file_node = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::ExplorerRow { node_id } if node_id == file_id))
+        .expect("file node rect");
+
+    let root_target_id = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find_map(|n| match n.kind {
+            NodeKind::ExplorerRow { node_id } => workbench
+                .store
+                .state()
+                .explorer
+                .path_and_kind_for(node_id)
+                .filter(|(path, is_dir)| !*is_dir && *path == root_target)
+                .map(|_| node_id),
+            _ => None,
+        })
+        .expect("root target node");
+    let root_target_node = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::ExplorerRow { node_id } if node_id == root_target_id))
+        .expect("root target rect");
+
+    let start_x = file_node.rect.x.saturating_add(1);
+    let start_y = file_node.rect.y;
+    let drop_x = root_target_node.rect.x.saturating_add(1);
+    let drop_y = root_target_node.rect.y;
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    // Drag start threshold is 2.
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        start_x.saturating_add(2),
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        drop_x,
+        drop_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        drop_x,
+        drop_y,
+    ));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |_| to.exists() && !from.exists());
+    assert!(root_target.exists(), "drop target file should not be moved");
+    assert_eq!(
+        workbench.store.state().explorer.path_and_kind_for(file_id),
+        Some((to, false))
+    );
+}
+
+#[test]
+fn test_drag_explorer_file_into_root_empty_space_moves_into_root() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    let from = src_dir.join("a.txt");
+    std::fs::write(&from, "hello\n").unwrap();
+    let to = dir.path().join("a.txt");
+
+    let (runtime, rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    // Expand `src` so its entries become visible and draggable.
+    let src_row = workbench
+        .store
+        .state()
+        .explorer
+        .rows
+        .iter()
+        .position(|r| r.is_dir && r.name.as_os_str() == OsStr::new("src"))
+        .expect("src row");
+    let now = Instant::now();
+    let _ = workbench.dispatch_kernel(KernelAction::ExplorerClickRow { row: src_row, now });
+    let _ = workbench.dispatch_kernel(KernelAction::ExplorerClickRow { row: src_row, now });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
+        w.store
+            .state()
+            .explorer
+            .rows
+            .iter()
+            .any(|r| !r.is_dir && r.name.as_os_str() == OsStr::new("a.txt"))
+    });
+
+    render_once(&mut workbench, 120, 40);
+
+    let file_id = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find_map(|n| match n.kind {
+            NodeKind::ExplorerRow { node_id } => workbench
+                .store
+                .state()
+                .explorer
+                .path_and_kind_for(node_id)
+                .filter(|(path, is_dir)| !*is_dir && *path == from)
+                .map(|_| node_id),
+            _ => None,
+        })
+        .expect("explorer file node");
+    let file_node = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::ExplorerRow { node_id } if node_id == file_id))
+        .expect("file node rect");
+
+    let root_drop_id = IdPath::root("workbench")
+        .push_str("explorer_root_drop")
+        .finish();
+    let root_drop = workbench.ui_tree.node(root_drop_id).expect("root drop node");
+    assert!(root_drop.rect.w > 0 && root_drop.rect.h > 0);
+
+    let start_x = file_node.rect.x.saturating_add(1);
+    let start_y = file_node.rect.y;
+    let drop_x = root_drop.rect.x.saturating_add(1);
+    let drop_y = root_drop.rect.y;
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    // Drag start threshold is 2.
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        start_x.saturating_add(2),
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        drop_x,
+        drop_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        drop_x,
+        drop_y,
+    ));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |_| to.exists() && !from.exists());
+    assert_eq!(
+        workbench.store.state().explorer.path_and_kind_for(file_id),
+        Some((to, false))
+    );
+}
+
+#[test]
+fn test_drag_explorer_file_renders_ghost_label_near_cursor() {
+    let dir = tempdir().unwrap();
+    let from = dir.path().join("a.txt");
+    std::fs::write(&from, "hello\n").unwrap();
+
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    render_once(&mut workbench, 120, 40);
+
+    let file_id = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find_map(|n| match n.kind {
+            NodeKind::ExplorerRow { node_id } => workbench
+                .store
+                .state()
+                .explorer
+                .path_and_kind_for(node_id)
+                .filter(|(path, is_dir)| !*is_dir && *path == from)
+                .map(|_| node_id),
+            _ => None,
+        })
+        .expect("explorer file node");
+    let file_node = workbench
+        .ui_tree
+        .nodes()
+        .iter()
+        .find(|n| matches!(n.kind, NodeKind::ExplorerRow { node_id } if node_id == file_id))
+        .expect("file node rect");
+
+    let start_x = file_node.rect.x.saturating_add(1);
+    let start_y = file_node.rect.y;
+    let drag_x = 50u16;
+    let drag_y = 20u16;
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    // Drag start threshold is 2.
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        start_x.saturating_add(2),
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        drag_x,
+        drag_y,
+    ));
+
+    let mut backend = TestBackend::new(120, 40);
+    workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
+
+    let buf = backend.buffer();
+    let ghost_x = drag_x.saturating_add(1);
+    let ghost_y = drag_y.saturating_add(1);
+    assert_eq!(buf.cell(ghost_x, ghost_y).unwrap().symbol, "┌");
+    assert_eq!(
+        buf.cell(ghost_x.saturating_add(2), ghost_y.saturating_add(1))
+            .unwrap()
+            .symbol,
+        "a"
+    );
 }
 
 #[test]

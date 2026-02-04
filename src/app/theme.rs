@@ -1,8 +1,8 @@
 //! UI 主题：把可配置的颜色集中管理，避免散落在渲染代码里。
 
-use ratatui::style::Color;
-
 use crate::kernel::services::ports::ThemeSettings;
+use crate::ui::core::style::Color;
+use crate::ui::core::theme::Theme as CoreTheme;
 
 #[derive(Debug, Clone)]
 pub struct UiTheme {
@@ -34,29 +34,29 @@ pub struct UiTheme {
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
-            focus_border: Color::Cyan,
-            inactive_border: Color::DarkGray,
-            separator: Color::DarkGray,
-            accent_fg: Color::Yellow,
-            syntax_string_fg: Color::Green,
-            syntax_number_fg: Color::Magenta,
-            syntax_attribute_fg: Color::Blue,
-            error_fg: Color::Red,
-            warning_fg: Color::Yellow,
+            focus_border: Color::Indexed(6),        // Cyan
+            inactive_border: Color::Indexed(8),     // DarkGray
+            separator: Color::Indexed(8),           // DarkGray
+            accent_fg: Color::Indexed(3),           // Yellow
+            syntax_string_fg: Color::Indexed(2),    // Green
+            syntax_number_fg: Color::Indexed(5),    // Magenta
+            syntax_attribute_fg: Color::Indexed(4), // Blue
+            error_fg: Color::Indexed(1),            // Red
+            warning_fg: Color::Indexed(3),          // Yellow
             activity_bg: Color::Reset,
-            activity_fg: Color::DarkGray,
-            activity_active_bg: Color::DarkGray,
-            activity_active_fg: Color::White,
-            sidebar_tab_active_bg: Color::DarkGray,
-            sidebar_tab_active_fg: Color::White,
-            sidebar_tab_inactive_fg: Color::DarkGray,
-            header_fg: Color::Cyan,
-            palette_border: Color::Cyan,
+            activity_fg: Color::Indexed(8),        // DarkGray
+            activity_active_bg: Color::Indexed(8), // DarkGray
+            activity_active_fg: Color::Indexed(15), // White
+            sidebar_tab_active_bg: Color::Indexed(8), // DarkGray
+            sidebar_tab_active_fg: Color::Indexed(15), // White
+            sidebar_tab_inactive_fg: Color::Indexed(8), // DarkGray
+            header_fg: Color::Indexed(6),          // Cyan
+            palette_border: Color::Indexed(6),     // Cyan
             palette_bg: Color::Reset,
-            palette_fg: Color::White,
-            palette_selected_bg: Color::DarkGray,
-            palette_selected_fg: Color::White,
-            palette_muted_fg: Color::DarkGray,
+            palette_fg: Color::Indexed(15), // White
+            palette_selected_bg: Color::Indexed(8), // DarkGray
+            palette_selected_fg: Color::Indexed(15), // White
+            palette_muted_fg: Color::Indexed(8),   // DarkGray
         }
     }
 }
@@ -199,24 +199,52 @@ pub fn parse_color(value: &str) -> Option<Color> {
     let v = v.to_ascii_lowercase();
     let c = match v.as_str() {
         "reset" => Color::Reset,
-        "black" => Color::Black,
-        "red" => Color::Red,
-        "green" => Color::Green,
-        "yellow" => Color::Yellow,
-        "blue" => Color::Blue,
-        "magenta" => Color::Magenta,
-        "cyan" => Color::Cyan,
-        "gray" | "grey" => Color::Gray,
-        "dark_gray" | "darkgrey" => Color::DarkGray,
-        "white" => Color::White,
-        "light_red" => Color::LightRed,
-        "light_green" => Color::LightGreen,
-        "light_yellow" => Color::LightYellow,
-        "light_blue" => Color::LightBlue,
-        "light_magenta" => Color::LightMagenta,
-        "light_cyan" => Color::LightCyan,
+        "black" => Color::Indexed(0),
+        "red" => Color::Indexed(1),
+        "green" => Color::Indexed(2),
+        "yellow" => Color::Indexed(3),
+        "blue" => Color::Indexed(4),
+        "magenta" => Color::Indexed(5),
+        "cyan" => Color::Indexed(6),
+        "gray" | "grey" => Color::Indexed(7),
+        "dark_gray" | "darkgrey" => Color::Indexed(8),
+        "white" => Color::Indexed(15),
+        "light_red" => Color::Indexed(9),
+        "light_green" => Color::Indexed(10),
+        "light_yellow" => Color::Indexed(11),
+        "light_blue" => Color::Indexed(12),
+        "light_magenta" => Color::Indexed(13),
+        "light_cyan" => Color::Indexed(14),
         _ => return None,
     };
 
     Some(c)
+}
+
+pub(crate) fn to_core_theme(theme: &UiTheme) -> CoreTheme {
+    CoreTheme {
+        focus_border: theme.focus_border,
+        inactive_border: theme.inactive_border,
+        separator: theme.separator,
+        accent_fg: theme.accent_fg,
+        syntax_string_fg: theme.syntax_string_fg,
+        syntax_number_fg: theme.syntax_number_fg,
+        syntax_attribute_fg: theme.syntax_attribute_fg,
+        error_fg: theme.error_fg,
+        warning_fg: theme.warning_fg,
+        activity_bg: theme.activity_bg,
+        activity_fg: theme.activity_fg,
+        activity_active_bg: theme.activity_active_bg,
+        activity_active_fg: theme.activity_active_fg,
+        sidebar_tab_active_bg: theme.sidebar_tab_active_bg,
+        sidebar_tab_active_fg: theme.sidebar_tab_active_fg,
+        sidebar_tab_inactive_fg: theme.sidebar_tab_inactive_fg,
+        header_fg: theme.header_fg,
+        palette_border: theme.palette_border,
+        palette_bg: theme.palette_bg,
+        palette_fg: theme.palette_fg,
+        palette_selected_bg: theme.palette_selected_bg,
+        palette_selected_fg: theme.palette_selected_fg,
+        palette_muted_fg: theme.palette_muted_fg,
+    }
 }

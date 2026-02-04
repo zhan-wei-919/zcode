@@ -1,83 +1,87 @@
 use super::super::Workbench;
 use crate::kernel::{BottomPanelTab, SearchResultItem, SearchViewport};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
+use crate::ui::core::geom::{Pos, Rect as UiRect};
+use crate::ui::core::painter::{BorderKind, Painter};
+use crate::ui::core::style::{Mod, Style as UiStyle};
+use unicode_width::UnicodeWidthStr;
 
 impl Workbench {
-    pub(super) fn render_bottom_panel(&mut self, frame: &mut Frame, area: Rect) {
+    pub(super) fn paint_bottom_panel(&mut self, painter: &mut Painter, area: UiRect) {
         let tab = self.store.state().ui.bottom_panel.active_tab.clone();
-        if area.width == 0 || area.height == 0 {
+        if area.is_empty() {
             return;
         }
 
-        let base_style = Style::default()
-            .bg(self.theme.palette_bg)
-            .fg(self.theme.palette_fg);
-        frame.render_widget(Block::default().style(base_style), area);
+        let base_style = UiStyle::default()
+            .bg(self.ui_theme.palette_bg)
+            .fg(self.ui_theme.palette_fg);
+        painter.fill_rect(area, base_style);
 
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(0)])
-            .split(area);
-        let tabs_area = rows[0];
-        let content_area = rows[1];
+        let tabs_h = 1.min(area.h);
+        let tabs_area = UiRect::new(area.x, area.y, area.w, tabs_h);
+        let content_area = UiRect::new(
+            area.x,
+            area.y.saturating_add(tabs_h),
+            area.w,
+            area.h.saturating_sub(tabs_h),
+        );
 
-        self.render_bottom_panel_tabs(frame, tabs_area, &tab);
+        self.paint_bottom_panel_tabs(painter, tabs_area, &tab);
 
         match tab {
-            BottomPanelTab::Problems => self.render_bottom_panel_problems(frame, content_area),
+            BottomPanelTab::Problems => self.paint_bottom_panel_problems(painter, content_area),
             BottomPanelTab::CodeActions => {
-                self.render_bottom_panel_code_actions(frame, content_area)
+                self.paint_bottom_panel_code_actions(painter, content_area)
             }
-            BottomPanelTab::Locations => self.render_bottom_panel_locations(frame, content_area),
-            BottomPanelTab::Symbols => self.render_bottom_panel_symbols(frame, content_area),
+            BottomPanelTab::Locations => self.paint_bottom_panel_locations(painter, content_area),
+            BottomPanelTab::Symbols => self.paint_bottom_panel_symbols(painter, content_area),
             BottomPanelTab::SearchResults => {
-                self.render_bottom_panel_search_results(frame, content_area)
+                self.paint_bottom_panel_search_results(painter, content_area)
             }
-            BottomPanelTab::Logs => self.render_bottom_panel_logs(frame, content_area),
-            BottomPanelTab::Terminal => self.render_bottom_panel_terminal(frame, content_area),
+            BottomPanelTab::Logs => self.paint_bottom_panel_logs(painter, content_area),
+            BottomPanelTab::Terminal => self.paint_bottom_panel_terminal(painter, content_area),
         }
     }
 
-    fn render_bottom_panel_tabs(&self, frame: &mut Frame, area: Rect, active: &BottomPanelTab) {
-        let tab_active = Style::default()
-            .fg(self.theme.header_fg)
-            .add_modifier(Modifier::BOLD);
-        let tab_inactive = Style::default().fg(self.theme.palette_muted_fg);
+    fn paint_bottom_panel_tabs(&self, painter: &mut Painter, area: UiRect, active: &BottomPanelTab) {
+        if area.is_empty() {
+            return;
+        }
 
-        let mut spans = Vec::new();
+        let tab_active = UiStyle::default()
+            .fg(self.ui_theme.header_fg)
+            .add_mod(Mod::BOLD);
+        let tab_inactive = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+
+        let y = area.y;
+        let mut x = area.x;
         for (tab, label) in self.bottom_panel_tabs() {
             let style = if &tab == active {
                 tab_active
             } else {
                 tab_inactive
             };
-            spans.push(Span::styled(label, style));
+            painter.text_clipped(Pos::new(x, y), label.as_str(), style, area);
+            x = x.saturating_add(label.width().min(u16::MAX as usize) as u16);
+            if x >= area.right() {
+                break;
+            }
         }
-
-        let line = Line::from(spans);
-        frame.render_widget(Paragraph::new(line), area);
     }
 
-    fn render_bottom_panel_problems(&mut self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
+    fn paint_bottom_panel_problems(&mut self, painter: &mut Painter, area: UiRect) {
+        if area.is_empty() {
             return;
         }
 
-        let height = area.height as usize;
-        self.sync_problems_view_height(area.height);
+        let height = area.h as usize;
+        self.sync_problems_view_height(area.h);
 
         let problems_state = &self.store.state().problems;
         let problems = problems_state.items();
         if problems.is_empty() {
-            let msg = Line::from(Span::styled(
-                "No problems",
-                Style::default().fg(self.theme.palette_muted_fg),
-            ));
-            frame.render_widget(Paragraph::new(msg), area);
+            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            painter.text_clipped(Pos::new(area.x, area.y), "No problems", style, area);
             return;
         }
 
@@ -87,8 +91,18 @@ impl Workbench {
             .selected_index()
             .min(problems.len().saturating_sub(1));
 
-        let mut lines = Vec::with_capacity(end.saturating_sub(start));
-        for (i, item) in problems.iter().enumerate().take(end).skip(start) {
+        for (row, (i, item)) in problems
+            .iter()
+            .enumerate()
+            .take(end)
+            .skip(start)
+            .enumerate()
+        {
+            let y = area.y.saturating_add(row.min(u16::MAX as usize) as u16);
+            if y >= area.bottom() {
+                break;
+            }
+
             let file_name = item
                 .path
                 .file_name()
@@ -97,57 +111,60 @@ impl Workbench {
             let line = item.range.start_line.saturating_add(1);
             let col = item.range.start_col.saturating_add(1);
             let is_selected = i == selected;
-            let marker_style = if is_selected {
-                Style::default().fg(self.theme.focus_border)
-            } else {
-                Style::default().fg(self.theme.palette_muted_fg)
-            };
             let marker = if is_selected { ">" } else { " " };
+            let marker_style = UiStyle::default().fg(if is_selected {
+                self.ui_theme.focus_border
+            } else {
+                self.ui_theme.palette_muted_fg
+            });
             let severity_style = match item.severity {
                 crate::kernel::problems::ProblemSeverity::Error => {
-                    Style::default().fg(self.theme.error_fg)
+                    UiStyle::default().fg(self.ui_theme.error_fg)
                 }
                 crate::kernel::problems::ProblemSeverity::Warning => {
-                    Style::default().fg(self.theme.warning_fg)
+                    UiStyle::default().fg(self.ui_theme.warning_fg)
                 }
                 crate::kernel::problems::ProblemSeverity::Information => {
-                    Style::default().fg(self.theme.palette_muted_fg)
+                    UiStyle::default().fg(self.ui_theme.palette_muted_fg)
                 }
                 crate::kernel::problems::ProblemSeverity::Hint => {
-                    Style::default().fg(self.theme.palette_muted_fg)
+                    UiStyle::default().fg(self.ui_theme.palette_muted_fg)
                 }
             };
-            lines.push(Line::from(vec![
-                Span::styled(marker, marker_style),
-                Span::raw(" "),
-                Span::styled(
-                    format!("{}:{}:{} ", file_name, line, col),
-                    Style::default().fg(self.theme.accent_fg),
-                ),
-                Span::styled(format!("[{}] ", item.severity.label()), severity_style),
-                Span::raw(item.message.as_str()),
-            ]));
-        }
 
-        frame.render_widget(Paragraph::new(lines), area);
+            let row_clip = UiRect::new(area.x, y, area.w, 1);
+            let mut x = area.x;
+            painter.text_clipped(Pos::new(x, y), marker, marker_style, row_clip);
+            x = x.saturating_add(marker.width().min(u16::MAX as usize) as u16);
+            painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_clip);
+            x = x.saturating_add(1);
+
+            let file_info = format!("{}:{}:{} ", file_name, line, col);
+            let file_style = UiStyle::default().fg(self.ui_theme.accent_fg);
+            painter.text_clipped(Pos::new(x, y), file_info.as_str(), file_style, row_clip);
+            x = x.saturating_add(file_info.width().min(u16::MAX as usize) as u16);
+
+            let sev = format!("[{}] ", item.severity.label());
+            painter.text_clipped(Pos::new(x, y), sev.as_str(), severity_style, row_clip);
+            x = x.saturating_add(sev.width().min(u16::MAX as usize) as u16);
+
+            painter.text_clipped(Pos::new(x, y), item.message.as_str(), UiStyle::default(), row_clip);
+        }
     }
 
-    fn render_bottom_panel_locations(&mut self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
+    fn paint_bottom_panel_locations(&mut self, painter: &mut Painter, area: UiRect) {
+        if area.is_empty() {
             return;
         }
 
-        let height = area.height as usize;
-        self.sync_locations_view_height(area.height);
+        let height = area.h as usize;
+        self.sync_locations_view_height(area.h);
 
         let locations_state = &self.store.state().locations;
         let locations = locations_state.items();
         if locations.is_empty() {
-            let msg = Line::from(Span::styled(
-                "No locations",
-                Style::default().fg(self.theme.palette_muted_fg),
-            ));
-            frame.render_widget(Paragraph::new(msg), area);
+            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            painter.text_clipped(Pos::new(area.x, area.y), "No locations", style, area);
             return;
         }
 
@@ -157,8 +174,17 @@ impl Workbench {
             .selected_index()
             .min(locations.len().saturating_sub(1));
 
-        let mut lines = Vec::with_capacity(end.saturating_sub(start));
-        for (i, item) in locations.iter().enumerate().take(end).skip(start) {
+        for (row, (i, item)) in locations
+            .iter()
+            .enumerate()
+            .take(end)
+            .skip(start)
+            .enumerate()
+        {
+            let y = area.y.saturating_add(row.min(u16::MAX as usize) as u16);
+            if y >= area.bottom() {
+                break;
+            }
             let file_name = item
                 .path
                 .file_name()
@@ -167,41 +193,39 @@ impl Workbench {
             let line = item.line.saturating_add(1);
             let col = item.column.saturating_add(1);
             let is_selected = i == selected;
-            let marker_style = if is_selected {
-                Style::default().fg(self.theme.focus_border)
-            } else {
-                Style::default().fg(self.theme.palette_muted_fg)
-            };
             let marker = if is_selected { ">" } else { " " };
-            lines.push(Line::from(vec![
-                Span::styled(marker, marker_style),
-                Span::raw(" "),
-                Span::styled(
-                    format!("{}:{}:{} ", file_name, line, col),
-                    Style::default().fg(self.theme.accent_fg),
-                ),
-            ]));
-        }
+            let marker_style = UiStyle::default().fg(if is_selected {
+                self.ui_theme.focus_border
+            } else {
+                self.ui_theme.palette_muted_fg
+            });
 
-        frame.render_widget(Paragraph::new(lines), area);
+            let row_clip = UiRect::new(area.x, y, area.w, 1);
+            let mut x = area.x;
+            painter.text_clipped(Pos::new(x, y), marker, marker_style, row_clip);
+            x = x.saturating_add(marker.width().min(u16::MAX as usize) as u16);
+            painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_clip);
+            x = x.saturating_add(1);
+
+            let file_info = format!("{}:{}:{} ", file_name, line, col);
+            let file_style = UiStyle::default().fg(self.ui_theme.accent_fg);
+            painter.text_clipped(Pos::new(x, y), file_info.as_str(), file_style, row_clip);
+        }
     }
 
-    fn render_bottom_panel_code_actions(&mut self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
+    fn paint_bottom_panel_code_actions(&mut self, painter: &mut Painter, area: UiRect) {
+        if area.is_empty() {
             return;
         }
 
-        let height = area.height as usize;
-        self.sync_code_actions_view_height(area.height);
+        let height = area.h as usize;
+        self.sync_code_actions_view_height(area.h);
 
         let actions_state = &self.store.state().code_actions;
         let actions = actions_state.items();
         if actions.is_empty() {
-            let msg = Line::from(Span::styled(
-                "No actions",
-                Style::default().fg(self.theme.palette_muted_fg),
-            ));
-            frame.render_widget(Paragraph::new(msg), area);
+            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            painter.text_clipped(Pos::new(area.x, area.y), "No actions", style, area);
             return;
         }
 
@@ -211,50 +235,56 @@ impl Workbench {
             .selected_index()
             .min(actions.len().saturating_sub(1));
 
-        let mut lines = Vec::with_capacity(end.saturating_sub(start));
-        for (i, action) in actions.iter().enumerate().take(end).skip(start) {
+        for (row, (i, action)) in actions
+            .iter()
+            .enumerate()
+            .take(end)
+            .skip(start)
+            .enumerate()
+        {
+            let y = area.y.saturating_add(row.min(u16::MAX as usize) as u16);
+            if y >= area.bottom() {
+                break;
+            }
             let is_selected = i == selected;
-            let marker_style = if is_selected {
-                Style::default().fg(self.theme.focus_border)
-            } else {
-                Style::default().fg(self.theme.palette_muted_fg)
-            };
             let marker = if is_selected { ">" } else { " " };
+            let marker_style = UiStyle::default().fg(if is_selected {
+                self.ui_theme.focus_border
+            } else {
+                self.ui_theme.palette_muted_fg
+            });
 
             let title_style = if action.is_preferred {
-                Style::default()
-                    .fg(self.theme.accent_fg)
-                    .add_modifier(Modifier::BOLD)
+                UiStyle::default()
+                    .fg(self.ui_theme.accent_fg)
+                    .add_mod(Mod::BOLD)
             } else {
-                Style::default().fg(self.theme.palette_fg)
+                UiStyle::default().fg(self.ui_theme.palette_fg)
             };
 
-            lines.push(Line::from(vec![
-                Span::styled(marker, marker_style),
-                Span::raw(" "),
-                Span::styled(action.title.as_str(), title_style),
-            ]));
+            let row_clip = UiRect::new(area.x, y, area.w, 1);
+            let mut x = area.x;
+            painter.text_clipped(Pos::new(x, y), marker, marker_style, row_clip);
+            x = x.saturating_add(marker.width().min(u16::MAX as usize) as u16);
+            painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_clip);
+            x = x.saturating_add(1);
+            painter.text_clipped(Pos::new(x, y), action.title.as_str(), title_style, row_clip);
         }
-
-        frame.render_widget(Paragraph::new(lines), area);
     }
 
-    fn render_bottom_panel_symbols(&mut self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
+    fn paint_bottom_panel_symbols(&mut self, painter: &mut Painter, area: UiRect) {
+        if area.is_empty() {
             return;
         }
 
-        let height = area.height as usize;
-        self.sync_symbols_view_height(area.height);
+        let height = area.h as usize;
+        self.sync_symbols_view_height(area.h);
 
         let symbols_state = &self.store.state().symbols;
         let symbols = symbols_state.items();
         if symbols.is_empty() {
-            let msg = Line::from(Span::styled(
-                "No symbols",
-                Style::default().fg(self.theme.palette_muted_fg),
-            ));
-            frame.render_widget(Paragraph::new(msg), area);
+            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            painter.text_clipped(Pos::new(area.x, area.y), "No symbols", style, area);
             return;
         }
 
@@ -264,8 +294,17 @@ impl Workbench {
             .selected_index()
             .min(symbols.len().saturating_sub(1));
 
-        let mut lines = Vec::with_capacity(end.saturating_sub(start));
-        for (i, item) in symbols.iter().enumerate().take(end).skip(start) {
+        for (row, (i, item)) in symbols
+            .iter()
+            .enumerate()
+            .take(end)
+            .skip(start)
+            .enumerate()
+        {
+            let y = area.y.saturating_add(row.min(u16::MAX as usize) as u16);
+            if y >= area.bottom() {
+                break;
+            }
             let file_name = item
                 .path
                 .file_name()
@@ -274,115 +313,107 @@ impl Workbench {
             let line = item.line.saturating_add(1);
             let col = item.column.saturating_add(1);
             let is_selected = i == selected;
-            let marker_style = if is_selected {
-                Style::default().fg(self.theme.focus_border)
-            } else {
-                Style::default().fg(self.theme.palette_muted_fg)
-            };
             let marker = if is_selected { ">" } else { " " };
+            let marker_style = UiStyle::default().fg(if is_selected {
+                self.ui_theme.focus_border
+            } else {
+                self.ui_theme.palette_muted_fg
+            });
 
             let kind = symbol_kind_label(item.kind);
             let indent = "  ".repeat(item.level.min(32));
 
-            let mut spans = Vec::with_capacity(8);
-            spans.push(Span::styled(marker, marker_style));
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                format!("{}:{}:{} ", file_name, line, col),
-                Style::default().fg(self.theme.accent_fg),
-            ));
-            spans.push(Span::styled(
-                format!("[{}] ", kind),
-                Style::default().fg(self.theme.palette_muted_fg),
-            ));
-            spans.push(Span::raw(indent));
-            spans.push(Span::styled(
-                item.name.as_str(),
-                Style::default().fg(self.theme.palette_fg),
-            ));
+            let row_clip = UiRect::new(area.x, y, area.w, 1);
+            let mut x = area.x;
+
+            painter.text_clipped(Pos::new(x, y), marker, marker_style, row_clip);
+            x = x.saturating_add(marker.width().min(u16::MAX as usize) as u16);
+            painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_clip);
+            x = x.saturating_add(1);
+
+            let file_info = format!("{}:{}:{} ", file_name, line, col);
+            let file_style = UiStyle::default().fg(self.ui_theme.accent_fg);
+            painter.text_clipped(Pos::new(x, y), file_info.as_str(), file_style, row_clip);
+            x = x.saturating_add(file_info.width().min(u16::MAX as usize) as u16);
+
+            let kind_text = format!("[{}] ", kind);
+            let kind_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            painter.text_clipped(Pos::new(x, y), kind_text.as_str(), kind_style, row_clip);
+            x = x.saturating_add(kind_text.width().min(u16::MAX as usize) as u16);
+
+            painter.text_clipped(Pos::new(x, y), indent.as_str(), UiStyle::default(), row_clip);
+            x = x.saturating_add(indent.width().min(u16::MAX as usize) as u16);
+
+            let name_style = UiStyle::default().fg(self.ui_theme.palette_fg);
+            painter.text_clipped(Pos::new(x, y), item.name.as_str(), name_style, row_clip);
+            x = x.saturating_add(item.name.as_str().width().min(u16::MAX as usize) as u16);
+
             if let Some(detail) = item.detail.as_deref().filter(|s| !s.is_empty()) {
-                spans.push(Span::raw(" "));
-                spans.push(Span::styled(
-                    detail,
-                    Style::default().fg(self.theme.palette_muted_fg),
-                ));
+                painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_clip);
+                x = x.saturating_add(1);
+                let detail_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+                painter.text_clipped(Pos::new(x, y), detail, detail_style, row_clip);
             }
-
-            lines.push(Line::from(spans));
         }
-
-        frame.render_widget(Paragraph::new(lines), area);
     }
 
-    fn render_bottom_panel_logs(&self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
+    fn paint_bottom_panel_logs(&self, painter: &mut Painter, area: UiRect) {
+        if area.is_empty() {
             return;
         }
 
-        if area.width < 3 || area.height < 3 {
+        if area.w < 3 || area.h < 3 {
             return;
         }
 
-        let base_style = Style::default()
-            .bg(self.theme.palette_bg)
-            .fg(self.theme.palette_fg);
-        let border_style = Style::default()
-            .fg(self.theme.focus_border)
-            .bg(self.theme.palette_bg);
-        frame.render_widget(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style)
-                .style(base_style),
-            area,
-        );
+        let border_style = UiStyle::default().fg(self.ui_theme.focus_border);
+        painter.border(area, border_style, BorderKind::Plain);
 
-        let inner = Rect::new(
+        let inner = UiRect::new(
             area.x.saturating_add(1),
             area.y.saturating_add(1),
-            area.width.saturating_sub(2),
-            area.height.saturating_sub(2),
+            area.w.saturating_sub(2),
+            area.h.saturating_sub(2),
         );
-        if inner.width == 0 || inner.height == 0 {
+        if inner.is_empty() {
             return;
         }
 
         if self.logs.is_empty() {
-            let msg = Line::from(Span::styled(
-                "No logs yet",
-                Style::default()
-                    .bg(self.theme.palette_bg)
-                    .fg(self.theme.palette_muted_fg),
-            ));
-            frame.render_widget(Paragraph::new(msg), inner);
+            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            painter.text_clipped(Pos::new(inner.x, inner.y), "No logs yet", style, inner);
             return;
         }
 
-        let height = inner.height as usize;
+        let height = inner.h as usize;
         let visible = height.min(self.logs.len());
         let start = self.logs.len().saturating_sub(visible);
 
-        let mut lines = Vec::with_capacity(visible);
-        for line in self.logs.iter().skip(start) {
-            lines.push(Line::from(line.as_str()));
+        for (row, line) in self.logs.iter().skip(start).enumerate() {
+            let y = inner.y.saturating_add(row.min(u16::MAX as usize) as u16);
+            if y >= inner.bottom() {
+                break;
+            }
+            let row_clip = UiRect::new(inner.x, y, inner.w, 1);
+            painter.text_clipped(Pos::new(inner.x, y), line.as_str(), UiStyle::default(), row_clip);
         }
-
-        frame.render_widget(Paragraph::new(lines).style(base_style), inner);
     }
 
-    fn render_bottom_panel_search_results(&mut self, frame: &mut Frame, area: Rect) {
-        if area.width == 0 || area.height == 0 {
+    fn paint_bottom_panel_search_results(&mut self, painter: &mut Painter, area: UiRect) {
+        if area.is_empty() {
             return;
         }
 
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(0)])
-            .split(area);
-        let summary_area = rows[0];
-        let list_area = rows[1];
+        let summary_h = 1.min(area.h);
+        let summary_area = UiRect::new(area.x, area.y, area.w, summary_h);
+        let list_area = UiRect::new(
+            area.x,
+            area.y.saturating_add(summary_h),
+            area.w,
+            area.h.saturating_sub(summary_h),
+        );
 
-        self.sync_search_view_height(SearchViewport::BottomPanel, list_area.height);
+        self.sync_search_view_height(SearchViewport::BottomPanel, list_area.h);
         let snapshot = self
             .store
             .state()
@@ -407,15 +438,15 @@ impl Workbench {
             "Enter search term in Search sidebar".to_string()
         };
 
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                summary,
-                Style::default().fg(self.theme.palette_muted_fg),
-            ))),
+        let summary_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+        painter.text_clipped(
+            Pos::new(summary_area.x, summary_area.y),
+            summary,
+            summary_style,
             summary_area,
         );
 
-        if list_area.width == 0 || list_area.height == 0 {
+        if list_area.is_empty() {
             return;
         }
 
@@ -425,22 +456,36 @@ impl Workbench {
 
         let search_state = &self.store.state().search;
 
-        let height = list_area.height as usize;
+        let height = list_area.h as usize;
         let start = snapshot.scroll_offset.min(snapshot.items.len());
         let end = (start + height).min(snapshot.items.len());
         let selected = snapshot
             .selected_index
             .min(snapshot.items.len().saturating_sub(1));
 
-        let mut lines = Vec::with_capacity(end.saturating_sub(start));
-        for (i, item) in snapshot.items.iter().enumerate().take(end).skip(start) {
+        for (row, (i, item)) in snapshot
+            .items
+            .iter()
+            .enumerate()
+            .take(end)
+            .skip(start)
+            .enumerate()
+        {
+            let y = list_area.y.saturating_add(row.min(u16::MAX as usize) as u16);
+            if y >= list_area.bottom() {
+                break;
+            }
             let is_selected = i == selected;
-            let marker_style = if is_selected {
-                Style::default().fg(self.theme.focus_border)
-            } else {
-                Style::default().fg(self.theme.palette_muted_fg)
-            };
             let marker = if is_selected { ">" } else { " " };
+            let marker_style = UiStyle::default().fg(if is_selected {
+                self.ui_theme.focus_border
+            } else {
+                self.ui_theme.palette_muted_fg
+            });
+            let row_clip = UiRect::new(list_area.x, y, list_area.w, 1);
+            let mut x = list_area.x;
+            painter.text_clipped(Pos::new(x, y), marker, marker_style, row_clip);
+            x = x.saturating_add(marker.width().min(u16::MAX as usize) as u16);
 
             match *item {
                 SearchResultItem::FileHeader { file_index } => {
@@ -454,16 +499,25 @@ impl Workbench {
                         .unwrap_or_else(|| file.path.to_string_lossy().to_string());
                     let icon = if file.expanded { "▼" } else { "▶" };
                     let match_count = file.matches.len();
-                    lines.push(Line::from(vec![
-                        Span::styled(marker, marker_style),
-                        Span::raw(" "),
-                        Span::styled(format!("{} ", icon), Style::default()),
-                        Span::styled(file_name, Style::default().fg(self.theme.accent_fg)),
-                        Span::styled(
-                            format!(" ({})", match_count),
-                            Style::default().fg(self.theme.palette_muted_fg),
-                        ),
-                    ]));
+                    painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_clip);
+                    x = x.saturating_add(1);
+
+                    let icon_text = format!("{} ", icon);
+                    painter.text_clipped(Pos::new(x, y), icon_text.as_str(), UiStyle::default(), row_clip);
+                    x = x.saturating_add(icon_text.width().min(u16::MAX as usize) as u16);
+
+                    let file_style = UiStyle::default().fg(self.ui_theme.accent_fg);
+                    painter.text_clipped(Pos::new(x, y), file_name.as_str(), file_style, row_clip);
+                    x = x.saturating_add(file_name.width().min(u16::MAX as usize) as u16);
+
+                    let count_text = format!(" ({})", match_count);
+                    let count_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+                    painter.text_clipped(
+                        Pos::new(x, y),
+                        count_text.as_str(),
+                        count_style,
+                        row_clip,
+                    );
                 }
                 SearchResultItem::MatchLine {
                     file_index,
@@ -475,24 +529,23 @@ impl Workbench {
                     let Some(match_info) = file.matches.get(match_index) else {
                         continue;
                     };
-                    lines.push(Line::from(vec![
-                        Span::styled(marker, marker_style),
-                        Span::raw("  "),
-                        Span::styled(
-                            format!("L{}:", match_info.line + 1),
-                            Style::default().fg(self.theme.palette_muted_fg),
-                        ),
-                        Span::raw(" "),
-                        Span::styled(
-                            format!("col {}", match_info.col + 1),
-                            Style::default().fg(self.theme.header_fg),
-                        ),
-                    ]));
+                    painter.text_clipped(Pos::new(x, y), "  ", UiStyle::default(), row_clip);
+                    x = x.saturating_add(2);
+
+                    let line_text = format!("L{}:", match_info.line + 1);
+                    let line_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+                    painter.text_clipped(Pos::new(x, y), line_text.as_str(), line_style, row_clip);
+                    x = x.saturating_add(line_text.width().min(u16::MAX as usize) as u16);
+
+                    painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_clip);
+                    x = x.saturating_add(1);
+
+                    let col_text = format!("col {}", match_info.col + 1);
+                    let col_style = UiStyle::default().fg(self.ui_theme.header_fg);
+                    painter.text_clipped(Pos::new(x, y), col_text.as_str(), col_style, row_clip);
                 }
             }
         }
-
-        frame.render_widget(Paragraph::new(lines), list_area);
     }
 }
 

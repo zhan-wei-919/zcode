@@ -78,6 +78,19 @@ impl Default for EditorViewportState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TabId(u64);
+
+impl TabId {
+    pub const fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Debug)]
 pub struct EditorMouseState {
     pub last_click: Option<(u16, u16, Instant)>,
@@ -104,6 +117,7 @@ impl Default for EditorMouseState {
 }
 
 pub struct EditorTabState {
+    pub id: TabId,
     pub title: String,
     pub path: Option<PathBuf>,
     pub buffer: TextBuffer,
@@ -123,6 +137,7 @@ pub struct EditorTabState {
 impl std::fmt::Debug for EditorTabState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EditorTabState")
+            .field("id", &self.id)
             .field("title", &self.title)
             .field("path", &self.path)
             .field("dirty", &self.dirty)
@@ -133,10 +148,11 @@ impl std::fmt::Debug for EditorTabState {
 }
 
 impl EditorTabState {
-    pub fn untitled(config: &EditorConfig) -> Self {
+    pub fn untitled(id: TabId, config: &EditorConfig) -> Self {
         let buffer = TextBuffer::new();
         let history = EditHistory::new(buffer.rope().clone());
         Self {
+            id,
             title: "Untitled".to_string(),
             path: None,
             buffer,
@@ -157,7 +173,7 @@ impl EditorTabState {
         }
     }
 
-    pub fn from_file(path: PathBuf, content: &str, config: &EditorConfig) -> Self {
+    pub fn from_file(id: TabId, path: PathBuf, content: &str, config: &EditorConfig) -> Self {
         let title = path
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
@@ -168,6 +184,7 @@ impl EditorTabState {
         let syntax = SyntaxDocument::for_path(&path, buffer.rope());
 
         Self {
+            id,
             title,
             path: Some(path),
             buffer,
@@ -1185,7 +1202,13 @@ impl EditorPaneState {
         true
     }
 
-    pub fn open_file(&mut self, path: PathBuf, content: &str, config: &EditorConfig) -> bool {
+    pub fn open_file(
+        &mut self,
+        tab_id: TabId,
+        path: PathBuf,
+        content: &str,
+        config: &EditorConfig,
+    ) -> bool {
         for (i, tab) in self.tabs.iter().enumerate() {
             if tab.path.as_ref() == Some(&path) {
                 return self.set_active(i);
@@ -1193,7 +1216,7 @@ impl EditorPaneState {
         }
 
         self.tabs
-            .push(EditorTabState::from_file(path, content, config));
+            .push(EditorTabState::from_file(tab_id, path, content, config));
         self.active = self.tabs.len().saturating_sub(1);
         true
     }
@@ -1280,6 +1303,7 @@ pub struct EditorState {
     pub config: EditorConfig,
     pub panes: Vec<EditorPaneState>,
     pub open_paths_version: u64,
+    next_tab_id: u64,
 }
 
 impl EditorState {
@@ -1288,7 +1312,14 @@ impl EditorState {
             config: config.clone(),
             panes: vec![EditorPaneState::new(&config)],
             open_paths_version: 0,
+            next_tab_id: 1,
         }
+    }
+
+    pub(super) fn alloc_tab_id(&mut self) -> TabId {
+        let id = TabId::new(self.next_tab_id);
+        self.next_tab_id = self.next_tab_id.saturating_add(1);
+        id
     }
 
     pub fn pane_mut(&mut self, pane: usize) -> Option<&mut EditorPaneState> {

@@ -4,7 +4,6 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::prelude::*;
 use std::{
     env, io,
     path::Path,
@@ -18,6 +17,7 @@ use zcode::app::Workbench;
 use zcode::core::event::InputEvent;
 use zcode::kernel::services::adapters::AsyncRuntime;
 use zcode::tui::view::{EventResult, View};
+use zcode::ui::backend::terminal::RatatuiTerminal;
 
 fn main() -> io::Result<()> {
     let mut logging_guard = logging::init();
@@ -49,14 +49,14 @@ fn main() -> io::Result<()> {
         cursor::SetCursorStyle::BlinkingBar
     )
     .inspect_err(|e| tracing::error!(error = ?e, "enter alternate screen failed"))?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)
-        .inspect_err(|e| tracing::error!(error = ?e, "terminal init failed"))?;
+    let mut terminal =
+        RatatuiTerminal::new(stdout).inspect_err(|e| tracing::error!(error = ?e, "terminal init failed"))?;
     let log_rx = logging_guard.as_mut().and_then(|guard| guard.take_log_rx());
     let result = run_app(&mut terminal, path_to_open, log_rx);
+    drop(terminal);
     disable_raw_mode().inspect_err(|e| tracing::error!(error = ?e, "disable_raw_mode failed"))?;
     execute!(
-        terminal.backend_mut(),
+        io::stdout(),
         LeaveAlternateScreen,
         DisableMouseCapture,
         cursor::SetCursorStyle::DefaultUserShape
@@ -86,7 +86,7 @@ fn env_truthy(key: &str) -> bool {
 }
 
 fn run_app(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    terminal: &mut RatatuiTerminal,
     path: &Path,
     log_rx: Option<mpsc::Receiver<String>>,
 ) -> io::Result<()> {
@@ -101,9 +101,7 @@ fn run_app(
 
     'app: loop {
         if dirty {
-            terminal.draw(|frame| {
-                workbench.render(frame, frame.area());
-            })?;
+            terminal.draw(|backend, area| workbench.render(backend, area))?;
             dirty = false;
         }
 

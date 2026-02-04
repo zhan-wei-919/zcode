@@ -41,30 +41,30 @@ impl Workbench {
     pub(in super::super) fn handle_key_event(&mut self, key_event: &KeyEvent) -> EventResult {
         let _scope = perf::scope("input.key");
 
-        if self.store.state().ui.explorer_context_menu.visible {
+        if self.store.state().ui.context_menu.visible {
             match key_event.code {
                 KeyCode::Esc => {
-                    let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuClose);
+                    let _ = self.dispatch_kernel(KernelAction::ContextMenuClose);
                     return EventResult::Consumed;
                 }
                 KeyCode::Up => {
-                    let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuMoveSelection {
+                    let _ = self.dispatch_kernel(KernelAction::ContextMenuMoveSelection {
                         delta: -1,
                     });
                     return EventResult::Consumed;
                 }
                 KeyCode::Down => {
-                    let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuMoveSelection {
+                    let _ = self.dispatch_kernel(KernelAction::ContextMenuMoveSelection {
                         delta: 1,
                     });
                     return EventResult::Consumed;
                 }
                 KeyCode::Enter => {
-                    let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuConfirm);
+                    let _ = self.dispatch_kernel(KernelAction::ContextMenuConfirm);
                     return EventResult::Consumed;
                 }
                 _ => {
-                    let _ = self.dispatch_kernel(KernelAction::ExplorerContextMenuClose);
+                    let _ = self.dispatch_kernel(KernelAction::ContextMenuClose);
                 }
             }
         }

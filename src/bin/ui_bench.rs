@@ -1,5 +1,3 @@
-use ratatui::backend::TestBackend;
-use ratatui::Terminal;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -10,6 +8,8 @@ use zcode::core::Command;
 use zcode::kernel::services::adapters::perf;
 use zcode::kernel::services::adapters::AsyncRuntime;
 use zcode::tui::view::View;
+use zcode::ui::backend::test::TestBackend;
+use zcode::ui::core::geom::Rect;
 
 fn main() -> std::io::Result<()> {
     let mut frames: usize = 300;
@@ -91,22 +91,16 @@ fn main() -> std::io::Result<()> {
         kind: KeyEventKind::Press,
     }));
 
-    let backend = TestBackend::new(width, height);
-    let mut terminal = Terminal::new(backend)?;
+    let mut backend = TestBackend::new(width, height);
+    let area = Rect::new(0, 0, width, height);
 
     for _ in 0..10 {
-        terminal.draw(|frame| {
-            let area = frame.area();
-            workbench.render(frame, area);
-        })?;
+        workbench.render(&mut backend, area);
     }
 
     let render_start = Instant::now();
     for _ in 0..frames {
-        terminal.draw(|frame| {
-            let area = frame.area();
-            workbench.render(frame, area);
-        })?;
+        workbench.render(&mut backend, area);
     }
     let render_elapsed = render_start.elapsed();
     print_render_summary(frames, render_elapsed);
