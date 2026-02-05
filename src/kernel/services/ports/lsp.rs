@@ -3,6 +3,43 @@
 use serde_json::Value;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LspServerKind {
+    RustAnalyzer,
+    Gopls,
+    Pyright,
+    TypeScriptLanguageServer,
+}
+
+impl LspServerKind {
+    pub fn from_settings_key(key: &str) -> Option<Self> {
+        let key = key.trim().to_ascii_lowercase();
+        match key.as_str() {
+            // Rust
+            "rust-analyzer" | "rust_analyzer" | "ra" | "rust" => Some(Self::RustAnalyzer),
+            // Go
+            "gopls" | "go" => Some(Self::Gopls),
+            // Python
+            "pyright" | "pyright-langserver" | "python" => Some(Self::Pyright),
+            // JS/TS
+            "typescript-language-server"
+            | "typescript_language_server"
+            | "tsls"
+            | "typescript"
+            | "javascript"
+            | "js"
+            | "ts" => Some(Self::TypeScriptLanguageServer),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LspClientKey {
+    pub server: LspServerKind,
+    pub root: PathBuf,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LspPositionEncoding {
     Utf8,

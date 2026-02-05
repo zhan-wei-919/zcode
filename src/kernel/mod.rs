@@ -6,6 +6,7 @@ pub mod editor;
 pub mod effect;
 pub mod git;
 pub mod locations;
+pub mod lsp_registry;
 pub mod palette;
 pub mod problems;
 pub mod search;

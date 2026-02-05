@@ -26,13 +26,14 @@ use completion::{
 #[cfg(test)]
 use completion::expand_snippet;
 use lsp::{
-    cursor_is_identifier, lsp_position_encoding, lsp_position_from_buffer_pos,
-    lsp_position_from_char_offset, lsp_position_from_cursor, lsp_position_to_byte_offset,
-    lsp_range_for_full_lines, lsp_request_target, problem_byte_offset,
+    cursor_is_identifier, lsp_position_encoding, lsp_position_encoding_for_path,
+    lsp_position_from_buffer_pos, lsp_position_from_char_offset, lsp_position_from_cursor,
+    lsp_position_to_byte_offset, lsp_range_for_full_lines, lsp_request_target,
+    lsp_server_capabilities_for_path, problem_byte_offset,
 };
 use search::search_open_target;
 use util::{
-    bottom_panel_tabs, find_open_tab, is_rust_source_path, next_bottom_panel_tab,
+    bottom_panel_tabs, find_open_tab, is_lsp_source_path, next_bottom_panel_tab,
     prev_bottom_panel_tab, search_viewport_for_focus,
 };
 
@@ -261,28 +262,14 @@ impl Store {
                                 self.state.ui.pending_editor_nav = None;
                             }
 
-                            let supports_semantic_tokens = self
-                                .state
-                                .lsp
-                                .server_capabilities
-                                .as_ref()
-                                .is_none_or(|c| c.semantic_tokens);
-                            let supports_inlay_hints = self
-                                .state
-                                .lsp
-                                .server_capabilities
-                                .as_ref()
-                                .is_none_or(|c| c.inlay_hints);
-                            let supports_folding_range = self
-                                .state
-                                .lsp
-                                .server_capabilities
-                                .as_ref()
-                                .is_none_or(|c| c.folding_range);
+                            let caps = lsp_server_capabilities_for_path(&self.state, &opened_path);
+                            let supports_semantic_tokens = caps.is_none_or(|c| c.semantic_tokens);
+                            let supports_inlay_hints = caps.is_none_or(|c| c.inlay_hints);
+                            let supports_folding_range = caps.is_none_or(|c| c.folding_range);
                             if (supports_semantic_tokens
                                 || supports_inlay_hints
                                 || supports_folding_range)
-                                && is_rust_source_path(&opened_path)
+                                && is_lsp_source_path(&opened_path)
                             {
                                 let Some(tab) = self
                                     .state
@@ -296,15 +283,11 @@ impl Store {
                                     };
                                 };
                                 let version = tab.edit_version;
-                                let encoding = lsp_position_encoding(&self.state);
+                                let encoding =
+                                    lsp_position_encoding_for_path(&self.state, &opened_path);
 
                                 if supports_semantic_tokens {
-                                    let use_range = self
-                                        .state
-                                        .lsp
-                                        .server_capabilities
-                                        .as_ref()
-                                        .is_none_or(|c| c.semantic_tokens_range)
+                                    let use_range = caps.is_none_or(|c| c.semantic_tokens_range)
                                         && tab.buffer.len_lines().max(1) >= 2000;
 
                                     if use_range {
@@ -993,12 +976,17 @@ impl Store {
                 let mut effects = Vec::new();
                 if next != prev {
                     if let Some(item) = self.state.ui.completion.items.get(next) {
-                        if self
+                        let supports_resolve = self
                             .state
-                            .lsp
-                            .server_capabilities
+                            .ui
+                            .completion
+                            .request
                             .as_ref()
-                            .is_none_or(|c| c.completion_resolve)
+                            .and_then(|req| {
+                                lsp_server_capabilities_for_path(&self.state, &req.path)
+                            })
+                            .is_none_or(|c| c.completion_resolve);
+                        if supports_resolve
                             && item.data.is_some()
                             && item
                                 .documentation
@@ -1087,7 +1075,7 @@ impl Store {
                     }
                 };
 
-                let encoding = lsp_position_encoding(&self.state);
+                let encoding = lsp_position_encoding_for_path(&self.state, &req.path);
                 let compute_range = || {
                     let (row, col) = tab.buffer.cursor();
                     let cursor_char_offset = tab.buffer.pos_to_char((row, col));
@@ -1627,35 +1615,29 @@ impl Store {
                 let mut effects = effects;
                 effects.extend(cmd_effects);
 
-                let supports_completion = self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.completion);
                 let tab = self
                     .state
                     .editor
                     .pane(pane)
                     .and_then(|pane| pane.active_tab());
-                let should_complete = supports_completion
-                    && tab.is_some_and(|tab| {
-                        let Some(path) = tab.path.as_ref() else {
-                            return false;
-                        };
-                        if !is_rust_source_path(path) {
-                            return false;
-                        }
+                let should_complete = tab.is_some_and(|tab| {
+                    let Some(path) = tab.path.as_ref() else {
+                        return false;
+                    };
+                    if !is_lsp_source_path(path) {
+                        return false;
+                    }
 
-                        let triggers = self
-                            .state
-                            .lsp
-                            .server_capabilities
-                            .as_ref()
-                            .map(|c| c.completion_triggers.as_slice())
-                            .unwrap_or(&[]);
-                        completion_triggered_by_insert(tab, ch, triggers)
-                    });
+                    let caps = lsp_server_capabilities_for_path(&self.state, path);
+                    if !caps.is_none_or(|c| c.completion) {
+                        return false;
+                    }
+
+                    let triggers: &[char] = caps
+                        .map(|c| c.completion_triggers.as_slice())
+                        .unwrap_or(&[]);
+                    completion_triggered_by_insert(tab, ch, triggers)
+                });
 
                 if should_complete {
                     if let Some((pane, path, line, column, version)) =
@@ -1708,12 +1690,17 @@ impl Store {
                                 .selected
                                 .min(self.state.ui.completion.items.len().saturating_sub(1));
                             if let Some(item) = self.state.ui.completion.items.get(selected) {
-                                if self
+                                let supports_resolve = self
                                     .state
-                                    .lsp
-                                    .server_capabilities
+                                    .ui
+                                    .completion
+                                    .request
                                     .as_ref()
-                                    .is_none_or(|c| c.completion_resolve)
+                                    .and_then(|req| {
+                                        lsp_server_capabilities_for_path(&self.state, &req.path)
+                                    })
+                                    .is_none_or(|c| c.completion_resolve);
+                                if supports_resolve
                                     && item.data.is_some()
                                     && item
                                         .documentation
@@ -1747,18 +1734,14 @@ impl Store {
                     }
                 }
 
-                let supports_signature_help = self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
+                let supports_signature_help = tab
+                    .and_then(|tab| tab.path.as_ref())
+                    .and_then(|path| lsp_server_capabilities_for_path(&self.state, path))
                     .is_none_or(|c| c.signature_help);
                 if supports_signature_help {
-                    let triggers = self
-                        .state
-                        .lsp
-                        .server_capabilities
-                        .as_ref()
+                    let triggers: &[char] = tab
+                        .and_then(|tab| tab.path.as_ref())
+                        .and_then(|path| lsp_server_capabilities_for_path(&self.state, path))
                         .map(|c| c.signature_help_triggers.as_slice())
                         .unwrap_or(&[]);
                     if signature_help_triggered_by_insert(ch, triggers) {
@@ -2592,14 +2575,13 @@ impl Store {
                                     index: tab_index,
                                 });
 
+                        let encoding = lsp_position_encoding_for_path(&self.state, &path);
                         let byte_offset = self
                             .state
                             .editor
                             .pane(pane)
                             .and_then(|pane_state| pane_state.tabs.get(tab_index))
-                            .map(|tab| {
-                                problem_byte_offset(tab, range, lsp_position_encoding(&self.state))
-                            })
+                            .map(|tab| problem_byte_offset(tab, range, encoding))
                             .unwrap_or(0);
 
                         let (changed2, eff2) = self
@@ -2706,18 +2688,14 @@ impl Store {
                                     index: tab_index,
                                 });
 
+                        let encoding = lsp_position_encoding_for_path(&self.state, &path);
                         let byte_offset = self
                             .state
                             .editor
                             .pane(pane)
                             .and_then(|pane_state| pane_state.tabs.get(tab_index))
                             .map(|tab| {
-                                lsp_position_to_byte_offset(
-                                    tab,
-                                    item.line,
-                                    item.column,
-                                    lsp_position_encoding(&self.state),
-                                )
+                                lsp_position_to_byte_offset(tab, item.line, item.column, encoding)
                             })
                             .unwrap_or(0);
 
@@ -2784,18 +2762,14 @@ impl Store {
                                     index: tab_index,
                                 });
 
+                        let encoding = lsp_position_encoding_for_path(&self.state, &path);
                         let byte_offset = self
                             .state
                             .editor
                             .pane(pane)
                             .and_then(|pane_state| pane_state.tabs.get(tab_index))
                             .map(|tab| {
-                                lsp_position_to_byte_offset(
-                                    tab,
-                                    item.line,
-                                    item.column,
-                                    lsp_position_encoding(&self.state),
-                                )
+                                lsp_position_to_byte_offset(tab, item.line, item.column, encoding)
                             })
                             .unwrap_or(0);
 
@@ -2835,18 +2809,6 @@ impl Store {
                 }
             }
             Command::LspHover => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.hover)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
                 let pane = self.state.ui.editor_layout.active_pane;
                 let Some(tab) = self
                     .state
@@ -2865,10 +2827,18 @@ impl Store {
                         state_changed,
                     };
                 };
-                if !is_rust_source_path(path) {
+                if !is_lsp_source_path(path) {
                     return DispatchResult {
                         effects,
                         state_changed,
+                    };
+                }
+                let supports_hover =
+                    lsp_server_capabilities_for_path(&self.state, path).is_none_or(|c| c.hover);
+                if !supports_hover {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
                     };
                 }
                 if tab.is_in_string_or_comment_at_cursor() || !cursor_is_identifier(tab) {
@@ -2878,7 +2848,7 @@ impl Store {
                     };
                 }
 
-                let encoding = lsp_position_encoding(&self.state);
+                let encoding = lsp_position_encoding_for_path(&self.state, path);
                 let (line, column) = lsp_position_from_cursor(tab, encoding);
                 return DispatchResult {
                     effects: vec![Effect::LspHoverRequest {
@@ -2890,20 +2860,16 @@ impl Store {
                 };
             }
             Command::LspDefinition => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.definition)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
                 if let Some((_pane, path, line, column, _version)) = lsp_request_target(&self.state)
                 {
+                    let supports_definition = lsp_server_capabilities_for_path(&self.state, &path)
+                        .is_none_or(|c| c.definition);
+                    if !supports_definition {
+                        return DispatchResult {
+                            effects,
+                            state_changed: false,
+                        };
+                    }
                     return DispatchResult {
                         effects: vec![Effect::LspDefinitionRequest { path, line, column }],
                         state_changed,
@@ -2911,19 +2877,16 @@ impl Store {
                 }
             }
             Command::LspCompletion => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.completion)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
                 if let Some((pane, path, line, column, version)) = lsp_request_target(&self.state) {
+                    let supports_completion = lsp_server_capabilities_for_path(&self.state, &path)
+                        .is_none_or(|c| c.completion);
+                    if !supports_completion {
+                        return DispatchResult {
+                            effects,
+                            state_changed: false,
+                        };
+                    }
+
                     self.state.ui.hover_message = None;
                     let Some(tab) = self
                         .state
@@ -2967,12 +2930,10 @@ impl Store {
                             .selected
                             .min(self.state.ui.completion.items.len().saturating_sub(1));
                         if let Some(item) = self.state.ui.completion.items.get(selected) {
-                            if self
-                                .state
-                                .lsp
-                                .server_capabilities
-                                .as_ref()
-                                .is_none_or(|c| c.completion_resolve)
+                            let supports_resolve =
+                                lsp_server_capabilities_for_path(&self.state, &path)
+                                    .is_none_or(|c| c.completion_resolve);
+                            if supports_resolve
                                 && item.data.is_some()
                                 && item
                                     .documentation
@@ -3020,20 +2981,17 @@ impl Store {
                 }
             }
             Command::LspSignatureHelp => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.signature_help)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
                 if let Some((_pane, path, line, column, _version)) = lsp_request_target(&self.state)
                 {
+                    let supports_signature_help =
+                        lsp_server_capabilities_for_path(&self.state, &path)
+                            .is_none_or(|c| c.signature_help);
+                    if !supports_signature_help {
+                        return DispatchResult {
+                            effects,
+                            state_changed: false,
+                        };
+                    }
                     return DispatchResult {
                         effects: vec![Effect::LspSignatureHelpRequest { path, line, column }],
                         state_changed,
@@ -3041,21 +2999,17 @@ impl Store {
                 }
             }
             Command::LspFormat => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.format)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
                 if let Some((_pane, path, _line, _column, _version)) =
                     lsp_request_target(&self.state)
                 {
+                    let supports_format = lsp_server_capabilities_for_path(&self.state, &path)
+                        .is_none_or(|c| c.format);
+                    if !supports_format {
+                        return DispatchResult {
+                            effects,
+                            state_changed: false,
+                        };
+                    }
                     return DispatchResult {
                         effects: vec![Effect::LspFormatRequest { path }],
                         state_changed,
@@ -3076,7 +3030,7 @@ impl Store {
                         state_changed,
                     };
                 };
-                if !is_rust_source_path(&path) {
+                if !is_lsp_source_path(&path) {
                     return DispatchResult {
                         effects,
                         state_changed,
@@ -3085,7 +3039,7 @@ impl Store {
 
                 let selection = tab.buffer.selection().filter(|sel| !sel.is_empty());
                 if let Some(selection) = selection {
-                    let encoding = lsp_position_encoding(&self.state);
+                    let encoding = lsp_position_encoding_for_path(&self.state, &path);
                     let (start_pos, end_pos) = selection.range();
                     let (start_line, start_col) =
                         lsp_position_from_buffer_pos(tab, start_pos, encoding);
@@ -3101,12 +3055,9 @@ impl Store {
                         },
                     };
 
-                    let supports_range_format = self
-                        .state
-                        .lsp
-                        .server_capabilities
-                        .as_ref()
-                        .is_none_or(|c| c.range_format);
+                    let supports_range_format =
+                        lsp_server_capabilities_for_path(&self.state, &path)
+                            .is_none_or(|c| c.range_format);
                     if supports_range_format {
                         return DispatchResult {
                             effects: vec![Effect::LspRangeFormatRequest { path, range }],
@@ -3114,11 +3065,7 @@ impl Store {
                         };
                     }
 
-                    let supports_format = self
-                        .state
-                        .lsp
-                        .server_capabilities
-                        .as_ref()
+                    let supports_format = lsp_server_capabilities_for_path(&self.state, &path)
                         .is_none_or(|c| c.format);
                     if supports_format {
                         return DispatchResult {
@@ -3133,13 +3080,7 @@ impl Store {
                     };
                 }
 
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.format)
-                {
+                if !lsp_server_capabilities_for_path(&self.state, &path).is_none_or(|c| c.format) {
                     return DispatchResult {
                         effects,
                         state_changed: false,
@@ -3152,18 +3093,6 @@ impl Store {
                 };
             }
             Command::LspRename => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.rename)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
                 if self.state.ui.input_dialog.visible {
                     return DispatchResult {
                         effects,
@@ -3179,6 +3108,15 @@ impl Store {
                     };
                 };
 
+                let supports_rename =
+                    lsp_server_capabilities_for_path(&self.state, &path).is_none_or(|c| c.rename);
+                if !supports_rename {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                }
+
                 self.state.ui.input_dialog.visible = true;
                 self.state.ui.input_dialog.title = "Rename Symbol".to_string();
                 self.state.ui.input_dialog.value.clear();
@@ -3189,20 +3127,17 @@ impl Store {
                 state_changed = true;
             }
             Command::LspReferences => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.references)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
                 if let Some((_pane, path, line, column, _version)) = lsp_request_target(&self.state)
                 {
+                    let supports_references = lsp_server_capabilities_for_path(&self.state, &path)
+                        .is_none_or(|c| c.references);
+                    if !supports_references {
+                        return DispatchResult {
+                            effects,
+                            state_changed: false,
+                        };
+                    }
+
                     let mut changed = self.state.locations.clear();
 
                     let prev_visible = self.state.ui.bottom_panel.visible;
@@ -3220,18 +3155,6 @@ impl Store {
                 }
             }
             Command::LspDocumentSymbols => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.document_symbols)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
                 let pane = self.state.ui.editor_layout.active_pane;
                 let Some(tab) = self.state.editor.pane(pane).and_then(|p| p.active_tab()) else {
                     return DispatchResult {
@@ -3245,10 +3168,18 @@ impl Store {
                         state_changed,
                     };
                 };
-                if !is_rust_source_path(&path) {
+                if !is_lsp_source_path(&path) {
                     return DispatchResult {
                         effects,
                         state_changed,
+                    };
+                }
+                let supports_symbols = lsp_server_capabilities_for_path(&self.state, &path)
+                    .is_none_or(|c| c.document_symbols);
+                if !supports_symbols {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
                     };
                 }
 
@@ -3273,13 +3204,14 @@ impl Store {
                 };
             }
             Command::LspWorkspaceSymbols => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.workspace_symbols)
-                {
+                let supports_workspace_symbols = self.state.lsp.server_capabilities.is_empty()
+                    || self
+                        .state
+                        .lsp
+                        .server_capabilities
+                        .values()
+                        .any(|c| c.workspace_symbols);
+                if !supports_workspace_symbols {
                     return DispatchResult {
                         effects,
                         state_changed: false,
@@ -3301,19 +3233,6 @@ impl Store {
                 state_changed = true;
             }
             Command::LspSemanticTokens => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.semantic_tokens)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
                 let pane = self.state.ui.editor_layout.active_pane;
                 let Some(tab) = self.state.editor.pane(pane).and_then(|p| p.active_tab()) else {
                     return DispatchResult {
@@ -3327,7 +3246,7 @@ impl Store {
                         state_changed,
                     };
                 };
-                if !is_rust_source_path(&path) {
+                if !is_lsp_source_path(&path) {
                     return DispatchResult {
                         effects,
                         state_changed,
@@ -3335,14 +3254,18 @@ impl Store {
                 }
 
                 let version = tab.edit_version;
-                let encoding = lsp_position_encoding(&self.state);
+                let caps = lsp_server_capabilities_for_path(&self.state, &path);
+                let supports_semantic_tokens = caps.is_none_or(|c| c.semantic_tokens);
+                if !supports_semantic_tokens {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                }
 
-                let use_range = self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.semantic_tokens_range)
+                let encoding = lsp_position_encoding_for_path(&self.state, &path);
+
+                let use_range = caps.is_none_or(|c| c.semantic_tokens_range)
                     && tab.buffer.len_lines().max(1) >= 2000;
 
                 if use_range {
@@ -3372,19 +3295,6 @@ impl Store {
                 };
             }
             Command::LspInlayHints => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.inlay_hints)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
                 let pane = self.state.ui.editor_layout.active_pane;
                 let Some(tab) = self.state.editor.pane(pane).and_then(|p| p.active_tab()) else {
                     return DispatchResult {
@@ -3398,17 +3308,25 @@ impl Store {
                         state_changed,
                     };
                 };
-                if !is_rust_source_path(&path) {
+                if !is_lsp_source_path(&path) {
                     return DispatchResult {
                         effects,
                         state_changed,
+                    };
+                }
+                let supports_inlay_hints = lsp_server_capabilities_for_path(&self.state, &path)
+                    .is_none_or(|c| c.inlay_hints);
+                if !supports_inlay_hints {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
                     };
                 }
 
                 let total_lines = tab.buffer.len_lines().max(1);
                 let start_line = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
                 let end_line_exclusive = (start_line + tab.viewport.height.max(1)).min(total_lines);
-                let encoding = lsp_position_encoding(&self.state);
+                let encoding = lsp_position_encoding_for_path(&self.state, &path);
                 let Some(range) =
                     lsp_range_for_full_lines(tab, start_line, end_line_exclusive, encoding)
                 else {
@@ -3428,19 +3346,6 @@ impl Store {
                 };
             }
             Command::LspFoldingRange => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.folding_range)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
                 let pane = self.state.ui.editor_layout.active_pane;
                 let Some(tab) = self.state.editor.pane(pane).and_then(|p| p.active_tab()) else {
                     return DispatchResult {
@@ -3454,10 +3359,18 @@ impl Store {
                         state_changed,
                     };
                 };
-                if !is_rust_source_path(&path) {
+                if !is_lsp_source_path(&path) {
                     return DispatchResult {
                         effects,
                         state_changed,
+                    };
+                }
+                let supports_folding_range = lsp_server_capabilities_for_path(&self.state, &path)
+                    .is_none_or(|c| c.folding_range);
+                if !supports_folding_range {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
                     };
                 }
 
@@ -3470,19 +3383,6 @@ impl Store {
                 };
             }
             cmd @ (Command::EditorFoldToggle | Command::EditorFold | Command::EditorUnfold) => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.folding_range)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
                 let pane = self.state.ui.editor_layout.active_pane;
                 let Some((path, version, needs_request)) = self
                     .state
@@ -3502,10 +3402,18 @@ impl Store {
                         state_changed,
                     };
                 };
-                if !is_rust_source_path(&path) {
+                if !is_lsp_source_path(&path) {
                     return DispatchResult {
                         effects,
                         state_changed,
+                    };
+                }
+                let supports_folding_range = lsp_server_capabilities_for_path(&self.state, &path)
+                    .is_none_or(|c| c.folding_range);
+                if !supports_folding_range {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
                     };
                 }
 
@@ -3522,20 +3430,17 @@ impl Store {
                 };
             }
             Command::LspCodeAction => {
-                if !self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .is_none_or(|c| c.code_action)
-                {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
                 if let Some((_pane, path, line, column, _version)) = lsp_request_target(&self.state)
                 {
+                    let supports_code_action = lsp_server_capabilities_for_path(&self.state, &path)
+                        .is_none_or(|c| c.code_action);
+                    if !supports_code_action {
+                        return DispatchResult {
+                            effects,
+                            state_changed: false,
+                        };
+                    }
+
                     let mut changed = self.state.code_actions.clear();
 
                     let prev_visible = self.state.ui.bottom_panel.visible;
@@ -3568,24 +3473,19 @@ impl Store {
                 effects.extend(cmd_effects);
 
                 if self.state.editor.config.format_on_save {
-                    let supports_formatting = self
+                    let path = self
                         .state
-                        .lsp
-                        .server_capabilities
-                        .as_ref()
-                        .is_some_and(|c| c.format);
-                    if supports_formatting {
-                        let path = self
-                            .state
-                            .editor
-                            .pane(pane)
-                            .and_then(|pane_state| pane_state.active_tab())
-                            .and_then(|tab| tab.path.clone());
-                        if let Some(path) = path {
-                            if is_rust_source_path(&path) {
-                                self.state.lsp.pending_format_on_save = Some(path.clone());
-                                effects.push(Effect::LspFormatRequest { path });
-                            }
+                        .editor
+                        .pane(pane)
+                        .and_then(|pane_state| pane_state.active_tab())
+                        .and_then(|tab| tab.path.clone());
+                    if let Some(path) = path {
+                        if is_lsp_source_path(&path)
+                            && lsp_server_capabilities_for_path(&self.state, &path)
+                                .is_some_and(|c| c.format)
+                        {
+                            self.state.lsp.pending_format_on_save = Some(path.clone());
+                            effects.push(Effect::LspFormatRequest { path });
                         }
                     }
                 }
@@ -3674,12 +3574,17 @@ impl Store {
                             .selected
                             .min(self.state.ui.completion.items.len().saturating_sub(1));
                         if let Some(item) = self.state.ui.completion.items.get(selected) {
-                            if self
+                            let supports_resolve = self
                                 .state
-                                .lsp
-                                .server_capabilities
+                                .ui
+                                .completion
+                                .request
                                 .as_ref()
-                                .is_none_or(|c| c.completion_resolve)
+                                .and_then(|req| {
+                                    lsp_server_capabilities_for_path(&self.state, &req.path)
+                                })
+                                .is_none_or(|c| c.completion_resolve);
+                            if supports_resolve
                                 && item.data.is_some()
                                 && item
                                     .documentation

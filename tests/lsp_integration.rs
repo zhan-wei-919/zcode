@@ -12,7 +12,7 @@ use zcode::core::event::{
 };
 use zcode::kernel::editor::{HighlightKind, HighlightSpan};
 use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
-use zcode::kernel::services::ports::LspPositionEncoding;
+use zcode::kernel::services::ports::{LspPositionEncoding, LspServerKind};
 use zcode::kernel::{BottomPanelTab, FocusTarget};
 use zcode::tui::view::View;
 
@@ -217,6 +217,52 @@ fn test_lsp_spawn_sync_requests_and_diagnostics_are_wired() {
             .and_then(|t| t.path.as_ref())
             .and_then(|p| std::fs::canonicalize(p).ok())
             .is_some_and(|p| p == def_path_canon)
+    });
+}
+
+#[test]
+fn test_lsp_spawns_for_multiple_languages() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let ts_path = dir.path().join("a.ts");
+    let go_path = dir.path().join("b.go");
+    let py_path = dir.path().join("c.py");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&ts_path, "export const x = 1;\n").unwrap();
+    std::fs::write(&go_path, "package main\n\nfunc main() {}\n").unwrap();
+    std::fs::write(&py_path, "x = 1\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    for path in [&ts_path, &go_path, &py_path] {
+        workbench.handle_message(AppMessage::FileLoaded {
+            path: path.to_path_buf(),
+            content: std::fs::read_to_string(path).unwrap(),
+        });
+    }
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        let caps = &w.state().lsp.server_capabilities;
+        caps.keys()
+            .any(|k| k.server == LspServerKind::TypeScriptLanguageServer)
+            && caps.keys().any(|k| k.server == LspServerKind::Gopls)
+            && caps.keys().any(|k| k.server == LspServerKind::Pyright)
     });
 }
 
@@ -761,11 +807,10 @@ fn test_lsp_utf8_position_encoding_applies_workspace_edit_to_unopened_file() {
     });
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state()
-            .lsp
-            .server_capabilities
-            .as_ref()
-            .is_some_and(|c| c.position_encoding == LspPositionEncoding::Utf8)
+        w.state().lsp.server_capabilities.iter().any(|(k, c)| {
+            k.server == LspServerKind::RustAnalyzer
+                && c.position_encoding == LspPositionEncoding::Utf8
+        })
     });
 
     let code_action = KeyEvent {
@@ -1260,7 +1305,11 @@ fn test_idle_hover_does_not_trigger_when_cursor_not_on_identifier() {
     });
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().lsp.server_capabilities.is_some()
+        w.state()
+            .lsp
+            .server_capabilities
+            .keys()
+            .any(|k| k.server == LspServerKind::RustAnalyzer)
     });
 
     for ch in "let content = String::from(\"Hello\")".chars() {
@@ -1317,7 +1366,11 @@ fn test_hover_response_does_not_show_after_user_input() {
     });
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().lsp.server_capabilities.is_some()
+        w.state()
+            .lsp
+            .server_capabilities
+            .keys()
+            .any(|k| k.server == LspServerKind::RustAnalyzer)
     });
 
     let hover = KeyEvent {
@@ -1394,7 +1447,11 @@ fn test_completion_closes_after_deleting_trigger() {
     });
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().lsp.server_capabilities.is_some()
+        w.state()
+            .lsp
+            .server_capabilities
+            .keys()
+            .any(|k| k.server == LspServerKind::RustAnalyzer)
     });
 
     let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
@@ -1464,7 +1521,11 @@ fn test_completion_filters_items_while_typing() {
     });
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().lsp.server_capabilities.is_some()
+        w.state()
+            .lsp
+            .server_capabilities
+            .keys()
+            .any(|k| k.server == LspServerKind::RustAnalyzer)
     });
 
     let completion = KeyEvent {
@@ -1538,8 +1599,8 @@ fn test_semantic_tokens_apply_expected_highlight_kinds() {
         w.state()
             .lsp
             .server_capabilities
-            .as_ref()
-            .is_some_and(|c| c.semantic_tokens)
+            .iter()
+            .any(|(k, c)| k.server == LspServerKind::RustAnalyzer && c.semantic_tokens)
     });
 
     let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
@@ -1899,7 +1960,11 @@ fn test_signature_help_closes_after_cursor_leaves_call() {
     });
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().lsp.server_capabilities.is_some()
+        w.state()
+            .lsp
+            .server_capabilities
+            .keys()
+            .any(|k| k.server == LspServerKind::RustAnalyzer)
     });
 
     for ch in "String::from".chars() {

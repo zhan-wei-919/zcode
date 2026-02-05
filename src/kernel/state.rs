@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
+use crate::kernel::services::ports::LspClientKey;
 use crate::kernel::services::ports::LspCompletionItem;
 use crate::kernel::services::ports::LspServerCapabilities;
 use crate::kernel::{CodeActionsState, LocationsState, ProblemsState, SymbolsState};
@@ -312,7 +313,7 @@ impl AppState {
 
 #[derive(Debug, Clone, Default)]
 pub struct LspState {
-    pub server_capabilities: Option<LspServerCapabilities>,
+    pub server_capabilities: FxHashMap<LspClientKey, LspServerCapabilities>,
     pub pending_format_on_save: Option<PathBuf>,
 }
 

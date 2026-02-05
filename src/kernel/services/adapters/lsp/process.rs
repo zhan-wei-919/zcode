@@ -3,7 +3,7 @@ use super::wire::{
     child_watch_loop, reader_loop, stderr_loop, writer_loop, InitState, LspPending, LspProcess,
     ReaderLoopArgs,
 };
-use super::LspService;
+use super::LspClient;
 use lsp_server::{Message, Request, RequestId};
 use lsp_types::request::Request as _;
 use std::collections::VecDeque;
@@ -11,7 +11,7 @@ use std::process::Command;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
-impl LspService {
+impl LspClient {
     pub(super) fn schedule_restart_backoff(&mut self) {
         let attempt = self.restart_attempts.saturating_add(1);
         self.restart_attempts = attempt;
@@ -150,10 +150,14 @@ impl LspService {
                 let latest_format = self.latest_format.clone();
                 let latest_rename = self.latest_rename.clone();
                 let latest_shutdown = self.latest_shutdown.clone();
+                let server = self.server;
+                let root = self.root.clone();
                 let tx = tx.clone();
                 let workspace_folders = Some(workspace_folders);
                 move || {
                     reader_loop(ReaderLoopArgs {
+                        server,
+                        root,
                         stdout,
                         ctx,
                         init_id,

@@ -12,10 +12,10 @@ pub use file::{
     DirEntry, DirEntryInfo, FileError, FileMetadata, FileProvider, Result as FileResult,
 };
 pub use lsp::{
-    LspCodeAction, LspCommand, LspCompletionItem, LspFoldingRange, LspInlayHint,
+    LspClientKey, LspCodeAction, LspCommand, LspCompletionItem, LspFoldingRange, LspInlayHint,
     LspInsertTextFormat, LspPosition, LspPositionEncoding, LspRange, LspResourceOp,
-    LspSemanticToken, LspSemanticTokensLegend, LspServerCapabilities, LspTextChange, LspTextEdit,
-    LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspSemanticToken, LspSemanticTokensLegend, LspServerCapabilities, LspServerKind, LspTextChange,
+    LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 pub use runtime::{AsyncExecutor, BoxFuture};
 pub use search::{

@@ -1,5 +1,5 @@
 use super::convert::{completion_item_to_lsp, path_to_url};
-use super::{LspRequestKind, LspService};
+use super::{LspClient, LspRequestKind};
 use crate::kernel::services::ports::{LspCompletionItem, LspPosition, LspRange};
 use lsp_server::{Message, Notification, Request, RequestId};
 use lsp_types::notification::Notification as _;
@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 
-impl LspService {
+impl LspClient {
     pub fn request_hover(&mut self, path: &Path, position: LspPosition) {
         if !self.ensure_started() {
             return;

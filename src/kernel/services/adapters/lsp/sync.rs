@@ -1,11 +1,11 @@
 use super::convert::{language_id_for_path, lsp_version, path_to_url, text_change_event};
-use super::LspService;
+use super::LspClient;
 use crate::kernel::services::ports::LspTextChange;
 use lsp_server::{Message, Notification};
 use lsp_types::notification::Notification as _;
 use std::path::Path;
 
-impl LspService {
+impl LspClient {
     pub fn needs_sync(&self, path: &Path, version: u64) -> bool {
         self.doc_versions.get(path).is_none_or(|v| *v != version)
     }

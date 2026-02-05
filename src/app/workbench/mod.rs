@@ -3,13 +3,16 @@
 use super::theme::UiTheme;
 use crate::core::event::InputEvent;
 use crate::core::Command;
+use crate::kernel::services::adapters::lsp::LspServerCommandOverride;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::kernel::services::adapters::{
     ClipboardService, ConfigService, FileService, GlobalSearchService, GlobalSearchTask,
     KeybindingContext, KeybindingService, LspService, SearchService, SearchTask,
 };
-use crate::kernel::services::ports::{EditorConfig, GlobalSearchMessage, SearchMessage};
+use crate::kernel::services::ports::{
+    EditorConfig, GlobalSearchMessage, LspServerKind, SearchMessage,
+};
 use crate::kernel::services::KernelServiceHost;
 use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, Store};
 use crate::models::build_file_tree;
@@ -193,6 +196,9 @@ impl Workbench {
         let mut keybindings = KeybindingService::new();
         let mut theme = UiTheme::default();
         let mut editor_config = EditorConfig::default();
+        let mut lsp_settings_override: Option<(String, Vec<String>)> = None;
+        let mut lsp_server_overrides: FxHashMap<LspServerKind, LspServerCommandOverride> =
+            FxHashMap::default();
 
         let settings_path = if !settings_enabled() {
             None
@@ -223,6 +229,50 @@ impl Workbench {
                         }
                     }
                 }
+                if let Some(command) = settings
+                    .lsp
+                    .command
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                {
+                    let args = settings
+                        .lsp
+                        .args
+                        .iter()
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>();
+                    lsp_settings_override = Some((command.to_string(), args));
+                }
+                for (name, cfg) in &settings.lsp.servers {
+                    let Some(kind) = LspServerKind::from_settings_key(name) else {
+                        continue;
+                    };
+
+                    let command = cfg
+                        .command
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|v| !v.is_empty())
+                        .map(str::to_string);
+                    let args = cfg.args.as_ref().map(|args| {
+                        args.iter()
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    });
+
+                    let entry = lsp_server_overrides.entry(kind).or_default();
+                    if let Some(command) = command {
+                        entry.command = Some(command);
+                    }
+                    if let Some(args) = args {
+                        entry.args = Some(args);
+                    }
+                }
                 theme.apply_settings(&settings.theme);
                 editor_config = settings.editor;
             }
@@ -242,6 +292,10 @@ impl Workbench {
             let mut service = LspService::new(absolute_root.clone(), ctx);
             if let Some((command, args)) = lsp_command_override() {
                 service = service.with_command(command, args);
+            } else if let Some((command, args)) = lsp_settings_override {
+                service = service.with_command(command, args);
+            } else if !lsp_server_overrides.is_empty() {
+                service = service.with_server_command_overrides(lsp_server_overrides);
             }
             let _ = kernel_services.register(service);
         }

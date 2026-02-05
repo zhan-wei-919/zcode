@@ -29,8 +29,9 @@
 ### 环境依赖
 
 *   [Rust toolchain](https://rustup.rs/)（推荐使用 `rust-toolchain.toml` 固定的版本）
-*   Linux: 需要 C 工具链用于链接（例如 `cc`/`gcc`）
+*   Linux: 需要 C 工具链用于链接（例如 `cc`/`gcc`）（用于编译 tree-sitter grammar）
 *   终端字体建议使用 Nerd Font（用于显示 UI 图标）
+*   可选（用于 LSP 智能功能）：`rust-analyzer`、`gopls`、`pyright-langserver`、`typescript-language-server`
 
 ### 启动编辑器
 
@@ -61,7 +62,7 @@ cargo run --release -- .
 
 ```bash
 cargo install --path . --locked
-zcode .
+zcode
 ```
 
 也可以使用辅助脚本：
@@ -70,6 +71,8 @@ zcode .
 ./install.sh --user
 # 或者：sudo ./install.sh --system
 ```
+
+如果使用 `./install.sh --user`，请确保 `~/.local/bin` 已加入 `PATH`。
 
 ## 操作指南
 
@@ -104,6 +107,14 @@ zcode .
     *   `Ctrl + z`: 撤销
     *   `Ctrl + y`: 重做
 
+*   **LSP（当对应语言服务可用时）**:
+    *   `F2`: 悬停提示 (Hover)
+    *   `F12`: 跳转定义 (Go to Definition)
+    *   `Shift + F12`: 查找引用 (Find References)
+    *   `Alt + Enter`: Code Action
+    *   `Ctrl + Space`: 自动补全 (Completion)
+    *   `Ctrl + Shift + r`: 重命名 (Rename)
+
 ### 鼠标操作
 
 `zcode` 对鼠标操作有完善的支持：
@@ -118,8 +129,11 @@ zcode .
 
 ## 核心功能
 
-*   **高性能异步架构**: 利用 `tokio` 运行时处理文件读写与全局搜索，确保主界面渲染线程永远流畅，不会因为大文件加载或搜索而卡顿。
-*   **现代化 UI**: 基于 `ratatui` 和 `crossterm` 构建，支持侧边栏 (Sidebar)、活动栏 (Activity Bar)、底部面板 (Panel)、多标签页 (Tabs) 和灵活的分屏编辑 (Split Panes)。
+*   **现代化 TUI 编辑器**: 基于 `ratatui` 和 `crossterm` 构建，支持侧边栏、底部面板、多标签页与分屏编辑。
+*   **多语言语法高亮**: 基于 tree-sitter，为 Rust/Go/Python/JavaScript/TypeScript（含 JSX/TSX）提供语法高亮兜底。
+*   **多语言 LSP 支持（可选）**: 为 Rust/Go/Python/JS/TS 提供诊断、悬停、补全、跳转定义等功能。
+    *   monorepo 友好：按语言“就近 marker”识别 root，并按 (language, root) 启动/复用 server。
+    *   server 自动发现：优先使用项目内 `node_modules/.bin` 与 Python 虚拟环境（如果存在）。
 *   **强大的搜索**: 内置基于 `ripgrep` 的高性能全局搜索和文件内实时搜索。
 *   **键位映射**: 支持灵活的键位绑定配置 (Keybindings)，用户可自定义快捷键。
 *   **剪贴板集成**: 与系统剪贴板无缝互通。
@@ -130,6 +144,23 @@ zcode .
 
 *   Linux: `~/.cache/.zcode/setting.json`
 *   macOS: `~/Library/Caches/.zcode/setting.json`
+
+### LSP 配置
+
+你可以在 `setting.json` 中按语言配置 LSP server 的 command/args：
+
+```json
+{
+  "lsp": {
+    "servers": {
+      "rust-analyzer": { "command": "rust-analyzer" },
+      "gopls": { "command": "gopls" },
+      "pyright": { "command": "pyright-langserver", "args": ["--stdio"] },
+      "tsls": { "command": "typescript-language-server", "args": ["--stdio"] }
+    }
+  }
+}
+```
 
 ## 常见问题
 
@@ -148,13 +179,37 @@ zcode .
 *   Wayland: `wl-clipboard`（`wl-copy` / `wl-paste`）
 *   X11: `xclip` 或 `xsel`
 
-### Rust LSP（`rust-analyzer`）找不到
+### LSP server 找不到
 
-确保系统存在 `rust-analyzer` 且在 PATH 中。如果你用 `rustup`：
+`zcode` 默认会启用 LSP，但具体语言 server 是可选的。按需安装：
 
-```bash
-rustup component add rust-analyzer rust-src
-```
+*   Rust（`rust-analyzer`）：
+
+    ```bash
+    rustup component add rust-analyzer rust-src
+    ```
+
+*   Go（`gopls`）：
+
+    ```bash
+    go install golang.org/x/tools/gopls@latest
+    ```
+
+*   Python（`pyright-langserver`）：
+
+    ```bash
+    npm i -g pyright
+    # 或：pipx install pyright
+    ```
+
+*   JavaScript/TypeScript（`typescript-language-server`）：
+
+    ```bash
+    npm i -g typescript-language-server typescript
+    # 或项目内：npm i -D typescript-language-server typescript
+    ```
+
+如果 JS/TS 按项目安装，`zcode` 会自动向上查找并使用 `node_modules/.bin`。
 
 ## 开发
 

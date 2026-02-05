@@ -1,5 +1,6 @@
 use super::super::Workbench;
 use crate::core::Command;
+use crate::kernel::lsp_registry;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::KeybindingContext;
 use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget};
@@ -158,7 +159,7 @@ impl Workbench {
         let Some(path) = tab.path.as_ref() else {
             return;
         };
-        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+        if !lsp_registry::is_lsp_source_path(path) {
             return;
         }
 
@@ -178,6 +179,11 @@ impl Workbench {
                 | Command::Cut
         );
 
+        let supports_semantic_tokens_range =
+            lsp_registry::client_key_for_path(&self.store.state().workspace_root, path)
+                .map(|(_, key)| key)
+                .and_then(|key| self.store.state().lsp.server_capabilities.get(&key))
+                .is_some_and(|c| c.semantic_tokens_range);
         let move_should_schedule = matches!(
             cmd,
             Command::CursorUp
@@ -186,13 +192,7 @@ impl Workbench {
                 | Command::ScrollDown
                 | Command::PageUp
                 | Command::PageDown
-        ) && self
-            .store
-            .state()
-            .lsp
-            .server_capabilities
-            .as_ref()
-            .is_some_and(|c| c.semantic_tokens_range)
+        ) && supports_semantic_tokens_range
             && tab.buffer.len_lines().max(1) >= 2000;
 
         if edit_should_schedule || move_should_schedule {
@@ -228,7 +228,7 @@ impl Workbench {
         let Some(path) = tab.path.as_ref() else {
             return;
         };
-        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+        if !lsp_registry::is_lsp_source_path(path) {
             return;
         }
 
@@ -287,7 +287,7 @@ impl Workbench {
         let Some(path) = tab.path.as_ref() else {
             return;
         };
-        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+        if !lsp_registry::is_lsp_source_path(path) {
             return;
         }
 

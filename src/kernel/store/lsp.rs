@@ -1,11 +1,12 @@
 use crate::kernel::services::ports::{
-    LspPosition, LspPositionEncoding, LspRange, LspResourceOp, LspTextEdit, LspWorkspaceEdit,
-    LspWorkspaceFileEdit,
+    LspClientKey, LspPosition, LspPositionEncoding, LspRange, LspResourceOp, LspServerCapabilities,
+    LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{CompletionPopupState, SignatureHelpPopupState};
 use crate::kernel::EditorAction;
 use crate::kernel::{Action, BottomPanelTab, Effect, FocusTarget};
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Instant;
 use unicode_xid::UnicodeXID;
 
@@ -14,7 +15,7 @@ use super::semantic::{
     semantic_highlight_lines_from_tokens, semantic_highlight_lines_from_tokens_range,
 };
 use super::util::find_open_tab;
-use super::util::{is_rust_source_path, line_len_chars, open_tabs_for_path, resolve_renamed_path};
+use super::util::{is_lsp_source_path, line_len_chars, open_tabs_for_path, resolve_renamed_path};
 
 pub(super) fn problem_byte_offset(
     tab: &crate::kernel::editor::EditorTabState,
@@ -80,21 +81,50 @@ pub(super) fn lsp_request_target(
     let pane = state.ui.editor_layout.active_pane;
     let tab = state.editor.pane(pane)?.active_tab()?;
     let path = tab.path.as_ref()?.clone();
-    if !is_rust_source_path(&path) {
+    if !is_lsp_source_path(&path) {
         return None;
     }
-    let encoding = lsp_position_encoding(state);
+    let encoding = lsp_position_encoding_for_path(state, &path);
     let (line, column) = lsp_position_from_cursor(tab, encoding);
     Some((pane, path, line, column, tab.edit_version))
 }
 
-pub(super) fn lsp_position_encoding(state: &crate::kernel::AppState) -> LspPositionEncoding {
-    state
-        .lsp
-        .server_capabilities
-        .as_ref()
+pub(super) fn lsp_server_capabilities_for_path<'a>(
+    state: &'a crate::kernel::AppState,
+    path: &Path,
+) -> Option<&'a LspServerCapabilities> {
+    let key = lsp_client_key_for_path(state, path)?;
+    state.lsp.server_capabilities.get(&key)
+}
+
+pub(super) fn lsp_client_key_for_path(
+    state: &crate::kernel::AppState,
+    path: &Path,
+) -> Option<LspClientKey> {
+    crate::kernel::lsp_registry::client_key_for_path(&state.workspace_root, path).map(|(_, key)| {
+        // Ensure we key capabilities by (server kind + root) to support monorepos with multiple roots.
+        key
+    })
+}
+
+pub(super) fn lsp_position_encoding_for_path(
+    state: &crate::kernel::AppState,
+    path: &Path,
+) -> LspPositionEncoding {
+    lsp_server_capabilities_for_path(state, path)
         .map(|c| c.position_encoding)
         .unwrap_or(LspPositionEncoding::Utf16)
+}
+
+pub(super) fn lsp_position_encoding(state: &crate::kernel::AppState) -> LspPositionEncoding {
+    let pane = state.ui.editor_layout.active_pane;
+    let Some(tab) = state.editor.pane(pane).and_then(|pane| pane.active_tab()) else {
+        return LspPositionEncoding::Utf16;
+    };
+    let Some(path) = tab.path.as_ref() else {
+        return LspPositionEncoding::Utf16;
+    };
+    lsp_position_encoding_for_path(state, path)
 }
 
 pub(super) fn lsp_position_from_cursor(
@@ -409,12 +439,8 @@ impl super::Store {
                         .pane(pane)
                         .and_then(|pane_state| pane_state.tabs.get(tab_index))
                         .map(|tab| {
-                            lsp_position_to_byte_offset(
-                                tab,
-                                line,
-                                column,
-                                lsp_position_encoding(&self.state),
-                            )
+                            let encoding = lsp_position_encoding_for_path(&self.state, &path);
+                            lsp_position_to_byte_offset(tab, line, column, encoding)
                         })
                         .unwrap_or(0);
 
@@ -505,27 +531,31 @@ impl super::Store {
                     state_changed: changed,
                 }
             }
-            Action::LspServerCapabilities { capabilities } => super::DispatchResult {
-                effects: Vec::new(),
-                state_changed: if self.state.lsp.server_capabilities.as_ref() == Some(&capabilities)
-                {
-                    false
-                } else {
-                    self.state.lsp.server_capabilities = Some(capabilities);
-                    true
-                },
-            },
+            Action::LspServerCapabilities {
+                server,
+                root,
+                capabilities,
+            } => {
+                let key = LspClientKey { server, root };
+                let changed = match self.state.lsp.server_capabilities.get(&key) {
+                    Some(existing) if existing == &capabilities => false,
+                    _ => {
+                        self.state.lsp.server_capabilities.insert(key, capabilities);
+                        true
+                    }
+                };
+                super::DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: changed,
+                }
+            }
             Action::LspSemanticTokens {
                 path,
                 version,
                 tokens,
             } => {
-                let Some(legend) = self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .and_then(|c| c.semantic_tokens_legend.as_ref())
+                let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
+                    .and_then(|c| c.semantic_tokens_legend.clone())
                 else {
                     return super::DispatchResult {
                         effects: Vec::new(),
@@ -533,7 +563,7 @@ impl super::Store {
                     };
                 };
 
-                let encoding = lsp_position_encoding(&self.state);
+                let encoding = lsp_position_encoding_for_path(&self.state, &path);
 
                 let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::HighlightSpan>>> =
                     None;
@@ -556,7 +586,7 @@ impl super::Store {
                                 let lines = semantic_highlight_lines_from_tokens(
                                     tab.buffer.rope(),
                                     &tokens,
-                                    legend,
+                                    &legend,
                                     encoding,
                                 );
                                 snapshot_lines = Some(lines.clone());
@@ -579,12 +609,8 @@ impl super::Store {
                 range,
                 tokens,
             } => {
-                let Some(legend) = self
-                    .state
-                    .lsp
-                    .server_capabilities
-                    .as_ref()
-                    .and_then(|c| c.semantic_tokens_legend.as_ref())
+                let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
+                    .and_then(|c| c.semantic_tokens_legend.clone())
                 else {
                     return super::DispatchResult {
                         effects: Vec::new(),
@@ -601,7 +627,7 @@ impl super::Store {
                     };
                 }
 
-                let encoding = lsp_position_encoding(&self.state);
+                let encoding = lsp_position_encoding_for_path(&self.state, &path);
 
                 let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::HighlightSpan>>> =
                     None;
@@ -619,7 +645,7 @@ impl super::Store {
                                 let lines = semantic_highlight_lines_from_tokens_range(
                                     tab.buffer.rope(),
                                     &tokens,
-                                    legend,
+                                    &legend,
                                     encoding,
                                     start_line,
                                     end_line_exclusive,
@@ -840,11 +866,7 @@ impl super::Store {
                     .items
                     .get(self.state.ui.completion.selected)
                 {
-                    if self
-                        .state
-                        .lsp
-                        .server_capabilities
-                        .as_ref()
+                    if lsp_server_capabilities_for_path(&self.state, &req.path)
                         .is_none_or(|c| c.completion_resolve)
                         && item.data.is_some()
                         && item
