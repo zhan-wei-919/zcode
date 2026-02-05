@@ -96,11 +96,11 @@ fn paint_editor_pane_indent_guides_do_not_overwrite_code() {
     backend.draw(layout.area, painter.cmds());
     let buf = backend.buffer();
 
-    // A 4-space indent draws a guide at the last whitespace cell in the level: col 3 (0-based).
+    // A 4-space indent draws a guide at the start of the indent level: col 0 (0-based).
     let y = layout.content_area.y;
-    let x_guide = layout.content_area.x + 3;
+    let x_guide = layout.content_area.x;
     let x_code = layout.content_area.x + 4;
-    assert_eq!(buf.cell(x_guide, y).unwrap().symbol, "│");
+    assert_eq!(buf.cell(x_guide, y).unwrap().symbol, "\u{258F}");
     assert_eq!(buf.cell(x_code, y).unwrap().symbol, "f");
 }
 
@@ -131,9 +131,10 @@ fn paint_editor_pane_indent_guides_respect_selection_background() {
     let buf = backend.buffer();
 
     let y = layout.content_area.y;
-    let x_guide = layout.content_area.x + 3;
+    let x_guide = layout.content_area.x;
     let cell = buf.cell(x_guide, y).unwrap();
-    assert_eq!(cell.symbol, "│");
+    assert_eq!(cell.symbol, "\u{258F}");
     assert_eq!(cell.style.bg, Some(theme.palette_selected_bg));
     assert_eq!(cell.style.fg, Some(theme.indent_guide_fg));
+    assert!(cell.style.mods.contains(crate::ui::core::style::Mod::DIM));
 }

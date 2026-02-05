@@ -15,6 +15,9 @@ use unicode_width::UnicodeWidthStr;
 
 use super::layout::EditorPaneLayout;
 
+// U+258F "LEFT ONE EIGHTH BLOCK" draws as a thin vertical guide in most fonts.
+const INDENT_GUIDE_SYMBOL: &str = "\u{258F}";
+
 pub fn paint_editor_pane(
     painter: &mut Painter,
     layout: &EditorPaneLayout,
@@ -633,7 +636,8 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         .bg(theme.palette_selected_bg)
         .fg(theme.palette_selected_fg);
 
-    let indent_guide_style = Style::default().fg(theme.indent_guide_fg);
+    // Indent guides should be subtle like VSCode/Helix (no "full bar" feeling).
+    let indent_guide_style = Style::default().fg(theme.indent_guide_fg).add_mod(Mod::DIM);
 
     let tab_size = tab_size.max(1) as u32;
 
@@ -787,8 +791,13 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             let indent_len = line.len().saturating_sub(line.trim_start().len());
             if indent_len > 0 {
                 let indent_prefix = &line[..indent_len];
+                // Collect expanded display ranges for each leading whitespace char so we can
+                // compute selection background for the cell we overlay.
+                let mut spans: Vec<(u32, u32, usize)> = Vec::new();
+
                 let mut col: u32 = 0;
                 for (g_idx, ch) in indent_prefix.chars().enumerate() {
+                    let start = col;
                     let w = if ch == '\t' {
                         let rem = col % tab_size;
                         if rem == 0 {
@@ -800,14 +809,27 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                         1
                     };
 
-                    col = col.saturating_add(w);
-                    if col == 0 || !col.is_multiple_of(tab_size) {
+                    if w == 0 {
                         continue;
                     }
 
-                    // Use the last cell within the indent level so we don't overwrite code.
-                    let guide_col = col.saturating_sub(1);
-                    let rel = guide_col.saturating_sub(horiz_offset);
+                    col = col.saturating_add(w);
+                    spans.push((start, col, g_idx));
+                }
+
+                // Place one guide per full indent level at the *start* of the level (0, 4, 8..).
+                // This avoids drawing a bar immediately before code (which looks too heavy in a
+                // cell-based TUI).
+                let indent_width = col;
+                let mut level_start_col: u32 = 0;
+                while level_start_col.saturating_add(tab_size) <= indent_width {
+                    let guide_col = level_start_col;
+                    level_start_col = level_start_col.saturating_add(tab_size);
+
+                    if guide_col < horiz_offset {
+                        continue;
+                    }
+                    let rel = guide_col - horiz_offset;
                     if rel >= area.w as u32 {
                         continue;
                     }
@@ -816,9 +838,15 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                         continue;
                     }
 
+                    let guide_g_idx = spans
+                        .iter()
+                        .find(|(start, end, _)| *start <= guide_col && guide_col < *end)
+                        .map(|(_, _, g_idx)| *g_idx);
+
                     let selected = has_selection
-                        && g_idx >= selection_range.0
-                        && g_idx < selection_range.1
+                        && guide_g_idx.is_some_and(|g_idx| {
+                            g_idx >= selection_range.0 && g_idx < selection_range.1
+                        })
                         && selection_range.0 != selection_range.1;
                     let style = if selected {
                         indent_guide_style.bg(theme.palette_selected_bg)
@@ -826,7 +854,12 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                         indent_guide_style.bg(theme.palette_bg)
                     };
 
-                    painter.text_clipped(Pos::new(guide_x, y), "│", style, row_clip);
+                    painter.text_clipped(
+                        Pos::new(guide_x, y),
+                        INDENT_GUIDE_SYMBOL,
+                        style,
+                        row_clip,
+                    );
                 }
             }
         }
