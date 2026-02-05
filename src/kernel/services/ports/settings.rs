@@ -88,6 +88,8 @@ pub struct ThemeSettings {
     pub palette_selected_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub palette_muted_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent_guide_fg: Option<String>,
 }
 
 impl Default for ThemeSettings {
@@ -116,6 +118,7 @@ impl Default for ThemeSettings {
             palette_selected_bg: Some("dark_gray".to_string()),
             palette_selected_fg: Some("white".to_string()),
             palette_muted_fg: Some("dark_gray".to_string()),
+            indent_guide_fg: Some("dark_gray".to_string()),
         }
     }
 }

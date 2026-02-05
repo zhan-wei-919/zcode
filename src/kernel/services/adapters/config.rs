@@ -39,6 +39,10 @@ impl ConfigService {
     pub fn set_word_wrap(&mut self, wrap: bool) {
         self.editor.word_wrap = wrap;
     }
+
+    pub fn set_show_indent_guides(&mut self, show: bool) {
+        self.editor.show_indent_guides = show;
+    }
 }
 
 impl Default for ConfigService {
