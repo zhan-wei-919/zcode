@@ -782,47 +782,51 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
         flush_text_segment(painter, line, y, row_clip, &mut seg);
 
-        // Draw indent guides
-        if show_indent_guides && !line.is_empty() {
-            let indent_len = line.len() - line.trim_start().len();
+        // Draw indent guides after the line has been rendered so we can overlay on whitespace.
+        if show_indent_guides {
+            let indent_len = line.len().saturating_sub(line.trim_start().len());
             if indent_len > 0 {
                 let indent_prefix = &line[..indent_len];
                 let mut col: u32 = 0;
-                for ch in indent_prefix.chars() {
-                    if ch == '\t' {
+                for (g_idx, ch) in indent_prefix.chars().enumerate() {
+                    let w = if ch == '\t' {
                         let rem = col % tab_size;
-                        let tab_width = if rem == 0 { tab_size } else { tab_size - rem };
-                        // Draw guide at tab boundary if visible
-                        let guide_col = col + tab_width;
-                        if guide_col >= horiz_offset {
-                            let guide_x = area.x + (guide_col - horiz_offset) as u16;
-                            if guide_x < right {
-                                painter.text_clipped(
-                                    Pos::new(guide_x, y),
-                                    "│",
-                                    indent_guide_style,
-                                    row_clip,
-                                );
-                            }
-                        }
-                        col += tab_width;
-                    } else if ch == ' ' {
-                        // Check if this is a tab boundary (every tab_size spaces)
-                        col += 1;
-                        if col % tab_size == 0 && col >= horiz_offset {
-                            let guide_x = area.x + (col - horiz_offset) as u16;
-                            if guide_x < right {
-                                painter.text_clipped(
-                                    Pos::new(guide_x, y),
-                                    "│",
-                                    indent_guide_style,
-                                    row_clip,
-                                );
-                            }
+                        if rem == 0 {
+                            tab_size
+                        } else {
+                            tab_size - rem
                         }
                     } else {
-                        col += 1;
+                        1
+                    };
+
+                    col = col.saturating_add(w);
+                    if col == 0 || !col.is_multiple_of(tab_size) {
+                        continue;
                     }
+
+                    // Use the last cell within the indent level so we don't overwrite code.
+                    let guide_col = col.saturating_sub(1);
+                    let rel = guide_col.saturating_sub(horiz_offset);
+                    if rel >= area.w as u32 {
+                        continue;
+                    }
+                    let guide_x = area.x.saturating_add(rel as u16);
+                    if guide_x >= right {
+                        continue;
+                    }
+
+                    let selected = has_selection
+                        && g_idx >= selection_range.0
+                        && g_idx < selection_range.1
+                        && selection_range.0 != selection_range.1;
+                    let style = if selected {
+                        indent_guide_style.bg(theme.palette_selected_bg)
+                    } else {
+                        indent_guide_style.bg(theme.palette_bg)
+                    };
+
+                    painter.text_clipped(Pos::new(guide_x, y), "│", style, row_clip);
                 }
             }
         }
