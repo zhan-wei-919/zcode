@@ -38,9 +38,12 @@
 
 ```bash
 # 1. 打开当前目录
+cargo run
+
+# 2. 显式打开当前目录
 cargo run -- .
 
-# 2. 打开指定文件
+# 3. 打开指定文件
 cargo run -- src/main.rs
 ```
 
@@ -59,6 +62,13 @@ cargo run --release -- .
 ```bash
 cargo install --path . --locked
 zcode .
+```
+
+也可以使用辅助脚本：
+
+```bash
+./install.sh --user
+# 或者：sudo ./install.sh --system
 ```
 
 ## 操作指南

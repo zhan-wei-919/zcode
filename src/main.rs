@@ -2,6 +2,7 @@ use crossterm::event::{self, Event};
 use std::{
     env, io,
     path::Path,
+    path::PathBuf,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -14,6 +15,12 @@ use zcode::kernel::services::adapters::AsyncRuntime;
 use zcode::tui::view::{EventResult, View};
 use zcode::tui::{self, terminal_guard::TerminationSignal};
 use zcode::ui::backend::terminal::RatatuiTerminal;
+
+#[derive(Debug)]
+struct StartupPaths {
+    root: PathBuf,
+    open_file: Option<PathBuf>,
+}
 
 fn main() -> io::Result<()> {
     let mut logging_guard = logging::init();
@@ -29,13 +36,36 @@ fn main() -> io::Result<()> {
         }
     }
 
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <path>", args[0]);
-        std::process::exit(1);
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("Usage: zcode [path]\n\nIf no path is provided, zcode opens the current directory.\nThe path can be a directory or a file.");
+        return Ok(());
     }
-    let path_to_open = Path::new(&args[1]);
-    tracing::info!(path = %path_to_open.display(), "starting");
+    if args.iter().any(|a| a == "-V" || a == "--version") {
+        println!("zcode {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if args.len() > 1 {
+        eprintln!("error: too many arguments\n\nUsage: zcode [path]");
+        std::process::exit(2);
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|e| {
+        eprintln!("error: cannot determine current directory: {e}");
+        std::process::exit(1);
+    });
+
+    let startup =
+        resolve_startup_paths(&cwd, args.first().map(String::as_str)).unwrap_or_else(|e| {
+            eprintln!("error: invalid path: {e}");
+            std::process::exit(1);
+        });
+
+    tracing::info!(
+        root = %startup.root.display(),
+        open_file = ?startup.open_file,
+        "starting"
+    );
 
     let guard = tui::terminal_guard::TerminalGuard::new()
         .inspect_err(|e| tracing::error!(error = ?e, "terminal setup failed"))?;
@@ -63,7 +93,13 @@ fn main() -> io::Result<()> {
     let mut terminal = RatatuiTerminal::new(io::stdout())
         .inspect_err(|e| tracing::error!(error = ?e, "terminal init failed"))?;
     let log_rx = logging_guard.as_mut().and_then(|guard| guard.take_log_rx());
-    let result = run_app(&mut terminal, path_to_open, log_rx, &term_rx);
+    let result = run_app(
+        &mut terminal,
+        startup.root.as_path(),
+        startup.open_file,
+        log_rx,
+        &term_rx,
+    );
     drop(terminal);
     let _ = restorer
         .restore()
@@ -95,6 +131,7 @@ fn env_truthy(key: &str) -> bool {
 fn run_app(
     terminal: &mut RatatuiTerminal,
     path: &Path,
+    startup_file: Option<PathBuf>,
     log_rx: Option<mpsc::Receiver<String>>,
     term_rx: &mpsc::Receiver<TerminationSignal>,
 ) -> io::Result<()> {
@@ -102,6 +139,9 @@ fn run_app(
     let (mut tx, mut rx) = mpsc::channel();
     let mut workbench =
         Workbench::new(root_path.as_path(), AsyncRuntime::new(tx.clone())?, log_rx)?;
+    if let Some(path) = startup_file {
+        workbench.runtime().load_file(path);
+    }
 
     let mut dirty = true;
     let mut last_tick = Instant::now();
@@ -184,6 +224,49 @@ fn run_app(
     }
 }
 
+fn resolve_startup_paths(cwd: &Path, arg: Option<&str>) -> io::Result<StartupPaths> {
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+
+    let path = match arg {
+        None => cwd.to_path_buf(),
+        Some(raw) => {
+            let p = PathBuf::from(raw);
+            if p.is_absolute() {
+                p
+            } else {
+                cwd.join(p)
+            }
+        }
+    };
+
+    let meta = std::fs::metadata(&path)?;
+    if meta.is_dir() {
+        let root = path.canonicalize().unwrap_or(path);
+        Ok(StartupPaths {
+            root,
+            open_file: None,
+        })
+    } else {
+        let file = path.canonicalize().unwrap_or(path);
+        let root = if file.starts_with(&cwd) {
+            cwd
+        } else {
+            file.parent()
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "file path has no parent directory",
+                    )
+                })?
+                .to_path_buf()
+        };
+        Ok(StartupPaths {
+            root,
+            open_file: Some(file),
+        })
+    }
+}
+
 /// 从事件队列中取出所有待处理事件，合并连续的滚轮事件
 fn drain_pending_events(first: Event) -> Vec<Event> {
     let mut events = vec![first];
@@ -198,6 +281,10 @@ fn drain_pending_events(first: Event) -> Vec<Event> {
     // 合并连续的滚轮事件
     coalesce_scroll_events(events)
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/cli_startup_paths.rs"]
+mod tests;
 
 /// 合并连续的滚轮事件，只保留最后一个方向的累计效果
 fn coalesce_scroll_events(events: Vec<Event>) -> Vec<Event> {

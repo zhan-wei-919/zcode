@@ -38,9 +38,12 @@ Run the following command in the project root:
 
 ```bash
 # 1. Open current directory
+cargo run
+
+# 2. Open current directory (explicit)
 cargo run -- .
 
-# 2. Open a specific file
+# 3. Open a specific file
 cargo run -- src/main.rs
 ```
 
@@ -59,6 +62,13 @@ Build and install `zcode` to your Cargo bin directory (usually `~/.cargo/bin`):
 ```bash
 cargo install --path . --locked
 zcode .
+```
+
+Alternatively, use the helper script:
+
+```bash
+./install.sh --user
+# or: sudo ./install.sh --system
 ```
 
 ## Usage Guide
