@@ -37,6 +37,7 @@ no_build=0
 force=0
 bin_dir=""
 binary_path=""
+binary_from_user=0
 
 # Default install target: system for root, user otherwise.
 default_target="user"
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --binary)
       binary_path="${2:-}"
+      binary_from_user=1
       shift 2
       ;;
     --no-build)
@@ -112,28 +114,35 @@ if [[ -z "${binary_path}" ]]; then
   fi
 fi
 
-if [[ ! -f "${binary_path}" ]]; then
-  if [[ "${no_build}" -eq 1 ]]; then
+if [[ "${binary_from_user}" -eq 1 ]]; then
+  if [[ ! -f "${binary_path}" ]]; then
     echo "error: binary not found: ${binary_path}" >&2
-    echo "hint: build it first or omit --no-build" >&2
     exit 1
   fi
-
-  if ! command -v cargo >/dev/null 2>&1; then
-    echo "error: cargo not found in PATH" >&2
-    echo "hint: install Rust toolchain from https://rustup.rs/ and retry" >&2
-    exit 1
-  fi
-
-  echo "building zcode (${mode})..."
-  (
-    cd "${script_dir}"
-    if [[ "${mode}" == "debug" ]]; then
-      cargo build
-    else
-      cargo build --release
+else
+  if [[ "${no_build}" -eq 1 ]]; then
+    if [[ ! -f "${binary_path}" ]]; then
+      echo "error: binary not found: ${binary_path}" >&2
+      echo "hint: build it first or omit --no-build" >&2
+      exit 1
     fi
-  )
+  else
+    if ! command -v cargo >/dev/null 2>&1; then
+      echo "error: cargo not found in PATH" >&2
+      echo "hint: install Rust toolchain from https://rustup.rs/ and retry" >&2
+      exit 1
+    fi
+
+    echo "building zcode (${mode})..."
+    (
+      cd "${script_dir}"
+      if [[ "${mode}" == "debug" ]]; then
+        cargo build --locked
+      else
+        cargo build --release --locked
+      fi
+    )
+  fi
 fi
 
 if [[ ! -f "${binary_path}" ]]; then
