@@ -55,6 +55,7 @@ pub struct Theme {
     pub palette_selected_bg: Color,
     pub palette_selected_fg: Color,
     pub palette_muted_fg: Color,
+    pub indent_guide_fg: Color,
 }
 
 impl Theme {
@@ -113,6 +114,7 @@ impl Default for Theme {
             palette_selected_bg: Color::Indexed(8),  // DarkGray
             palette_selected_fg: Color::Indexed(15), // White
             palette_muted_fg: Color::Indexed(8),     // DarkGray
+            indent_guide_fg: Color::Indexed(8),      // DarkGray
         }
     }
 }

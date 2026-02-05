@@ -14,6 +14,12 @@ pub struct EditorConfig {
     pub auto_indent: bool,
     #[serde(default, alias = "formatOnSave")]
     pub format_on_save: bool,
+    #[serde(default = "default_show_indent_guides")]
+    pub show_indent_guides: bool,
+}
+
+fn default_show_indent_guides() -> bool {
+    true
 }
 
 impl Default for EditorConfig {
@@ -29,6 +35,7 @@ impl Default for EditorConfig {
             word_wrap: false,
             auto_indent: true,
             format_on_save: false,
+            show_indent_guides: default_show_indent_guides(),
         }
     }
 }

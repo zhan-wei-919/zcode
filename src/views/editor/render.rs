@@ -449,6 +449,7 @@ fn paint_editor_body(
             highlight_lines: syntax.as_deref(),
             tab_size: config.tab_size,
             theme,
+            show_indent_guides: config.show_indent_guides,
         },
     );
 }
@@ -608,6 +609,7 @@ struct ContentPaintCtx<'a> {
     highlight_lines: Option<&'a [Vec<HighlightSpan>]>,
     tab_size: u8,
     theme: &'a Theme,
+    show_indent_guides: bool,
 }
 
 fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintCtx<'_>) {
@@ -618,6 +620,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         highlight_lines,
         tab_size,
         theme,
+        show_indent_guides,
     } = ctx;
     if area.is_empty() {
         return;
@@ -629,6 +632,8 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
     let selection_style = Style::default()
         .bg(theme.palette_selected_bg)
         .fg(theme.palette_selected_fg);
+
+    let indent_guide_style = Style::default().fg(theme.indent_guide_fg);
 
     let tab_size = tab_size.max(1) as u32;
 
@@ -776,6 +781,51 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         }
 
         flush_text_segment(painter, line, y, row_clip, &mut seg);
+
+        // Draw indent guides
+        if show_indent_guides && !line.is_empty() {
+            let indent_len = line.len() - line.trim_start().len();
+            if indent_len > 0 {
+                let indent_prefix = &line[..indent_len];
+                let mut col: u32 = 0;
+                for ch in indent_prefix.chars() {
+                    if ch == '\t' {
+                        let rem = col % tab_size;
+                        let tab_width = if rem == 0 { tab_size } else { tab_size - rem };
+                        // Draw guide at tab boundary if visible
+                        let guide_col = col + tab_width;
+                        if guide_col >= horiz_offset {
+                            let guide_x = area.x + (guide_col - horiz_offset) as u16;
+                            if guide_x < right {
+                                painter.text_clipped(
+                                    Pos::new(guide_x, y),
+                                    "│",
+                                    indent_guide_style,
+                                    row_clip,
+                                );
+                            }
+                        }
+                        col += tab_width;
+                    } else if ch == ' ' {
+                        // Check if this is a tab boundary (every tab_size spaces)
+                        col += 1;
+                        if col % tab_size == 0 && col >= horiz_offset {
+                            let guide_x = area.x + (col - horiz_offset) as u16;
+                            if guide_x < right {
+                                painter.text_clipped(
+                                    Pos::new(guide_x, y),
+                                    "│",
+                                    indent_guide_style,
+                                    row_clip,
+                                );
+                            }
+                        }
+                    } else {
+                        col += 1;
+                    }
+                }
+            }
+        }
 
         if let Some(hints) = inlay_hints {
             if x < right {

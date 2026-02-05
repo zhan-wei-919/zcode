@@ -29,6 +29,7 @@ pub struct UiTheme {
     pub palette_selected_bg: Color,
     pub palette_selected_fg: Color,
     pub palette_muted_fg: Color,
+    pub indent_guide_fg: Color,
 }
 
 impl Default for UiTheme {
@@ -57,6 +58,7 @@ impl Default for UiTheme {
             palette_selected_bg: Color::Indexed(8),  // DarkGray
             palette_selected_fg: Color::Indexed(15), // White
             palette_muted_fg: Color::Indexed(8),     // DarkGray
+            indent_guide_fg: Color::Indexed(8),      // DarkGray
         }
     }
 }
@@ -178,6 +180,11 @@ impl UiTheme {
                 self.palette_muted_fg = c;
             }
         }
+        if let Some(v) = &settings.indent_guide_fg {
+            if let Some(c) = parse_color(v) {
+                self.indent_guide_fg = c;
+            }
+        }
     }
 }
 
@@ -246,5 +253,6 @@ pub(crate) fn to_core_theme(theme: &UiTheme) -> CoreTheme {
         palette_selected_bg: theme.palette_selected_bg,
         palette_selected_fg: theme.palette_selected_fg,
         palette_muted_fg: theme.palette_muted_fg,
+        indent_guide_fg: theme.indent_guide_fg,
     }
 }
