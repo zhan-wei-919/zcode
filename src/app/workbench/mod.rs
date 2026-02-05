@@ -138,6 +138,16 @@ pub struct Workbench {
     last_settings_modified: Option<SystemTime>,
     last_input_at: Instant,
     idle_hover_last_request: Option<(PathBuf, u32, u32, u64)>,
+    idle_hover_last_anchor: Option<(u16, u16)>,
+    idle_hover_target: Option<IdleHoverTarget>,
+    hover_popup_scroll: usize,
+    hover_popup_total_lines: usize,
+    hover_popup_hash: Option<u64>,
+    last_hover_popup_area: Option<Rect>,
+    completion_doc_scroll: usize,
+    completion_doc_total_lines: usize,
+    completion_doc_key: Option<CompletionDocKey>,
+    last_completion_doc_area: Option<Rect>,
     pending_completion_deadline: Option<Instant>,
     pending_semantic_tokens_deadline: Option<Instant>,
     pending_inlay_hints_deadline: Option<Instant>,
@@ -183,6 +193,22 @@ pub struct Workbench {
     last_code_actions_click: Option<(Instant, usize)>,
     last_symbols_click: Option<(Instant, usize)>,
     pending_restart: Option<PendingRestart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompletionDocKey {
+    pane: usize,
+    path: PathBuf,
+    version: u64,
+    selected: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IdleHoverTarget {
+    pane: usize,
+    row: usize,
+    col: usize,
+    anchor: (u16, u16),
 }
 
 impl Workbench {
@@ -324,6 +350,16 @@ impl Workbench {
             last_settings_modified,
             last_input_at: Instant::now(),
             idle_hover_last_request: None,
+            idle_hover_last_anchor: None,
+            idle_hover_target: None,
+            hover_popup_scroll: 0,
+            hover_popup_total_lines: 0,
+            hover_popup_hash: None,
+            last_hover_popup_area: None,
+            completion_doc_scroll: 0,
+            completion_doc_total_lines: 0,
+            completion_doc_key: None,
+            last_completion_doc_area: None,
             pending_completion_deadline: None,
             pending_semantic_tokens_deadline: None,
             pending_inlay_hints_deadline: None,
@@ -385,6 +421,68 @@ impl Workbench {
 
     pub fn take_pending_restart(&mut self) -> Option<(PathBuf, bool)> {
         self.pending_restart.take().map(|req| (req.path, req.hard))
+    }
+
+    fn hover_popup_view_height(&self) -> usize {
+        self.last_hover_popup_area
+            .map(|a| a.h.saturating_sub(2) as usize)
+            .unwrap_or(0)
+    }
+
+    fn scroll_hover_popup_by(&mut self, delta_lines: isize) -> bool {
+        let view_h = self.hover_popup_view_height();
+        if view_h == 0 || self.hover_popup_total_lines <= view_h {
+            return false;
+        }
+
+        let max_scroll = self.hover_popup_total_lines.saturating_sub(view_h);
+        let next = if delta_lines < 0 {
+            self.hover_popup_scroll
+                .saturating_sub(delta_lines.unsigned_abs())
+        } else {
+            (self.hover_popup_scroll + delta_lines as usize).min(max_scroll)
+        };
+
+        if next == self.hover_popup_scroll {
+            return false;
+        }
+        self.hover_popup_scroll = next;
+        true
+    }
+
+    fn reset_hover_popup_scroll(&mut self) {
+        self.hover_popup_scroll = 0;
+    }
+
+    fn completion_doc_view_height(&self) -> usize {
+        self.last_completion_doc_area
+            .map(|a| a.h.saturating_sub(2) as usize)
+            .unwrap_or(0)
+    }
+
+    fn scroll_completion_doc_by(&mut self, delta_lines: isize) -> bool {
+        let view_h = self.completion_doc_view_height();
+        if view_h == 0 || self.completion_doc_total_lines <= view_h {
+            return false;
+        }
+
+        let max_scroll = self.completion_doc_total_lines.saturating_sub(view_h);
+        let next = if delta_lines < 0 {
+            self.completion_doc_scroll
+                .saturating_sub(delta_lines.unsigned_abs())
+        } else {
+            (self.completion_doc_scroll + delta_lines as usize).min(max_scroll)
+        };
+
+        if next == self.completion_doc_scroll {
+            return false;
+        }
+        self.completion_doc_scroll = next;
+        true
+    }
+
+    fn reset_completion_doc_scroll(&mut self) {
+        self.completion_doc_scroll = 0;
     }
 
     pub(super) fn open_settings(&mut self) {

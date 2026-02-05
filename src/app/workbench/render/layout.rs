@@ -9,10 +9,9 @@ use crate::kernel::{BottomPanelTab, FocusTarget, SidebarTab};
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::input::DragPayload;
-use crate::ui::core::layout::Insets;
-use crate::ui::core::painter::BorderKind;
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::{Mod as UiMod, Style as UiStyle};
+use crate::ui::core::theme::Theme;
 use crate::ui::core::tree::NodeKind;
 use crate::views::{
     compute_editor_pane_layout, cursor_position_editor, tab_insertion_index, tab_insertion_x,
@@ -192,44 +191,7 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
         };
 
         if let Some(label) = label {
-            let text = format!(" {label} ");
-            let text_w =
-                unicode_width::UnicodeWidthStr::width(text.as_str()).min(u16::MAX as usize) as u16;
-            let w = text_w.saturating_add(2).min(area.w);
-            let h = 3u16;
-
-            if w >= 3 && area.h >= h {
-                let mut x = pos.x.saturating_add(1);
-                let mut y = pos.y.saturating_add(1);
-                if x.saturating_add(w) > area.right() {
-                    x = area.right().saturating_sub(w);
-                }
-                if y.saturating_add(h) > area.bottom() {
-                    y = area.bottom().saturating_sub(h);
-                }
-                x = x.max(area.x);
-                y = y.max(area.y);
-
-                let rect = Rect::new(x, y, w, h);
-                let fill = UiStyle::default()
-                    .bg(workbench.ui_theme.palette_selected_bg)
-                    .fg(workbench.ui_theme.palette_selected_fg);
-                let border = UiStyle::default()
-                    .bg(workbench.ui_theme.palette_selected_bg)
-                    .fg(workbench.ui_theme.focus_border);
-                let text_style = UiStyle::default()
-                    .bg(workbench.ui_theme.palette_selected_bg)
-                    .fg(workbench.ui_theme.palette_selected_fg)
-                    .add_mod(UiMod::BOLD);
-
-                painter.fill_rect(rect, fill);
-                painter.border(rect, border, BorderKind::Plain);
-
-                let inner = rect.inset(Insets::all(1));
-                if !inner.is_empty() {
-                    painter.text_clipped(Pos::new(inner.x, inner.y), text, text_style, inner);
-                }
-            }
+            paint_drag_chip(&mut painter, area, pos, label.as_str(), &workbench.ui_theme);
         }
     }
 
@@ -351,6 +313,64 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
     backend.draw(area, painter.cmds());
 }
 
+fn paint_drag_chip(painter: &mut Painter, screen: Rect, mouse: Pos, label: &str, theme: &Theme) {
+    if screen.is_empty() {
+        return;
+    }
+
+    let label = label.trim();
+    if label.is_empty() {
+        return;
+    }
+
+    // Minimal floating chip: a single-line badge with a thin accent bar + subtle shadow.
+    // This looks more "GUI-like" than a boxed tooltip.
+    let label_w = unicode_width::UnicodeWidthStr::width(label).min(u16::MAX as usize) as u16;
+
+    let accent_w = 1u16;
+    let pad_left = 1u16;
+    let pad_right = 1u16;
+    let desired_w = accent_w
+        .saturating_add(pad_left)
+        .saturating_add(label_w)
+        .saturating_add(pad_right);
+    let w = desired_w.min(screen.w);
+    let h = 1u16;
+
+    if w < 4 || screen.h < h {
+        return;
+    }
+
+    let mut x = mouse.x.saturating_add(1);
+    let mut y = mouse.y.saturating_add(1);
+    if x.saturating_add(w) > screen.right() {
+        x = screen.right().saturating_sub(w);
+    }
+    if y.saturating_add(h) > screen.bottom() {
+        y = screen.bottom().saturating_sub(h);
+    }
+    x = x.max(screen.x);
+    y = y.max(screen.y);
+
+    let rect = Rect::new(x, y, w, h);
+
+    let chip_bg = theme.palette_selected_bg;
+    let chip_fg = theme.palette_selected_fg;
+
+    let fill = UiStyle::default().bg(chip_bg).fg(chip_fg);
+    painter.fill_rect(rect, fill);
+
+    let accent_style = UiStyle::default().bg(chip_bg).fg(theme.focus_border);
+    painter.vline(Pos::new(rect.x, rect.y), rect.h, '\u{258F}', accent_style);
+
+    let text_style = UiStyle::default()
+        .bg(chip_bg)
+        .fg(chip_fg)
+        .add_mod(UiMod::BOLD);
+    let text_x = rect.x.saturating_add(accent_w.saturating_add(pad_left));
+    painter.text_clipped(Pos::new(text_x, rect.y), label, text_style, rect);
+}
+
 pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
     if workbench.store.state().ui.input_dialog.visible {
         return input_dialog_cursor(workbench);
@@ -395,3 +415,7 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
         FocusTarget::CommandPalette => None,
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/app/workbench/render/layout.rs"]
+mod tests;

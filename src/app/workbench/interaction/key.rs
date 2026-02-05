@@ -1,6 +1,6 @@
 use super::super::Workbench;
 use super::terminal::terminal_bytes_for_key_event;
-use crate::core::event::{Key, KeyCode, KeyEvent, KeyModifiers};
+use crate::core::event::{InputEvent, Key, KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use crate::core::Command;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{KeybindingContext, KeybindingService};
@@ -11,9 +11,29 @@ use crate::tui::view::EventResult;
 use std::time::Instant;
 
 impl Workbench {
-    pub(in super::super) fn record_user_input(&mut self) {
+    pub(in super::super) fn record_user_input(&mut self, event: &InputEvent) {
+        let preserve_hover = matches!(
+            event,
+            InputEvent::Mouse(me)
+                if self.store.state().ui.hover_message.is_some()
+                    && self.last_hover_popup_area.is_some_and(|a| {
+                        super::super::util::rect_contains(a, me.column, me.row)
+                    })
+                    && matches!(
+                        me.kind,
+                        MouseEventKind::Moved
+                            | MouseEventKind::ScrollUp
+                            | MouseEventKind::ScrollDown
+                            | MouseEventKind::ScrollLeft
+                            | MouseEventKind::ScrollRight
+                    )
+        );
+
         self.last_input_at = Instant::now();
-        self.idle_hover_last_request = None;
+        if !preserve_hover {
+            self.idle_hover_last_request = None;
+            self.idle_hover_last_anchor = None;
+        }
         self.pending_completion_deadline = None;
         self.pending_inlay_hints_deadline = None;
         self.pending_folding_range_deadline = None;
@@ -24,17 +44,19 @@ impl Workbench {
             self.terminal_cursor_last_blink = Instant::now();
         }
 
-        if let Some(service) = self
-            .kernel_services
-            .get_mut::<crate::kernel::services::adapters::LspService>()
-        {
-            service.cancel_hover();
-        }
+        if !preserve_hover {
+            if let Some(service) = self
+                .kernel_services
+                .get_mut::<crate::kernel::services::adapters::LspService>()
+            {
+                service.cancel_hover();
+            }
 
-        if self.store.state().ui.hover_message.is_some() {
-            let _ = self.dispatch_kernel(KernelAction::LspHover {
-                text: String::new(),
-            });
+            if self.store.state().ui.hover_message.is_some() {
+                let _ = self.dispatch_kernel(KernelAction::LspHover {
+                    text: String::new(),
+                });
+            }
         }
     }
 
@@ -112,22 +134,48 @@ impl Workbench {
         }
 
         if self.store.state().ui.completion.visible {
-            match key_event.code {
-                KeyCode::Esc => {
+            match (key_event.code, key_event.modifiers) {
+                (KeyCode::Esc, _) => {
                     let _ = self.dispatch_kernel(KernelAction::CompletionClose);
+                    self.completion_doc_scroll = 0;
+                    self.completion_doc_total_lines = 0;
+                    self.completion_doc_key = None;
+                    self.last_completion_doc_area = None;
                     return EventResult::Consumed;
                 }
-                KeyCode::Tab => {
+                (KeyCode::Tab, _) => {
                     let _ =
                         self.dispatch_kernel(KernelAction::CompletionMoveSelection { delta: 1 });
+                    self.reset_completion_doc_scroll();
                     return EventResult::Consumed;
                 }
-                KeyCode::BackTab => {
+                (KeyCode::BackTab, _) => {
                     let _ =
                         self.dispatch_kernel(KernelAction::CompletionMoveSelection { delta: -1 });
+                    self.reset_completion_doc_scroll();
                     return EventResult::Consumed;
                 }
-                KeyCode::Enter => {
+                (KeyCode::PageUp, _) => {
+                    let step = self.completion_doc_view_height().max(1) as isize;
+                    let _ = self.scroll_completion_doc_by(-step);
+                    return EventResult::Consumed;
+                }
+                (KeyCode::PageDown, _) => {
+                    let step = self.completion_doc_view_height().max(1) as isize;
+                    let _ = self.scroll_completion_doc_by(step);
+                    return EventResult::Consumed;
+                }
+                (KeyCode::Char('u' | 'U'), mods) if mods.contains(KeyModifiers::CONTROL) => {
+                    let half = (self.completion_doc_view_height() / 2).max(1) as isize;
+                    let _ = self.scroll_completion_doc_by(-half);
+                    return EventResult::Consumed;
+                }
+                (KeyCode::Char('d' | 'D'), mods) if mods.contains(KeyModifiers::CONTROL) => {
+                    let half = (self.completion_doc_view_height() / 2).max(1) as isize;
+                    let _ = self.scroll_completion_doc_by(half);
+                    return EventResult::Consumed;
+                }
+                (KeyCode::Enter, _) => {
                     let pane = self.store.state().ui.editor_layout.active_pane;
                     let before_version = self
                         .store
@@ -149,6 +197,14 @@ impl Workbench {
                         self.maybe_schedule_semantic_tokens_debounce(&refresh);
                         self.maybe_schedule_inlay_hints_debounce(&refresh);
                         self.maybe_schedule_folding_range_debounce(&refresh);
+                    }
+
+                    // Completion session ends; reset doc scroll for the next popup.
+                    if !self.store.state().ui.completion.visible {
+                        self.completion_doc_scroll = 0;
+                        self.completion_doc_total_lines = 0;
+                        self.completion_doc_key = None;
+                        self.last_completion_doc_area = None;
                     }
                     return EventResult::Consumed;
                 }

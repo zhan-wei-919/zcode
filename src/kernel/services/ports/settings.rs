@@ -127,7 +127,7 @@ impl Default for ThemeSettings {
             accent_fg: Some("yellow".to_string()),
             syntax_string_fg: Some("green".to_string()),
             syntax_number_fg: Some("magenta".to_string()),
-            syntax_attribute_fg: Some("blue".to_string()),
+            syntax_attribute_fg: Some("light_blue".to_string()),
             error_fg: Some("red".to_string()),
             warning_fg: Some("yellow".to_string()),
             activity_bg: None,

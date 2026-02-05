@@ -11,7 +11,7 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
         event,
         InputEvent::Key(_) | InputEvent::Mouse(_) | InputEvent::Paste(_)
     ) {
-        workbench.record_user_input();
+        workbench.record_user_input(event);
     }
 
     match event {

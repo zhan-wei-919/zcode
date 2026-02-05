@@ -14,6 +14,7 @@ pub use state::{
     EditorMouseState, EditorPaneState, EditorState, EditorTabState, EditorViewportState,
     SearchBarField, SearchBarMode, SearchBarState, TabId,
 };
-pub use syntax::{HighlightKind, HighlightSpan, LanguageId};
+pub use syntax::{highlight_snippet, HighlightKind, HighlightSpan, LanguageId};
 pub(crate) use viewport::clamp_and_follow;
 pub use viewport::cursor_display_x_abs;
+pub(crate) use viewport::screen_to_col;

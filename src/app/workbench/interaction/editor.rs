@@ -1,4 +1,4 @@
-use super::super::Workbench;
+use super::super::{util, Workbench};
 use crate::core::event::{InputEvent, MouseButton, MouseEvent, MouseEventKind};
 use crate::core::Command;
 use crate::kernel::services::adapters::perf;
@@ -350,6 +350,38 @@ impl Workbench {
                 }
             }
             MouseEventKind::Moved => {
+                // Track the last mouse position inside the editor content so idle-hover requests
+                // can use the hovered symbol (VSCode/Helix-like) instead of the cursor.
+                let idle_target =
+                    if let Some((x, y)) = hit_test_editor_mouse(&layout, event.column, event.row) {
+                        pane_state.active_tab().and_then(|tab| {
+                            let visible_lines = tab.visible_lines_in_viewport(
+                                tab.viewport.line_offset,
+                                tab.viewport.height.max(1),
+                            );
+                            let row = visible_lines.get(y as usize).copied()?;
+
+                            let col = crate::kernel::editor::screen_to_col(
+                                &tab.viewport,
+                                &tab.buffer,
+                                config.tab_size,
+                                row,
+                                x,
+                            )?;
+
+                            Some(super::super::IdleHoverTarget {
+                                pane,
+                                row,
+                                col,
+                                anchor: (event.column, event.row),
+                            })
+                        })
+                    } else {
+                        None
+                    };
+
+                self.idle_hover_target = idle_target;
+
                 if let Some(index) =
                     hit_test_tab_hover(&layout, pane_state, event.column, event.row, hovered_idx)
                 {
@@ -357,9 +389,29 @@ impl Workbench {
                 } else {
                     let _ = self.dispatch_kernel(KernelAction::ClearHoveredTab);
                 }
+
                 EventResult::Consumed
             }
             MouseEventKind::ScrollUp => {
+                if self.store.state().ui.completion.visible
+                    && self
+                        .last_completion_doc_area
+                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
+                {
+                    let step = config.scroll_step().max(1) as isize;
+                    let _ = self.scroll_completion_doc_by(-step);
+                    return EventResult::Consumed;
+                }
+                if self.store.state().ui.hover_message.is_some()
+                    && self
+                        .last_hover_popup_area
+                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
+                {
+                    let step = config.scroll_step().max(1) as isize;
+                    let _ = self.scroll_hover_popup_by(-step);
+                    return EventResult::Consumed;
+                }
+
                 let delta_lines = -(config.scroll_step() as isize);
                 let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::Scroll {
                     pane,
@@ -372,6 +424,25 @@ impl Workbench {
                 EventResult::Consumed
             }
             MouseEventKind::ScrollDown => {
+                if self.store.state().ui.completion.visible
+                    && self
+                        .last_completion_doc_area
+                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
+                {
+                    let step = config.scroll_step().max(1) as isize;
+                    let _ = self.scroll_completion_doc_by(step);
+                    return EventResult::Consumed;
+                }
+                if self.store.state().ui.hover_message.is_some()
+                    && self
+                        .last_hover_popup_area
+                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
+                {
+                    let step = config.scroll_step().max(1) as isize;
+                    let _ = self.scroll_hover_popup_by(step);
+                    return EventResult::Consumed;
+                }
+
                 let delta_lines = config.scroll_step() as isize;
                 let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::Scroll {
                     pane,

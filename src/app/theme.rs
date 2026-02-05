@@ -35,15 +35,17 @@ pub struct UiTheme {
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
-            focus_border: Color::Indexed(6),        // Cyan
-            inactive_border: Color::Indexed(8),     // DarkGray
-            separator: Color::Indexed(8),           // DarkGray
-            accent_fg: Color::Indexed(3),           // Yellow
-            syntax_string_fg: Color::Indexed(2),    // Green
-            syntax_number_fg: Color::Indexed(5),    // Magenta
-            syntax_attribute_fg: Color::Indexed(4), // Blue
-            error_fg: Color::Indexed(1),            // Red
-            warning_fg: Color::Indexed(3),          // Yellow
+            focus_border: Color::Indexed(6),     // Cyan
+            inactive_border: Color::Indexed(8),  // DarkGray
+            separator: Color::Indexed(8),        // DarkGray
+            accent_fg: Color::Indexed(3),        // Yellow
+            syntax_string_fg: Color::Indexed(2), // Green
+            syntax_number_fg: Color::Indexed(5), // Magenta
+            // Use light blue so namespaces/modules (semantic tokens) are readable even on
+            // terminals where ANSI blue is very dark.
+            syntax_attribute_fg: Color::Indexed(12), // LightBlue
+            error_fg: Color::Indexed(1),             // Red
+            warning_fg: Color::Indexed(3),           // Yellow
             activity_bg: Color::Reset,
             activity_fg: Color::Indexed(8),             // DarkGray
             activity_active_bg: Color::Indexed(8),      // DarkGray

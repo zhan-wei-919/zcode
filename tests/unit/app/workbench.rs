@@ -377,11 +377,9 @@ fn test_drag_tab_renders_ghost_label_near_cursor() {
     let buf = backend.buffer();
     let ghost_x = drag_x.saturating_add(1);
     let ghost_y = drag_y.saturating_add(1);
-    assert_eq!(buf.cell(ghost_x, ghost_y).unwrap().symbol, "┌");
+    assert_eq!(buf.cell(ghost_x, ghost_y).unwrap().symbol, "▏");
     assert_eq!(
-        buf.cell(ghost_x.saturating_add(2), ghost_y.saturating_add(1))
-            .unwrap()
-            .symbol,
+        buf.cell(ghost_x.saturating_add(2), ghost_y).unwrap().symbol,
         "g"
     );
 }
@@ -1089,11 +1087,9 @@ fn test_drag_explorer_file_renders_ghost_label_near_cursor() {
     let buf = backend.buffer();
     let ghost_x = drag_x.saturating_add(1);
     let ghost_y = drag_y.saturating_add(1);
-    assert_eq!(buf.cell(ghost_x, ghost_y).unwrap().symbol, "┌");
+    assert_eq!(buf.cell(ghost_x, ghost_y).unwrap().symbol, "▏");
     assert_eq!(
-        buf.cell(ghost_x.saturating_add(2), ghost_y.saturating_add(1))
-            .unwrap()
-            .symbol,
+        buf.cell(ghost_x.saturating_add(2), ghost_y).unwrap().symbol,
         "a"
     );
 }

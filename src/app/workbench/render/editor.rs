@@ -1,4 +1,4 @@
-use super::super::Workbench;
+use super::super::{CompletionDocKey, Workbench};
 use crate::kernel::editor::EditorPaneState;
 use crate::kernel::SplitDirection;
 use crate::ui::backend::Backend;
@@ -12,7 +12,10 @@ use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, SplitDrop};
 use crate::views::{
     compute_editor_pane_layout, cursor_position_editor, paint_editor_pane, EditorPaneLayout,
 };
+use std::hash::{Hash, Hasher};
 use unicode_width::UnicodeWidthStr;
+
+use super::doc;
 
 impl Workbench {
     fn register_editor_splitter_node(&mut self, sep_area: UiRect, direction: SplitDirection) {
@@ -36,11 +39,20 @@ impl Workbench {
         });
     }
 
-    pub(super) fn paint_hover_popup(&self, painter: &mut Painter, area: UiRect) {
-        let Some(text) = self.store.state().ui.hover_message.as_ref() else {
-            return;
-        };
-        if text.trim().is_empty() {
+    pub(super) fn paint_hover_popup(&mut self, painter: &mut Painter, area: UiRect) {
+        self.last_hover_popup_area = None;
+        self.hover_popup_total_lines = 0;
+
+        let has_text = self
+            .store
+            .state()
+            .ui
+            .hover_message
+            .as_deref()
+            .is_some_and(|t| !t.trim().is_empty());
+        if !has_text {
+            self.hover_popup_scroll = 0;
+            self.hover_popup_hash = None;
             return;
         }
 
@@ -54,42 +66,91 @@ impl Workbench {
         };
         let config = &self.store.state().editor.config;
         let layout = compute_editor_pane_layout(pane_area, pane_state, config);
-        let Some((cx, cy)) = cursor_position_editor(&layout, pane_state, config) else {
-            return;
+        let (cx, cy) = if let Some((x, y)) = self.idle_hover_last_anchor {
+            (x, y)
+        } else {
+            let Some((cx, cy)) = cursor_position_editor(&layout, pane_state, config) else {
+                return;
+            };
+            (cx, cy)
         };
-
-        let mut lines: Vec<&str> = text.lines().collect();
-        if lines.is_empty() {
-            return;
-        }
-        if lines.len() > 6 {
-            lines.truncate(6);
-        }
 
         if area.is_empty() {
             return;
         }
 
-        let max_line_width = lines
-            .iter()
-            .map(|line| UnicodeWidthStr::width(*line))
-            .max()
-            .unwrap_or(1);
+        if area.w < 3 || area.h < 3 {
+            return;
+        }
 
-        let desired_width = max_line_width.saturating_add(2);
-        let desired_height = lines.len().saturating_add(2);
+        let (text_hash, inner_w, rendered) = {
+            let text = self
+                .store
+                .state()
+                .ui
+                .hover_message
+                .as_deref()
+                .unwrap_or_default();
 
-        let width = desired_width.max(4).min(area.w as usize).max(1) as u16;
-        let height = desired_height.max(3).min(area.h as usize).max(1) as u16;
+            let mut hasher = rustc_hash::FxHasher::default();
+            text.hash(&mut hasher);
+            let text_hash = hasher.finish();
+
+            let natural_w = doc::natural_width(text);
+            let max_inner_w = area.w.saturating_sub(2).max(1);
+            let inner_w = (natural_w.min(u16::MAX as usize) as u16)
+                .clamp(1, 120)
+                .min(max_inner_w);
+            let rendered = doc::render_markdown(text, inner_w, doc::MAX_RENDER_LINES);
+            (text_hash, inner_w, rendered)
+        };
+
+        let total_lines = rendered.len();
+        if self.hover_popup_hash != Some(text_hash) {
+            self.reset_hover_popup_scroll();
+        }
+        self.hover_popup_hash = Some(text_hash);
+        self.hover_popup_total_lines = total_lines;
+
+        let desired_width = inner_w.saturating_add(2).max(3);
+
+        // Prevent hover docs from taking over the whole screen; allow scrolling instead.
+        let max_height = area.h.min(15);
+        if max_height < 3 {
+            return;
+        }
+        let desired_height = total_lines.saturating_add(2).min(u16::MAX as usize).max(3) as u16;
+        let height = desired_height.min(max_height);
+        let width = desired_width.min(area.w).max(3);
 
         let right = area.right();
         let mut x = cx;
         if x.saturating_add(width) > right {
             x = right.saturating_sub(width);
         }
+        if x < area.x {
+            x = area.x;
+        }
         let below = cy.saturating_add(1);
         let bottom = area.bottom();
-        let mut y = if below.saturating_add(height) <= bottom {
+        let avail_below = bottom.saturating_sub(below);
+        let avail_above = cy.saturating_sub(area.y);
+        let can_below = avail_below >= 3;
+        let can_above = avail_above >= 3;
+        let place_below = match (can_below, can_above) {
+            (true, true) => avail_below >= avail_above,
+            (true, false) => true,
+            (false, true) => false,
+            (false, false) => return,
+        };
+        let avail_h = if place_below {
+            avail_below
+        } else {
+            avail_above
+        };
+        let height = height.min(avail_h);
+
+        let mut y = if place_below {
             below
         } else {
             cy.saturating_sub(height)
@@ -97,8 +158,13 @@ impl Workbench {
         if y < area.y {
             y = area.y;
         }
+        if y.saturating_add(height) > area.bottom() {
+            y = area.bottom().saturating_sub(height);
+        }
 
         let popup_area = UiRect::new(x, y, width, height);
+        self.last_hover_popup_area = Some(popup_area);
+
         let base_style = UiStyle::default()
             .bg(self.ui_theme.palette_bg)
             .fg(self.ui_theme.palette_fg);
@@ -109,16 +175,17 @@ impl Workbench {
             return;
         }
 
-        let wrapped = wrap_lines(&lines, inner.w, inner.h as usize);
-        let text_style = UiStyle::default().fg(self.ui_theme.palette_fg);
-        for (idx, line) in wrapped.into_iter().enumerate() {
-            let y = inner.y.saturating_add(idx.min(u16::MAX as usize) as u16);
-            if y >= inner.bottom() {
-                break;
-            }
-            let row_clip = UiRect::new(inner.x, y, inner.w, 1);
-            painter.text_clipped(Pos::new(inner.x, y), line, text_style, row_clip);
-        }
+        let view_h = inner.h as usize;
+        self.hover_popup_scroll =
+            doc::clamp_scroll_offset(self.hover_popup_scroll, total_lines, view_h);
+        doc::paint_doc_lines(
+            painter,
+            inner,
+            &rendered,
+            &self.ui_theme,
+            base_style,
+            self.hover_popup_scroll,
+        );
     }
 
     pub(super) fn paint_signature_help_popup(&self, painter: &mut Painter, area: UiRect) {
@@ -215,9 +282,14 @@ impl Workbench {
         }
     }
 
-    pub(super) fn paint_completion_popup(&self, painter: &mut Painter, area: UiRect) {
+    pub(super) fn paint_completion_popup(&mut self, painter: &mut Painter, area: UiRect) {
+        self.last_completion_doc_area = None;
+        self.completion_doc_total_lines = 0;
+
         let completion = &self.store.state().ui.completion;
         if !completion.visible || completion.items.is_empty() {
+            self.completion_doc_scroll = 0;
+            self.completion_doc_key = None;
             return;
         }
 
@@ -355,6 +427,89 @@ impl Workbench {
                 x = x.saturating_add(1);
                 painter.text_clipped(Pos::new(x, y), detail, detail_style, row_area);
             }
+        }
+
+        let doc_key = completion.request.as_ref().map(|req| CompletionDocKey {
+            pane: req.pane,
+            path: req.path.clone(),
+            version: req.version,
+            selected,
+        });
+        if self.completion_doc_key.as_ref() != doc_key.as_ref() {
+            self.completion_doc_scroll = 0;
+        }
+        self.completion_doc_key = doc_key;
+
+        // Documentation panel (Helix-like): show docs for the currently selected item.
+        let doc_text = completion.items.get(selected).and_then(|item| {
+            item.documentation
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| item.detail.as_deref().filter(|s| !s.trim().is_empty()))
+        });
+
+        if let Some(doc_text) = doc_text {
+            let natural_w = doc::natural_width(doc_text);
+
+            let max_area = completion_doc_area(area, popup_area, cy, 30);
+            let Some(mut doc_area_max) = max_area else {
+                return;
+            };
+            if doc_area_max.w < 3 || doc_area_max.h < 3 {
+                return;
+            }
+
+            // Prefer a narrow doc panel: shrink to natural width (capped) rather than using
+            // all available space. Long docs scroll instead of taking over the screen.
+            let avail_inner_w = doc_area_max.w.saturating_sub(2).max(1);
+            let inner_w = (natural_w.min(u16::MAX as usize) as u16)
+                .clamp(1, 120)
+                .min(avail_inner_w);
+
+            let rendered = doc::render_markdown(doc_text, inner_w, doc::MAX_RENDER_LINES);
+            let total_lines = rendered.len();
+            self.completion_doc_total_lines = total_lines;
+
+            let desired_h = total_lines.saturating_add(2).min(u16::MAX as usize).max(3) as u16;
+            let desired_w = inner_w.saturating_add(2).max(3);
+
+            doc_area_max.w = desired_w.min(doc_area_max.w);
+            doc_area_max.h = desired_h.min(doc_area_max.h);
+
+            // Align above/below doc popups with the completion list rather than full screen.
+            let place_side = doc_area_max.x == popup_area.right();
+            if !place_side {
+                let mut x = popup_area.x;
+                if x.saturating_add(doc_area_max.w) > area.right() {
+                    x = area.right().saturating_sub(doc_area_max.w);
+                }
+                if x < area.x {
+                    x = area.x;
+                }
+                doc_area_max.x = x;
+            }
+
+            painter.fill_rect(doc_area_max, base_style);
+            painter.border(doc_area_max, border_style, BorderKind::Plain);
+
+            self.last_completion_doc_area = Some(doc_area_max);
+
+            let inner = doc_area_max.inset(Insets::all(1));
+            if inner.is_empty() {
+                return;
+            }
+
+            let view_h = inner.h as usize;
+            self.completion_doc_scroll =
+                doc::clamp_scroll_offset(self.completion_doc_scroll, total_lines, view_h);
+            doc::paint_doc_lines(
+                painter,
+                inner,
+                &rendered,
+                &self.ui_theme,
+                base_style,
+                self.completion_doc_scroll,
+            );
         }
     }
 
@@ -752,6 +907,57 @@ fn wrap_lines(lines: &[&str], width: u16, max_lines: usize) -> Vec<String> {
         }
     }
     out
+}
+
+fn completion_doc_area(
+    screen: UiRect,
+    popup: UiRect,
+    cursor_y: u16,
+    side_threshold: u16,
+) -> Option<UiRect> {
+    if screen.is_empty() || popup.is_empty() {
+        return None;
+    }
+
+    let right_avail = screen.right().saturating_sub(popup.right());
+    if right_avail > side_threshold {
+        let x = popup.right();
+        let y = popup.y;
+        let w = right_avail;
+        // Keep the doc panel bounded to the completion popup height (Helix-like). Long docs are
+        // scrollable; we don't want the popup to take over the whole screen.
+        let h = popup.h;
+        let area = UiRect::new(x, y, w, h);
+        return (!area.is_empty()).then_some(area);
+    }
+
+    let top = screen.y;
+    let bottom = screen.bottom();
+    let popup_top = popup.y;
+    let popup_bottom = popup.bottom();
+
+    // Documentation should not cover the cursor or the completion popup.
+    let avail_above = cursor_y
+        .min(popup_top)
+        .saturating_sub(top)
+        .saturating_sub(1);
+    let avail_below = bottom
+        .saturating_sub(cursor_y.max(popup_bottom))
+        .saturating_sub(1);
+
+    let (y, avail_h) = if avail_below >= avail_above {
+        (bottom.saturating_sub(avail_below), avail_below)
+    } else {
+        (top, avail_above)
+    };
+
+    if avail_h <= 1 {
+        return None;
+    }
+
+    let h = avail_h.min(15);
+    let area = UiRect::new(screen.x, y, screen.w, h);
+    (!area.is_empty()).then_some(area)
 }
 
 fn push_editor_area_node(

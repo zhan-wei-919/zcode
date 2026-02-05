@@ -2,11 +2,14 @@ use super::super::theme::UiTheme;
 use super::Workbench;
 use crate::core::Command;
 use crate::kernel::services::adapters::{ConfigService, KeybindingContext, KeybindingService};
-use crate::kernel::services::ports::{GlobalSearchMessage, SearchMessage};
+use crate::kernel::services::ports::{
+    GlobalSearchMessage, LspPosition, LspPositionEncoding, SearchMessage,
+};
 use crate::kernel::services::KernelMessage;
 use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget};
 use std::sync::mpsc;
 use std::time::Instant;
+use unicode_xid::UnicodeXID;
 
 impl Workbench {
     /// 定时检查是否需要刷盘（由主循环调用）
@@ -233,7 +236,13 @@ impl Workbench {
             return false;
         }
 
-        let pane = self.store.state().ui.editor_layout.active_pane;
+        let active_pane = self.store.state().ui.editor_layout.active_pane;
+        let (pane, pos, anchor) = self
+            .idle_hover_target
+            .filter(|t| self.store.state().editor.pane(t.pane).is_some())
+            .map(|t| (t.pane, (t.row, t.col), Some(t.anchor)))
+            .unwrap_or_else(|| (active_pane, (usize::MAX, usize::MAX), None));
+
         let Some(tab) = self
             .store
             .state()
@@ -247,18 +256,61 @@ impl Workbench {
         let Some(path) = tab.path.as_ref() else {
             return false;
         };
-        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+        if !crate::kernel::lsp_registry::is_lsp_source_path(path) {
             return false;
         }
 
-        let (line, column) = lsp_position_from_cursor(tab);
+        // Resolve server capabilities/encoding for this path.
+        let caps = crate::kernel::lsp_registry::client_key_for_path(
+            &self.store.state().workspace_root,
+            path,
+        )
+        .and_then(|(_, key)| self.store.state().lsp.server_capabilities.get(&key));
+        let supports_hover = caps.map(|c| c.hover).unwrap_or(true);
+        if !supports_hover {
+            return false;
+        }
+        let encoding = caps
+            .map(|c| c.position_encoding)
+            .unwrap_or(LspPositionEncoding::Utf16);
+
+        // Determine which buffer position we are hovering: mouse position (preferred), otherwise cursor.
+        let buf_pos = if pos.0 == usize::MAX {
+            tab.buffer.cursor()
+        } else {
+            let row = pos.0.min(tab.buffer.len_lines().saturating_sub(1));
+            let col = pos.1.min(tab.buffer.line_grapheme_len(row));
+            (row, col)
+        };
+
+        let char_offset = tab.buffer.pos_to_char(buf_pos);
+        if tab.is_in_string_or_comment_at_char(char_offset) {
+            return false;
+        }
+        if !buffer_pos_is_identifier(tab, buf_pos) {
+            return false;
+        }
+
+        let (line, column) = lsp_position_from_buffer_pos(tab, buf_pos, encoding);
         let key = (path.clone(), line, column, tab.edit_version);
         if self.idle_hover_last_request.as_ref() == Some(&key) {
             return false;
         }
         self.idle_hover_last_request = Some(key);
+        self.idle_hover_last_anchor = anchor;
 
-        let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::LspHover));
+        if let Some(service) = self
+            .kernel_services
+            .get_mut::<crate::kernel::services::adapters::LspService>()
+        {
+            service.request_hover(
+                path,
+                LspPosition {
+                    line,
+                    character: column,
+                },
+            );
+        }
         false
     }
 
@@ -460,17 +512,45 @@ impl Workbench {
     }
 }
 
-fn lsp_position_from_cursor(tab: &crate::kernel::editor::EditorTabState) -> (u32, u32) {
-    let (row, col) = tab.buffer.cursor();
+fn buffer_pos_is_identifier(
+    tab: &crate::kernel::editor::EditorTabState,
+    pos: (usize, usize),
+) -> bool {
+    let rope = tab.buffer.rope();
+    let char_offset = tab.buffer.pos_to_char(pos).min(rope.len_chars());
+    if char_offset >= rope.len_chars() {
+        return false;
+    }
+
+    let ch = rope.char(char_offset);
+    ch == '_' || UnicodeXID::is_xid_continue(ch)
+}
+
+fn lsp_position_from_buffer_pos(
+    tab: &crate::kernel::editor::EditorTabState,
+    pos: (usize, usize),
+    encoding: LspPositionEncoding,
+) -> (u32, u32) {
+    let (row, col) = pos;
     let char_offset = tab.buffer.pos_to_char((row, col));
     let rope = tab.buffer.rope();
     let line_start = rope.line_to_char(row);
     let col_chars = char_offset.saturating_sub(line_start);
-    let utf16 = rope
-        .line(row)
-        .chars()
-        .take(col_chars)
-        .map(|ch| ch.len_utf16() as u32)
-        .sum();
-    (row as u32, utf16)
+
+    let line_slice = rope.line(row);
+    let character = match encoding {
+        LspPositionEncoding::Utf8 => line_slice
+            .chars()
+            .take(col_chars)
+            .map(|ch| ch.len_utf8() as u32)
+            .sum(),
+        LspPositionEncoding::Utf16 => line_slice
+            .chars()
+            .take(col_chars)
+            .map(|ch| ch.len_utf16() as u32)
+            .sum(),
+        LspPositionEncoding::Utf32 => col_chars as u32,
+    };
+
+    (row as u32, character)
 }

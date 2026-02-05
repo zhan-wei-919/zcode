@@ -193,6 +193,84 @@ impl SyntaxDocument {
     }
 }
 
+/// Highlight an arbitrary snippet (e.g. LSP hover / completion documentation code fences).
+///
+/// Returns per-line highlight spans with offsets relative to each line start.
+pub fn highlight_snippet(language: LanguageId, text: &str) -> Vec<Vec<HighlightSpan>> {
+    let rope = Rope::from_str(text);
+    let total_lines = rope.len_lines().max(1);
+
+    let mut parser = Parser::new();
+    let language_set = match language {
+        LanguageId::Rust => parser.set_language(tree_sitter_rust::language()).is_ok(),
+        LanguageId::Go => parser.set_language(tree_sitter_go::language()).is_ok(),
+        LanguageId::Python => parser.set_language(tree_sitter_python::language()).is_ok(),
+        LanguageId::JavaScript => parser
+            .set_language(tree_sitter_javascript::language())
+            .is_ok(),
+        LanguageId::TypeScript => parser
+            .set_language(tree_sitter_typescript::language_typescript())
+            .is_ok(),
+        LanguageId::Tsx => parser
+            .set_language(tree_sitter_typescript::language_tsx())
+            .is_ok(),
+    };
+    if !language_set {
+        return vec![Vec::new(); total_lines];
+    }
+
+    let Some(tree) = parse_rope(&mut parser, &rope, None) else {
+        return vec![Vec::new(); total_lines];
+    };
+
+    let start_byte = 0;
+    let end_byte = rope.len_bytes();
+    let spans = collect_highlights(language, &tree, start_byte, end_byte);
+
+    let mut per_line = vec![Vec::new(); total_lines];
+
+    for span in spans {
+        let span_start = span.start.min(end_byte);
+        let span_end = span.end.min(end_byte);
+        if span_start >= span_end {
+            continue;
+        }
+
+        let first_line = rope.byte_to_line(span_start);
+        let last_line = rope.byte_to_line(span_end.saturating_sub(1));
+
+        let last_line = last_line.min(total_lines.saturating_sub(1));
+        for (line, line_spans) in per_line
+            .iter_mut()
+            .enumerate()
+            .take(last_line.saturating_add(1))
+            .skip(first_line)
+        {
+            let line_start = rope.line_to_byte(line);
+            let line_end = rope.line_to_byte((line + 1).min(total_lines));
+
+            let s = span_start.max(line_start);
+            let e = span_end.min(line_end);
+            if s >= e {
+                continue;
+            }
+
+            line_spans.push(HighlightSpan {
+                start: s - line_start,
+                end: e - line_start,
+                kind: span.kind,
+            });
+        }
+    }
+
+    for line_spans in &mut per_line {
+        line_spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+        merge_adjacent_spans(line_spans);
+    }
+
+    per_line
+}
+
 fn parse_rope(parser: &mut Parser, rope: &Rope, old_tree: Option<&Tree>) -> Option<Tree> {
     let mut cache = RopeChunkCache::new(rope);
     parser.parse_with(
