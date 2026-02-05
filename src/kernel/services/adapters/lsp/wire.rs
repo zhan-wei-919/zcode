@@ -5,10 +5,10 @@ use super::convert::{
     signature_help_text, symbol_item_from_symbol_information, symbol_item_from_workspace_symbol,
     workspace_edit_from_lsp,
 };
-use super::LspService;
+use super::LspClient;
 use crate::kernel::locations::LocationItem;
 use crate::kernel::services::ports::{
-    LspFoldingRange, LspRange, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspFoldingRange, LspRange, LspServerKind, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use crate::kernel::services::KernelServiceContext;
 use crate::kernel::Action;
@@ -92,7 +92,7 @@ pub(super) enum LspRequestKind {
     Shutdown,
 }
 
-impl LspService {
+impl LspClient {
     pub(super) fn next_id(&mut self) -> i32 {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
@@ -219,6 +219,8 @@ pub(super) fn writer_loop(
 }
 
 pub(super) struct ReaderLoopArgs {
+    pub(super) server: LspServerKind,
+    pub(super) root: PathBuf,
     pub(super) stdout: std::process::ChildStdout,
     pub(super) ctx: KernelServiceContext,
     pub(super) init_id: i32,
@@ -245,6 +247,8 @@ pub(super) struct ReaderLoopArgs {
 
 pub(super) fn reader_loop(args: ReaderLoopArgs) {
     let ReaderLoopArgs {
+        server,
+        root,
         stdout,
         ctx,
         init_id,
@@ -314,7 +318,11 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
                             serde_json::from_value::<lsp_types::InitializeResult>(result.clone())
                         {
                             let caps = server_capabilities_from_lsp(&result.capabilities);
-                            ctx.dispatch(Action::LspServerCapabilities { capabilities: caps });
+                            ctx.dispatch(Action::LspServerCapabilities {
+                                server,
+                                root: root.clone(),
+                                capabilities: caps,
+                            });
                         }
                     }
 

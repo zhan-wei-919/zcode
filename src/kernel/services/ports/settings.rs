@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::config::EditorConfig;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Settings {
@@ -12,6 +13,31 @@ pub struct Settings {
     pub theme: ThemeSettings,
     #[serde(default)]
     pub editor: EditorConfig,
+    #[serde(default)]
+    pub lsp: LspSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LspSettings {
+    /// LSP server command (e.g. "rust-analyzer" or "/usr/bin/rust-analyzer").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Extra arguments passed to the LSP server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Per-server overrides keyed by server name (e.g. "gopls", "pyright", "tsls").
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub servers: BTreeMap<String, LspServerConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LspServerConfig {
+    /// LSP server command override for this language server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Extra args override. When omitted, zcode uses server-specific defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -29,8 +29,9 @@
 ### Prerequisites
 
 *   [Rust toolchain](https://rustup.rs/) (recommended: the version pinned in `rust-toolchain.toml`)
-*   Linux: a C toolchain for linking (e.g. `cc`/`gcc`)
+*   Linux: a C toolchain for linking (e.g. `cc`/`gcc`) (needed for building tree-sitter grammars)
 *   A terminal font with Nerd Font glyphs (recommended for UI icons)
+*   Optional (for LSP features): `rust-analyzer`, `gopls`, `pyright-langserver`, `typescript-language-server`
 
 ### Launching the Editor
 
@@ -61,7 +62,7 @@ Build and install `zcode` to your Cargo bin directory (usually `~/.cargo/bin`):
 
 ```bash
 cargo install --path . --locked
-zcode .
+zcode
 ```
 
 Alternatively, use the helper script:
@@ -70,6 +71,8 @@ Alternatively, use the helper script:
 ./install.sh --user
 # or: sudo ./install.sh --system
 ```
+
+If you use `./install.sh --user`, make sure `~/.local/bin` is in your `PATH`.
 
 ## Usage Guide
 
@@ -104,6 +107,14 @@ Default key mappings are as follows:
     *   `Ctrl + z`: Undo
     *   `Ctrl + y`: Redo
 
+*   **LSP** (when a language server is available):
+    *   `F2`: Hover
+    *   `F12`: Go to Definition
+    *   `Shift + F12`: Find References
+    *   `Alt + Enter`: Code Action
+    *   `Ctrl + Space`: Completion
+    *   `Ctrl + Shift + r`: Rename
+
 ### Mouse Support
 
 `zcode` has comprehensive mouse support:
@@ -118,8 +129,11 @@ Default key mappings are as follows:
 
 ## Core Features
 
-*   **⚡️ High-Performance Async Architecture**: Powered by `tokio`, handling file I/O and global search asynchronously. This ensures the main UI thread remains buttery smooth, never blocking on large file loads or heavy searches.
-*   **🎨 Modern UI**: Built on `ratatui` and `crossterm`, featuring a Sidebar, Activity Bar, Bottom Panel, Tabs, and flexible Split Panes.
+*   **Fast TUI editor**: Built on `ratatui` and `crossterm`, featuring a Sidebar, Bottom Panel, Tabs, and split panes.
+*   **Multi-language syntax highlighting**: Tree-sitter highlight for Rust/Go/Python/JavaScript/TypeScript (incl. JSX/TSX).
+*   **Multi-language LSP support** (optional): Diagnostics, hover, completion, go-to-definition, etc, for Rust/Go/Python/JS/TS.
+    *   Monorepo-friendly: LSP root is detected per language by searching the nearest marker file (then spawns per-(language,root)).
+    *   Server discovery: prefers project-local `node_modules/.bin` and Python virtualenvs when available.
 *   **🔍 Powerful Search**: Built-in `ripgrep`-based engine for high-performance global search and real-time in-file finding.
 *   **⌨️ Key Mapping**: Flexible keybinding configuration support.
 *   **📋 Clipboard Integration**: Seamless system clipboard support.
@@ -130,6 +144,23 @@ Settings are stored in:
 
 *   Linux: `~/.cache/.zcode/setting.json`
 *   macOS: `~/Library/Caches/.zcode/setting.json`
+
+### LSP configuration
+
+You can override per-language LSP server commands in `setting.json`:
+
+```json
+{
+  "lsp": {
+    "servers": {
+      "rust-analyzer": { "command": "rust-analyzer" },
+      "gopls": { "command": "gopls" },
+      "pyright": { "command": "pyright-langserver", "args": ["--stdio"] },
+      "tsls": { "command": "typescript-language-server", "args": ["--stdio"] }
+    }
+  }
+}
+```
 
 ## Troubleshooting
 
@@ -148,13 +179,37 @@ Install one of the following:
 *   Wayland: `wl-clipboard` (`wl-copy` / `wl-paste`)
 *   X11: `xclip` or `xsel`
 
-### Rust LSP (`rust-analyzer`) not found
+### LSP server not found
 
-Make sure `rust-analyzer` is installed and available in PATH. If you use `rustup`:
+`zcode` enables LSP by default, but the language servers are optional. Install the servers you want:
 
-```bash
-rustup component add rust-analyzer rust-src
-```
+*   Rust (`rust-analyzer`):
+
+    ```bash
+    rustup component add rust-analyzer rust-src
+    ```
+
+*   Go (`gopls`):
+
+    ```bash
+    go install golang.org/x/tools/gopls@latest
+    ```
+
+*   Python (`pyright-langserver`):
+
+    ```bash
+    npm i -g pyright
+    # or: pipx install pyright
+    ```
+
+*   JavaScript/TypeScript (`typescript-language-server`):
+
+    ```bash
+    npm i -g typescript-language-server typescript
+    # or per-project: npm i -D typescript-language-server typescript
+    ```
+
+If you install JS/TS servers per-project, `zcode` will auto-detect `node_modules/.bin` (searching upwards from the detected project root).
 
 ## Development
 

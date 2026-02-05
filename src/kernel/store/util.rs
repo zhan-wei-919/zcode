@@ -70,8 +70,8 @@ pub(super) fn prev_bottom_panel_tab(
     Some(tabs[prev].clone())
 }
 
-pub(super) fn is_rust_source_path(path: &Path) -> bool {
-    matches!(path.extension().and_then(|s| s.to_str()), Some("rs"))
+pub(super) fn is_lsp_source_path(path: &Path) -> bool {
+    crate::kernel::lsp_registry::is_lsp_source_path(path)
 }
 
 pub(super) fn line_len_chars(line: RopeSlice<'_>) -> usize {

@@ -1,4 +1,5 @@
 use super::Workbench;
+use crate::kernel::lsp_registry;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{
     ClipboardService, GlobalSearchService, LspService, SearchService,
@@ -499,7 +500,7 @@ impl Workbench {
                     let Some(path) = tab.path.as_ref() else {
                         continue;
                     };
-                    if !is_rust_source_path(path) {
+                    if !lsp_registry::is_lsp_source_path(path) {
                         continue;
                     }
                     current_paths.insert(path.clone());
@@ -531,7 +532,7 @@ impl Workbench {
         let Some(path) = tab.path.as_ref() else {
             return;
         };
-        if !is_rust_source_path(path) {
+        if !lsp_registry::is_lsp_source_path(path) {
             return;
         }
 
@@ -539,21 +540,26 @@ impl Workbench {
             return;
         }
 
-        let encoding = self
-            .store
-            .state()
-            .lsp
-            .server_capabilities
-            .as_ref()
-            .map(|c| c.position_encoding)
-            .unwrap_or(LspPositionEncoding::Utf16);
+        let encoding = lsp_position_encoding_for_path(self.store.state(), path);
         let change = lsp_change_from_tab(tab, encoding);
         service.sync_document(path, tab.edit_version, change, || tab.buffer.text());
     }
 }
 
-fn is_rust_source_path(path: &std::path::Path) -> bool {
-    matches!(path.extension().and_then(|s| s.to_str()), Some("rs"))
+fn lsp_position_encoding_for_path(
+    state: &crate::kernel::AppState,
+    path: &std::path::Path,
+) -> LspPositionEncoding {
+    let Some((_language, key)) = lsp_registry::client_key_for_path(&state.workspace_root, path)
+    else {
+        return LspPositionEncoding::Utf16;
+    };
+    state
+        .lsp
+        .server_capabilities
+        .get(&key)
+        .map(|c| c.position_encoding)
+        .unwrap_or(LspPositionEncoding::Utf16)
 }
 
 fn lsp_change_from_tab(

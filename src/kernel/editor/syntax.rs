@@ -8,6 +8,11 @@ use tree_sitter::{InputEdit, Parser, Point, Tree};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LanguageId {
     Rust,
+    Go,
+    Python,
+    JavaScript,
+    TypeScript,
+    Tsx,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +53,11 @@ impl SyntaxDocument {
     pub fn for_path(path: &Path, rope: &Rope) -> Option<Self> {
         match path.extension().and_then(|s| s.to_str()) {
             Some("rs") => Self::new(LanguageId::Rust, rope),
+            Some("go") => Self::new(LanguageId::Go, rope),
+            Some("py" | "pyi") => Self::new(LanguageId::Python, rope),
+            Some("js" | "mjs" | "cjs" | "jsx") => Self::new(LanguageId::JavaScript, rope),
+            Some("ts" | "mts" | "cts") => Self::new(LanguageId::TypeScript, rope),
+            Some("tsx") => Self::new(LanguageId::Tsx, rope),
             _ => None,
         }
     }
@@ -56,6 +66,17 @@ impl SyntaxDocument {
         let mut parser = Parser::new();
         match language {
             LanguageId::Rust => parser.set_language(tree_sitter_rust::language()).ok()?,
+            LanguageId::Go => parser.set_language(tree_sitter_go::language()).ok()?,
+            LanguageId::Python => parser.set_language(tree_sitter_python::language()).ok()?,
+            LanguageId::JavaScript => parser
+                .set_language(tree_sitter_javascript::language())
+                .ok()?,
+            LanguageId::TypeScript => parser
+                .set_language(tree_sitter_typescript::language_typescript())
+                .ok()?,
+            LanguageId::Tsx => parser
+                .set_language(tree_sitter_typescript::language_tsx())
+                .ok()?,
         }
 
         let tree = parse_rope(&mut parser, rope, None)?;
@@ -128,7 +149,7 @@ impl SyntaxDocument {
         let range_start = rope.line_to_byte(start_line);
         let range_end = rope.line_to_byte(end_line_exclusive);
 
-        let spans = collect_highlights(&self.tree, range_start, range_end);
+        let spans = collect_highlights(self.language, &self.tree, range_start, range_end);
 
         let mut per_line = vec![Vec::new(); end_line_exclusive - start_line];
 
@@ -297,7 +318,12 @@ fn merge_adjacent_spans(spans: &mut Vec<HighlightSpan>) {
     *spans = out;
 }
 
-fn collect_highlights(tree: &Tree, start_byte: usize, end_byte: usize) -> Vec<AbsHighlightSpan> {
+fn collect_highlights(
+    language: LanguageId,
+    tree: &Tree,
+    start_byte: usize,
+    end_byte: usize,
+) -> Vec<AbsHighlightSpan> {
     let root = tree.root_node();
     let mut stack = vec![root];
     let mut spans = Vec::new();
@@ -310,7 +336,7 @@ fn collect_highlights(tree: &Tree, start_byte: usize, end_byte: usize) -> Vec<Ab
             continue;
         }
 
-        if let Some(kind) = classify_node(node.kind()) {
+        if let Some(kind) = classify_node(language, node.kind()) {
             spans.push(AbsHighlightSpan {
                 start: node_start,
                 end: node_end,
@@ -337,26 +363,35 @@ fn collect_highlights(tree: &Tree, start_byte: usize, end_byte: usize) -> Vec<Ab
     spans
 }
 
-fn classify_node(kind: &str) -> Option<HighlightKind> {
+fn classify_node(language: LanguageId, kind: &str) -> Option<HighlightKind> {
     if is_comment_kind(kind) {
         return Some(HighlightKind::Comment);
     }
     if is_string_kind(kind) {
         return Some(HighlightKind::String);
     }
-    if matches!(kind, "integer_literal" | "float_literal") {
+    if kind.contains("integer") || kind.contains("float") || kind.contains("number") {
         return Some(HighlightKind::Number);
     }
-    if matches!(kind, "type_identifier" | "primitive_type") {
+    if kind.ends_with("_literal") && (kind.contains("int") || kind.contains("imaginary")) {
+        return Some(HighlightKind::Number);
+    }
+    if matches!(
+        kind,
+        "type_identifier" | "primitive_type" | "predefined_type"
+    ) {
         return Some(HighlightKind::Type);
     }
-    if matches!(kind, "attribute_item" | "inner_attribute_item") {
+    if matches!(
+        kind,
+        "attribute_item" | "inner_attribute_item" | "decorator"
+    ) {
         return Some(HighlightKind::Attribute);
     }
     if kind == "lifetime" {
         return Some(HighlightKind::Lifetime);
     }
-    if is_rust_keyword(kind) {
+    if is_keyword(language, kind) {
         return Some(HighlightKind::Keyword);
     }
     None
@@ -367,15 +402,16 @@ fn is_comment_kind(kind: &str) -> bool {
 }
 
 fn is_string_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        "string_literal"
-            | "raw_string_literal"
-            | "byte_string_literal"
-            | "raw_byte_string_literal"
-            | "char_literal"
-            | "byte_literal"
-    )
+    kind.contains("string") || matches!(kind, "char_literal" | "byte_literal")
+}
+
+fn is_keyword(language: LanguageId, kind: &str) -> bool {
+    match language {
+        LanguageId::Rust => is_rust_keyword(kind),
+        LanguageId::Go => is_go_keyword(kind),
+        LanguageId::Python => is_python_keyword(kind),
+        LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Tsx => is_js_ts_keyword(kind),
+    }
 }
 
 fn is_rust_keyword(kind: &str) -> bool {
@@ -417,6 +453,135 @@ fn is_rust_keyword(kind: &str) -> bool {
             | "use"
             | "where"
             | "while"
+    )
+}
+
+fn is_go_keyword(kind: &str) -> bool {
+    matches!(
+        kind,
+        "break"
+            | "case"
+            | "chan"
+            | "const"
+            | "continue"
+            | "default"
+            | "defer"
+            | "else"
+            | "fallthrough"
+            | "for"
+            | "func"
+            | "go"
+            | "goto"
+            | "if"
+            | "import"
+            | "interface"
+            | "map"
+            | "package"
+            | "range"
+            | "return"
+            | "select"
+            | "struct"
+            | "switch"
+            | "type"
+            | "var"
+    )
+}
+
+fn is_python_keyword(kind: &str) -> bool {
+    matches!(
+        kind,
+        "False"
+            | "None"
+            | "True"
+            | "and"
+            | "as"
+            | "assert"
+            | "async"
+            | "await"
+            | "break"
+            | "case"
+            | "class"
+            | "continue"
+            | "def"
+            | "del"
+            | "elif"
+            | "else"
+            | "except"
+            | "finally"
+            | "for"
+            | "from"
+            | "global"
+            | "if"
+            | "import"
+            | "in"
+            | "is"
+            | "lambda"
+            | "match"
+            | "nonlocal"
+            | "not"
+            | "or"
+            | "pass"
+            | "raise"
+            | "return"
+            | "try"
+            | "while"
+            | "with"
+            | "yield"
+    )
+}
+
+fn is_js_ts_keyword(kind: &str) -> bool {
+    matches!(
+        kind,
+        "async"
+            | "await"
+            | "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "export"
+            | "extends"
+            | "finally"
+            | "for"
+            | "from"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "interface"
+            | "let"
+            | "new"
+            | "null"
+            | "of"
+            | "private"
+            | "protected"
+            | "public"
+            | "readonly"
+            | "return"
+            | "static"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "try"
+            | "type"
+            | "typeof"
+            | "undefined"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+            | "yield"
+            | "true"
+            | "false"
     )
 }
 
