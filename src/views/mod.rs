@@ -8,6 +8,7 @@
 pub mod editor;
 pub mod explorer;
 pub mod search;
+pub mod theme_editor;
 
 pub use editor::{
     compute_editor_pane_layout, cursor_position_editor, hit_test_editor_mouse, hit_test_editor_tab,

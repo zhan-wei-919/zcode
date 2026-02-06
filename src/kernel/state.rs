@@ -22,6 +22,130 @@ pub enum FocusTarget {
     Editor,
     BottomPanel,
     CommandPalette,
+    ThemeEditor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeEditorToken {
+    Comment,
+    Keyword,
+    String,
+    Number,
+    Type,
+    Attribute,
+    Function,
+    Variable,
+    Constant,
+    Regex,
+}
+
+impl ThemeEditorToken {
+    pub const ALL: [ThemeEditorToken; 10] = [
+        ThemeEditorToken::Comment,
+        ThemeEditorToken::Keyword,
+        ThemeEditorToken::String,
+        ThemeEditorToken::Number,
+        ThemeEditorToken::Type,
+        ThemeEditorToken::Attribute,
+        ThemeEditorToken::Function,
+        ThemeEditorToken::Variable,
+        ThemeEditorToken::Constant,
+        ThemeEditorToken::Regex,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Comment => "Comment",
+            Self::Keyword => "Keyword",
+            Self::String => "String",
+            Self::Number => "Number",
+            Self::Type => "Type",
+            Self::Attribute => "Attribute",
+            Self::Function => "Function",
+            Self::Variable => "Variable",
+            Self::Constant => "Constant",
+            Self::Regex => "Regex",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::Comment => 0,
+            Self::Keyword => 1,
+            Self::String => 2,
+            Self::Number => 3,
+            Self::Type => 4,
+            Self::Attribute => 5,
+            Self::Function => 6,
+            Self::Variable => 7,
+            Self::Constant => 8,
+            Self::Regex => 9,
+        }
+    }
+
+    pub fn from_index(i: usize) -> Self {
+        Self::ALL[i % Self::ALL.len()]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeEditorFocus {
+    TokenList,
+    HueBar,
+    SvPalette,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewLanguage {
+    Rust,
+    Python,
+    Go,
+    JavaScript,
+}
+
+impl PreviewLanguage {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Rust => "Rust",
+            Self::Python => "Python",
+            Self::Go => "Go",
+            Self::JavaScript => "JavaScript",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Rust => Self::Python,
+            Self::Python => Self::Go,
+            Self::Go => Self::JavaScript,
+            Self::JavaScript => Self::Rust,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ThemeEditorState {
+    pub visible: bool,
+    pub selected_token: ThemeEditorToken,
+    pub focus: ThemeEditorFocus,
+    pub hue: u16,
+    pub saturation: u8,
+    pub lightness: u8,
+    pub preview_language: PreviewLanguage,
+}
+
+impl Default for ThemeEditorState {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            selected_token: ThemeEditorToken::Comment,
+            focus: ThemeEditorFocus::TokenList,
+            hue: 0,
+            saturation: 50,
+            lightness: 50,
+            preview_language: PreviewLanguage::Rust,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,6 +366,7 @@ pub struct UiState {
     pub hover_message: Option<String>,
     pub signature_help: SignatureHelpPopupState,
     pub completion: CompletionPopupState,
+    pub theme_editor: ThemeEditorState,
 }
 
 impl Default for UiState {
@@ -271,6 +396,7 @@ impl Default for UiState {
             hover_message: None,
             signature_help: SignatureHelpPopupState::default(),
             completion: CompletionPopupState::default(),
+            theme_editor: ThemeEditorState::default(),
         }
     }
 }

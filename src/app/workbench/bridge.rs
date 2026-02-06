@@ -480,6 +480,9 @@ impl Workbench {
             KernelEffect::Restart { path, hard } => {
                 self.pending_restart = Some(super::PendingRestart { path, hard });
             }
+            KernelEffect::SaveThemeSettings { .. } => {
+                // Theme saving is handled via debounce in tick.rs
+            }
         }
     }
 }

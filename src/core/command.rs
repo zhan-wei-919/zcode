@@ -169,6 +169,9 @@ pub enum Command {
     GitTogglePanel,
     HardReload,
 
+    // ==================== Theme Editor ====================
+    OpenThemeEditor,
+
     // ==================== 扩展点 ====================
     Custom(String),
 }
@@ -303,6 +306,7 @@ impl Command {
             Command::GitWorktreeAdd => "gitWorktreeAdd",
             Command::GitTogglePanel => "gitTogglePanel",
             Command::HardReload => "hardReload",
+            Command::OpenThemeEditor => "openThemeEditor",
             Command::Escape => "escape",
             Command::Custom(name) => name,
         }
@@ -437,6 +441,7 @@ impl Command {
             "gitWorktreeAdd" => Command::GitWorktreeAdd,
             "gitTogglePanel" => Command::GitTogglePanel,
             "hardReload" => Command::HardReload,
+            "openThemeEditor" => Command::OpenThemeEditor,
             other => Command::Custom(other.to_string()),
         }
     }

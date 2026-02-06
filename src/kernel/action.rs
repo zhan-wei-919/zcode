@@ -19,7 +19,7 @@ use crate::kernel::services::ports::LspServerCapabilities;
 use crate::kernel::services::ports::LspServerKind;
 use crate::kernel::services::ports::LspTextEdit;
 use crate::kernel::services::ports::LspWorkspaceEdit;
-use crate::kernel::state::BottomPanelTab;
+use crate::kernel::state::{BottomPanelTab, ThemeEditorFocus};
 use crate::kernel::symbols::SymbolItem;
 use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem, TerminalId};
 
@@ -290,4 +290,30 @@ pub enum Action {
         from: PathBuf,
         to: PathBuf,
     },
+    ThemeEditorOpen,
+    ThemeEditorClose,
+    ThemeEditorMoveTokenSelection {
+        delta: isize,
+    },
+    ThemeEditorSetFocus {
+        focus: ThemeEditorFocus,
+    },
+    ThemeEditorAdjustHue {
+        delta: i16,
+    },
+    ThemeEditorSetHue {
+        hue: u16,
+    },
+    ThemeEditorAdjustSaturation {
+        delta: i8,
+    },
+    ThemeEditorAdjustLightness {
+        delta: i8,
+    },
+    ThemeEditorSetSaturationLightness {
+        saturation: u8,
+        lightness: u8,
+    },
+    ThemeEditorCycleLanguage,
+    ThemeEditorResetToken,
 }

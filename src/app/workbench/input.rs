@@ -77,6 +77,12 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
                 return EventResult::Ignored;
             }
 
+            // When theme editor is visible, handle mouse directly without
+            // area-based focus switching (which would steal focus to Editor).
+            if workbench.store.state().ui.theme_editor.visible {
+                return workbench.handle_theme_editor_mouse(mouse_event);
+            }
+
             if let Some(result) = workbench.handle_sidebar_split_mouse(mouse_event) {
                 return result;
             }
@@ -99,6 +105,7 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
                 FocusTarget::Editor => workbench.handle_editor_mouse(mouse_event),
                 FocusTarget::BottomPanel => workbench.handle_bottom_panel_mouse(mouse_event),
                 FocusTarget::CommandPalette => EventResult::Ignored,
+                FocusTarget::ThemeEditor => workbench.handle_theme_editor_mouse(mouse_event),
             };
 
             if state_changed && matches!(result, EventResult::Ignored) {

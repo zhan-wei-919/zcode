@@ -486,6 +486,11 @@ fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<Hi
         return Some(HighlightKind::Lifetime);
     }
     match language {
+        LanguageId::Rust => {
+            if let Some(kind) = classify_rust_node(node) {
+                return Some(kind);
+            }
+        }
         LanguageId::Go => {
             if let Some(kind) = classify_go_node(node) {
                 return Some(kind);
@@ -496,10 +501,121 @@ fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<Hi
                 return Some(kind);
             }
         }
-        _ => {}
+        LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Tsx => {
+            if let Some(kind) = classify_js_node(node) {
+                return Some(kind);
+            }
+        }
     }
     if is_keyword(language, kind) {
         return Some(HighlightKind::Keyword);
+    }
+    None
+}
+
+fn classify_rust_node(node: Node<'_>) -> Option<HighlightKind> {
+    match node.kind() {
+        "identifier" => classify_rust_identifier(node),
+        "field_identifier" => classify_rust_field_identifier(node),
+        "macro_invocation" => Some(HighlightKind::Macro),
+        _ => None,
+    }
+}
+
+fn classify_rust_identifier(node: Node<'_>) -> Option<HighlightKind> {
+    let parent = node.parent()?;
+    match parent.kind() {
+        "function_item" | "function_signature_item" if node_is_field(parent, "name", node) => {
+            Some(HighlightKind::Function)
+        }
+        "call_expression" if node_is_field(parent, "function", node) => {
+            Some(HighlightKind::Function)
+        }
+        "const_item" | "static_item" if node_is_field(parent, "name", node) => {
+            Some(HighlightKind::Constant)
+        }
+        "let_declaration" if node_is_field(parent, "pattern", node) => {
+            Some(HighlightKind::Variable)
+        }
+        "parameter" | "closure_parameters" => Some(HighlightKind::Variable),
+        "scoped_identifier" => {
+            if parent.parent().is_some_and(|grand| {
+                grand.kind() == "call_expression" && node_is_field(grand, "function", parent)
+            }) {
+                // In `HashMap::new()`, only the `name` part (`new`) is Function;
+                // the `path` part (`HashMap`) is Type.
+                if node_is_field(parent, "name", node) {
+                    Some(HighlightKind::Function)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn classify_rust_field_identifier(node: Node<'_>) -> Option<HighlightKind> {
+    let parent = node.parent()?;
+    if parent.kind() == "field_expression" {
+        if parent.parent().is_some_and(|grand| {
+            grand.kind() == "call_expression" && node_is_field(grand, "function", parent)
+        }) {
+            return Some(HighlightKind::Function);
+        }
+        return Some(HighlightKind::Variable);
+    }
+    if parent.kind() == "field_declaration" {
+        return Some(HighlightKind::Variable);
+    }
+    None
+}
+
+fn classify_js_node(node: Node<'_>) -> Option<HighlightKind> {
+    match node.kind() {
+        "identifier" | "shorthand_property_identifier_pattern" => classify_js_identifier(node),
+        "property_identifier" => classify_js_property_identifier(node),
+        _ => None,
+    }
+}
+
+fn classify_js_identifier(node: Node<'_>) -> Option<HighlightKind> {
+    let parent = node.parent()?;
+    match parent.kind() {
+        "function_declaration"
+        | "function"
+        | "generator_function_declaration"
+        | "generator_function"
+            if node_is_field(parent, "name", node) =>
+        {
+            Some(HighlightKind::Function)
+        }
+        "call_expression" if node_is_field(parent, "function", node) => {
+            Some(HighlightKind::Function)
+        }
+        "class_declaration" | "class" if node_is_field(parent, "name", node) => {
+            Some(HighlightKind::Type)
+        }
+        "variable_declarator" if node_is_field(parent, "name", node) => {
+            Some(HighlightKind::Variable)
+        }
+        "formal_parameters" => Some(HighlightKind::Variable),
+        "method_definition" if node_is_field(parent, "name", node) => Some(HighlightKind::Function),
+        _ => None,
+    }
+}
+
+fn classify_js_property_identifier(node: Node<'_>) -> Option<HighlightKind> {
+    let parent = node.parent()?;
+    if parent.kind() == "member_expression" {
+        if parent.parent().is_some_and(|grand| {
+            grand.kind() == "call_expression" && node_is_field(grand, "function", parent)
+        }) {
+            return Some(HighlightKind::Function);
+        }
+        return Some(HighlightKind::Variable);
     }
     None
 }

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::kernel::services::ports::{
     LspCompletionItem, LspPositionEncoding, LspRange, LspResourceOp, LspWorkspaceFileEdit,
+    ThemeSettings,
 };
 use crate::kernel::TerminalId;
 
@@ -176,5 +177,8 @@ pub enum Effect {
     Restart {
         path: PathBuf,
         hard: bool,
+    },
+    SaveThemeSettings {
+        theme_settings: Box<ThemeSettings>,
     },
 }

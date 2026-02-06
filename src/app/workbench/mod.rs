@@ -193,6 +193,10 @@ pub struct Workbench {
     last_code_actions_click: Option<(Instant, usize)>,
     last_symbols_click: Option<(Instant, usize)>,
     pending_restart: Option<PendingRestart>,
+    pending_theme_save_deadline: Option<Instant>,
+    last_theme_editor_token_list_area: Option<Rect>,
+    last_theme_editor_hue_bar_area: Option<Rect>,
+    last_theme_editor_sv_palette_area: Option<Rect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -412,6 +416,10 @@ impl Workbench {
             last_code_actions_click: None,
             last_symbols_click: None,
             pending_restart: None,
+            pending_theme_save_deadline: None,
+            last_theme_editor_token_list_area: None,
+            last_theme_editor_hue_bar_area: None,
+            last_theme_editor_sv_palette_area: None,
         };
 
         if git_enabled() {

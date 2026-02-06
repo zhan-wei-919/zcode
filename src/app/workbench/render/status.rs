@@ -14,6 +14,7 @@ impl Workbench {
             FocusTarget::Editor => "Editor",
             FocusTarget::BottomPanel => "Panel",
             FocusTarget::CommandPalette => "Palette",
+            FocusTarget::ThemeEditor => "Theme",
         }
     }
 

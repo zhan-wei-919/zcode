@@ -13,6 +13,7 @@ use crate::ui::core::painter::Painter;
 use crate::ui::core::style::{Mod as UiMod, Style as UiStyle};
 use crate::ui::core::theme::Theme;
 use crate::ui::core::tree::NodeKind;
+use crate::views::theme_editor::paint_theme_editor;
 use crate::views::{
     compute_editor_pane_layout, cursor_position_editor, tab_insertion_index, tab_insertion_x,
 };
@@ -52,7 +53,20 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
 
     workbench.last_bottom_panel_area = bottom_panel_area;
 
-    if workbench.store.state().ui.sidebar_visible && main_area.w > 0 {
+    if workbench.store.state().ui.theme_editor.visible {
+        let mut painter = Painter::new();
+        let areas = paint_theme_editor(
+            &mut painter,
+            main_area,
+            &workbench.store.state().ui.theme_editor,
+            &workbench.ui_theme,
+            &workbench.theme,
+        );
+        workbench.last_theme_editor_token_list_area = areas.token_list;
+        workbench.last_theme_editor_hue_bar_area = areas.hue_bar;
+        workbench.last_theme_editor_sv_palette_area = areas.sv_palette;
+        backend.draw(main_area, painter.cmds());
+    } else if workbench.store.state().ui.sidebar_visible && main_area.w > 0 {
         workbench.last_sidebar_container_area = Some(main_area);
 
         let available = main_area.w;
@@ -413,6 +427,7 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
             _ => None,
         },
         FocusTarget::CommandPalette => None,
+        FocusTarget::ThemeEditor => None,
     }
 }
 

@@ -31,6 +31,7 @@ impl Workbench {
         changed |= self.poll_folding_range_debounce();
         changed |= self.poll_idle_hover();
         changed |= self.poll_terminal_cursor_blink();
+        changed |= self.poll_theme_save();
 
         changed
     }
@@ -581,6 +582,86 @@ impl Workbench {
         }
 
         false
+    }
+
+    fn poll_theme_save(&mut self) -> bool {
+        let Some(deadline) = self.pending_theme_save_deadline else {
+            return false;
+        };
+        if Instant::now() < deadline {
+            return false;
+        }
+        self.pending_theme_save_deadline = None;
+
+        let Some(settings_path) = self.settings_path.as_ref() else {
+            return false;
+        };
+
+        let settings_text = match std::fs::read_to_string(settings_path) {
+            Ok(text) => text,
+            Err(_) => return false,
+        };
+        let mut settings: crate::kernel::services::ports::Settings =
+            match serde_json::from_str(&settings_text) {
+                Ok(s) => s,
+                Err(_) => return false,
+            };
+
+        // Build ThemeSettings from current theme
+        settings.theme = self.build_theme_settings();
+
+        let json = match serde_json::to_string_pretty(&settings) {
+            Ok(j) => j,
+            Err(_) => return false,
+        };
+        let _ = std::fs::write(settings_path, json);
+
+        // Update last_settings_modified to avoid triggering reload_settings
+        if let Ok(meta) = std::fs::metadata(settings_path) {
+            if let Ok(modified) = meta.modified() {
+                self.last_settings_modified = Some(modified);
+            }
+        }
+
+        false
+    }
+
+    fn build_theme_settings(&self) -> crate::kernel::services::ports::ThemeSettings {
+        use crate::app::theme::color_to_hex;
+        let t = &self.theme;
+        crate::kernel::services::ports::ThemeSettings {
+            focus_border: color_to_hex(t.focus_border),
+            inactive_border: color_to_hex(t.inactive_border),
+            separator: color_to_hex(t.separator),
+            accent_fg: color_to_hex(t.accent_fg),
+            syntax_comment_fg: color_to_hex(t.syntax_comment_fg),
+            syntax_keyword_fg: color_to_hex(t.syntax_keyword_fg),
+            syntax_string_fg: color_to_hex(t.syntax_string_fg),
+            syntax_number_fg: color_to_hex(t.syntax_number_fg),
+            syntax_type_fg: color_to_hex(t.syntax_type_fg),
+            syntax_attribute_fg: color_to_hex(t.syntax_attribute_fg),
+            syntax_function_fg: color_to_hex(t.syntax_function_fg),
+            syntax_variable_fg: color_to_hex(t.syntax_variable_fg),
+            syntax_constant_fg: color_to_hex(t.syntax_constant_fg),
+            syntax_regex_fg: color_to_hex(t.syntax_regex_fg),
+            error_fg: color_to_hex(t.error_fg),
+            warning_fg: color_to_hex(t.warning_fg),
+            activity_bg: color_to_hex(t.activity_bg),
+            activity_fg: color_to_hex(t.activity_fg),
+            activity_active_bg: color_to_hex(t.activity_active_bg),
+            activity_active_fg: color_to_hex(t.activity_active_fg),
+            sidebar_tab_active_bg: color_to_hex(t.sidebar_tab_active_bg),
+            sidebar_tab_active_fg: color_to_hex(t.sidebar_tab_active_fg),
+            sidebar_tab_inactive_fg: color_to_hex(t.sidebar_tab_inactive_fg),
+            header_fg: color_to_hex(t.header_fg),
+            palette_border: color_to_hex(t.palette_border),
+            palette_bg: color_to_hex(t.palette_bg),
+            palette_fg: color_to_hex(t.palette_fg),
+            palette_selected_bg: color_to_hex(t.palette_selected_bg),
+            palette_selected_fg: color_to_hex(t.palette_selected_fg),
+            palette_muted_fg: color_to_hex(t.palette_muted_fg),
+            indent_guide_fg: color_to_hex(t.indent_guide_fg),
+        }
     }
 }
 

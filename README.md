@@ -134,9 +134,14 @@ Default key mappings are as follows:
 *   **Multi-language LSP support** (optional): Diagnostics, hover, completion, go-to-definition, etc, for Rust/Go/Python/JS/TS.
     *   Monorepo-friendly: LSP root is detected per language by searching the nearest marker file (then spawns per-(language,root)).
     *   Server discovery: prefers project-local `node_modules/.bin` and Python virtualenvs when available.
-*   **🔍 Powerful Search**: Built-in `ripgrep`-based engine for high-performance global search and real-time in-file finding.
-*   **⌨️ Key Mapping**: Flexible keybinding configuration support.
-*   **📋 Clipboard Integration**: Seamless system clipboard support.
+*   **Search**: Built-in `ripgrep`-based engine for high-performance global search and real-time in-file finding.
+*   **Key Mapping**: Flexible keybinding configuration support.
+*   **Clipboard Integration**: Seamless system clipboard support.
+*   **Theme Editor**: Built-in visual theme editor for customizing syntax highlighting colors. Open via Command Palette (`Ctrl + Shift + p` > "Open Theme Editor").
+    *   **Color Picker**: Hue Bar (vertical strip) + Saturation/Lightness palette. Click or drag to pick colors; the code preview updates in real time.
+    *   **Auto-save**: Color changes are automatically saved to `setting.json` (debounced 300ms). No manual save needed.
+    *   **Keyboard**: `Tab` to cycle focus (Token List / Hue Bar / SL Palette). Arrow keys to adjust values (`Shift` for larger steps). `l` to switch preview language. `Ctrl + r` to reset the selected token to its default color. `Esc` to close.
+    *   **Mouse**: Click or drag on the Hue Bar to change hue. Click or drag on the SL Palette to change saturation/lightness. Click a token in the list to select it.
 
 ## Configuration
 

@@ -174,6 +174,11 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::OpenSettings,
     },
     PaletteItem {
+        label: "Preferences: Open Theme Editor",
+        label_lc: "preferences: open theme editor",
+        command: Command::OpenThemeEditor,
+    },
+    PaletteItem {
         label: "Git: Worktree (Open/Create)",
         label_lc: "git: worktree (open/create)",
         command: Command::GitWorktreeAdd,
