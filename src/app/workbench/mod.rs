@@ -308,6 +308,8 @@ impl Workbench {
             }
         }
 
+        theme.adapt_to_terminal_capabilities();
+
         let executor: Arc<dyn crate::kernel::services::ports::AsyncExecutor> =
             Arc::new(runtime.tokio_handle());
         let mut kernel_services = KernelServiceHost::new(executor);

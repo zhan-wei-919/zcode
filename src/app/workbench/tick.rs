@@ -498,6 +498,7 @@ impl Workbench {
 
         let mut theme = UiTheme::default();
         theme.apply_settings(&settings.theme);
+        theme.adapt_to_terminal_capabilities();
         let ui_theme = crate::app::theme::to_core_theme(&theme);
 
         let _ = self.store.dispatch(KernelAction::EditorConfigUpdated {
