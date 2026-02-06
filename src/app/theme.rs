@@ -63,22 +63,17 @@ pub fn detect_terminal_color_support() -> TerminalColorSupport {
     let term = std::env::var("TERM")
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let term_program = std::env::var("TERM_PROGRAM")
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
     if colorterm.contains("truecolor")
         || colorterm.contains("24bit")
+        || colorterm.contains("direct")
         || term.contains("truecolor")
         || term.contains("24bit")
         || term.contains("direct")
-        || term_program == "wezterm"
-        || term_program == "iterm.app"
     {
         return TerminalColorSupport::TrueColor;
     }
 
-    if term.contains("256color") || term_program == "apple_terminal" {
+    if term.contains("256color") {
         return TerminalColorSupport::Ansi256;
     }
 
@@ -164,6 +159,21 @@ impl UiTheme {
         self.palette_selected_fg = map_color_for_support(self.palette_selected_fg, support);
         self.palette_muted_fg = map_color_for_support(self.palette_muted_fg, support);
         self.indent_guide_fg = map_color_for_support(self.indent_guide_fg, support);
+
+        self.apply_non_truecolor_syntax_palette(support);
+    }
+
+    fn apply_non_truecolor_syntax_palette(&mut self, support: TerminalColorSupport) {
+        self.syntax_comment_fg = syntax_fallback_color(support, 65, 2);
+        self.syntax_keyword_fg = syntax_fallback_color(support, 68, 12);
+        self.syntax_string_fg = syntax_fallback_color(support, 173, 3);
+        self.syntax_number_fg = syntax_fallback_color(support, 108, 10);
+        self.syntax_type_fg = syntax_fallback_color(support, 73, 6);
+        self.syntax_attribute_fg = syntax_fallback_color(support, 73, 6);
+        self.syntax_function_fg = syntax_fallback_color(support, 180, 11);
+        self.syntax_variable_fg = syntax_fallback_color(support, 111, 14);
+        self.syntax_constant_fg = syntax_fallback_color(support, 75, 12);
+        self.syntax_regex_fg = syntax_fallback_color(support, 167, 9);
     }
 
     pub fn apply_settings(&mut self, settings: &ThemeSettings) {
@@ -344,6 +354,20 @@ fn map_color_for_support(color: Color, support: TerminalColorSupport) -> Color {
     }
 }
 
+fn syntax_fallback_color(
+    support: TerminalColorSupport,
+    ansi256_index: u8,
+    ansi16_index: u8,
+) -> Color {
+    match support {
+        TerminalColorSupport::TrueColor => {
+            unreachable!("syntax fallback palette should only apply in non-truecolor mode")
+        }
+        TerminalColorSupport::Ansi256 => Color::Indexed(ansi256_index),
+        TerminalColorSupport::Ansi16 => Color::Indexed(ansi16_index),
+    }
+}
+
 fn rgb_to_ansi256_index(r: u8, g: u8, b: u8) -> u8 {
     let mut best_index = 0u8;
     let mut best_distance = u32::MAX;
@@ -505,9 +529,15 @@ mod tests {
         let mut theme = UiTheme::default();
         theme.apply_color_support(TerminalColorSupport::Ansi256);
 
-        assert!(matches!(theme.syntax_keyword_fg, Color::Indexed(_)));
-        assert!(matches!(theme.syntax_string_fg, Color::Indexed(_)));
-        assert!(matches!(theme.syntax_constant_fg, Color::Indexed(_)));
+        assert_eq!(theme.syntax_comment_fg, Color::Indexed(65));
+        assert_eq!(theme.syntax_keyword_fg, Color::Indexed(68));
+        assert_eq!(theme.syntax_string_fg, Color::Indexed(173));
+        assert_eq!(theme.syntax_number_fg, Color::Indexed(108));
+        assert_eq!(theme.syntax_type_fg, Color::Indexed(73));
+        assert_eq!(theme.syntax_function_fg, Color::Indexed(180));
+        assert_eq!(theme.syntax_variable_fg, Color::Indexed(111));
+        assert_eq!(theme.syntax_constant_fg, Color::Indexed(75));
+        assert_eq!(theme.syntax_regex_fg, Color::Indexed(167));
     }
 
     #[test]
@@ -515,8 +545,14 @@ mod tests {
         let mut theme = UiTheme::default();
         theme.apply_color_support(TerminalColorSupport::Ansi16);
 
-        assert!(matches!(theme.syntax_keyword_fg, Color::Indexed(i) if i <= 15));
-        assert!(matches!(theme.syntax_regex_fg, Color::Indexed(i) if i <= 15));
-        assert!(matches!(theme.syntax_constant_fg, Color::Indexed(i) if i <= 15));
+        assert_eq!(theme.syntax_comment_fg, Color::Indexed(2));
+        assert_eq!(theme.syntax_keyword_fg, Color::Indexed(12));
+        assert_eq!(theme.syntax_string_fg, Color::Indexed(3));
+        assert_eq!(theme.syntax_number_fg, Color::Indexed(10));
+        assert_eq!(theme.syntax_type_fg, Color::Indexed(6));
+        assert_eq!(theme.syntax_function_fg, Color::Indexed(11));
+        assert_eq!(theme.syntax_variable_fg, Color::Indexed(14));
+        assert_eq!(theme.syntax_constant_fg, Color::Indexed(12));
+        assert_eq!(theme.syntax_regex_fg, Color::Indexed(9));
     }
 }
