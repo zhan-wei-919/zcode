@@ -561,7 +561,7 @@ impl Workbench {
         EventResult::Consumed
     }
 
-    fn apply_theme_editor_color(&mut self) {
+    pub(in super::super) fn apply_theme_editor_color(&mut self) {
         let te = &self.store.state().ui.theme_editor;
         let token = te.selected_token;
         let (r, g, b) = crate::app::theme::hsl_to_rgb(te.hue, te.saturation, te.lightness);
@@ -599,7 +599,9 @@ impl Workbench {
                 self.theme.syntax_regex_fg = color;
             }
         }
-        self.ui_theme = crate::app::theme::to_core_theme(&self.theme);
+        let core_theme = crate::app::theme::to_core_theme(&self.theme);
+        self.ui_theme =
+            crate::ui::core::theme_adapter::adapt_theme(&core_theme, self.terminal_color_support);
 
         // Schedule debounced save
         self.pending_theme_save_deadline =
@@ -622,7 +624,7 @@ impl Workbench {
             crate::kernel::state::ThemeEditorToken::Regex => defaults.syntax_regex_fg,
         };
 
-        if let crate::ui::core::style::Color::Rgb(r, g, b) = color {
+        if let Some((r, g, b)) = crate::ui::core::theme_adapter::color_to_rgb(color) {
             let (h, s, l) = crate::app::theme::rgb_to_hsl(r, g, b);
             let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetHue { hue: h });
             let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetSaturationLightness {
@@ -634,7 +636,7 @@ impl Workbench {
         self.apply_theme_editor_color();
     }
 
-    fn sync_theme_editor_hsl(&mut self) {
+    pub(in super::super) fn sync_theme_editor_hsl(&mut self) {
         let token = self.store.state().ui.theme_editor.selected_token;
         let color = match token {
             crate::kernel::state::ThemeEditorToken::Comment => self.theme.syntax_comment_fg,
@@ -649,7 +651,7 @@ impl Workbench {
             crate::kernel::state::ThemeEditorToken::Regex => self.theme.syntax_regex_fg,
         };
 
-        if let crate::ui::core::style::Color::Rgb(r, g, b) = color {
+        if let Some((r, g, b)) = crate::ui::core::theme_adapter::color_to_rgb(color) {
             let (h, s, l) = crate::app::theme::rgb_to_hsl(r, g, b);
             let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetHue { hue: h });
             let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetSaturationLightness {

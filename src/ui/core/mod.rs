@@ -1,3 +1,4 @@
+pub mod color_support;
 pub mod geom;
 pub mod id;
 pub mod input;
@@ -6,5 +7,6 @@ pub mod painter;
 pub mod runtime;
 pub mod style;
 pub mod theme;
+pub mod theme_adapter;
 pub mod tree;
 pub mod widget;

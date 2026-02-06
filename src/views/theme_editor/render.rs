@@ -1,10 +1,12 @@
-use crate::app::theme::{hsl_to_rgb, UiTheme};
+use crate::app::theme::hsl_to_rgb;
 use crate::kernel::editor::{highlight_snippet, HighlightKind, HighlightSpan, LanguageId};
 use crate::kernel::state::{PreviewLanguage, ThemeEditorFocus, ThemeEditorState, ThemeEditorToken};
+use crate::ui::core::color_support::TerminalColorSupport;
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::{Color, Mod as UiMod, Style};
 use crate::ui::core::theme::Theme;
+use crate::ui::core::theme_adapter::map_color_to_support;
 
 use super::snippets;
 
@@ -20,7 +22,7 @@ pub fn paint_theme_editor(
     area: Rect,
     state: &ThemeEditorState,
     theme: &Theme,
-    ui_theme: &UiTheme,
+    color_support: TerminalColorSupport,
 ) -> ThemeEditorAreas {
     let mut areas = ThemeEditorAreas {
         token_list: None,
@@ -39,8 +41,15 @@ pub fn paint_theme_editor(
     let (title_area, body) = area.split_top(1);
     paint_title_bar(painter, title_area, theme);
 
-    // Split body into left panel and right preview
-    let left_w = (body.w * 40 / 100).max(30).min(body.w.saturating_sub(10));
+    // Split body into left panel and right preview.
+    // Keep preview just wide enough to show snippet lines, so controls get more space.
+    let min_left_w = 30;
+    let min_preview_w = 10;
+    let preview_w = preview_required_width(state.preview_language).max(min_preview_w);
+    let preview_w = preview_w
+        .min(body.w.saturating_sub(min_left_w).max(min_preview_w))
+        .min(body.w);
+    let left_w = body.w.saturating_sub(preview_w);
     let (left_area, right_area) = body.split_left(left_w);
 
     // Separator
@@ -65,8 +74,8 @@ pub fn paint_theme_editor(
         right_area
     };
 
-    paint_left_panel(painter, left_area, state, theme, ui_theme, &mut areas);
-    paint_code_preview(painter, right_inner, state, theme, ui_theme);
+    paint_left_panel(painter, left_area, state, theme, &mut areas, color_support);
+    paint_code_preview(painter, right_inner, state, theme);
     areas
 }
 
@@ -100,8 +109,8 @@ fn paint_left_panel(
     area: Rect,
     state: &ThemeEditorState,
     theme: &Theme,
-    ui_theme: &UiTheme,
     areas: &mut ThemeEditorAreas,
+    color_support: TerminalColorSupport,
 ) {
     if area.is_empty() {
         return;
@@ -121,7 +130,7 @@ fn paint_left_panel(
     let token_list_h = ThemeEditorToken::ALL.len() as u16;
     let (token_area, rest) = inner.split_top(token_list_h.min(inner.h));
     areas.token_list = Some(token_area);
-    paint_token_list(painter, token_area, state, theme, ui_theme);
+    paint_token_list(painter, token_area, state, theme);
 
     if rest.h < 2 {
         return;
@@ -137,16 +146,15 @@ fn paint_left_panel(
     let (picker_area, bottom_area) = rest.split_bottom(2);
 
     if picker_area.h >= 3 && picker_area.w >= 6 {
-        paint_color_picker(painter, picker_area, state, theme, areas);
+        paint_color_picker(painter, picker_area, state, theme, areas, color_support);
     }
 
     // Hex color + language label
     if bottom_area.h >= 1 {
         let (r, g, b) = hsl_to_rgb(state.hue, state.saturation, state.lightness);
         let hex = format!("#{:02X}{:02X}{:02X}", r, g, b);
-        let color_preview = Style::default()
-            .fg(Color::Rgb(r, g, b))
-            .add_mod(UiMod::BOLD);
+        let preview_color = map_color_to_support(Color::Rgb(r, g, b), color_support);
+        let color_preview = Style::default().fg(preview_color).add_mod(UiMod::BOLD);
         let (hex_row, rest2) = bottom_area.split_top(1);
         painter.text_clipped(Pos::new(hex_row.x, hex_row.y), &hex, color_preview, hex_row);
 
@@ -164,28 +172,22 @@ fn paint_left_panel(
     }
 }
 
-fn token_color(token: ThemeEditorToken, ui_theme: &UiTheme) -> Color {
+fn token_color(token: ThemeEditorToken, theme: &Theme) -> Color {
     match token {
-        ThemeEditorToken::Comment => ui_theme.syntax_comment_fg,
-        ThemeEditorToken::Keyword => ui_theme.syntax_keyword_fg,
-        ThemeEditorToken::String => ui_theme.syntax_string_fg,
-        ThemeEditorToken::Number => ui_theme.syntax_number_fg,
-        ThemeEditorToken::Type => ui_theme.syntax_type_fg,
-        ThemeEditorToken::Attribute => ui_theme.syntax_attribute_fg,
-        ThemeEditorToken::Function => ui_theme.syntax_function_fg,
-        ThemeEditorToken::Variable => ui_theme.syntax_variable_fg,
-        ThemeEditorToken::Constant => ui_theme.syntax_constant_fg,
-        ThemeEditorToken::Regex => ui_theme.syntax_regex_fg,
+        ThemeEditorToken::Comment => theme.syntax_comment_fg,
+        ThemeEditorToken::Keyword => theme.syntax_keyword_fg,
+        ThemeEditorToken::String => theme.syntax_string_fg,
+        ThemeEditorToken::Number => theme.syntax_number_fg,
+        ThemeEditorToken::Type => theme.syntax_type_fg,
+        ThemeEditorToken::Attribute => theme.syntax_attribute_fg,
+        ThemeEditorToken::Function => theme.syntax_function_fg,
+        ThemeEditorToken::Variable => theme.syntax_variable_fg,
+        ThemeEditorToken::Constant => theme.syntax_constant_fg,
+        ThemeEditorToken::Regex => theme.syntax_regex_fg,
     }
 }
 
-fn paint_token_list(
-    painter: &mut Painter,
-    area: Rect,
-    state: &ThemeEditorState,
-    theme: &Theme,
-    ui_theme: &UiTheme,
-) {
+fn paint_token_list(painter: &mut Painter, area: Rect, state: &ThemeEditorState, theme: &Theme) {
     for (i, token) in ThemeEditorToken::ALL.iter().enumerate() {
         let y = area.y.saturating_add(i as u16);
         if y >= area.bottom() {
@@ -202,7 +204,7 @@ fn paint_token_list(
         }
 
         let indicator = if is_selected { "\u{25B8} " } else { "  " };
-        let color = token_color(*token, ui_theme);
+        let color = token_color(*token, theme);
         let label_style = if is_selected && state.focus == ThemeEditorFocus::TokenList {
             Style::default()
                 .bg(theme.palette_selected_bg)
@@ -223,6 +225,7 @@ fn paint_color_picker(
     state: &ThemeEditorState,
     theme: &Theme,
     areas: &mut ThemeEditorAreas,
+    color_support: TerminalColorSupport,
 ) {
     // Layout: [Hue Bar (2 cols)] [1 col gap] [SV Palette (rest)]
     let hue_bar_w: u16 = 2;
@@ -244,11 +247,17 @@ fn paint_color_picker(
     areas.hue_bar = Some(hue_bar_area);
     areas.sv_palette = Some(sv_area);
 
-    paint_hue_bar(painter, hue_bar_area, state, theme);
-    paint_sv_palette(painter, sv_area, state, theme);
+    paint_hue_bar(painter, hue_bar_area, state, theme, color_support);
+    paint_sv_palette(painter, sv_area, state, theme, color_support);
 }
 
-fn paint_hue_bar(painter: &mut Painter, area: Rect, state: &ThemeEditorState, _theme: &Theme) {
+fn paint_hue_bar(
+    painter: &mut Painter,
+    area: Rect,
+    state: &ThemeEditorState,
+    _theme: &Theme,
+    color_support: TerminalColorSupport,
+) {
     for row in 0..area.h {
         let y = area.y + row;
         // Map row to hue: top=0, bottom=359
@@ -259,7 +268,7 @@ fn paint_hue_bar(painter: &mut Painter, area: Rect, state: &ThemeEditorState, _t
         } as u16;
 
         let (r, g, b) = hsl_to_rgb(hue, 100, 50);
-        let bg_color = Color::Rgb(r, g, b);
+        let bg_color = map_color_to_support(Color::Rgb(r, g, b), color_support);
 
         // Check if this row is the current hue position
         let cur_row = hue_to_row(state.hue, area.h);
@@ -268,7 +277,7 @@ fn paint_hue_bar(painter: &mut Painter, area: Rect, state: &ThemeEditorState, _t
             // Draw marker for current hue — use ASCII to avoid wide-char issues
             let marker_style = Style::default()
                 .bg(bg_color)
-                .fg(Color::Rgb(0, 0, 0))
+                .fg(map_color_to_support(Color::Rgb(0, 0, 0), color_support))
                 .add_mod(UiMod::BOLD);
             painter.text_clipped(Pos::new(area.x, y), "<>", marker_style, area);
         } else {
@@ -278,7 +287,13 @@ fn paint_hue_bar(painter: &mut Painter, area: Rect, state: &ThemeEditorState, _t
     }
 }
 
-fn paint_sv_palette(painter: &mut Painter, area: Rect, state: &ThemeEditorState, _theme: &Theme) {
+fn paint_sv_palette(
+    painter: &mut Painter,
+    area: Rect,
+    state: &ThemeEditorState,
+    _theme: &Theme,
+    color_support: TerminalColorSupport,
+) {
     let hue = state.hue;
 
     // Current marker position — use same mapping as mouse handler
@@ -296,15 +311,15 @@ fn paint_sv_palette(painter: &mut Painter, area: Rect, state: &ThemeEditorState,
             let s = col_to_saturation(col, area.w);
 
             let (r, g, b) = hsl_to_rgb(hue, s, l);
-            let bg_color = Color::Rgb(r, g, b);
+            let bg_color = map_color_to_support(Color::Rgb(r, g, b), color_support);
 
             if row == marker_row && col == marker_col {
                 // Draw crosshair marker — use ASCII "+" to avoid wide-char issues
                 let luma = (r as u16 + g as u16 + b as u16) / 3;
                 let fg = if luma > 128 {
-                    Color::Rgb(0, 0, 0)
+                    map_color_to_support(Color::Rgb(0, 0, 0), color_support)
                 } else {
-                    Color::Rgb(255, 255, 255)
+                    map_color_to_support(Color::Rgb(255, 255, 255), color_support)
                 };
                 let style = Style::default().bg(bg_color).fg(fg).add_mod(UiMod::BOLD);
                 painter.text_clipped(Pos::new(x, y), "+", style, area);
@@ -381,23 +396,12 @@ pub fn row_to_lightness(row: u16, height: u16) -> u8 {
     }
 }
 
-fn paint_code_preview(
-    painter: &mut Painter,
-    area: Rect,
-    state: &ThemeEditorState,
-    theme: &Theme,
-    ui_theme: &UiTheme,
-) {
+fn paint_code_preview(painter: &mut Painter, area: Rect, state: &ThemeEditorState, theme: &Theme) {
     if area.is_empty() {
         return;
     }
 
-    let (lang_id, snippet) = match state.preview_language {
-        PreviewLanguage::Rust => (LanguageId::Rust, snippets::RUST_SNIPPET),
-        PreviewLanguage::Python => (LanguageId::Python, snippets::PYTHON_SNIPPET),
-        PreviewLanguage::Go => (LanguageId::Go, snippets::GO_SNIPPET),
-        PreviewLanguage::JavaScript => (LanguageId::JavaScript, snippets::JS_SNIPPET),
-    };
+    let (lang_id, snippet) = preview_language_snippet(state.preview_language);
 
     let highlights = highlight_snippet(lang_id, snippet);
     let lines: Vec<&str> = snippet.lines().collect();
@@ -415,24 +419,44 @@ fn paint_code_preview(
         }
 
         let spans = highlights.get(i).map(|s| s.as_slice());
-        paint_highlighted_line(painter, row, line, spans, base_style, ui_theme);
+        paint_highlighted_line(painter, row, line, spans, base_style, theme);
     }
 }
 
-fn style_for_highlight(kind: HighlightKind, ui_theme: &UiTheme) -> Style {
+fn preview_required_width(language: PreviewLanguage) -> u16 {
+    let (_, snippet) = preview_language_snippet(language);
+    let max_line_width = snippet
+        .lines()
+        .map(|line| unicode_width::UnicodeWidthStr::width(line) as u16)
+        .max()
+        .unwrap_or(0);
+    // +2: one left padding cell and one cell consumed by clipping offset.
+    max_line_width.saturating_add(2)
+}
+
+fn preview_language_snippet(language: PreviewLanguage) -> (LanguageId, &'static str) {
+    match language {
+        PreviewLanguage::Rust => (LanguageId::Rust, snippets::RUST_SNIPPET),
+        PreviewLanguage::Python => (LanguageId::Python, snippets::PYTHON_SNIPPET),
+        PreviewLanguage::Go => (LanguageId::Go, snippets::GO_SNIPPET),
+        PreviewLanguage::JavaScript => (LanguageId::JavaScript, snippets::JS_SNIPPET),
+    }
+}
+
+fn style_for_highlight(kind: HighlightKind, theme: &Theme) -> Style {
     match kind {
-        HighlightKind::Comment => Style::default().fg(ui_theme.syntax_comment_fg),
-        HighlightKind::String => Style::default().fg(ui_theme.syntax_string_fg),
-        HighlightKind::Regex => Style::default().fg(ui_theme.syntax_regex_fg),
-        HighlightKind::Keyword => Style::default().fg(ui_theme.syntax_keyword_fg),
-        HighlightKind::Type => Style::default().fg(ui_theme.syntax_type_fg),
-        HighlightKind::Number => Style::default().fg(ui_theme.syntax_number_fg),
-        HighlightKind::Attribute => Style::default().fg(ui_theme.syntax_attribute_fg),
-        HighlightKind::Lifetime => Style::default().fg(ui_theme.syntax_keyword_fg),
-        HighlightKind::Function => Style::default().fg(ui_theme.syntax_function_fg),
-        HighlightKind::Macro => Style::default().fg(ui_theme.syntax_attribute_fg),
-        HighlightKind::Variable => Style::default().fg(ui_theme.syntax_variable_fg),
-        HighlightKind::Constant => Style::default().fg(ui_theme.syntax_constant_fg),
+        HighlightKind::Comment => Style::default().fg(theme.syntax_comment_fg),
+        HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
+        HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
+        HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
+        HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
+        HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),
+        HighlightKind::Lifetime => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::Function => Style::default().fg(theme.syntax_function_fg),
+        HighlightKind::Macro => Style::default().fg(theme.syntax_attribute_fg),
+        HighlightKind::Variable => Style::default().fg(theme.syntax_variable_fg),
+        HighlightKind::Constant => Style::default().fg(theme.syntax_constant_fg),
     }
 }
 
@@ -442,7 +466,7 @@ fn paint_highlighted_line(
     line: &str,
     spans: Option<&[HighlightSpan]>,
     base_style: Style,
-    ui_theme: &UiTheme,
+    theme: &Theme,
 ) {
     if clip.is_empty() || line.is_empty() {
         return;
@@ -473,7 +497,7 @@ fn paint_highlighted_line(
             let span = &spans[span_idx];
             let end = span.end.min(line.len());
             let seg = &line[byte_pos..end];
-            let style = style_for_highlight(span.kind, ui_theme);
+            let style = style_for_highlight(span.kind, theme);
             painter.text_clipped(Pos::new(x, clip.y), seg, style, clip);
             let seg_w = unicode_width::UnicodeWidthStr::width(seg) as u16;
             x = x.saturating_add(seg_w);

@@ -4,6 +4,7 @@ use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::ui::backend::test::TestBackend;
 use crate::ui::core::geom::Rect;
 use crate::ui::core::id::IdPath;
+use crate::ui::core::style::Color;
 use crate::ui::core::tree::{NodeKind, SplitDrop};
 use std::ffi::{OsStr, OsString};
 use std::sync::mpsc;
@@ -1156,6 +1157,70 @@ fn test_open_file_and_save_runs_async_runtime() {
     });
 
     assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "Xhello\n");
+}
+
+#[test]
+fn test_theme_editor_sync_hsl_supports_indexed_colors() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    workbench.theme.syntax_comment_fg = Color::Indexed(65);
+    assert_eq!(
+        workbench.store.state().ui.theme_editor.selected_token,
+        crate::kernel::state::ThemeEditorToken::Comment
+    );
+    assert_eq!(
+        crate::ui::core::theme_adapter::color_to_rgb(workbench.theme.syntax_comment_fg),
+        crate::ui::core::theme_adapter::color_to_rgb(Color::Indexed(65))
+    );
+
+    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetHue { hue: 1 });
+    assert_eq!(workbench.store.state().ui.theme_editor.hue, 1);
+    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetSaturationLightness {
+        saturation: 1,
+        lightness: 1,
+    });
+    assert_eq!(
+        (
+            workbench.store.state().ui.theme_editor.hue,
+            workbench.store.state().ui.theme_editor.saturation,
+            workbench.store.state().ui.theme_editor.lightness,
+        ),
+        (1, 1, 1)
+    );
+
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::OpenThemeEditor));
+
+    workbench.sync_theme_editor_hsl();
+
+    let (r, g, b) = crate::ui::core::theme_adapter::color_to_rgb(Color::Indexed(65)).unwrap();
+    let expected = crate::app::theme::rgb_to_hsl(r, g, b);
+    let state = &workbench.store.state().ui.theme_editor;
+    assert_eq!((state.hue, state.saturation, state.lightness), expected);
+}
+
+#[test]
+fn test_theme_editor_ui_theme_uses_ansi_fallback_when_not_truecolor() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    workbench.terminal_color_support =
+        crate::ui::core::color_support::TerminalColorSupport::Ansi256;
+    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetHue { hue: 120 });
+    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetSaturationLightness {
+        saturation: 100,
+        lightness: 50,
+    });
+
+    workbench.apply_theme_editor_color();
+
+    assert!(matches!(workbench.theme.syntax_comment_fg, Color::Rgb(..)));
+    assert!(matches!(
+        workbench.ui_theme.syntax_comment_fg,
+        Color::Indexed(_)
+    ));
 }
 
 #[test]

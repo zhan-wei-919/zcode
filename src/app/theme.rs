@@ -39,47 +39,6 @@ pub struct UiTheme {
     pub indent_guide_fg: Color,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TerminalColorSupport {
-    TrueColor,
-    Ansi256,
-    Ansi16,
-}
-
-pub fn detect_terminal_color_support() -> TerminalColorSupport {
-    if let Ok(value) = std::env::var("ZCODE_COLOR_SUPPORT") {
-        let value = value.trim().to_ascii_lowercase();
-        match value.as_str() {
-            "truecolor" | "24bit" | "rgb" => return TerminalColorSupport::TrueColor,
-            "256" | "ansi256" => return TerminalColorSupport::Ansi256,
-            "16" | "ansi16" | "basic" => return TerminalColorSupport::Ansi16,
-            _ => {}
-        }
-    }
-
-    let colorterm = std::env::var("COLORTERM")
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let term = std::env::var("TERM")
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if colorterm.contains("truecolor")
-        || colorterm.contains("24bit")
-        || colorterm.contains("direct")
-        || term.contains("truecolor")
-        || term.contains("24bit")
-        || term.contains("direct")
-    {
-        return TerminalColorSupport::TrueColor;
-    }
-
-    if term.contains("256color") {
-        return TerminalColorSupport::Ansi256;
-    }
-
-    TerminalColorSupport::Ansi16
-}
-
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
@@ -119,63 +78,6 @@ impl Default for UiTheme {
 }
 
 impl UiTheme {
-    pub fn adapt_to_terminal_capabilities(&mut self) {
-        self.apply_color_support(detect_terminal_color_support());
-    }
-
-    fn apply_color_support(&mut self, support: TerminalColorSupport) {
-        if support == TerminalColorSupport::TrueColor {
-            return;
-        }
-
-        self.focus_border = map_color_for_support(self.focus_border, support);
-        self.inactive_border = map_color_for_support(self.inactive_border, support);
-        self.separator = map_color_for_support(self.separator, support);
-        self.accent_fg = map_color_for_support(self.accent_fg, support);
-        self.syntax_comment_fg = map_color_for_support(self.syntax_comment_fg, support);
-        self.syntax_keyword_fg = map_color_for_support(self.syntax_keyword_fg, support);
-        self.syntax_string_fg = map_color_for_support(self.syntax_string_fg, support);
-        self.syntax_number_fg = map_color_for_support(self.syntax_number_fg, support);
-        self.syntax_type_fg = map_color_for_support(self.syntax_type_fg, support);
-        self.syntax_attribute_fg = map_color_for_support(self.syntax_attribute_fg, support);
-        self.syntax_function_fg = map_color_for_support(self.syntax_function_fg, support);
-        self.syntax_variable_fg = map_color_for_support(self.syntax_variable_fg, support);
-        self.syntax_constant_fg = map_color_for_support(self.syntax_constant_fg, support);
-        self.syntax_regex_fg = map_color_for_support(self.syntax_regex_fg, support);
-        self.error_fg = map_color_for_support(self.error_fg, support);
-        self.warning_fg = map_color_for_support(self.warning_fg, support);
-        self.activity_bg = map_color_for_support(self.activity_bg, support);
-        self.activity_fg = map_color_for_support(self.activity_fg, support);
-        self.activity_active_bg = map_color_for_support(self.activity_active_bg, support);
-        self.activity_active_fg = map_color_for_support(self.activity_active_fg, support);
-        self.sidebar_tab_active_bg = map_color_for_support(self.sidebar_tab_active_bg, support);
-        self.sidebar_tab_active_fg = map_color_for_support(self.sidebar_tab_active_fg, support);
-        self.sidebar_tab_inactive_fg = map_color_for_support(self.sidebar_tab_inactive_fg, support);
-        self.header_fg = map_color_for_support(self.header_fg, support);
-        self.palette_border = map_color_for_support(self.palette_border, support);
-        self.palette_bg = map_color_for_support(self.palette_bg, support);
-        self.palette_fg = map_color_for_support(self.palette_fg, support);
-        self.palette_selected_bg = map_color_for_support(self.palette_selected_bg, support);
-        self.palette_selected_fg = map_color_for_support(self.palette_selected_fg, support);
-        self.palette_muted_fg = map_color_for_support(self.palette_muted_fg, support);
-        self.indent_guide_fg = map_color_for_support(self.indent_guide_fg, support);
-
-        self.apply_non_truecolor_syntax_palette(support);
-    }
-
-    fn apply_non_truecolor_syntax_palette(&mut self, support: TerminalColorSupport) {
-        self.syntax_comment_fg = syntax_fallback_color(support, 65, 2);
-        self.syntax_keyword_fg = syntax_fallback_color(support, 33, 4);
-        self.syntax_string_fg = syntax_fallback_color(support, 114, 10);
-        self.syntax_number_fg = syntax_fallback_color(support, 108, 10);
-        self.syntax_type_fg = syntax_fallback_color(support, 44, 6);
-        self.syntax_attribute_fg = syntax_fallback_color(support, 44, 6);
-        self.syntax_function_fg = syntax_fallback_color(support, 179, 11);
-        self.syntax_variable_fg = syntax_fallback_color(support, 81, 6);
-        self.syntax_constant_fg = syntax_fallback_color(support, 39, 12);
-        self.syntax_regex_fg = syntax_fallback_color(support, 167, 9);
-    }
-
     pub fn apply_settings(&mut self, settings: &ThemeSettings) {
         if let Some(v) = &settings.focus_border {
             if let Some(c) = parse_color(v) {
@@ -335,115 +237,6 @@ impl UiTheme {
     }
 }
 
-fn map_color_for_support(color: Color, support: TerminalColorSupport) -> Color {
-    match (support, color) {
-        (TerminalColorSupport::TrueColor, value) => value,
-        (_, Color::Reset) => Color::Reset,
-        (TerminalColorSupport::Ansi256, Color::Rgb(r, g, b)) => {
-            Color::Indexed(rgb_to_ansi256_index(r, g, b))
-        }
-        (TerminalColorSupport::Ansi256, Color::Indexed(i)) => Color::Indexed(i),
-        (TerminalColorSupport::Ansi16, Color::Rgb(r, g, b)) => {
-            Color::Indexed(rgb_to_ansi16_index(r, g, b))
-        }
-        (TerminalColorSupport::Ansi16, Color::Indexed(i)) if i <= 15 => Color::Indexed(i),
-        (TerminalColorSupport::Ansi16, Color::Indexed(i)) => {
-            let (r, g, b) = ansi256_index_to_rgb(i);
-            Color::Indexed(rgb_to_ansi16_index(r, g, b))
-        }
-    }
-}
-
-fn syntax_fallback_color(
-    support: TerminalColorSupport,
-    ansi256_index: u8,
-    ansi16_index: u8,
-) -> Color {
-    match support {
-        TerminalColorSupport::TrueColor => {
-            unreachable!("syntax fallback palette should only apply in non-truecolor mode")
-        }
-        TerminalColorSupport::Ansi256 => Color::Indexed(ansi256_index),
-        TerminalColorSupport::Ansi16 => Color::Indexed(ansi16_index),
-    }
-}
-
-fn rgb_to_ansi256_index(r: u8, g: u8, b: u8) -> u8 {
-    let mut best_index = 0u8;
-    let mut best_distance = u32::MAX;
-
-    for index in 0u16..=255u16 {
-        let index_u8 = index as u8;
-        let (pr, pg, pb) = ansi256_index_to_rgb(index_u8);
-        let distance = color_distance_sq(r, g, b, pr, pg, pb);
-        if distance < best_distance {
-            best_distance = distance;
-            best_index = index_u8;
-        }
-    }
-
-    best_index
-}
-
-fn rgb_to_ansi16_index(r: u8, g: u8, b: u8) -> u8 {
-    let mut best_index = 0u8;
-    let mut best_distance = u32::MAX;
-
-    for (index, (pr, pg, pb)) in ANSI16_RGB.iter().copied().enumerate() {
-        let distance = color_distance_sq(r, g, b, pr, pg, pb);
-        if distance < best_distance {
-            best_distance = distance;
-            best_index = index as u8;
-        }
-    }
-
-    best_index
-}
-
-fn ansi256_index_to_rgb(index: u8) -> (u8, u8, u8) {
-    if index <= 15 {
-        return ANSI16_RGB[index as usize];
-    }
-
-    if (16..=231).contains(&index) {
-        let level = [0u8, 95, 135, 175, 215, 255];
-        let offset = index - 16;
-        let r = level[(offset / 36) as usize];
-        let g = level[((offset / 6) % 6) as usize];
-        let b = level[(offset % 6) as usize];
-        return (r, g, b);
-    }
-
-    let gray = 8u8.saturating_add((index - 232).saturating_mul(10));
-    (gray, gray, gray)
-}
-
-fn color_distance_sq(r1: u8, g1: u8, b1: u8, r2: u8, g2: u8, b2: u8) -> u32 {
-    let dr = i32::from(r1) - i32::from(r2);
-    let dg = i32::from(g1) - i32::from(g2);
-    let db = i32::from(b1) - i32::from(b2);
-    (dr * dr + dg * dg + db * db) as u32
-}
-
-const ANSI16_RGB: [(u8, u8, u8); 16] = [
-    (0, 0, 0),
-    (205, 0, 0),
-    (0, 205, 0),
-    (205, 205, 0),
-    (0, 0, 238),
-    (205, 0, 205),
-    (0, 205, 205),
-    (229, 229, 229),
-    (127, 127, 127),
-    (255, 0, 0),
-    (0, 255, 0),
-    (255, 255, 0),
-    (92, 92, 255),
-    (255, 0, 255),
-    (0, 255, 255),
-    (255, 255, 255),
-];
-
 pub fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (u16, u8, u8) {
     let rf = r as f64 / 255.0;
     let gf = g as f64 / 255.0;
@@ -528,13 +321,6 @@ pub fn hsl_to_rgb(h: u16, s: u8, l: u8) -> (u8, u8, u8) {
     )
 }
 
-pub fn color_to_hex(color: Color) -> Option<String> {
-    match color {
-        Color::Rgb(r, g, b) => Some(format!("#{:02X}{:02X}{:02X}", r, g, b)),
-        _ => None,
-    }
-}
-
 pub fn parse_color(value: &str) -> Option<Color> {
     let v = value.trim();
     if v.is_empty() {
@@ -608,42 +394,5 @@ pub(crate) fn to_core_theme(theme: &UiTheme) -> CoreTheme {
         palette_selected_fg: theme.palette_selected_fg,
         palette_muted_fg: theme.palette_muted_fg,
         indent_guide_fg: theme.indent_guide_fg,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ansi256_fallback_converts_rgb_to_indexed_colors() {
-        let mut theme = UiTheme::default();
-        theme.apply_color_support(TerminalColorSupport::Ansi256);
-
-        assert_eq!(theme.syntax_comment_fg, Color::Indexed(65));
-        assert_eq!(theme.syntax_keyword_fg, Color::Indexed(33));
-        assert_eq!(theme.syntax_string_fg, Color::Indexed(114));
-        assert_eq!(theme.syntax_number_fg, Color::Indexed(108));
-        assert_eq!(theme.syntax_type_fg, Color::Indexed(44));
-        assert_eq!(theme.syntax_function_fg, Color::Indexed(179));
-        assert_eq!(theme.syntax_variable_fg, Color::Indexed(81));
-        assert_eq!(theme.syntax_constant_fg, Color::Indexed(39));
-        assert_eq!(theme.syntax_regex_fg, Color::Indexed(167));
-    }
-
-    #[test]
-    fn ansi16_fallback_converts_rgb_to_indexed_colors() {
-        let mut theme = UiTheme::default();
-        theme.apply_color_support(TerminalColorSupport::Ansi16);
-
-        assert_eq!(theme.syntax_comment_fg, Color::Indexed(2));
-        assert_eq!(theme.syntax_keyword_fg, Color::Indexed(4));
-        assert_eq!(theme.syntax_string_fg, Color::Indexed(10));
-        assert_eq!(theme.syntax_number_fg, Color::Indexed(10));
-        assert_eq!(theme.syntax_type_fg, Color::Indexed(6));
-        assert_eq!(theme.syntax_function_fg, Color::Indexed(11));
-        assert_eq!(theme.syntax_variable_fg, Color::Indexed(6));
-        assert_eq!(theme.syntax_constant_fg, Color::Indexed(12));
-        assert_eq!(theme.syntax_regex_fg, Color::Indexed(9));
     }
 }

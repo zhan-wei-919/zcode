@@ -18,6 +18,7 @@ use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusT
 use crate::models::build_file_tree;
 use crate::tui::view::{EventResult, View};
 use crate::ui::backend::Backend;
+use crate::ui::core::color_support::{detect_terminal_color_support, TerminalColorSupport};
 use crate::ui::core::geom::Rect;
 use crate::views::{ExplorerView, SearchView};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -157,6 +158,7 @@ pub struct Workbench {
     lsp_open_paths: FxHashSet<PathBuf>,
     theme: UiTheme,
     ui_theme: crate::ui::core::theme::Theme,
+    terminal_color_support: TerminalColorSupport,
     ui_runtime: crate::ui::core::runtime::UiRuntime,
     ui_tree: crate::ui::core::tree::UiTree,
     runtime: AsyncRuntime,
@@ -312,7 +314,7 @@ impl Workbench {
             }
         }
 
-        theme.adapt_to_terminal_capabilities();
+        let terminal_color_support = detect_terminal_color_support();
 
         let executor: Arc<dyn crate::kernel::services::ports::AsyncExecutor> =
             Arc::new(runtime.tokio_handle());
@@ -345,7 +347,9 @@ impl Workbench {
         let panes = store.state().ui.editor_layout.panes.max(1);
         let lsp_open_paths_version = store.state().editor.open_paths_version;
 
-        let ui_theme = crate::app::theme::to_core_theme(&theme);
+        let core_theme = crate::app::theme::to_core_theme(&theme);
+        let ui_theme =
+            crate::ui::core::theme_adapter::adapt_theme(&core_theme, terminal_color_support);
 
         let mut workbench = Self {
             store,
@@ -380,6 +384,7 @@ impl Workbench {
             lsp_open_paths: FxHashSet::default(),
             theme,
             ui_theme,
+            terminal_color_support,
             ui_runtime: crate::ui::core::runtime::UiRuntime::new(),
             ui_tree: crate::ui::core::tree::UiTree::new(),
             runtime,
