@@ -165,14 +165,14 @@ impl UiTheme {
 
     fn apply_non_truecolor_syntax_palette(&mut self, support: TerminalColorSupport) {
         self.syntax_comment_fg = syntax_fallback_color(support, 65, 2);
-        self.syntax_keyword_fg = syntax_fallback_color(support, 68, 12);
-        self.syntax_string_fg = syntax_fallback_color(support, 173, 3);
+        self.syntax_keyword_fg = syntax_fallback_color(support, 33, 4);
+        self.syntax_string_fg = syntax_fallback_color(support, 114, 10);
         self.syntax_number_fg = syntax_fallback_color(support, 108, 10);
-        self.syntax_type_fg = syntax_fallback_color(support, 73, 6);
-        self.syntax_attribute_fg = syntax_fallback_color(support, 73, 6);
-        self.syntax_function_fg = syntax_fallback_color(support, 180, 11);
-        self.syntax_variable_fg = syntax_fallback_color(support, 111, 14);
-        self.syntax_constant_fg = syntax_fallback_color(support, 75, 12);
+        self.syntax_type_fg = syntax_fallback_color(support, 44, 6);
+        self.syntax_attribute_fg = syntax_fallback_color(support, 44, 6);
+        self.syntax_function_fg = syntax_fallback_color(support, 179, 11);
+        self.syntax_variable_fg = syntax_fallback_color(support, 81, 6);
+        self.syntax_constant_fg = syntax_fallback_color(support, 39, 12);
         self.syntax_regex_fg = syntax_fallback_color(support, 167, 9);
     }
 
@@ -530,13 +530,13 @@ mod tests {
         theme.apply_color_support(TerminalColorSupport::Ansi256);
 
         assert_eq!(theme.syntax_comment_fg, Color::Indexed(65));
-        assert_eq!(theme.syntax_keyword_fg, Color::Indexed(68));
-        assert_eq!(theme.syntax_string_fg, Color::Indexed(173));
+        assert_eq!(theme.syntax_keyword_fg, Color::Indexed(33));
+        assert_eq!(theme.syntax_string_fg, Color::Indexed(114));
         assert_eq!(theme.syntax_number_fg, Color::Indexed(108));
-        assert_eq!(theme.syntax_type_fg, Color::Indexed(73));
-        assert_eq!(theme.syntax_function_fg, Color::Indexed(180));
-        assert_eq!(theme.syntax_variable_fg, Color::Indexed(111));
-        assert_eq!(theme.syntax_constant_fg, Color::Indexed(75));
+        assert_eq!(theme.syntax_type_fg, Color::Indexed(44));
+        assert_eq!(theme.syntax_function_fg, Color::Indexed(179));
+        assert_eq!(theme.syntax_variable_fg, Color::Indexed(81));
+        assert_eq!(theme.syntax_constant_fg, Color::Indexed(39));
         assert_eq!(theme.syntax_regex_fg, Color::Indexed(167));
     }
 
@@ -546,12 +546,12 @@ mod tests {
         theme.apply_color_support(TerminalColorSupport::Ansi16);
 
         assert_eq!(theme.syntax_comment_fg, Color::Indexed(2));
-        assert_eq!(theme.syntax_keyword_fg, Color::Indexed(12));
-        assert_eq!(theme.syntax_string_fg, Color::Indexed(3));
+        assert_eq!(theme.syntax_keyword_fg, Color::Indexed(4));
+        assert_eq!(theme.syntax_string_fg, Color::Indexed(10));
         assert_eq!(theme.syntax_number_fg, Color::Indexed(10));
         assert_eq!(theme.syntax_type_fg, Color::Indexed(6));
         assert_eq!(theme.syntax_function_fg, Color::Indexed(11));
-        assert_eq!(theme.syntax_variable_fg, Color::Indexed(14));
+        assert_eq!(theme.syntax_variable_fg, Color::Indexed(6));
         assert_eq!(theme.syntax_constant_fg, Color::Indexed(12));
         assert_eq!(theme.syntax_regex_fg, Color::Indexed(9));
     }
