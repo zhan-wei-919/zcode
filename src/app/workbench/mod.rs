@@ -78,6 +78,17 @@ fn env_truthy(key: &str) -> bool {
     )
 }
 
+fn mouse_up_as_down_compat_enabled() -> bool {
+    if let Ok(value) = std::env::var("ZCODE_MOUSE_UP_AS_DOWN") {
+        let value = value.trim().to_ascii_lowercase();
+        return matches!(value.as_str(), "1" | "true" | "yes" | "on");
+    }
+
+    std::env::var("TERM_PROGRAM")
+        .ok()
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("apple_terminal"))
+}
+
 fn settings_enabled() -> bool {
     !cfg!(test) && !env_truthy("ZCODE_DISABLE_SETTINGS")
 }
@@ -187,6 +198,8 @@ pub struct Workbench {
     last_terminal_panel_size: Option<(u16, u16)>,
     terminal_cursor_visible: bool,
     terminal_cursor_last_blink: Instant,
+    mouse_up_as_down_compat: bool,
+    mouse_has_reported_down: bool,
     last_editor_container_area: Option<Rect>,
     editor_split_dragging: bool,
     sidebar_split_dragging: bool,
@@ -413,6 +426,8 @@ impl Workbench {
             last_terminal_panel_size: None,
             terminal_cursor_visible: true,
             terminal_cursor_last_blink: Instant::now(),
+            mouse_up_as_down_compat: mouse_up_as_down_compat_enabled(),
+            mouse_has_reported_down: false,
             last_editor_container_area: None,
             editor_split_dragging: false,
             sidebar_split_dragging: false,

@@ -490,7 +490,9 @@ impl Workbench {
     ) -> EventResult {
         let is_click_or_drag = matches!(
             event.kind,
-            MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Drag(MouseButton::Left)
+            MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::Up(MouseButton::Left)
+                | MouseEventKind::Drag(MouseButton::Left)
         );
         if !is_click_or_drag {
             return EventResult::Ignored;
@@ -538,7 +540,10 @@ impl Workbench {
                 && col < area.x + area.w
                 && row >= area.y
                 && row < area.y + area.h
-                && matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
+                && matches!(
+                    event.kind,
+                    MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+                )
             {
                 let rel_row = (row - area.y) as usize;
                 let count = crate::kernel::state::ThemeEditorToken::ALL.len();
