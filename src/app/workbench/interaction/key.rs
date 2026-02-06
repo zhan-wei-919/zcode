@@ -1,6 +1,8 @@
 use super::super::Workbench;
 use super::terminal::terminal_bytes_for_key_event;
-use crate::core::event::{InputEvent, Key, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crate::core::event::{
+    InputEvent, Key, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use crate::core::Command;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{KeybindingContext, KeybindingService};
@@ -364,7 +366,11 @@ impl Workbench {
                 EventResult::Consumed
             }
             (KeyCode::Up, mods) => {
-                let delta = if mods.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
+                let delta = if mods.contains(KeyModifiers::SHIFT) {
+                    10
+                } else {
+                    1
+                };
                 match focus {
                     ThemeEditorFocus::TokenList => {
                         let _ = self.dispatch_kernel(KernelAction::ThemeEditorMoveTokenSelection {
@@ -389,7 +395,11 @@ impl Workbench {
                 EventResult::Consumed
             }
             (KeyCode::Down, mods) => {
-                let delta = if mods.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
+                let delta = if mods.contains(KeyModifiers::SHIFT) {
+                    10
+                } else {
+                    1
+                };
                 match focus {
                     ThemeEditorFocus::TokenList => {
                         let _ = self.dispatch_kernel(KernelAction::ThemeEditorMoveTokenSelection {
@@ -414,7 +424,11 @@ impl Workbench {
                 EventResult::Consumed
             }
             (KeyCode::Left, mods) => {
-                let delta = if mods.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
+                let delta = if mods.contains(KeyModifiers::SHIFT) {
+                    10
+                } else {
+                    1
+                };
                 match focus {
                     ThemeEditorFocus::HueBar => {
                         // Left on hue bar = switch to SvPalette
@@ -434,7 +448,11 @@ impl Workbench {
                 EventResult::Consumed
             }
             (KeyCode::Right, mods) => {
-                let delta = if mods.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
+                let delta = if mods.contains(KeyModifiers::SHIFT) {
+                    10
+                } else {
+                    1
+                };
                 match focus {
                     ThemeEditorFocus::HueBar => {
                         // Right on hue bar = switch to SvPalette
@@ -528,9 +546,8 @@ impl Workbench {
                     let cur = self.store.state().ui.theme_editor.selected_token.index();
                     let delta = rel_row as isize - cur as isize;
                     if delta != 0 {
-                        let _ = self.dispatch_kernel(
-                            KernelAction::ThemeEditorMoveTokenSelection { delta },
-                        );
+                        let _ = self
+                            .dispatch_kernel(KernelAction::ThemeEditorMoveTokenSelection { delta });
                         self.sync_theme_editor_hsl();
                     }
                     let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
