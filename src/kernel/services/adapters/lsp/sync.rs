@@ -92,9 +92,10 @@ impl LspClient {
             return;
         };
 
+        let language_id = language_id_for_path(path);
         let item = lsp_types::TextDocumentItem::new(
             uri,
-            language_id_for_path(path).to_string(),
+            language_id.to_string(),
             lsp_version(version),
             text.to_string(),
         );
@@ -108,6 +109,12 @@ impl LspClient {
         ));
 
         self.doc_versions.insert(path.to_path_buf(), version);
+        tracing::debug!(
+            path = %path.display(),
+            language_id,
+            version,
+            "lsp didOpen"
+        );
         self.send_message(msg, true);
     }
 

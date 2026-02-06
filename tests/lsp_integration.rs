@@ -90,6 +90,39 @@ fn drive_until(
     }
 }
 
+fn has_command_in_path(name: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+
+    for dir in std::env::split_paths(&path) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = dir.join(name);
+        if is_executable_file(&candidate) {
+            return true;
+        }
+    }
+
+    false
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::metadata(path)
+        .ok()
+        .filter(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)
+        .is_some()
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &std::path::Path) -> bool {
+    path.is_file()
+}
+
 #[test]
 fn test_lsp_spawn_sync_requests_and_diagnostics_are_wired() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
@@ -264,6 +297,435 @@ fn test_lsp_spawns_for_multiple_languages() {
             && caps.keys().any(|k| k.server == LspServerKind::Gopls)
             && caps.keys().any(|k| k.server == LspServerKind::Pyright)
     });
+}
+
+#[test]
+fn test_did_open_sends_language_id_for_python_go_and_js_ts() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let py_path = dir.path().join("a.py");
+    let go_path = dir.path().join("b.go");
+    let ts_path = dir.path().join("c.ts");
+    let js_path = dir.path().join("d.js");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&py_path, "foo = 1\n").unwrap();
+    std::fs::write(&go_path, "package main\n\nfunc main() {}\n").unwrap();
+    std::fs::write(&ts_path, "export const x = 1;\n").unwrap();
+    std::fs::write(&js_path, "export const y = 2;\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    for path in [&py_path, &go_path, &ts_path, &js_path] {
+        workbench.handle_message(AppMessage::FileLoaded {
+            path: path.to_path_buf(),
+            content: std::fs::read_to_string(path).unwrap(),
+        });
+    }
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |_| {
+        let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        trace
+            .lines()
+            .any(|line| line.trim() == "didOpen languageId python")
+            && trace
+                .lines()
+                .any(|line| line.trim() == "didOpen languageId go")
+            && trace
+                .lines()
+                .any(|line| line.trim() == "didOpen languageId typescript")
+            && trace
+                .lines()
+                .any(|line| line.trim() == "didOpen languageId javascript")
+    });
+}
+
+#[test]
+fn test_hover_and_completion_work_for_python_go_and_js_ts() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let py_path = dir.path().join("a.py");
+    let go_path = dir.path().join("b.go");
+    let ts_path = dir.path().join("c.ts");
+    let js_path = dir.path().join("d.js");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&py_path, "foo = 1\n").unwrap();
+    std::fs::write(&go_path, "package main\n\nfunc main() {}\n").unwrap();
+    std::fs::write(&ts_path, "export const x = 1;\n").unwrap();
+    std::fs::write(&js_path, "export const y = 2;\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    let completion = KeyEvent {
+        code: KeyCode::Char(' '),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+    };
+    let hover = KeyEvent {
+        code: KeyCode::F(2),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    };
+    let close = KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    };
+
+    for path in [&py_path, &go_path, &ts_path, &js_path] {
+        workbench.handle_message(AppMessage::FileLoaded {
+            path: path.to_path_buf(),
+            content: std::fs::read_to_string(path).unwrap(),
+        });
+
+        let _ = workbench.handle_input(&InputEvent::Key(completion));
+        drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+            w.state().ui.completion.visible
+                && w.state()
+                    .ui
+                    .completion
+                    .items
+                    .iter()
+                    .any(|item| item.label == "stubItem")
+        });
+
+        let _ = workbench.handle_input(&InputEvent::Key(close));
+        assert!(!workbench.state().ui.completion.visible);
+
+        let _ = workbench.handle_input(&InputEvent::Key(hover));
+        drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+            w.state()
+                .ui
+                .hover_message
+                .as_deref()
+                .is_some_and(|m| m.starts_with("stub hover @"))
+        });
+
+        let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Right,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+        drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+            w.state().ui.hover_message.is_none()
+        });
+    }
+}
+
+#[test]
+fn test_hover_works_when_cursor_is_after_identifier() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let py_path = dir.path().join("a.py");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&py_path, "foo = 1\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: py_path.clone(),
+        content: std::fs::read_to_string(&py_path).unwrap(),
+    });
+
+    // Cursor at start -> move right 3 times so it's positioned *after* `foo`.
+    for _ in 0..3 {
+        let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Right,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+    }
+
+    let hover = KeyEvent {
+        code: KeyCode::F(2),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(hover));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state()
+            .ui
+            .hover_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("stub hover @"))
+    });
+}
+
+#[test]
+fn test_completion_debounce_triggers_for_python() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let py_path = dir.path().join("a.py");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&py_path, "\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: py_path.clone(),
+        content: std::fs::read_to_string(&py_path).unwrap(),
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char('p'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().ui.completion.visible
+            && w.state()
+                .ui
+                .completion
+                .items
+                .iter()
+                .any(|item| item.label == "stubItem")
+    });
+}
+
+#[test]
+#[ignore]
+fn test_real_pyright_hover_and_completion_smoke() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(
+            "zcode::kernel::services::adapters::lsp=debug",
+        ))
+        .with_test_writer()
+        .try_init();
+
+    if !has_command_in_path("pyright-langserver") {
+        eprintln!("skip: pyright-langserver not found on PATH");
+        return;
+    }
+
+    // Ensure we use real discovery (not the stub override from other tests / user env).
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .remove("ZCODE_LSP_COMMAND")
+        .remove("ZCODE_LSP_ARGS")
+        .remove("ZCODE_LSP_STUB_TRACE_PATH")
+        .remove("ZCODE_LSP_STUB_DISABLE_OPTIONAL");
+
+    let dir = tempdir().unwrap();
+    let hover_path = dir.path().join("hover.py");
+    let comp_path = dir.path().join("completion.py");
+
+    std::fs::write(&hover_path, "pred = 1\n").unwrap();
+    std::fs::write(&comp_path, "import os\nos.\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: hover_path.clone(),
+        content: std::fs::read_to_string(&hover_path).unwrap(),
+    });
+
+    // `FileLoaded` doesn't go through `dispatch_kernel`, so it doesn't automatically trigger LSP
+    // sync. Send a harmless command to kick the bridge's `sync_lsp()` once.
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Right,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    // Wait until server capabilities are published.
+    eprintln!("[e2e] waiting for pyright capabilities...");
+    drive_until(&mut workbench, &rx, Duration::from_secs(20), |w| {
+        w.state()
+            .lsp
+            .server_capabilities
+            .keys()
+            .any(|k| k.server == LspServerKind::Pyright)
+    });
+    eprintln!("[e2e] pyright capabilities ready");
+
+    // Hover should produce non-empty markdown (pyright typically returns a fenced code block).
+    let hover = KeyEvent {
+        code: KeyCode::F(2),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(hover));
+    eprintln!("[e2e] waiting for hover...");
+    drive_until(&mut workbench, &rx, Duration::from_secs(10), |w| {
+        w.state()
+            .ui
+            .hover_message
+            .as_deref()
+            .is_some_and(|m| !m.trim().is_empty())
+    });
+    eprintln!("[e2e] hover ready");
+
+    let hover_text = workbench
+        .state()
+        .ui
+        .hover_message
+        .clone()
+        .unwrap_or_default();
+    assert!(
+        hover_text.contains("pred"),
+        "expected hover to mention `pred`, got:\n{hover_text}"
+    );
+
+    // Open a second file and request completion.
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: comp_path.clone(),
+        content: std::fs::read_to_string(&comp_path).unwrap(),
+    });
+
+    // Put the cursor on the `os.` line (end-of-line).
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Down,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::End,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    let completion = KeyEvent {
+        code: KeyCode::Char('.'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(completion));
+    eprintln!("[e2e] waiting for completion...");
+    drive_until(&mut workbench, &rx, Duration::from_secs(10), |w| {
+        w.state().ui.completion.visible && !w.state().ui.completion.items.is_empty()
+    });
+    eprintln!("[e2e] completion ready");
+}
+
+#[test]
+fn test_optional_lsp_requests_are_gated_by_capabilities() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let py_path = dir.path().join("a.py");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str())
+        .set("ZCODE_LSP_STUB_DISABLE_OPTIONAL", std::ffi::OsStr::new("1"));
+
+    std::fs::write(&py_path, "x = 1\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: py_path.clone(),
+        content: std::fs::read_to_string(&py_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().lsp.server_capabilities.iter().any(|(k, c)| {
+            k.server == LspServerKind::Pyright
+                && !c.semantic_tokens
+                && !c.inlay_hints
+                && !c.folding_range
+        })
+    });
+
+    let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+    assert!(
+        !trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/semanticTokens/full"),
+        "unexpected semanticTokens/full request in lsp trace:\n{trace}"
+    );
+    assert!(
+        !trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/inlayHint"),
+        "unexpected inlayHint request in lsp trace:\n{trace}"
+    );
+    assert!(
+        !trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/foldingRange"),
+        "unexpected foldingRange request in lsp trace:\n{trace}"
+    );
 }
 
 #[test]

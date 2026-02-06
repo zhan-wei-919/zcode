@@ -121,6 +121,17 @@ fn main() {
 
                     if let Some(marker) = marker {
                         trace.log(marker);
+                        if marker == "didOpen" {
+                            if let Ok(params) = serde_json::from_value::<
+                                lsp_types::DidOpenTextDocumentParams,
+                            >(not.params.clone())
+                            {
+                                trace.log(&format!(
+                                    "didOpen languageId {}",
+                                    params.text_document.language_id
+                                ));
+                            }
+                        }
                         let params = publish_diagnostics(uri, marker);
                         let msg = Message::Notification(Notification::new(
                             lsp_types::notification::PublishDiagnostics::METHOD.to_string(),
@@ -154,6 +165,13 @@ fn handle_request(
     let position_encoding = StubPositionEncoding::from_env();
     match req.method.as_str() {
         m if m == lsp_types::request::Initialize::METHOD => {
+            let disable_optional = std::env::var("ZCODE_LSP_STUB_DISABLE_OPTIONAL")
+                .ok()
+                .is_some_and(|v| {
+                    let v = v.trim();
+                    !v.is_empty() && v != "0"
+                });
+
             let params = serde_json::from_value::<lsp_types::InitializeParams>(req.params)
                 .unwrap_or_default();
             let root = workspace_root_from_initialize(&params);
@@ -183,10 +201,9 @@ fn handle_request(
                     retrigger_characters: None,
                     work_done_progress_options: lsp_types::WorkDoneProgressOptions::default(),
                 }),
-                folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(
-                    true,
-                )),
-                semantic_tokens_provider: Some(
+                folding_range_provider: (!disable_optional)
+                    .then_some(lsp_types::FoldingRangeProviderCapability::Simple(true)),
+                semantic_tokens_provider: (!disable_optional).then_some(
                     lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
                         lsp_types::SemanticTokensOptions {
                             work_done_progress_options: lsp_types::WorkDoneProgressOptions::default(
@@ -203,7 +220,7 @@ fn handle_request(
                         },
                     ),
                 ),
-                inlay_hint_provider: Some(lsp_types::OneOf::Left(true)),
+                inlay_hint_provider: (!disable_optional).then_some(lsp_types::OneOf::Left(true)),
                 document_formatting_provider: Some(lsp_types::OneOf::Left(true)),
                 document_range_formatting_provider: Some(lsp_types::OneOf::Left(true)),
                 rename_provider: Some(lsp_types::OneOf::Left(true)),

@@ -25,9 +25,16 @@ pub enum Token {
     SidebarTabActiveBg,
     SidebarTabActiveFg,
     SidebarTabInactiveFg,
+    SyntaxCommentFg,
+    SyntaxKeywordFg,
     SyntaxStringFg,
     SyntaxNumberFg,
+    SyntaxTypeFg,
     SyntaxAttributeFg,
+    SyntaxFunctionFg,
+    SyntaxVariableFg,
+    SyntaxConstantFg,
+    SyntaxRegexFg,
 }
 
 #[derive(Debug, Clone)]
@@ -36,9 +43,16 @@ pub struct Theme {
     pub inactive_border: Color,
     pub separator: Color,
     pub accent_fg: Color,
+    pub syntax_comment_fg: Color,
+    pub syntax_keyword_fg: Color,
     pub syntax_string_fg: Color,
     pub syntax_number_fg: Color,
+    pub syntax_type_fg: Color,
     pub syntax_attribute_fg: Color,
+    pub syntax_function_fg: Color,
+    pub syntax_variable_fg: Color,
+    pub syntax_constant_fg: Color,
+    pub syntax_regex_fg: Color,
     pub error_fg: Color,
     pub warning_fg: Color,
     pub activity_bg: Color,
@@ -81,9 +95,16 @@ impl Theme {
             Token::SidebarTabActiveBg => self.sidebar_tab_active_bg,
             Token::SidebarTabActiveFg => self.sidebar_tab_active_fg,
             Token::SidebarTabInactiveFg => self.sidebar_tab_inactive_fg,
+            Token::SyntaxCommentFg => self.syntax_comment_fg,
+            Token::SyntaxKeywordFg => self.syntax_keyword_fg,
             Token::SyntaxStringFg => self.syntax_string_fg,
             Token::SyntaxNumberFg => self.syntax_number_fg,
+            Token::SyntaxTypeFg => self.syntax_type_fg,
             Token::SyntaxAttributeFg => self.syntax_attribute_fg,
+            Token::SyntaxFunctionFg => self.syntax_function_fg,
+            Token::SyntaxVariableFg => self.syntax_variable_fg,
+            Token::SyntaxConstantFg => self.syntax_constant_fg,
+            Token::SyntaxRegexFg => self.syntax_regex_fg,
         }
     }
 }
@@ -91,17 +112,22 @@ impl Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            focus_border: Color::Indexed(6),     // Cyan
-            inactive_border: Color::Indexed(8),  // DarkGray
-            separator: Color::Indexed(8),        // DarkGray
-            accent_fg: Color::Indexed(3),        // Yellow
-            syntax_string_fg: Color::Indexed(2), // Green
-            syntax_number_fg: Color::Indexed(5), // Magenta
-            // Use light blue so namespaces/modules (semantic tokens) are readable even on
-            // terminals where ANSI blue is very dark.
-            syntax_attribute_fg: Color::Indexed(12), // LightBlue
-            error_fg: Color::Indexed(1),             // Red
-            warning_fg: Color::Indexed(3),           // Yellow
+            focus_border: Color::Indexed(6),    // Cyan
+            inactive_border: Color::Indexed(8), // DarkGray
+            separator: Color::Indexed(8),       // DarkGray
+            accent_fg: Color::Indexed(3),
+            syntax_comment_fg: Color::Rgb(0x6A, 0x99, 0x55),
+            syntax_keyword_fg: Color::Rgb(0x56, 0x9C, 0xD6),
+            syntax_string_fg: Color::Rgb(0xCE, 0x91, 0x78),
+            syntax_number_fg: Color::Rgb(0xB5, 0xCE, 0xA8),
+            syntax_type_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
+            syntax_attribute_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
+            syntax_function_fg: Color::Rgb(0xDC, 0xDC, 0xAA),
+            syntax_variable_fg: Color::Rgb(0x9C, 0xDC, 0xFE),
+            syntax_constant_fg: Color::Rgb(0x4F, 0xC1, 0xFF),
+            syntax_regex_fg: Color::Rgb(0xD1, 0x69, 0x69),
+            error_fg: Color::Indexed(1),   // Red
+            warning_fg: Color::Indexed(3), // Yellow
             activity_bg: Color::Reset,
             activity_fg: Color::Indexed(8),             // DarkGray
             activity_active_bg: Color::Indexed(8),      // DarkGray

@@ -147,20 +147,30 @@ Settings are stored in:
 
 ### LSP configuration
 
-You can override per-language LSP server commands in `setting.json`:
+You can override per-language LSP server command/args and optional initialize options in `setting.json`:
 
 ```json
 {
   "lsp": {
     "servers": {
       "rust-analyzer": { "command": "rust-analyzer" },
-      "gopls": { "command": "gopls" },
+      "gopls": { "command": "/home/you/go/bin/gopls" },
       "pyright": { "command": "pyright-langserver", "args": ["--stdio"] },
-      "tsls": { "command": "typescript-language-server", "args": ["--stdio"] }
+      "tsls": {
+        "command": "typescript-language-server",
+        "args": ["--stdio"],
+        "initialization_options": {
+          "preferences": {
+            "includeCompletionsForModuleExports": true
+          }
+        }
+      }
     }
   }
 }
 ```
+
+For Go, if `gopls` is installed under `~/go/bin`, prefer setting an absolute command path as above.
 
 ## Troubleshooting
 

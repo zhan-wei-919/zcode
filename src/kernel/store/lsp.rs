@@ -8,7 +8,6 @@ use crate::kernel::{Action, BottomPanelTab, Effect, FocusTarget};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
-use unicode_xid::UnicodeXID;
 
 use super::completion::{filtered_completion_items, sort_completion_items};
 use super::semantic::{
@@ -132,18 +131,6 @@ pub(super) fn lsp_position_from_cursor(
     encoding: LspPositionEncoding,
 ) -> (u32, u32) {
     lsp_position_from_buffer_pos(tab, tab.buffer.cursor(), encoding)
-}
-
-pub(super) fn cursor_is_identifier(tab: &crate::kernel::editor::EditorTabState) -> bool {
-    let (row, col) = tab.buffer.cursor();
-    let char_offset = tab.buffer.pos_to_char((row, col));
-    let rope = tab.buffer.rope();
-    let char_offset = char_offset.min(rope.len_chars());
-    if char_offset >= rope.len_chars() {
-        return false;
-    }
-    let ch = rope.char(char_offset);
-    ch == '_' || UnicodeXID::is_xid_continue(ch)
 }
 
 pub(super) fn lsp_position_from_buffer_pos(
@@ -540,12 +527,111 @@ impl super::Store {
                 let changed = match self.state.lsp.server_capabilities.get(&key) {
                     Some(existing) if existing == &capabilities => false,
                     _ => {
-                        self.state.lsp.server_capabilities.insert(key, capabilities);
+                        self.state
+                            .lsp
+                            .server_capabilities
+                            .insert(key.clone(), capabilities);
                         true
                     }
                 };
+                let mut effects = Vec::new();
+                if changed {
+                    let Some(caps) = self.state.lsp.server_capabilities.get(&key) else {
+                        return super::DispatchResult {
+                            effects,
+                            state_changed: changed,
+                        };
+                    };
+
+                    // Request optional features once we know server capabilities; this avoids
+                    // queuing unsupported requests during initialization (common for pyright).
+                    for pane in &self.state.editor.panes {
+                        let Some(tab) = pane.active_tab() else {
+                            continue;
+                        };
+                        let Some(path) = tab.path.as_ref() else {
+                            continue;
+                        };
+                        if !is_lsp_source_path(path) {
+                            continue;
+                        }
+
+                        let Some(tab_key) = lsp_client_key_for_path(&self.state, path) else {
+                            continue;
+                        };
+                        if tab_key != key {
+                            continue;
+                        }
+
+                        let version = tab.edit_version;
+                        let encoding = caps.position_encoding;
+
+                        if caps.semantic_tokens
+                            && (caps.semantic_tokens_full || caps.semantic_tokens_range)
+                        {
+                            let total_lines = tab.buffer.len_lines().max(1);
+                            let can_range = caps.semantic_tokens_range;
+                            let can_full = caps.semantic_tokens_full;
+                            let prefer_range = can_range && (total_lines >= 2000 || !can_full);
+
+                            if prefer_range {
+                                let viewport_top =
+                                    tab.viewport.line_offset.min(total_lines.saturating_sub(1));
+                                let height = tab.viewport.height.max(1);
+                                let overscan = 40usize.min(total_lines);
+                                let start_line = viewport_top.saturating_sub(overscan);
+                                let end_line_exclusive =
+                                    (viewport_top + height + overscan).min(total_lines);
+                                if let Some(range) = lsp_range_for_full_lines(
+                                    tab,
+                                    start_line,
+                                    end_line_exclusive,
+                                    encoding,
+                                ) {
+                                    effects.push(Effect::LspSemanticTokensRangeRequest {
+                                        path: path.clone(),
+                                        version,
+                                        range,
+                                    });
+                                }
+                            } else if can_full {
+                                effects.push(Effect::LspSemanticTokensRequest {
+                                    path: path.clone(),
+                                    version,
+                                });
+                            }
+                        }
+
+                        if caps.inlay_hints {
+                            let total_lines = tab.buffer.len_lines().max(1);
+                            let start_line =
+                                tab.viewport.line_offset.min(total_lines.saturating_sub(1));
+                            let end_line_exclusive =
+                                (start_line + tab.viewport.height.max(1)).min(total_lines);
+                            if let Some(range) = lsp_range_for_full_lines(
+                                tab,
+                                start_line,
+                                end_line_exclusive,
+                                encoding,
+                            ) {
+                                effects.push(Effect::LspInlayHintsRequest {
+                                    path: path.clone(),
+                                    version,
+                                    range,
+                                });
+                            }
+                        }
+
+                        if caps.folding_range {
+                            effects.push(Effect::LspFoldingRangeRequest {
+                                path: path.clone(),
+                                version,
+                            });
+                        }
+                    }
+                }
                 super::DispatchResult {
-                    effects: Vec::new(),
+                    effects,
                     state_changed: changed,
                 }
             }

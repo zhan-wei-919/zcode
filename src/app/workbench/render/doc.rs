@@ -2,7 +2,7 @@ use crate::core::text_window;
 use crate::kernel::editor::{highlight_snippet, HighlightKind, HighlightSpan, LanguageId};
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::painter::Painter;
-use crate::ui::core::style::{Mod, Style};
+use crate::ui::core::style::Style;
 use crate::ui::core::theme::Theme;
 use unicode_width::UnicodeWidthStr;
 
@@ -131,17 +131,18 @@ fn paint_doc_line(
 
 fn style_for_highlight(kind: HighlightKind, theme: &Theme) -> Style {
     match kind {
-        HighlightKind::Comment => Style::default().fg(theme.palette_muted_fg),
+        HighlightKind::Comment => Style::default().fg(theme.syntax_comment_fg),
         HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
-        HighlightKind::Keyword => Style::default().fg(theme.accent_fg).add_mod(Mod::BOLD),
-        HighlightKind::Type => Style::default().fg(theme.header_fg),
+        HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
+        HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
         HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
         HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),
-        HighlightKind::Lifetime => Style::default().fg(theme.syntax_number_fg),
-        // Not currently produced by `highlight_snippet`, but keep for completeness.
-        HighlightKind::Function => Style::default().fg(theme.accent_fg),
+        HighlightKind::Lifetime => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::Function => Style::default().fg(theme.syntax_function_fg),
         HighlightKind::Macro => Style::default().fg(theme.syntax_attribute_fg),
-        HighlightKind::Variable => Style::default().fg(theme.palette_fg),
+        HighlightKind::Variable => Style::default().fg(theme.syntax_variable_fg),
+        HighlightKind::Constant => Style::default().fg(theme.syntax_constant_fg),
     }
 }
 

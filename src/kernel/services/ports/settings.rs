@@ -38,6 +38,11 @@ pub struct LspServerConfig {
     /// Extra args override. When omitted, zcode uses server-specific defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub args: Option<Vec<String>>,
+    /// Optional initialization options forwarded to the server as-is.
+    ///
+    /// Useful for server-specific knobs such as semantic token behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initialization_options: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,11 +82,25 @@ pub struct ThemeSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accent_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_comment_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_keyword_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_string_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_number_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_type_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_attribute_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_function_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_variable_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_constant_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_regex_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -125,9 +144,16 @@ impl Default for ThemeSettings {
             inactive_border: Some("dark_gray".to_string()),
             separator: Some("dark_gray".to_string()),
             accent_fg: Some("yellow".to_string()),
-            syntax_string_fg: Some("green".to_string()),
-            syntax_number_fg: Some("magenta".to_string()),
-            syntax_attribute_fg: Some("light_blue".to_string()),
+            syntax_comment_fg: Some("#6A9955".to_string()),
+            syntax_keyword_fg: Some("#569CD6".to_string()),
+            syntax_string_fg: Some("#CE9178".to_string()),
+            syntax_number_fg: Some("#B5CEA8".to_string()),
+            syntax_type_fg: Some("#4EC9B0".to_string()),
+            syntax_attribute_fg: Some("#4EC9B0".to_string()),
+            syntax_function_fg: Some("#DCDCAA".to_string()),
+            syntax_variable_fg: Some("#9CDCFE".to_string()),
+            syntax_constant_fg: Some("#4FC1FF".to_string()),
+            syntax_regex_fg: Some("#D16969".to_string()),
             error_fg: Some("red".to_string()),
             warning_fg: Some("yellow".to_string()),
             activity_bg: None,

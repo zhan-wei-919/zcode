@@ -975,6 +975,14 @@ pub(super) fn workspace_folders_for_root(root: &Path) -> Option<Vec<lsp_types::W
 }
 
 pub(super) fn client_capabilities() -> lsp_types::ClientCapabilities {
+    let hover = lsp_types::HoverClientCapabilities {
+        dynamic_registration: Some(false),
+        content_format: Some(vec![
+            lsp_types::MarkupKind::Markdown,
+            lsp_types::MarkupKind::PlainText,
+        ]),
+    };
+
     let completion = lsp_types::CompletionClientCapabilities {
         completion_item: Some(lsp_types::CompletionItemCapability {
             snippet_support: Some(true),
@@ -1059,12 +1067,12 @@ pub(super) fn client_capabilities() -> lsp_types::ClientCapabilities {
     lsp_types::ClientCapabilities {
         workspace: Some(lsp_types::WorkspaceClientCapabilities {
             apply_edit: Some(true),
-            workspace_folders: Some(true),
             configuration: Some(true),
             symbol: Some(workspace_symbol),
             ..Default::default()
         }),
         text_document: Some(lsp_types::TextDocumentClientCapabilities {
+            hover: Some(hover),
             completion: Some(completion),
             signature_help: Some(signature_help),
             document_symbol: Some(document_symbol),

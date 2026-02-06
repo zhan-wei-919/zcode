@@ -1,15 +1,19 @@
 use super::super::theme::UiTheme;
 use super::Workbench;
 use crate::core::Command;
-use crate::kernel::services::adapters::{ConfigService, KeybindingContext, KeybindingService};
+use crate::kernel::services::adapters::lsp::LspServerCommandOverride;
+use crate::kernel::services::adapters::{
+    ConfigService, KeybindingContext, KeybindingService, LspService,
+};
+use crate::kernel::services::ports::LspServerKind;
 use crate::kernel::services::ports::{
     GlobalSearchMessage, LspPosition, LspPositionEncoding, SearchMessage,
 };
 use crate::kernel::services::KernelMessage;
 use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget};
+use rustc_hash::FxHashMap;
 use std::sync::mpsc;
 use std::time::Instant;
-use unicode_xid::UnicodeXID;
 
 impl Workbench {
     /// 定时检查是否需要刷盘（由主循环调用）
@@ -283,11 +287,12 @@ impl Workbench {
             (row, col)
         };
 
+        let Some(buf_pos) = tab.identifier_pos_at_or_before(buf_pos) else {
+            return false;
+        };
+
         let char_offset = tab.buffer.pos_to_char(buf_pos);
         if tab.is_in_string_or_comment_at_char(char_offset) {
-            return false;
-        }
-        if !buffer_pos_is_identifier(tab, buf_pos) {
             return false;
         }
 
@@ -421,6 +426,10 @@ impl Workbench {
 
         let editor_config = settings.editor.clone();
         let mut keybindings = KeybindingService::new();
+        let mut lsp_settings_override: Option<(String, Vec<String>, Option<serde_json::Value>)> =
+            None;
+        let mut lsp_server_overrides: FxHashMap<LspServerKind, LspServerCommandOverride> =
+            FxHashMap::default();
         for rule in settings.keybindings {
             if let Some(key) =
                 crate::kernel::services::adapters::settings::parse_keybinding(&rule.key)
@@ -435,6 +444,55 @@ impl Workbench {
                 } else {
                     keybindings.bind(context, key, Command::from_name(&rule.command));
                 }
+            }
+        }
+
+        if let Some(command) = settings
+            .lsp
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            let args = settings
+                .lsp
+                .args
+                .iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            lsp_settings_override = Some((command.to_string(), args, None));
+        }
+
+        for (name, cfg) in &settings.lsp.servers {
+            let Some(kind) = LspServerKind::from_settings_key(name) else {
+                continue;
+            };
+
+            let command = cfg
+                .command
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string);
+            let args = cfg.args.as_ref().map(|args| {
+                args.iter()
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            });
+
+            let entry = lsp_server_overrides.entry(kind).or_default();
+            if let Some(command) = command {
+                entry.command = Some(command);
+            }
+            if let Some(args) = args {
+                entry.args = Some(args);
+            }
+            if let Some(initialization_options) = cfg.initialization_options.clone() {
+                entry.initialization_options = Some(initialization_options);
             }
         }
 
@@ -458,6 +516,19 @@ impl Workbench {
                 .kernel_services
                 .register(ConfigService::with_editor_config(editor_config));
         }
+
+        if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+            let mut global_override = None;
+            if super::lsp_command_override().is_none() {
+                global_override = lsp_settings_override;
+            }
+
+            if service.reconfigure(global_override, lsp_server_overrides) {
+                self.lsp_open_paths.clear();
+                self.lsp_open_paths_version = 0;
+            }
+        }
+
         self.theme = theme;
         self.ui_theme = ui_theme;
         self.last_settings_modified = self
@@ -510,20 +581,6 @@ impl Workbench {
 
         false
     }
-}
-
-fn buffer_pos_is_identifier(
-    tab: &crate::kernel::editor::EditorTabState,
-    pos: (usize, usize),
-) -> bool {
-    let rope = tab.buffer.rope();
-    let char_offset = tab.buffer.pos_to_char(pos).min(rope.len_chars());
-    if char_offset >= rope.len_chars() {
-        return false;
-    }
-
-    let ch = rope.char(char_offset);
-    ch == '_' || UnicodeXID::is_xid_continue(ch)
 }
 
 fn lsp_position_from_buffer_pos(

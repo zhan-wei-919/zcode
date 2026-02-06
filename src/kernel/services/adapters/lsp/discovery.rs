@@ -35,7 +35,7 @@ pub(super) fn resolve_default_server_command(
 ) -> Option<(String, Vec<String>)> {
     match language {
         LspLanguage::Rust => resolve_rust_analyzer_command(root).map(|cmd| (cmd, Vec::new())),
-        LspLanguage::Go => resolve_command_path(root, "gopls").map(|cmd| (cmd, Vec::new())),
+        LspLanguage::Go => resolve_gopls_command().map(|cmd| (cmd, Vec::new())),
         LspLanguage::Python => resolve_pyright_langserver_command(workspace_root, root)
             .map(|cmd| (cmd, vec!["--stdio".to_string()])),
         LspLanguage::JavaScript | LspLanguage::TypeScript | LspLanguage::Jsx | LspLanguage::Tsx => {
@@ -43,6 +43,13 @@ pub(super) fn resolve_default_server_command(
                 .map(|cmd| (cmd, vec!["--stdio".to_string()]))
         }
     }
+}
+
+fn resolve_gopls_command() -> Option<String> {
+    find_in_path("gopls")
+        .or_else(|| resolve_gobin_command("gopls"))
+        .or_else(|| resolve_gopath_command("gopls"))
+        .map(|path| path.to_string_lossy().to_string())
 }
 
 fn resolve_typescript_language_server_command(
@@ -61,23 +68,47 @@ fn resolve_pyright_langserver_command(workspace_root: &Path, root: &Path) -> Opt
         .map(|path| path.to_string_lossy().to_string())
 }
 
-fn resolve_command_path(_root: &Path, name: &str) -> Option<String> {
-    find_in_path(name).map(|path| path.to_string_lossy().to_string())
+fn resolve_gobin_command(name: &str) -> Option<PathBuf> {
+    let gobin = std::env::var_os("GOBIN")?;
+    if gobin.is_empty() {
+        return None;
+    }
+
+    executable_in_dir(&PathBuf::from(gobin), name)
+}
+
+fn resolve_gopath_command(name: &str) -> Option<PathBuf> {
+    if let Some(gopath) = std::env::var_os("GOPATH") {
+        for dir in std::env::split_paths(&gopath) {
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
+
+            if let Some(path) = executable_in_dir(&dir.join("bin"), name) {
+                return Some(path);
+            }
+        }
+    }
+
+    let home = std::env::var_os("HOME")?;
+    executable_in_dir(&PathBuf::from(home).join("go").join("bin"), name)
 }
 
 fn find_in_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .filter(|dir| !dir.as_os_str().is_empty())
-        .find_map(|dir| {
-            for exe in candidate_names(name) {
-                let candidate = dir.join(exe);
-                if is_executable_file(&candidate) {
-                    return Some(candidate);
-                }
-            }
-            None
-        })
+        .find_map(|dir| executable_in_dir(&dir, name))
+}
+
+fn executable_in_dir(dir: &Path, name: &str) -> Option<PathBuf> {
+    for exe in candidate_names(name) {
+        let candidate = dir.join(exe);
+        if is_executable_file(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn resolve_node_modules_bin(workspace_root: &Path, root: &Path, name: &str) -> Option<PathBuf> {

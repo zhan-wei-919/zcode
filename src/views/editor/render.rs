@@ -935,16 +935,18 @@ fn style_for_highlight(
     }
 
     let style = match span.kind {
-        HighlightKind::Comment => Style::default().fg(theme.palette_muted_fg),
+        HighlightKind::Comment => Style::default().fg(theme.syntax_comment_fg),
         HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
-        HighlightKind::Keyword => Style::default().fg(theme.accent_fg).add_mod(Mod::BOLD),
-        HighlightKind::Type => Style::default().fg(theme.header_fg),
+        HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
+        HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
         HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
         HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),
-        HighlightKind::Lifetime => Style::default().fg(theme.syntax_number_fg),
-        HighlightKind::Function => Style::default().fg(theme.accent_fg),
+        HighlightKind::Lifetime => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::Function => Style::default().fg(theme.syntax_function_fg),
         HighlightKind::Macro => Style::default().fg(theme.syntax_attribute_fg),
-        HighlightKind::Variable => Style::default().fg(theme.palette_fg),
+        HighlightKind::Variable => Style::default().fg(theme.syntax_variable_fg),
+        HighlightKind::Constant => Style::default().fg(theme.syntax_constant_fg),
     };
 
     Some(style)

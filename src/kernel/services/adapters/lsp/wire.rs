@@ -291,10 +291,12 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
 
         match msg {
             Message::Request(req) => {
+                tracing::debug!(method = %req.method, "lsp server request");
                 let resp = handle_server_request(req, &workspace_folders, &ctx);
                 let _ = tx.send(Message::Response(resp));
             }
             Message::Notification(not) => {
+                tracing::debug!(method = %not.method, "lsp notification");
                 if not.method == lsp_types::notification::PublishDiagnostics::METHOD {
                     if let Ok(params) =
                         serde_json::from_value::<lsp_types::PublishDiagnosticsParams>(not.params)
@@ -302,6 +304,12 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
                         if let Some((path, items)) = diagnostics_from_params(params) {
                             ctx.dispatch(Action::LspDiagnostics { path, items });
                         }
+                    }
+                } else if not.method == lsp_types::notification::LogMessage::METHOD {
+                    if let Ok(params) =
+                        serde_json::from_value::<lsp_types::LogMessageParams>(not.params)
+                    {
+                        tracing::debug!(message = %params.message, "lsp log message");
                     }
                 }
             }
@@ -407,6 +415,7 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
                             resp.id == RequestId::from(latest_shutdown.load(Ordering::Relaxed))
                         }
                     };
+                    tracing::debug!(id = ?resp.id, kind = ?kind, is_latest, "lsp response matched");
                     if is_latest {
                         if matches!(kind, LspRequestKind::Shutdown) {
                             let exit = Message::Notification(Notification::new(
@@ -527,7 +536,18 @@ fn handle_server_request(
 
 pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceContext) {
     if let Some(err) = resp.error {
-        tracing::warn!(code = err.code, error = %err.message, "lsp request failed");
+        let is_optional_method = matches!(
+            kind,
+            LspRequestKind::SemanticTokens { .. }
+                | LspRequestKind::SemanticTokensRange { .. }
+                | LspRequestKind::InlayHints { .. }
+                | LspRequestKind::FoldingRange { .. }
+        );
+        if err.code == ErrorCode::MethodNotFound as i32 && is_optional_method {
+            tracing::debug!(code = err.code, error = %err.message, "lsp method not supported");
+        } else {
+            tracing::warn!(code = err.code, error = %err.message, "lsp request failed");
+        }
         match &kind {
             LspRequestKind::Hover => ctx.dispatch(Action::LspHover {
                 text: String::new(),
@@ -605,6 +625,7 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                 .ok()
                 .flatten();
             let text = hover.and_then(|h| hover_text(&h)).unwrap_or_default();
+            tracing::debug!(text_len = text.len(), "lsp hover response");
             ctx.dispatch(Action::LspHover { text });
         }
         LspRequestKind::Definition => {
@@ -701,6 +722,11 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                 .ok()
                 .flatten();
             let (items, is_incomplete) = resp.map(completion_items).unwrap_or_default();
+            tracing::debug!(
+                items_len = items.len(),
+                is_incomplete,
+                "lsp completion response"
+            );
             ctx.dispatch(Action::LspCompletion {
                 items,
                 is_incomplete,

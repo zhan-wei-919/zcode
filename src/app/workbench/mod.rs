@@ -222,7 +222,8 @@ impl Workbench {
         let mut keybindings = KeybindingService::new();
         let mut theme = UiTheme::default();
         let mut editor_config = EditorConfig::default();
-        let mut lsp_settings_override: Option<(String, Vec<String>)> = None;
+        let mut lsp_settings_override: Option<(String, Vec<String>, Option<serde_json::Value>)> =
+            None;
         let mut lsp_server_overrides: FxHashMap<LspServerKind, LspServerCommandOverride> =
             FxHashMap::default();
 
@@ -270,7 +271,7 @@ impl Workbench {
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string())
                         .collect::<Vec<_>>();
-                    lsp_settings_override = Some((command.to_string(), args));
+                    lsp_settings_override = Some((command.to_string(), args, None));
                 }
                 for (name, cfg) in &settings.lsp.servers {
                     let Some(kind) = LspServerKind::from_settings_key(name) else {
@@ -298,6 +299,9 @@ impl Workbench {
                     if let Some(args) = args {
                         entry.args = Some(args);
                     }
+                    if let Some(initialization_options) = cfg.initialization_options.clone() {
+                        entry.initialization_options = Some(initialization_options);
+                    }
                 }
                 theme.apply_settings(&settings.theme);
                 editor_config = settings.editor;
@@ -318,8 +322,9 @@ impl Workbench {
             let mut service = LspService::new(absolute_root.clone(), ctx);
             if let Some((command, args)) = lsp_command_override() {
                 service = service.with_command(command, args);
-            } else if let Some((command, args)) = lsp_settings_override {
-                service = service.with_command(command, args);
+            } else if let Some((command, args, initialization_options)) = lsp_settings_override {
+                service =
+                    service.with_command_and_init_options(command, args, initialization_options);
             } else if !lsp_server_overrides.is_empty() {
                 service = service.with_server_command_overrides(lsp_server_overrides);
             }

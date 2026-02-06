@@ -71,6 +71,14 @@ impl LspClient {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
+        tracing::info!(
+            server = ?self.server,
+            root = %self.root.display(),
+            command = %self.command,
+            args = ?self.args,
+            "starting lsp server"
+        );
+
         let mut child = match cmd.spawn() {
             Ok(child) => child,
             Err(e) => {
@@ -248,7 +256,7 @@ impl LspClient {
             process_id: Some(std::process::id()),
             root_path: None,
             root_uri: Some(root_uri.clone()),
-            initialization_options: None,
+            initialization_options: self.initialization_options.clone(),
             capabilities,
             trace: None,
             workspace_folders: Some(vec![lsp_types::WorkspaceFolder {

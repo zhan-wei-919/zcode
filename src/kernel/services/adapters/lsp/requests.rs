@@ -15,6 +15,7 @@ impl LspClient {
         }
 
         if !self.doc_versions.contains_key(path) {
+            tracing::debug!(path = %path.display(), "skip hover request (document not opened)");
             return;
         }
 
@@ -46,6 +47,13 @@ impl LspClient {
             lsp_types::request::HoverRequest::METHOD.to_string(),
             params,
         ));
+        tracing::debug!(
+            id,
+            path = %path.display(),
+            line = position.line,
+            character = position.character,
+            "lsp request hover"
+        );
         self.send_message(msg, true);
     }
 
@@ -264,6 +272,10 @@ impl LspClient {
         }
 
         if !self.doc_versions.contains_key(path) {
+            tracing::debug!(
+                path = %path.display(),
+                "skip completion request (document not opened)"
+            );
             return;
         }
 
@@ -300,6 +312,13 @@ impl LspClient {
             lsp_types::request::Completion::METHOD.to_string(),
             params,
         ));
+        tracing::debug!(
+            id,
+            path = %path.display(),
+            line = position.line,
+            character = position.character,
+            "lsp request completion"
+        );
         self.send_message(msg, true);
     }
 

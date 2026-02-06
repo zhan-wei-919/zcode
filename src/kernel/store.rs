@@ -26,10 +26,9 @@ use completion::{
 #[cfg(test)]
 use completion::expand_snippet;
 use lsp::{
-    cursor_is_identifier, lsp_position_encoding, lsp_position_encoding_for_path,
-    lsp_position_from_buffer_pos, lsp_position_from_char_offset, lsp_position_from_cursor,
-    lsp_position_to_byte_offset, lsp_range_for_full_lines, lsp_request_target,
-    lsp_server_capabilities_for_path, problem_byte_offset,
+    lsp_position_encoding, lsp_position_encoding_for_path, lsp_position_from_buffer_pos,
+    lsp_position_from_char_offset, lsp_position_to_byte_offset, lsp_range_for_full_lines,
+    lsp_request_target, lsp_server_capabilities_for_path, problem_byte_offset,
 };
 use search::search_open_target;
 use util::{
@@ -206,256 +205,267 @@ impl Store {
                     EditorAction::CloseTabAt { .. } | EditorAction::MoveTab { .. }
                 );
 
-                let mut result =
-                    match editor_action {
-                        EditorAction::OpenFile {
-                            pane,
-                            path,
-                            content,
-                        } => {
-                            let opened_path = path.clone();
-                            let opened_path_for_git = opened_path.clone();
-                            let pending = self
-                                .state
-                                .ui
-                                .pending_editor_nav
-                                .as_ref()
-                                .filter(|p| p.pane == pane && p.path == path)
-                                .map(|p| p.target.clone());
+                let mut result = match editor_action {
+                    EditorAction::OpenFile {
+                        pane,
+                        path,
+                        content,
+                    } => {
+                        let opened_path = path.clone();
+                        let opened_path_for_git = opened_path.clone();
+                        let pending = self
+                            .state
+                            .ui
+                            .pending_editor_nav
+                            .as_ref()
+                            .filter(|p| p.pane == pane && p.path == path)
+                            .map(|p| p.target.clone());
 
-                            let (mut state_changed, mut effects) =
-                                self.state.editor.dispatch_action(EditorAction::OpenFile {
-                                    pane,
-                                    path,
-                                    content,
-                                });
+                        let (mut state_changed, mut effects) =
+                            self.state.editor.dispatch_action(EditorAction::OpenFile {
+                                pane,
+                                path,
+                                content,
+                            });
 
-                            if let Some(target) = pending {
-                                let byte_offset = match target {
-                                    super::state::PendingEditorNavigationTarget::ByteOffset {
-                                        byte_offset,
-                                    } => byte_offset,
-                                    super::state::PendingEditorNavigationTarget::LineColumn {
-                                        line,
-                                        column,
-                                    } => self
-                                        .state
-                                        .editor
-                                        .pane(pane)
-                                        .and_then(|pane_state| pane_state.active_tab())
-                                        .map(|tab| {
-                                            lsp_position_to_byte_offset(
-                                                tab,
-                                                line,
-                                                column,
-                                                lsp_position_encoding(&self.state),
-                                            )
-                                        })
-                                        .unwrap_or(0),
-                                };
-
-                                let (changed, cmd_effects) = self.state.editor.dispatch_action(
-                                    EditorAction::GotoByteOffset { pane, byte_offset },
-                                );
-                                state_changed |= changed;
-                                effects.extend(cmd_effects);
-                                self.state.ui.pending_editor_nav = None;
-                            }
-
-                            let caps = lsp_server_capabilities_for_path(&self.state, &opened_path);
-                            let supports_semantic_tokens = caps.is_none_or(|c| c.semantic_tokens);
-                            let supports_inlay_hints = caps.is_none_or(|c| c.inlay_hints);
-                            let supports_folding_range = caps.is_none_or(|c| c.folding_range);
-                            if (supports_semantic_tokens
-                                || supports_inlay_hints
-                                || supports_folding_range)
-                                && is_lsp_source_path(&opened_path)
-                            {
-                                let Some(tab) = self
+                        if let Some(target) = pending {
+                            let byte_offset = match target {
+                                super::state::PendingEditorNavigationTarget::ByteOffset {
+                                    byte_offset,
+                                } => byte_offset,
+                                super::state::PendingEditorNavigationTarget::LineColumn {
+                                    line,
+                                    column,
+                                } => self
                                     .state
                                     .editor
                                     .pane(pane)
                                     .and_then(|pane_state| pane_state.active_tab())
-                                else {
+                                    .map(|tab| {
+                                        lsp_position_to_byte_offset(
+                                            tab,
+                                            line,
+                                            column,
+                                            lsp_position_encoding(&self.state),
+                                        )
+                                    })
+                                    .unwrap_or(0),
+                            };
+
+                            let (changed, cmd_effects) =
+                                self.state
+                                    .editor
+                                    .dispatch_action(EditorAction::GotoByteOffset {
+                                        pane,
+                                        byte_offset,
+                                    });
+                            state_changed |= changed;
+                            effects.extend(cmd_effects);
+                            self.state.ui.pending_editor_nav = None;
+                        }
+
+                        let caps = lsp_server_capabilities_for_path(&self.state, &opened_path);
+                        let supports_semantic_tokens = caps.is_some_and(|c| {
+                            c.semantic_tokens && (c.semantic_tokens_full || c.semantic_tokens_range)
+                        });
+                        let supports_inlay_hints = caps.is_some_and(|c| c.inlay_hints);
+                        let supports_folding_range = caps.is_some_and(|c| c.folding_range);
+                        if (supports_semantic_tokens
+                            || supports_inlay_hints
+                            || supports_folding_range)
+                            && is_lsp_source_path(&opened_path)
+                        {
+                            let Some(tab) = self
+                                .state
+                                .editor
+                                .pane(pane)
+                                .and_then(|pane_state| pane_state.active_tab())
+                            else {
+                                return DispatchResult {
+                                    effects,
+                                    state_changed,
+                                };
+                            };
+                            let version = tab.edit_version;
+                            let encoding =
+                                lsp_position_encoding_for_path(&self.state, &opened_path);
+
+                            if supports_semantic_tokens {
+                                let Some(caps) = caps else {
                                     return DispatchResult {
                                         effects,
                                         state_changed,
                                     };
                                 };
-                                let version = tab.edit_version;
-                                let encoding =
-                                    lsp_position_encoding_for_path(&self.state, &opened_path);
 
-                                if supports_semantic_tokens {
-                                    let use_range = caps.is_none_or(|c| c.semantic_tokens_range)
-                                        && tab.buffer.len_lines().max(1) >= 2000;
+                                let total_lines = tab.buffer.len_lines().max(1);
+                                let can_range = caps.semantic_tokens_range;
+                                let can_full = caps.semantic_tokens_full;
+                                let prefer_range = can_range && (total_lines >= 2000 || !can_full);
 
-                                    if use_range {
-                                        let total_lines = tab.buffer.len_lines().max(1);
-                                        let viewport_top = tab
-                                            .viewport
-                                            .line_offset
-                                            .min(total_lines.saturating_sub(1));
-                                        let height = tab.viewport.height.max(1);
-                                        let overscan = 40usize.min(total_lines);
-                                        let start_line = viewport_top.saturating_sub(overscan);
-                                        let end_line_exclusive =
-                                            (viewport_top + height + overscan).min(total_lines);
-                                        if let Some(range) = lsp_range_for_full_lines(
-                                            tab,
-                                            start_line,
-                                            end_line_exclusive,
-                                            encoding,
-                                        ) {
-                                            effects.push(Effect::LspSemanticTokensRangeRequest {
-                                                path: opened_path.clone(),
-                                                version,
-                                                range,
-                                            });
-                                        }
-                                    } else {
-                                        effects.push(Effect::LspSemanticTokensRequest {
-                                            path: opened_path.clone(),
-                                            version,
-                                        });
-                                    }
-                                }
-
-                                if supports_inlay_hints {
-                                    let total_lines = tab.buffer.len_lines().max(1);
-                                    let start_line =
+                                if prefer_range {
+                                    let viewport_top =
                                         tab.viewport.line_offset.min(total_lines.saturating_sub(1));
+                                    let height = tab.viewport.height.max(1);
+                                    let overscan = 40usize.min(total_lines);
+                                    let start_line = viewport_top.saturating_sub(overscan);
                                     let end_line_exclusive =
-                                        (start_line + tab.viewport.height.max(1)).min(total_lines);
+                                        (viewport_top + height + overscan).min(total_lines);
                                     if let Some(range) = lsp_range_for_full_lines(
                                         tab,
                                         start_line,
                                         end_line_exclusive,
                                         encoding,
                                     ) {
-                                        effects.push(Effect::LspInlayHintsRequest {
+                                        effects.push(Effect::LspSemanticTokensRangeRequest {
                                             path: opened_path.clone(),
                                             version,
                                             range,
                                         });
                                     }
-                                }
-
-                                if supports_folding_range {
-                                    effects.push(Effect::LspFoldingRangeRequest {
-                                        path: opened_path,
+                                } else if can_full {
+                                    effects.push(Effect::LspSemanticTokensRequest {
+                                        path: opened_path.clone(),
                                         version,
                                     });
                                 }
                             }
 
+                            if supports_inlay_hints {
+                                let total_lines = tab.buffer.len_lines().max(1);
+                                let start_line =
+                                    tab.viewport.line_offset.min(total_lines.saturating_sub(1));
+                                let end_line_exclusive =
+                                    (start_line + tab.viewport.height.max(1)).min(total_lines);
+                                if let Some(range) = lsp_range_for_full_lines(
+                                    tab,
+                                    start_line,
+                                    end_line_exclusive,
+                                    encoding,
+                                ) {
+                                    effects.push(Effect::LspInlayHintsRequest {
+                                        path: opened_path.clone(),
+                                        version,
+                                        range,
+                                    });
+                                }
+                            }
+
+                            if supports_folding_range {
+                                effects.push(Effect::LspFoldingRangeRequest {
+                                    path: opened_path,
+                                    version,
+                                });
+                            }
+                        }
+
+                        if let Some(repo_root) = self.state.git.repo_root.clone() {
+                            effects.push(Effect::GitRefreshStatus {
+                                repo_root: repo_root.clone(),
+                            });
+                            effects.push(Effect::GitRefreshDiff {
+                                repo_root,
+                                path: opened_path_for_git,
+                            });
+                        }
+
+                        DispatchResult {
+                            effects,
+                            state_changed,
+                        }
+                    }
+                    EditorAction::SetActiveTab { pane, index } => {
+                        let (state_changed, mut effects) = self
+                            .state
+                            .editor
+                            .dispatch_action(EditorAction::SetActiveTab { pane, index });
+
+                        if let Some(repo_root) = self.state.git.repo_root.clone() {
+                            let path = self
+                                .state
+                                .editor
+                                .pane(pane)
+                                .and_then(|pane_state| pane_state.active_tab())
+                                .and_then(|tab| tab.path.clone());
+                            if let Some(path) = path {
+                                effects.push(Effect::GitRefreshStatus {
+                                    repo_root: repo_root.clone(),
+                                });
+                                effects.push(Effect::GitRefreshDiff { repo_root, path });
+                            }
+                        }
+
+                        DispatchResult {
+                            effects,
+                            state_changed,
+                        }
+                    }
+                    EditorAction::Saved {
+                        pane,
+                        path,
+                        success,
+                        version,
+                    } => {
+                        let saved_path = path.clone();
+                        let (state_changed, mut effects) =
+                            self.state.editor.dispatch_action(EditorAction::Saved {
+                                pane,
+                                path,
+                                success,
+                                version,
+                            });
+
+                        if success {
                             if let Some(repo_root) = self.state.git.repo_root.clone() {
                                 effects.push(Effect::GitRefreshStatus {
                                     repo_root: repo_root.clone(),
                                 });
                                 effects.push(Effect::GitRefreshDiff {
                                     repo_root,
-                                    path: opened_path_for_git,
+                                    path: saved_path,
                                 });
                             }
-
-                            DispatchResult {
-                                effects,
-                                state_changed,
-                            }
                         }
-                        EditorAction::SetActiveTab { pane, index } => {
-                            let (state_changed, mut effects) = self
+
+                        DispatchResult {
+                            effects,
+                            state_changed,
+                        }
+                    }
+                    EditorAction::CloseTabAt { pane, index } => {
+                        let (state_changed, mut effects) = self
+                            .state
+                            .editor
+                            .dispatch_action(EditorAction::CloseTabAt { pane, index });
+
+                        if let Some(repo_root) = self.state.git.repo_root.clone() {
+                            let path = self
                                 .state
                                 .editor
-                                .dispatch_action(EditorAction::SetActiveTab { pane, index });
-
-                            if let Some(repo_root) = self.state.git.repo_root.clone() {
-                                let path = self
-                                    .state
-                                    .editor
-                                    .pane(pane)
-                                    .and_then(|pane_state| pane_state.active_tab())
-                                    .and_then(|tab| tab.path.clone());
-                                if let Some(path) = path {
-                                    effects.push(Effect::GitRefreshStatus {
-                                        repo_root: repo_root.clone(),
-                                    });
-                                    effects.push(Effect::GitRefreshDiff { repo_root, path });
-                                }
-                            }
-
-                            DispatchResult {
-                                effects,
-                                state_changed,
-                            }
-                        }
-                        EditorAction::Saved {
-                            pane,
-                            path,
-                            success,
-                            version,
-                        } => {
-                            let saved_path = path.clone();
-                            let (state_changed, mut effects) =
-                                self.state.editor.dispatch_action(EditorAction::Saved {
-                                    pane,
-                                    path,
-                                    success,
-                                    version,
+                                .pane(pane)
+                                .and_then(|pane_state| pane_state.active_tab())
+                                .and_then(|tab| tab.path.clone());
+                            if let Some(path) = path {
+                                effects.push(Effect::GitRefreshStatus {
+                                    repo_root: repo_root.clone(),
                                 });
-
-                            if success {
-                                if let Some(repo_root) = self.state.git.repo_root.clone() {
-                                    effects.push(Effect::GitRefreshStatus {
-                                        repo_root: repo_root.clone(),
-                                    });
-                                    effects.push(Effect::GitRefreshDiff {
-                                        repo_root,
-                                        path: saved_path,
-                                    });
-                                }
-                            }
-
-                            DispatchResult {
-                                effects,
-                                state_changed,
+                                effects.push(Effect::GitRefreshDiff { repo_root, path });
                             }
                         }
-                        EditorAction::CloseTabAt { pane, index } => {
-                            let (state_changed, mut effects) = self
-                                .state
-                                .editor
-                                .dispatch_action(EditorAction::CloseTabAt { pane, index });
 
-                            if let Some(repo_root) = self.state.git.repo_root.clone() {
-                                let path = self
-                                    .state
-                                    .editor
-                                    .pane(pane)
-                                    .and_then(|pane_state| pane_state.active_tab())
-                                    .and_then(|tab| tab.path.clone());
-                                if let Some(path) = path {
-                                    effects.push(Effect::GitRefreshStatus {
-                                        repo_root: repo_root.clone(),
-                                    });
-                                    effects.push(Effect::GitRefreshDiff { repo_root, path });
-                                }
-                            }
-
-                            DispatchResult {
-                                effects,
-                                state_changed,
-                            }
+                        DispatchResult {
+                            effects,
+                            state_changed,
                         }
-                        other => {
-                            let (state_changed, effects) = self.state.editor.dispatch_action(other);
-                            DispatchResult {
-                                effects,
-                                state_changed,
-                            }
+                    }
+                    other => {
+                        let (state_changed, effects) = self.state.editor.dispatch_action(other);
+                        DispatchResult {
+                            effects,
+                            state_changed,
                         }
-                    };
+                    }
+                };
 
                 let editor_changed = result.state_changed;
                 result.state_changed |= completion_changed;
@@ -2841,7 +2851,10 @@ impl Store {
                         state_changed: false,
                     };
                 }
-                if tab.is_in_string_or_comment_at_cursor() || !cursor_is_identifier(tab) {
+                let cursor = tab.buffer.cursor();
+                let pos = tab.identifier_pos_at_or_before(cursor).unwrap_or(cursor);
+                let char_offset = tab.buffer.pos_to_char(pos);
+                if tab.is_in_string_or_comment_at_char(char_offset) {
                     return DispatchResult {
                         effects,
                         state_changed,
@@ -2849,7 +2862,7 @@ impl Store {
                 }
 
                 let encoding = lsp_position_encoding_for_path(&self.state, path);
-                let (line, column) = lsp_position_from_cursor(tab, encoding);
+                let (line, column) = lsp_position_from_buffer_pos(tab, pos, encoding);
                 return DispatchResult {
                     effects: vec![Effect::LspHoverRequest {
                         path: path.clone(),
@@ -3255,7 +3268,9 @@ impl Store {
 
                 let version = tab.edit_version;
                 let caps = lsp_server_capabilities_for_path(&self.state, &path);
-                let supports_semantic_tokens = caps.is_none_or(|c| c.semantic_tokens);
+                let supports_semantic_tokens = caps.is_some_and(|c| {
+                    c.semantic_tokens && (c.semantic_tokens_full || c.semantic_tokens_range)
+                });
                 if !supports_semantic_tokens {
                     return DispatchResult {
                         effects,
@@ -3265,11 +3280,19 @@ impl Store {
 
                 let encoding = lsp_position_encoding_for_path(&self.state, &path);
 
-                let use_range = caps.is_none_or(|c| c.semantic_tokens_range)
-                    && tab.buffer.len_lines().max(1) >= 2000;
+                let Some(caps) = caps else {
+                    return DispatchResult {
+                        effects,
+                        state_changed,
+                    };
+                };
 
-                if use_range {
-                    let total_lines = tab.buffer.len_lines().max(1);
+                let total_lines = tab.buffer.len_lines().max(1);
+                let can_range = caps.semantic_tokens_range;
+                let can_full = caps.semantic_tokens_full;
+                let prefer_range = can_range && (total_lines >= 2000 || !can_full);
+
+                if prefer_range {
                     let viewport_top = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
                     let height = tab.viewport.height.max(1);
                     let overscan = 40usize.min(total_lines);
@@ -3289,9 +3312,16 @@ impl Store {
                     }
                 }
 
+                if can_full {
+                    return DispatchResult {
+                        effects: vec![Effect::LspSemanticTokensRequest { path, version }],
+                        state_changed,
+                    };
+                }
+
                 return DispatchResult {
-                    effects: vec![Effect::LspSemanticTokensRequest { path, version }],
-                    state_changed,
+                    effects: Vec::new(),
+                    state_changed: false,
                 };
             }
             Command::LspInlayHints => {
@@ -3315,7 +3345,7 @@ impl Store {
                     };
                 }
                 let supports_inlay_hints = lsp_server_capabilities_for_path(&self.state, &path)
-                    .is_none_or(|c| c.inlay_hints);
+                    .is_some_and(|c| c.inlay_hints);
                 if !supports_inlay_hints {
                     return DispatchResult {
                         effects,
@@ -3366,7 +3396,7 @@ impl Store {
                     };
                 }
                 let supports_folding_range = lsp_server_capabilities_for_path(&self.state, &path)
-                    .is_none_or(|c| c.folding_range);
+                    .is_some_and(|c| c.folding_range);
                 if !supports_folding_range {
                     return DispatchResult {
                         effects,
@@ -3409,7 +3439,7 @@ impl Store {
                     };
                 }
                 let supports_folding_range = lsp_server_capabilities_for_path(&self.state, &path)
-                    .is_none_or(|c| c.folding_range);
+                    .is_some_and(|c| c.folding_range);
                 if !supports_folding_range {
                     return DispatchResult {
                         effects,

@@ -5,6 +5,7 @@ use crate::kernel::services::ports::{
 use crate::kernel::services::KernelServiceContext;
 use lsp_server::RequestId;
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
@@ -21,10 +22,11 @@ mod wire;
 
 use wire::{LspProcess, LspRequestKind};
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct LspServerCommandOverride {
     pub command: Option<String>,
     pub args: Option<Vec<String>>,
+    pub initialization_options: Option<Value>,
 }
 
 #[cfg(test)]
@@ -57,7 +59,7 @@ struct ClientKey {
 pub struct LspService {
     workspace_root: PathBuf,
     ctx: KernelServiceContext,
-    command_override: Option<(String, Vec<String>)>,
+    command_override: Option<(String, Vec<String>, Option<Value>)>,
     server_command_overrides: FxHashMap<LspServerKind, LspServerCommandOverride>,
     clients: FxHashMap<ClientKey, LspClient>,
     warned_missing: FxHashSet<LspServerKind>,
@@ -87,7 +89,19 @@ impl LspService {
 
     /// Global override (primarily for tests / debugging).
     pub fn with_command(mut self, command: String, args: Vec<String>) -> Self {
-        self.command_override = Some((command.clone(), args.clone()));
+        self.command_override = Some((command.clone(), args.clone(), None));
+        self.debug_command = command;
+        self.debug_args = args;
+        self
+    }
+
+    pub fn with_command_and_init_options(
+        mut self,
+        command: String,
+        args: Vec<String>,
+        initialization_options: Option<Value>,
+    ) -> Self {
+        self.command_override = Some((command.clone(), args.clone(), initialization_options));
         self.debug_command = command;
         self.debug_args = args;
         self
@@ -99,6 +113,36 @@ impl LspService {
     ) -> Self {
         self.server_command_overrides = overrides;
         self
+    }
+
+    pub(crate) fn reconfigure(
+        &mut self,
+        command_override: Option<(String, Vec<String>, Option<Value>)>,
+        server_command_overrides: FxHashMap<LspServerKind, LspServerCommandOverride>,
+    ) -> bool {
+        let changed = self.command_override != command_override
+            || self.server_command_overrides != server_command_overrides;
+        if !changed {
+            return false;
+        }
+
+        self.command_override = command_override;
+        self.server_command_overrides = server_command_overrides;
+
+        if let Some((command, args, _)) = &self.command_override {
+            self.debug_command = command.clone();
+            self.debug_args = args.clone();
+        } else {
+            self.debug_command = "rust-analyzer".to_string();
+            self.debug_args.clear();
+        }
+
+        for client in self.clients.values_mut() {
+            client.shutdown();
+        }
+        self.clients.clear();
+        self.warned_missing.clear();
+        true
     }
 
     fn client_key_for_path(&self, path: &Path) -> Option<(LspLanguage, ClientKey)> {
@@ -119,11 +163,18 @@ impl LspService {
         }
     }
 
+    fn default_initialization_options_for_server(server: LspServerKind) -> Option<Value> {
+        match server {
+            LspServerKind::Gopls => Some(json!({ "semanticTokens": true })),
+            _ => None,
+        }
+    }
+
     fn resolve_server_command(
         &mut self,
         language: LspLanguage,
         key: &ClientKey,
-    ) -> Option<(String, Vec<String>)> {
+    ) -> Option<(String, Vec<String>, Option<Value>)> {
         if let Some(global) = self.command_override.clone() {
             return Some(global);
         }
@@ -141,13 +192,19 @@ impl LspService {
             .or_else(|| default.as_ref().map(|(_, args)| args.clone()))
             .unwrap_or_else(|| Self::default_args_for_language(language));
 
-        Some((command, args))
+        let initialization_options = per_server
+            .and_then(|cfg| cfg.initialization_options.clone())
+            .or_else(|| Self::default_initialization_options_for_server(key.server));
+
+        Some((command, args, initialization_options))
     }
 
     fn client_for_path_mut(&mut self, path: &Path) -> Option<&mut LspClient> {
         let (language, key) = self.client_key_for_path(path)?;
         if !self.clients.contains_key(&key) {
-            let Some((command, args)) = self.resolve_server_command(language, &key) else {
+            let Some((command, args, initialization_options)) =
+                self.resolve_server_command(language, &key)
+            else {
                 if self.warned_missing.insert(key.server) {
                     tracing::warn!(
                         language = language.display_name(),
@@ -159,7 +216,8 @@ impl LspService {
             };
 
             let client = LspClient::new(key.root.clone(), key.server, self.ctx.clone())
-                .with_command(command, args);
+                .with_command(command, args)
+                .with_initialization_options(initialization_options);
             self.clients.insert(key.clone(), client);
         }
 
@@ -338,6 +396,7 @@ struct LspClient {
     root: PathBuf,
     command: String,
     args: Vec<String>,
+    initialization_options: Option<Value>,
     ctx: KernelServiceContext,
     process: Option<LspProcess>,
     exiting: bool,
@@ -370,6 +429,7 @@ impl LspClient {
             root,
             command: "rust-analyzer".to_string(),
             args: Vec::new(),
+            initialization_options: None,
             ctx,
             process: None,
             exiting: false,
@@ -399,6 +459,11 @@ impl LspClient {
     fn with_command(mut self, command: String, args: Vec<String>) -> Self {
         self.command = command;
         self.args = args;
+        self
+    }
+
+    fn with_initialization_options(mut self, initialization_options: Option<Value>) -> Self {
+        self.initialization_options = initialization_options;
         self
     }
 }

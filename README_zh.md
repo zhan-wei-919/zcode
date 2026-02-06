@@ -147,20 +147,30 @@ zcode
 
 ### LSP 配置
 
-你可以在 `setting.json` 中按语言配置 LSP server 的 command/args：
+你可以在 `setting.json` 中按语言配置 LSP server 的 command/args，以及可选的 initialize options：
 
 ```json
 {
   "lsp": {
     "servers": {
       "rust-analyzer": { "command": "rust-analyzer" },
-      "gopls": { "command": "gopls" },
+      "gopls": { "command": "/home/you/go/bin/gopls" },
       "pyright": { "command": "pyright-langserver", "args": ["--stdio"] },
-      "tsls": { "command": "typescript-language-server", "args": ["--stdio"] }
+      "tsls": {
+        "command": "typescript-language-server",
+        "args": ["--stdio"],
+        "initialization_options": {
+          "preferences": {
+            "includeCompletionsForModuleExports": true
+          }
+        }
+      }
     }
   }
 }
 ```
+
+对 Go 而言，如果 `gopls` 安装在 `~/go/bin`，建议像上面一样显式配置绝对路径。
 
 ## 常见问题
 

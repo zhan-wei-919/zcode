@@ -3,7 +3,7 @@
 use crate::models::EditOp;
 use ropey::Rope;
 use std::path::Path;
-use tree_sitter::{InputEdit, Parser, Point, Tree};
+use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LanguageId {
@@ -19,6 +19,7 @@ pub enum LanguageId {
 pub enum HighlightKind {
     Comment,
     String,
+    Regex,
     Keyword,
     Type,
     Number,
@@ -27,6 +28,7 @@ pub enum HighlightKind {
     Function,
     Macro,
     Variable,
+    Constant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +151,7 @@ impl SyntaxDocument {
         let range_start = rope.line_to_byte(start_line);
         let range_end = rope.line_to_byte(end_line_exclusive);
 
-        let spans = collect_highlights(self.language, &self.tree, range_start, range_end);
+        let spans = collect_highlights(self.language, &self.tree, rope, range_start, range_end);
 
         let mut per_line = vec![Vec::new(); end_line_exclusive - start_line];
 
@@ -225,7 +227,7 @@ pub fn highlight_snippet(language: LanguageId, text: &str) -> Vec<Vec<HighlightS
 
     let start_byte = 0;
     let end_byte = rope.len_bytes();
-    let spans = collect_highlights(language, &tree, start_byte, end_byte);
+    let spans = collect_highlights(language, &tree, &rope, start_byte, end_byte);
 
     let mut per_line = vec![Vec::new(); total_lines];
 
@@ -399,6 +401,7 @@ fn merge_adjacent_spans(spans: &mut Vec<HighlightSpan>) {
 fn collect_highlights(
     language: LanguageId,
     tree: &Tree,
+    rope: &Rope,
     start_byte: usize,
     end_byte: usize,
 ) -> Vec<AbsHighlightSpan> {
@@ -414,7 +417,7 @@ fn collect_highlights(
             continue;
         }
 
-        if let Some(kind) = classify_node(language, node.kind()) {
+        if let Some(kind) = classify_node(language, node, rope) {
             spans.push(AbsHighlightSpan {
                 start: node_start,
                 end: node_end,
@@ -423,7 +426,10 @@ fn collect_highlights(
 
             if matches!(
                 kind,
-                HighlightKind::Comment | HighlightKind::String | HighlightKind::Attribute
+                HighlightKind::Comment
+                    | HighlightKind::String
+                    | HighlightKind::Regex
+                    | HighlightKind::Attribute
             ) {
                 continue;
             }
@@ -441,9 +447,19 @@ fn collect_highlights(
     spans
 }
 
-fn classify_node(language: LanguageId, kind: &str) -> Option<HighlightKind> {
+fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<HighlightKind> {
+    let kind = node.kind();
+
     if is_comment_kind(kind) {
         return Some(HighlightKind::Comment);
+    }
+    if is_regex_kind(kind) {
+        return Some(HighlightKind::Regex);
+    }
+    if language == LanguageId::Python && is_string_kind(kind) {
+        if let Some(kind) = classify_python_string(node, rope) {
+            return Some(kind);
+        }
     }
     if is_string_kind(kind) {
         return Some(HighlightKind::String);
@@ -469,14 +485,325 @@ fn classify_node(language: LanguageId, kind: &str) -> Option<HighlightKind> {
     if kind == "lifetime" {
         return Some(HighlightKind::Lifetime);
     }
+    match language {
+        LanguageId::Go => {
+            if let Some(kind) = classify_go_node(node) {
+                return Some(kind);
+            }
+        }
+        LanguageId::Python => {
+            if let Some(kind) = classify_python_node(node, rope) {
+                return Some(kind);
+            }
+        }
+        _ => {}
+    }
     if is_keyword(language, kind) {
         return Some(HighlightKind::Keyword);
     }
     None
 }
 
+fn classify_go_node(node: Node<'_>) -> Option<HighlightKind> {
+    match node.kind() {
+        "package_identifier" | "label_name" => Some(HighlightKind::Attribute),
+        "identifier" => classify_go_identifier(node),
+        "field_identifier" => classify_go_field_identifier(node),
+        _ => None,
+    }
+}
+
+fn classify_go_identifier(node: Node<'_>) -> Option<HighlightKind> {
+    let parent = node.parent()?;
+    match parent.kind() {
+        "function_declaration" if node_is_field(parent, "name", node) => {
+            Some(HighlightKind::Function)
+        }
+        "call_expression" if node_is_field(parent, "function", node) => {
+            Some(HighlightKind::Function)
+        }
+        "parameter_declaration" => {
+            if parent
+                .parent()
+                .is_some_and(|grand| grand.kind() == "type_parameter_list")
+            {
+                Some(HighlightKind::Type)
+            } else {
+                Some(HighlightKind::Variable)
+            }
+        }
+        "variadic_parameter_declaration" => Some(HighlightKind::Variable),
+        "const_spec" | "var_spec" if node_is_field(parent, "name", node) => {
+            Some(HighlightKind::Variable)
+        }
+        "expression_list" => {
+            let grand = parent.parent()?;
+            if matches!(
+                grand.kind(),
+                "short_var_declaration"
+                    | "assignment_statement"
+                    | "range_clause"
+                    | "receive_statement"
+            ) && node_is_field(grand, "left", parent)
+            {
+                Some(HighlightKind::Variable)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn classify_go_field_identifier(node: Node<'_>) -> Option<HighlightKind> {
+    let parent = node.parent()?;
+    match parent.kind() {
+        "method_declaration" | "method_spec" if node_is_field(parent, "name", node) => {
+            Some(HighlightKind::Function)
+        }
+        "field_declaration" => Some(HighlightKind::Variable),
+        "selector_expression" if node_is_field(parent, "field", node) => {
+            if parent.parent().is_some_and(|grand| {
+                grand.kind() == "call_expression" && node_is_field(grand, "function", parent)
+            }) {
+                Some(HighlightKind::Function)
+            } else {
+                Some(HighlightKind::Variable)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn classify_python_node(node: Node<'_>, rope: &Rope) -> Option<HighlightKind> {
+    match node.kind() {
+        "identifier" => classify_python_identifier(node, rope),
+        _ => None,
+    }
+}
+
+fn classify_python_identifier(node: Node<'_>, rope: &Rope) -> Option<HighlightKind> {
+    let parent = node.parent()?;
+    match parent.kind() {
+        "function_definition" if node_is_field(parent, "name", node) => {
+            Some(HighlightKind::Function)
+        }
+        "class_definition" if node_is_field(parent, "name", node) => Some(HighlightKind::Type),
+        "call" if node_is_field(parent, "function", node) => {
+            Some(classify_python_callable_identifier(node, rope))
+        }
+        "attribute" if node_is_field(parent, "attribute", node) => {
+            if parent.parent().is_some_and(|grand| {
+                grand.kind() == "call" && node_is_field(grand, "function", parent)
+            }) {
+                Some(classify_python_callable_identifier(node, rope))
+            } else {
+                Some(HighlightKind::Variable)
+            }
+        }
+        "parameters" | "lambda_parameters" => Some(HighlightKind::Variable),
+        "typed_parameter"
+        | "default_parameter"
+        | "typed_default_parameter"
+        | "list_splat_pattern"
+        | "dictionary_splat_pattern" => Some(HighlightKind::Variable),
+        "assignment" | "augmented_assignment" => {
+            if node_in_field_subtree(parent, "left", node) {
+                if is_python_constant_identifier(node, rope) {
+                    Some(HighlightKind::Constant)
+                } else {
+                    Some(HighlightKind::Variable)
+                }
+            } else {
+                None
+            }
+        }
+        "for_statement" => {
+            if node_in_field_subtree(parent, "left", node) {
+                Some(HighlightKind::Variable)
+            } else {
+                None
+            }
+        }
+        "named_expression" if node_is_field(parent, "name", node) => Some(HighlightKind::Variable),
+        "keyword_argument" if node_is_field(parent, "name", node) => Some(HighlightKind::Variable),
+        "global_statement" | "nonlocal_statement" => Some(HighlightKind::Variable),
+        "aliased_import" if node_is_field(parent, "alias", node) => Some(HighlightKind::Attribute),
+        _ => None,
+    }
+}
+
+fn classify_python_string(node: Node<'_>, rope: &Rope) -> Option<HighlightKind> {
+    let mut current = Some(node);
+    while let Some(cursor) = current {
+        if cursor.kind() == "call" && node_in_field_subtree(cursor, "arguments", node) {
+            if !is_first_python_call_argument(cursor, node) {
+                return None;
+            }
+
+            let function = cursor.child_by_field_name("function")?;
+            let callee = classify_python_call_callee_name(function, rope)?;
+            if is_python_regex_callee(callee.as_str()) {
+                return Some(HighlightKind::Regex);
+            }
+            return None;
+        }
+        current = cursor.parent();
+    }
+    None
+}
+
+fn classify_python_call_callee_name(node: Node<'_>, rope: &Rope) -> Option<String> {
+    match node.kind() {
+        "identifier" => node_text_trimmed(rope, node),
+        "attribute" => {
+            let object = node.child_by_field_name("object")?;
+            let attribute = node.child_by_field_name("attribute")?;
+            let object_name = classify_python_call_callee_name(object, rope)?;
+            let attribute_name = node_text_trimmed(rope, attribute)?;
+            Some(format!("{object_name}.{attribute_name}"))
+        }
+        _ => None,
+    }
+}
+
+fn is_python_regex_callee(callee: &str) -> bool {
+    matches!(
+        callee,
+        "re.compile"
+            | "re.search"
+            | "re.match"
+            | "re.fullmatch"
+            | "re.sub"
+            | "re.subn"
+            | "re.findall"
+            | "re.finditer"
+            | "re.split"
+            | "regex.compile"
+            | "regex.search"
+            | "regex.match"
+            | "regex.fullmatch"
+            | "regex.sub"
+            | "regex.subn"
+            | "regex.findall"
+            | "regex.finditer"
+            | "regex.split"
+    )
+}
+
+fn is_first_python_call_argument(call: Node<'_>, node: Node<'_>) -> bool {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return false;
+    };
+
+    let Some(first) = arguments.named_child(0) else {
+        return false;
+    };
+
+    node_contains(first, node)
+}
+
+fn node_contains(ancestor: Node<'_>, descendant: Node<'_>) -> bool {
+    let mut current = Some(descendant);
+    while let Some(cursor) = current {
+        if same_node(cursor, ancestor) {
+            return true;
+        }
+        current = cursor.parent();
+    }
+    false
+}
+
+fn classify_python_callable_identifier(node: Node<'_>, rope: &Rope) -> HighlightKind {
+    if node_text_trimmed(rope, node).is_some_and(|name| is_python_type_name(name.as_str())) {
+        HighlightKind::Type
+    } else {
+        HighlightKind::Function
+    }
+}
+
+fn is_python_constant_identifier(node: Node<'_>, rope: &Rope) -> bool {
+    node_text_trimmed(rope, node).is_some_and(|name| is_python_constant_name(name.as_str()))
+}
+
+fn is_python_type_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_uppercase() {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn is_python_constant_name(name: &str) -> bool {
+    let mut has_uppercase = false;
+    for ch in name.chars() {
+        if ch.is_ascii_uppercase() {
+            has_uppercase = true;
+            continue;
+        }
+        if ch.is_ascii_digit() || ch == '_' {
+            continue;
+        }
+        return false;
+    }
+    has_uppercase
+}
+
+fn node_text_trimmed(rope: &Rope, node: Node<'_>) -> Option<String> {
+    let text = node_text(rope, node)?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn node_text(rope: &Rope, node: Node<'_>) -> Option<String> {
+    if node.end_byte() > rope.len_bytes() {
+        return None;
+    }
+    let start_char = rope.byte_to_char(node.start_byte());
+    let end_char = rope.byte_to_char(node.end_byte());
+    Some(rope.slice(start_char..end_char).to_string())
+}
+
+fn node_is_field(parent: Node<'_>, field_name: &str, node: Node<'_>) -> bool {
+    parent
+        .child_by_field_name(field_name)
+        .is_some_and(|field| same_node(field, node))
+}
+
+fn node_in_field_subtree(parent: Node<'_>, field_name: &str, node: Node<'_>) -> bool {
+    let Some(field_node) = parent.child_by_field_name(field_name) else {
+        return false;
+    };
+
+    let mut current = Some(node);
+    while let Some(cursor) = current {
+        if same_node(cursor, field_node) {
+            return true;
+        }
+        if same_node(cursor, parent) {
+            break;
+        }
+        current = cursor.parent();
+    }
+    false
+}
+
+fn same_node(left: Node<'_>, right: Node<'_>) -> bool {
+    left.start_byte() == right.start_byte() && left.end_byte() == right.end_byte()
+}
+
 fn is_comment_kind(kind: &str) -> bool {
     kind.contains("comment")
+}
+
+fn is_regex_kind(kind: &str) -> bool {
+    kind.contains("regex") || kind == "regular_expression"
 }
 
 fn is_string_kind(kind: &str) -> bool {
@@ -561,6 +888,10 @@ fn is_go_keyword(kind: &str) -> bool {
             | "struct"
             | "switch"
             | "type"
+            | "true"
+            | "false"
+            | "nil"
+            | "iota"
             | "var"
     )
 }

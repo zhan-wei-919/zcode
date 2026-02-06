@@ -18,7 +18,9 @@ pub(super) fn semantic_highlight_lines_from_tokens(
         let Some(token_type) = legend.token_types.get(token.token_type as usize) else {
             continue;
         };
-        let Some(kind) = highlight_kind_for_semantic_token(token_type.as_str()) else {
+        let Some(kind) =
+            highlight_kind_for_semantic_token(token_type.as_str(), token.modifiers, legend)
+        else {
             continue;
         };
 
@@ -82,7 +84,9 @@ pub(super) fn semantic_highlight_lines_from_tokens_range(
         let Some(token_type) = legend.token_types.get(token.token_type as usize) else {
             continue;
         };
-        let Some(kind) = highlight_kind_for_semantic_token(token_type.as_str()) else {
+        let Some(kind) =
+            highlight_kind_for_semantic_token(token_type.as_str(), token.modifiers, legend)
+        else {
             continue;
         };
 
@@ -121,20 +125,105 @@ pub(super) fn semantic_highlight_lines_from_tokens_range(
     lines
 }
 
-fn highlight_kind_for_semantic_token(token_type: &str) -> Option<HighlightKind> {
+fn highlight_kind_for_semantic_token(
+    token_type: &str,
+    modifiers: u32,
+    legend: &LspSemanticTokensLegend,
+) -> Option<HighlightKind> {
     match token_type {
         "comment" => Some(HighlightKind::Comment),
         "string" => Some(HighlightKind::String),
-        "keyword" => Some(HighlightKind::Keyword),
+        "regexp" => Some(HighlightKind::Regex),
+        "keyword" | "modifier" | "operator" => Some(HighlightKind::Keyword),
         "number" => Some(HighlightKind::Number),
-        "type" | "struct" | "enum" | "interface" | "trait" | "typeParameter" => {
+        "type" | "struct" | "enum" | "interface" | "trait" | "typeParameter" | "class" => {
             Some(HighlightKind::Type)
         }
-        "function" | "method" => Some(HighlightKind::Function),
+        "function" | "method" | "member" => Some(HighlightKind::Function),
         "macro" => Some(HighlightKind::Macro),
-        "variable" | "parameter" | "property" | "enumMember" => Some(HighlightKind::Variable),
-        "namespace" | "module" => Some(HighlightKind::Attribute),
+        "enumMember" => Some(HighlightKind::Constant),
+        "variable" | "parameter" | "property" | "event" => {
+            if has_semantic_modifier(modifiers, legend, "readonly") {
+                Some(HighlightKind::Constant)
+            } else {
+                Some(HighlightKind::Variable)
+            }
+        }
+        "namespace" | "module" | "label" | "decorator" => Some(HighlightKind::Attribute),
         _ => None,
+    }
+}
+
+fn has_semantic_modifier(modifiers: u32, legend: &LspSemanticTokensLegend, name: &str) -> bool {
+    let Some(index) = legend.token_modifiers.iter().position(|m| m == name) else {
+        return false;
+    };
+    modifiers & (1u32 << index) != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_token_class_maps_to_type() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("class", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Type)
+        );
+    }
+
+    #[test]
+    fn semantic_token_member_maps_to_function() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("member", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Function)
+        );
+    }
+
+    #[test]
+    fn semantic_token_label_maps_to_attribute() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("label", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Attribute)
+        );
+    }
+
+    #[test]
+    fn semantic_token_operator_maps_to_keyword() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("operator", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Keyword)
+        );
+    }
+
+    #[test]
+    fn semantic_token_regexp_maps_to_regex() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("regexp", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Regex)
+        );
+    }
+
+    #[test]
+    fn semantic_token_enum_member_maps_to_constant() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("enumMember", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Constant)
+        );
+    }
+
+    #[test]
+    fn semantic_token_readonly_variable_maps_to_constant() {
+        let legend = LspSemanticTokensLegend {
+            token_types: Vec::new(),
+            token_modifiers: vec!["readonly".to_string()],
+        };
+
+        assert_eq!(
+            highlight_kind_for_semantic_token("variable", 1, &legend),
+            Some(HighlightKind::Constant)
+        );
     }
 }
 

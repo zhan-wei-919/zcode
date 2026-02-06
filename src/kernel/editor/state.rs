@@ -4,6 +4,7 @@ use crate::models::{EditHistory, EditOp, Granularity, OpKind, TextBuffer};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::PathBuf;
 use std::time::Instant;
+use unicode_xid::UnicodeXID;
 
 use super::syntax::SyntaxDocument;
 use super::{viewport, HighlightSpan, LanguageId};
@@ -254,6 +255,39 @@ impl EditorTabState {
 
     pub fn language(&self) -> Option<LanguageId> {
         self.syntax.as_ref().map(|s| s.language())
+    }
+
+    /// Returns the nearest identifier position at or immediately before `pos`.
+    ///
+    /// This makes cursor-based actions (hover, etc.) work when the cursor is placed *after* an
+    /// identifier, which is a very common editing state.
+    pub fn identifier_pos_at_or_before(&self, pos: (usize, usize)) -> Option<(usize, usize)> {
+        let (row, col) = pos;
+
+        // Be forgiving: users often park the cursor on punctuation/whitespace right after a token
+        // (e.g. `pred,` or `foo()`), but still expect hover/completion to resolve the identifier.
+        const MAX_BACKTRACK: usize = 32;
+        let max = col.min(MAX_BACKTRACK);
+
+        for back in 0..=max {
+            let candidate = (row, col.saturating_sub(back));
+            if self.is_identifier_at_pos(candidate) {
+                return Some(candidate);
+            }
+        }
+
+        None
+    }
+
+    fn is_identifier_at_pos(&self, pos: (usize, usize)) -> bool {
+        let rope = self.buffer.rope();
+        let char_offset = self.buffer.pos_to_char(pos).min(rope.len_chars());
+        if char_offset >= rope.len_chars() {
+            return false;
+        }
+
+        let ch = rope.char(char_offset);
+        ch == '_' || UnicodeXID::is_xid_continue(ch)
     }
 
     pub fn is_in_string_or_comment_at_char(&self, char_offset: usize) -> bool {

@@ -11,6 +11,9 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 struct EnvRestore {
     path: Option<std::ffi::OsString>,
     cargo_home: Option<std::ffi::OsString>,
+    gobin: Option<std::ffi::OsString>,
+    gopath: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
 }
 
 #[cfg(unix)]
@@ -19,6 +22,9 @@ impl EnvRestore {
         Self {
             path: std::env::var_os("PATH"),
             cargo_home: std::env::var_os("CARGO_HOME"),
+            gobin: std::env::var_os("GOBIN"),
+            gopath: std::env::var_os("GOPATH"),
+            home: std::env::var_os("HOME"),
         }
     }
 
@@ -35,6 +41,9 @@ impl Drop for EnvRestore {
     fn drop(&mut self) {
         Self::restore_var("PATH", self.path.take());
         Self::restore_var("CARGO_HOME", self.cargo_home.take());
+        Self::restore_var("GOBIN", self.gobin.take());
+        Self::restore_var("GOPATH", self.gopath.take());
+        Self::restore_var("HOME", self.home.take());
     }
 }
 
@@ -354,4 +363,178 @@ fn resolve_default_server_command_searches_node_modules_upwards() {
     .expect("resolved");
     assert_eq!(cmd, tls.to_string_lossy());
     assert_eq!(args, vec!["--stdio".to_string()]);
+}
+
+#[test]
+#[cfg(unix)]
+fn resolve_default_server_command_go_falls_back_to_gopath_bin() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvRestore::capture();
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace_root = temp.path();
+    let gopath = workspace_root.join("gopath");
+    let gopath_bin = gopath.join("bin");
+    std::fs::create_dir_all(&gopath_bin).expect("mkdir gopath bin");
+
+    let gopls = gopath_bin.join("gopls");
+    std::fs::write(&gopls, "#!/bin/sh\nexit 0\n").expect("write gopls");
+    let mut perms = std::fs::metadata(&gopls).expect("stat gopls").permissions();
+    use std::os::unix::fs::PermissionsExt as _;
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gopls, perms).expect("chmod gopls");
+
+    std::env::set_var("PATH", "");
+    std::env::set_var("GOPATH", &gopath);
+    std::env::remove_var("GOBIN");
+
+    let (cmd, args) = super::discovery::resolve_default_server_command(
+        workspace_root,
+        workspace_root,
+        crate::kernel::lsp_registry::LspLanguage::Go,
+    )
+    .expect("resolved");
+
+    assert_eq!(cmd, gopls.to_string_lossy());
+    assert!(args.is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn resolve_default_server_command_go_falls_back_to_home_go_bin() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvRestore::capture();
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace_root = temp.path();
+    let home = workspace_root.join("home");
+    let home_go_bin = home.join("go").join("bin");
+    std::fs::create_dir_all(&home_go_bin).expect("mkdir home go bin");
+
+    let gopls = home_go_bin.join("gopls");
+    std::fs::write(&gopls, "#!/bin/sh\nexit 0\n").expect("write gopls");
+    let mut perms = std::fs::metadata(&gopls).expect("stat gopls").permissions();
+    use std::os::unix::fs::PermissionsExt as _;
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gopls, perms).expect("chmod gopls");
+
+    std::env::set_var("PATH", "");
+    std::env::remove_var("GOPATH");
+    std::env::remove_var("GOBIN");
+    std::env::set_var("HOME", &home);
+
+    let (cmd, args) = super::discovery::resolve_default_server_command(
+        workspace_root,
+        workspace_root,
+        crate::kernel::lsp_registry::LspLanguage::Go,
+    )
+    .expect("resolved");
+
+    assert_eq!(cmd, gopls.to_string_lossy());
+    assert!(args.is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn resolve_server_command_go_uses_default_semantic_init_options() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvRestore::capture();
+
+    struct NoopExecutor;
+
+    impl AsyncExecutor for NoopExecutor {
+        fn spawn(&self, _task: BoxFuture) {}
+    }
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace_root = temp.path();
+    let go_file = workspace_root.join("main.go");
+    std::fs::write(&go_file, "package main\n").expect("write go file");
+
+    let gopath = workspace_root.join("gopath");
+    let gopath_bin = gopath.join("bin");
+    std::fs::create_dir_all(&gopath_bin).expect("mkdir gopath bin");
+    let gopls = gopath_bin.join("gopls");
+    std::fs::write(&gopls, "#!/bin/sh\nexit 0\n").expect("write gopls");
+    let mut perms = std::fs::metadata(&gopls).expect("stat gopls").permissions();
+    use std::os::unix::fs::PermissionsExt as _;
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gopls, perms).expect("chmod gopls");
+
+    std::env::set_var("PATH", "");
+    std::env::set_var("GOPATH", &gopath);
+    std::env::remove_var("GOBIN");
+
+    let host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let mut service = LspService::new(workspace_root.to_path_buf(), host.context());
+
+    let (language, key) = service
+        .client_key_for_path(&go_file)
+        .expect("go client key");
+    let (_cmd, _args, init_options) = service
+        .resolve_server_command(language, &key)
+        .expect("resolve go command");
+
+    assert_eq!(
+        init_options,
+        Some(serde_json::json!({ "semanticTokens": true }))
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn resolve_server_command_go_prefers_user_init_options() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvRestore::capture();
+
+    struct NoopExecutor;
+
+    impl AsyncExecutor for NoopExecutor {
+        fn spawn(&self, _task: BoxFuture) {}
+    }
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace_root = temp.path();
+    let go_file = workspace_root.join("main.go");
+    std::fs::write(&go_file, "package main\n").expect("write go file");
+
+    let gopath = workspace_root.join("gopath");
+    let gopath_bin = gopath.join("bin");
+    std::fs::create_dir_all(&gopath_bin).expect("mkdir gopath bin");
+    let gopls = gopath_bin.join("gopls");
+    std::fs::write(&gopls, "#!/bin/sh\nexit 0\n").expect("write gopls");
+    let mut perms = std::fs::metadata(&gopls).expect("stat gopls").permissions();
+    use std::os::unix::fs::PermissionsExt as _;
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&gopls, perms).expect("chmod gopls");
+
+    std::env::set_var("PATH", "");
+    std::env::set_var("GOPATH", &gopath);
+    std::env::remove_var("GOBIN");
+
+    let mut overrides = rustc_hash::FxHashMap::default();
+    overrides.insert(
+        LspServerKind::Gopls,
+        LspServerCommandOverride {
+            command: None,
+            args: None,
+            initialization_options: Some(serde_json::json!({ "semanticTokens": false })),
+        },
+    );
+
+    let host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let mut service = LspService::new(workspace_root.to_path_buf(), host.context())
+        .with_server_command_overrides(overrides);
+
+    let (language, key) = service
+        .client_key_for_path(&go_file)
+        .expect("go client key");
+    let (_cmd, _args, init_options) = service
+        .resolve_server_command(language, &key)
+        .expect("resolve go command");
+
+    assert_eq!(
+        init_options,
+        Some(serde_json::json!({ "semanticTokens": false }))
+    );
 }
