@@ -11,7 +11,7 @@
 
 `zcode` 是一个基于 Rust 开发的现代化、高性能 TUI（终端用户界面）文本编辑器。
 
-![main_UI.png](/home/zhanwei/project/zcode/img/main_UI.png)
+![main_UI.png](img/main_UI.png)
 
 ## 目录
 

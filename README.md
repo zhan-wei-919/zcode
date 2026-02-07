@@ -11,7 +11,7 @@
 
 `zcode` is a modern, high-performance TUI (Terminal User Interface) text editor written in Rust.
 
-![main_UI.png](/home/zhanwei/project/zcode/img/main_UI.png)
+![main_UI.png](img/main_UI.png)
 
 ## Table of Contents
 
