@@ -151,6 +151,45 @@ fn main() {
                 if not.method == lsp_types::notification::Exit::METHOD {
                     break;
                 }
+
+                if not.method == lsp_types::notification::Initialized::METHOD
+                    && std::env::var("ZCODE_LSP_STUB_SEND_PROGRESS")
+                        .ok()
+                        .is_some_and(|v| v == "1")
+                {
+                    let token =
+                        lsp_types::NumberOrString::String("rustAnalyzer/cachePriming".into());
+                    let begin = lsp_types::ProgressParams {
+                        token: token.clone(),
+                        value: lsp_types::ProgressParamsValue::WorkDone(
+                            lsp_types::WorkDoneProgress::Begin(lsp_types::WorkDoneProgressBegin {
+                                title: "Indexing".into(),
+                                cancellable: None,
+                                message: None,
+                                percentage: Some(0),
+                            }),
+                        ),
+                    };
+                    let msg =
+                        Message::Notification(Notification::new("$/progress".to_string(), begin));
+                    if send(&mut writer, msg).is_err() {
+                        break;
+                    }
+
+                    let end = lsp_types::ProgressParams {
+                        token,
+                        value: lsp_types::ProgressParamsValue::WorkDone(
+                            lsp_types::WorkDoneProgress::End(lsp_types::WorkDoneProgressEnd {
+                                message: None,
+                            }),
+                        ),
+                    };
+                    let msg =
+                        Message::Notification(Notification::new("$/progress".to_string(), end));
+                    if send(&mut writer, msg).is_err() {
+                        break;
+                    }
+                }
             }
             Message::Response(_) => {}
         }

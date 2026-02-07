@@ -958,6 +958,10 @@ impl Store {
             | action @ Action::LspSignatureHelp { .. }
             | action @ Action::LspApplyWorkspaceEdit { .. }
             | action @ Action::LspFormatCompleted { .. } => self.reduce_lsp_action(action),
+            Action::LspProgressEnd => DispatchResult {
+                effects: Vec::new(),
+                state_changed: true,
+            },
             Action::CompletionClose => {
                 let had = self.state.ui.completion.visible
                     || self.state.ui.completion.request.is_some()

@@ -52,6 +52,7 @@ impl LspClient {
             path = %path.display(),
             line = position.line,
             character = position.character,
+            target = "lsp.pipeline",
             "lsp request hover"
         );
         self.send_message(msg, true);
@@ -317,6 +318,7 @@ impl LspClient {
             path = %path.display(),
             line = position.line,
             character = position.character,
+            target = "lsp.pipeline",
             "lsp request completion"
         );
         self.send_message(msg, true);

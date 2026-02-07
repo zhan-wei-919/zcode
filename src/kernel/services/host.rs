@@ -8,6 +8,8 @@ use super::bus::{kernel_bus, KernelBusReceiver, KernelBusSender, KernelMessage};
 use super::ports::{AsyncExecutor, BoxFuture};
 use std::sync::mpsc::TryRecvError;
 
+use crate::tui::wakeup::WakeupSender;
+
 pub struct KernelServiceHost {
     registry: ServiceRegistry,
     bus: KernelBusSender,
@@ -61,6 +63,10 @@ impl KernelServiceHost {
 
     pub fn try_recv(&mut self) -> Result<KernelMessage, TryRecvError> {
         self.rx.try_recv()
+    }
+
+    pub fn set_wakeup(&mut self, sender: WakeupSender) {
+        self.bus.set_wakeup(sender);
     }
 }
 

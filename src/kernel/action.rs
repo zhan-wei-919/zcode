@@ -256,6 +256,7 @@ pub enum Action {
     LspFormatCompleted {
         path: PathBuf,
     },
+    LspProgressEnd,
     CompletionClose,
     CompletionMoveSelection {
         delta: isize,

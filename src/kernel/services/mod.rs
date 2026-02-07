@@ -9,5 +9,7 @@ pub mod bus;
 pub mod host;
 pub mod ports;
 
-pub use bus::{kernel_bus, KernelBusReceiver, KernelBusSender, KernelMessage};
+pub use bus::{
+    kernel_bus, KernelBusReceiver, KernelBusSender, KernelMessage, KernelMessagePayload,
+};
 pub use host::{KernelServiceContext, KernelServiceHost};

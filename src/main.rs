@@ -1,4 +1,5 @@
 use crossterm::event::{self, Event};
+use std::os::unix::io::RawFd;
 use std::{
     env, io,
     path::Path,
@@ -137,8 +138,14 @@ fn run_app(
 ) -> io::Result<()> {
     let mut root_path = path.to_path_buf();
     let (mut tx, mut rx) = mpsc::channel();
-    let mut workbench =
-        Workbench::new(root_path.as_path(), AsyncRuntime::new(tx.clone())?, log_rx)?;
+
+    let (wakeup_tx, wakeup_rx) = zcode::tui::wakeup::wakeup_pipe()?;
+    let mut workbench = Workbench::new(
+        root_path.as_path(),
+        AsyncRuntime::new(tx.clone())?,
+        log_rx,
+        Some(wakeup_tx.clone()),
+    )?;
     if let Some(path) = startup_file {
         workbench.runtime().load_file(path);
     }
@@ -162,7 +169,10 @@ fn run_app(
             .checked_sub(last_tick.elapsed())
             .unwrap_or(Duration::ZERO);
 
-        if event::poll(timeout)? {
+        let result = poll_events(timeout, wakeup_rx.raw_fd())?;
+
+        // Always drain crossterm buffered events (handles SIGWINCH → Resize).
+        while event::poll(Duration::ZERO)? {
             let event = event::read()?;
             let events = drain_pending_events(event);
 
@@ -180,6 +190,7 @@ fn run_app(
                             root_path.as_path(),
                             AsyncRuntime::new(tx.clone())?,
                             log_rx,
+                            Some(wakeup_tx.clone()),
                         )?;
                         dirty = true;
                         last_tick = Instant::now();
@@ -194,6 +205,14 @@ fn run_app(
             }
         }
 
+        // Kernel bus: drain if wakeup signalled.
+        if result.wakeup_ready {
+            wakeup_rx.drain();
+            if workbench.poll_kernel_bus() {
+                dirty = true;
+            }
+        }
+
         while let Ok(msg) = rx.try_recv() {
             workbench.handle_message(msg);
             dirty = true;
@@ -203,8 +222,12 @@ fn run_app(
                 let (new_tx, new_rx) = mpsc::channel();
                 tx = new_tx;
                 rx = new_rx;
-                workbench =
-                    Workbench::new(root_path.as_path(), AsyncRuntime::new(tx.clone())?, log_rx)?;
+                workbench = Workbench::new(
+                    root_path.as_path(),
+                    AsyncRuntime::new(tx.clone())?,
+                    log_rx,
+                    Some(wakeup_tx.clone()),
+                )?;
                 dirty = true;
                 last_tick = Instant::now();
                 if hard {
@@ -214,14 +237,83 @@ fn run_app(
             }
         }
 
-        // 定时检查是否需要刷盘
+        // Tick (no longer includes poll_kernel_bus).
         if last_tick.elapsed() >= tick_rate {
+            let tick_start = Instant::now();
             if workbench.tick() {
                 dirty = true;
+            }
+            let tick_elapsed = tick_start.elapsed();
+            if tick_elapsed.as_millis() > 5 {
+                tracing::debug!(elapsed_ms = tick_elapsed.as_millis() as u64, "tick() slow");
             }
             last_tick = Instant::now();
         }
     }
+}
+
+struct PollResult {
+    wakeup_ready: bool,
+}
+
+/// Use `libc::poll()` to simultaneously wait on stdin and the wakeup pipe fd.
+/// Returns which fds are ready. On EINTR, returns both false (caller loops).
+fn poll_events(timeout: Duration, wakeup_fd: RawFd) -> io::Result<PollResult> {
+    poll_events_with(timeout, wakeup_fd, |fds, timeout_ms| {
+        // SAFETY: fds is a valid array of pollfd structs, nfds=2, timeout_ms is valid.
+        let ret = unsafe { libc::poll(fds.as_mut_ptr(), 2, timeout_ms) };
+
+        if ret < 0 {
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EINTR) {
+                fds[0].revents = 0;
+                fds[1].revents = 0;
+                return Ok(());
+            }
+            return Err(err);
+        }
+
+        Ok(())
+    })
+}
+
+fn poll_events_with<F>(timeout: Duration, wakeup_fd: RawFd, poller: F) -> io::Result<PollResult>
+where
+    F: FnOnce(&mut [libc::pollfd; 2], i32) -> io::Result<()>,
+{
+    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let mut fds = [
+        libc::pollfd {
+            fd: libc::STDIN_FILENO,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: wakeup_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+
+    poller(&mut fds, timeout_ms)?;
+
+    let wake_revents = fds[1].revents;
+    if wake_revents & libc::POLLNVAL != 0 {
+        return Err(io::Error::from_raw_os_error(libc::EBADF));
+    }
+    if wake_revents & libc::POLLERR != 0 {
+        return Err(io::Error::other("wakeup fd reported POLLERR"));
+    }
+    if wake_revents & libc::POLLHUP != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "wakeup pipe disconnected",
+        ));
+    }
+
+    Ok(PollResult {
+        wakeup_ready: wake_revents & libc::POLLIN != 0,
+    })
 }
 
 fn resolve_startup_paths(cwd: &Path, arg: Option<&str>) -> io::Result<StartupPaths> {

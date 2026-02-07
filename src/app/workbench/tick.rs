@@ -9,7 +9,7 @@ use crate::kernel::services::ports::LspServerKind;
 use crate::kernel::services::ports::{
     GlobalSearchMessage, LspPosition, LspPositionEncoding, SearchMessage,
 };
-use crate::kernel::services::KernelMessage;
+use crate::kernel::services::KernelMessagePayload;
 use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget};
 use rustc_hash::FxHashMap;
 use std::sync::mpsc;
@@ -139,7 +139,7 @@ impl Workbench {
         changed
     }
 
-    fn poll_kernel_bus(&mut self) -> bool {
+    pub fn poll_kernel_bus(&mut self) -> bool {
         let mut changed = false;
         let mut drained = 0usize;
         loop {
@@ -147,12 +147,28 @@ impl Workbench {
                 break;
             }
             match self.kernel_services.try_recv() {
-                Ok(msg) => match msg {
-                    KernelMessage::Action(action) => {
-                        drained += 1;
-                        changed |= self.dispatch_kernel(action);
+                Ok(msg) => {
+                    let queue_wait = msg.enqueued_at.elapsed();
+                    match msg.payload {
+                        KernelMessagePayload::Action(action) => {
+                            if queue_wait.as_millis() > 1 {
+                                tracing::debug!(
+                                    queue_wait_ms = queue_wait.as_millis() as u64,
+                                    target = "lsp.pipeline",
+                                    "kernel bus queue wait"
+                                );
+                            }
+                            let is_progress_end = matches!(&action, KernelAction::LspProgressEnd);
+                            drained += 1;
+                            changed |= self.dispatch_kernel(action);
+                            if is_progress_end {
+                                self.pending_semantic_tokens_deadline = Some(Instant::now());
+                                self.pending_inlay_hints_deadline = Some(Instant::now());
+                                self.pending_folding_range_deadline = Some(Instant::now());
+                            }
+                        }
                     }
-                },
+                }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => break,
             }
@@ -324,8 +340,18 @@ impl Workbench {
         let Some(deadline) = self.pending_completion_deadline else {
             return false;
         };
-        if Instant::now() < deadline {
+        let now = Instant::now();
+        if now < deadline {
             return false;
+        }
+
+        let overshoot = now.duration_since(deadline);
+        if overshoot.as_millis() > 5 {
+            tracing::debug!(
+                overshoot_ms = overshoot.as_millis() as u64,
+                target = "lsp.pipeline",
+                "completion debounce overshoot"
+            );
         }
 
         self.pending_completion_deadline = None;

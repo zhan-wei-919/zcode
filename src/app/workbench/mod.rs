@@ -17,6 +17,7 @@ use crate::kernel::services::KernelServiceHost;
 use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, Store};
 use crate::models::build_file_tree;
 use crate::tui::view::{EventResult, View};
+use crate::tui::wakeup::WakeupSender;
 use crate::ui::backend::Backend;
 use crate::ui::core::color_support::{detect_terminal_color_support, TerminalColorSupport};
 use crate::ui::core::geom::Rect;
@@ -223,6 +224,7 @@ impl Workbench {
         root_path: &Path,
         runtime: AsyncRuntime,
         log_rx: Option<Receiver<String>>,
+        wakeup: Option<WakeupSender>,
     ) -> std::io::Result<Self> {
         let file_tree = build_file_tree(root_path)?;
         let absolute_root = file_tree.absolute_root().to_path_buf();
@@ -320,6 +322,9 @@ impl Workbench {
         let executor: Arc<dyn crate::kernel::services::ports::AsyncExecutor> =
             Arc::new(runtime.tokio_handle());
         let mut kernel_services = KernelServiceHost::new(executor);
+        if let Some(wakeup) = wakeup {
+            kernel_services.set_wakeup(wakeup);
+        }
         let _ = kernel_services.register(ClipboardService::new());
         let _ = kernel_services.register(SearchService::new(runtime.tokio_handle().clone()));
         let _ = kernel_services.register(GlobalSearchService::new(runtime.tokio_handle().clone()));

@@ -307,9 +307,21 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
                     }
                 } else if not.method == lsp_types::notification::LogMessage::METHOD {
                     if let Ok(params) =
-                        serde_json::from_value::<lsp_types::LogMessageParams>(not.params)
+                        serde_json::from_value::<lsp_types::LogMessageParams>(not.params.clone())
                     {
                         tracing::debug!(message = %params.message, "lsp log message");
+                    }
+                } else if not.method == "$/progress" {
+                    if let Ok(params) =
+                        serde_json::from_value::<lsp_types::ProgressParams>(not.params)
+                    {
+                        if let lsp_types::ProgressParamsValue::WorkDone(
+                            lsp_types::WorkDoneProgress::End(_),
+                        ) = params.value
+                        {
+                            tracing::info!(token = ?params.token, "lsp progress end");
+                            ctx.dispatch(Action::LspProgressEnd);
+                        }
                     }
                 }
             }
@@ -535,6 +547,27 @@ fn handle_server_request(
 }
 
 pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceContext) {
+    let response_start = Instant::now();
+    let kind_label = match &kind {
+        LspRequestKind::Hover => "hover",
+        LspRequestKind::Definition => "definition",
+        LspRequestKind::References => "references",
+        LspRequestKind::DocumentSymbols { .. } => "documentSymbols",
+        LspRequestKind::WorkspaceSymbols => "workspaceSymbols",
+        LspRequestKind::CodeAction => "codeAction",
+        LspRequestKind::Completion => "completion",
+        LspRequestKind::CompletionResolve { .. } => "completionResolve",
+        LspRequestKind::SemanticTokens { .. } => "semanticTokens",
+        LspRequestKind::SemanticTokensRange { .. } => "semanticTokensRange",
+        LspRequestKind::InlayHints { .. } => "inlayHints",
+        LspRequestKind::FoldingRange { .. } => "foldingRange",
+        LspRequestKind::SignatureHelp => "signatureHelp",
+        LspRequestKind::Rename => "rename",
+        LspRequestKind::Format { .. } => "format",
+        LspRequestKind::ExecuteCommand => "executeCommand",
+        LspRequestKind::Shutdown => "shutdown",
+    };
+
     if let Some(err) = resp.error {
         let is_optional_method = matches!(
             kind,
@@ -933,5 +966,15 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
         }
         LspRequestKind::ExecuteCommand => {}
         LspRequestKind::Shutdown => {}
+    }
+
+    let elapsed = response_start.elapsed();
+    if elapsed.as_millis() > 1 {
+        tracing::debug!(
+            elapsed_ms = elapsed.as_millis() as u64,
+            kind = ?kind_label,
+            target = "lsp.pipeline",
+            "lsp response processing"
+        );
     }
 }

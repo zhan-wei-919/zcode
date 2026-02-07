@@ -58,7 +58,7 @@ fn main() -> std::io::Result<()> {
     let root = create_fixture_dir(explorer_files)?;
     let (tx, _rx) = mpsc::channel();
     let runtime = AsyncRuntime::new(tx)?;
-    let mut workbench = Workbench::new(&root, runtime, None)?;
+    let mut workbench = Workbench::new(&root, runtime, None, None)?;
 
     if panes == 2 {
         workbench.bench_run_command(Command::SplitEditorVertical);
