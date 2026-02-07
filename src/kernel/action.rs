@@ -314,6 +314,9 @@ pub enum Action {
         saturation: u8,
         lightness: u8,
     },
+    ThemeEditorSetAnsiIndex {
+        index: u8,
+    },
     ThemeEditorCycleLanguage,
     ThemeEditorResetToken,
 }

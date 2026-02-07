@@ -23,6 +23,7 @@ pub fn paint_theme_editor(
     state: &ThemeEditorState,
     theme: &Theme,
     color_support: TerminalColorSupport,
+    ansi_cursor: Option<(u16, u16)>,
 ) -> ThemeEditorAreas {
     let mut areas = ThemeEditorAreas {
         token_list: None,
@@ -74,7 +75,15 @@ pub fn paint_theme_editor(
         right_area
     };
 
-    paint_left_panel(painter, left_area, state, theme, &mut areas, color_support);
+    paint_left_panel(
+        painter,
+        left_area,
+        state,
+        theme,
+        &mut areas,
+        color_support,
+        ansi_cursor,
+    );
     paint_code_preview(painter, right_inner, state, theme);
     areas
 }
@@ -111,6 +120,7 @@ fn paint_left_panel(
     theme: &Theme,
     areas: &mut ThemeEditorAreas,
     color_support: TerminalColorSupport,
+    ansi_cursor: Option<(u16, u16)>,
 ) {
     if area.is_empty() {
         return;
@@ -146,17 +156,48 @@ fn paint_left_panel(
     let (picker_area, bottom_area) = rest.split_bottom(2);
 
     if picker_area.h >= 3 && picker_area.w >= 6 {
-        paint_color_picker(painter, picker_area, state, theme, areas, color_support);
+        paint_color_picker(
+            painter,
+            picker_area,
+            state,
+            theme,
+            areas,
+            color_support,
+            ansi_cursor,
+        );
     }
 
     // Hex color + language label
     if bottom_area.h >= 1 {
-        let (r, g, b) = hsl_to_rgb(state.hue, state.saturation, state.lightness);
-        let hex = format!("#{:02X}{:02X}{:02X}", r, g, b);
-        let preview_color = map_color_to_support(Color::Rgb(r, g, b), color_support);
+        let (label, preview_color) = match color_support {
+            TerminalColorSupport::TrueColor => {
+                let (r, g, b) = hsl_to_rgb(state.hue, state.saturation, state.lightness);
+                (
+                    format!("#{:02X}{:02X}{:02X}", r, g, b),
+                    map_color_to_support(Color::Rgb(r, g, b), color_support),
+                )
+            }
+            TerminalColorSupport::Ansi256 => {
+                let idx = state.ansi_index.max(16);
+                let hex = crate::ui::core::theme_adapter::color_to_hex(Color::Indexed(idx))
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                (format!("@{} {}", idx, hex), Color::Indexed(idx))
+            }
+            TerminalColorSupport::Ansi16 => {
+                let idx = state.ansi_index % 16;
+                let hex = crate::ui::core::theme_adapter::color_to_hex(Color::Indexed(idx))
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                (format!("@{} {}", idx, hex), Color::Indexed(idx))
+            }
+        };
         let color_preview = Style::default().fg(preview_color).add_mod(UiMod::BOLD);
         let (hex_row, rest2) = bottom_area.split_top(1);
-        painter.text_clipped(Pos::new(hex_row.x, hex_row.y), &hex, color_preview, hex_row);
+        painter.text_clipped(
+            Pos::new(hex_row.x, hex_row.y),
+            &label,
+            color_preview,
+            hex_row,
+        );
 
         if !rest2.is_empty() {
             let (lang_row, _) = rest2.split_top(1);
@@ -226,29 +267,189 @@ fn paint_color_picker(
     theme: &Theme,
     areas: &mut ThemeEditorAreas,
     color_support: TerminalColorSupport,
+    ansi_cursor: Option<(u16, u16)>,
 ) {
-    // Layout: [Hue Bar (2 cols)] [1 col gap] [SV Palette (rest)]
-    let hue_bar_w: u16 = 2;
-    let gap: u16 = 1;
-    let min_sv_w: u16 = 3;
+    match color_support {
+        TerminalColorSupport::TrueColor => {
+            // Layout: [Hue Bar (2 cols)] [1 col gap] [SV Palette (rest)]
+            let hue_bar_w: u16 = 2;
+            let gap: u16 = 1;
+            let min_sv_w: u16 = 3;
 
-    if area.w < hue_bar_w + gap + min_sv_w {
+            if area.w < hue_bar_w + gap + min_sv_w {
+                return;
+            }
+
+            let hue_bar_area = Rect::new(area.x, area.y, hue_bar_w, area.h);
+            let sv_area = Rect::new(
+                area.x + hue_bar_w + gap,
+                area.y,
+                area.w - hue_bar_w - gap,
+                area.h,
+            );
+
+            areas.hue_bar = Some(hue_bar_area);
+            areas.sv_palette = Some(sv_area);
+
+            paint_hue_bar(painter, hue_bar_area, state, theme, color_support);
+            paint_sv_palette(painter, sv_area, state, theme, color_support);
+        }
+        TerminalColorSupport::Ansi256 | TerminalColorSupport::Ansi16 => {
+            areas.sv_palette = Some(area);
+            paint_ansi_palette(painter, area, state, color_support, ansi_cursor);
+        }
+    }
+}
+
+fn paint_ansi_palette(
+    painter: &mut Painter,
+    area: Rect,
+    state: &ThemeEditorState,
+    color_support: TerminalColorSupport,
+    ansi_cursor: Option<(u16, u16)>,
+) {
+    if area.is_empty() {
         return;
     }
 
-    let hue_bar_area = Rect::new(area.x, area.y, hue_bar_w, area.h);
-    let sv_area = Rect::new(
-        area.x + hue_bar_w + gap,
-        area.y,
-        area.w - hue_bar_w - gap,
-        area.h,
-    );
+    match color_support {
+        TerminalColorSupport::TrueColor => {}
+        TerminalColorSupport::Ansi256 => paint_ansi256_palette(painter, area, state, ansi_cursor),
+        TerminalColorSupport::Ansi16 => paint_ansi16_palette(painter, area, state, ansi_cursor),
+    }
+}
 
-    areas.hue_bar = Some(hue_bar_area);
-    areas.sv_palette = Some(sv_area);
+fn paint_ansi256_palette(
+    painter: &mut Painter,
+    area: Rect,
+    state: &ThemeEditorState,
+    ansi_cursor: Option<(u16, u16)>,
+) {
+    let selected = state.ansi_index.max(16);
 
-    paint_hue_bar(painter, hue_bar_area, state, theme, color_support);
-    paint_sv_palette(painter, sv_area, state, theme, color_support);
+    // Reserve 1 row for grayscale ramp (if there's room).
+    let gray_h = if area.h >= 7 { 1 } else { 0 };
+    let cube_h = area.h.saturating_sub(gray_h);
+    if cube_h == 0 || area.w == 0 {
+        return;
+    }
+
+    let (mut marker_col, mut marker_row, mut marker_is_gray) =
+        ansi256_index_to_picker_marker(selected, area.w, area.h);
+    if let Some((col, row)) = ansi_cursor.filter(|(col, row)| *col < area.w && *row < area.h) {
+        if picker_pos_to_ansi_index(col, row, area.w, area.h, TerminalColorSupport::Ansi256)
+            == Some(selected)
+        {
+            marker_col = col;
+            marker_row = row;
+            marker_is_gray = row == area.h.saturating_sub(1) && area.h >= 7;
+        }
+    }
+
+    let marker_fg = {
+        let (r, g, b) = crate::ui::core::theme_adapter::color_to_rgb(Color::Indexed(selected))
+            .unwrap_or((0, 0, 0));
+        let luma = (r as u16 + g as u16 + b as u16) / 3;
+        if luma > 128 {
+            Color::Indexed(16) // black (standard palette)
+        } else {
+            Color::Indexed(231) // white (standard palette)
+        }
+    };
+
+    for row in 0..cube_h {
+        let g_level = axis_pos_to_value(row, cube_h, 5) as u8;
+        let y = area.y + row;
+        for col in 0..area.w {
+            let cube_col = axis_pos_to_value(col, area.w, 35) as u8;
+            let r_level = cube_col / 6;
+            let b_level = cube_col % 6;
+            let idx = 16u16 + (r_level as u16 * 36) + (g_level as u16 * 6) + b_level as u16;
+            let bg = Color::Indexed(idx as u8);
+            let x = area.x + col;
+
+            if !marker_is_gray && row == marker_row && col == marker_col {
+                let style = Style::default().bg(bg).fg(marker_fg).add_mod(UiMod::BOLD);
+                painter.text_clipped(Pos::new(x, y), "+", style, area);
+            } else {
+                painter.text_clipped(Pos::new(x, y), " ", Style::default().bg(bg), area);
+            }
+        }
+    }
+
+    if gray_h == 0 {
+        return;
+    }
+
+    // Grayscale ramp: indices 232..255 (24 steps)
+    let gray_y = area.y + cube_h;
+    for col in 0..area.w {
+        let gray_level = axis_pos_to_value(col, area.w, 23) as u8;
+        let idx = 232u16 + gray_level as u16;
+        let bg = Color::Indexed(idx as u8);
+        let x = area.x + col;
+
+        if marker_is_gray && col == marker_col {
+            let style = Style::default().bg(bg).fg(marker_fg).add_mod(UiMod::BOLD);
+            painter.text_clipped(Pos::new(x, gray_y), "+", style, area);
+        } else {
+            painter.text_clipped(Pos::new(x, gray_y), " ", Style::default().bg(bg), area);
+        }
+    }
+}
+
+fn paint_ansi16_palette(
+    painter: &mut Painter,
+    area: Rect,
+    state: &ThemeEditorState,
+    ansi_cursor: Option<(u16, u16)>,
+) {
+    let selected = state.ansi_index % 16;
+    let (mut marker_col, mut marker_row) = {
+        let marker_row_val = (selected / 8) as u16;
+        let marker_col_val = (selected % 8) as u16;
+        (
+            axis_value_to_pos(marker_col_val, area.w, 7),
+            axis_value_to_pos(marker_row_val, area.h, 1),
+        )
+    };
+    if let Some((col, row)) = ansi_cursor.filter(|(col, row)| *col < area.w && *row < area.h) {
+        if picker_pos_to_ansi_index(col, row, area.w, area.h, TerminalColorSupport::Ansi16)
+            == Some(selected)
+        {
+            marker_col = col;
+            marker_row = row;
+        }
+    }
+
+    let marker_fg = {
+        let (r, g, b) = crate::ui::core::theme_adapter::color_to_rgb(Color::Indexed(selected))
+            .unwrap_or((0, 0, 0));
+        let luma = (r as u16 + g as u16 + b as u16) / 3;
+        if luma > 128 {
+            Color::Indexed(0)
+        } else {
+            Color::Indexed(15)
+        }
+    };
+
+    for row in 0..area.h {
+        let row_val = axis_pos_to_value(row, area.h, 1) as u8;
+        let y = area.y + row;
+        for col in 0..area.w {
+            let col_val = axis_pos_to_value(col, area.w, 7) as u8;
+            let idx = row_val * 8 + col_val;
+            let bg = Color::Indexed(idx);
+            let x = area.x + col;
+
+            if row == marker_row && col == marker_col {
+                let style = Style::default().bg(bg).fg(marker_fg).add_mod(UiMod::BOLD);
+                painter.text_clipped(Pos::new(x, y), "+", style, area);
+            } else {
+                painter.text_clipped(Pos::new(x, y), " ", Style::default().bg(bg), area);
+            }
+        }
+    }
 }
 
 fn paint_hue_bar(
@@ -337,6 +538,24 @@ fn paint_sv_palette(
 // re-rendering the marker must land on the same cell.  We achieve this by
 // using *rounding* (+ half-divisor) in the value→pixel direction.
 
+fn axis_value_to_pos(value: u16, size: u16, max_value: u16) -> u16 {
+    if size > 1 {
+        let n = size as u32 - 1;
+        let max = max_value as u32;
+        ((value as u32 * n + max / 2) / max) as u16
+    } else {
+        0
+    }
+}
+
+fn axis_pos_to_value(pos: u16, size: u16, max_value: u16) -> u16 {
+    if size > 1 {
+        (pos as u32 * max_value as u32 / (size as u32 - 1)) as u16
+    } else {
+        0
+    }
+}
+
 /// Map a hue value (0..359) to a row index in the hue bar.
 fn hue_to_row(hue: u16, height: u16) -> u16 {
     if height > 1 {
@@ -394,6 +613,71 @@ pub fn row_to_lightness(row: u16, height: u16) -> u8 {
     } else {
         50
     }
+}
+
+pub fn picker_pos_to_ansi_index(
+    col: u16,
+    row: u16,
+    width: u16,
+    height: u16,
+    support: TerminalColorSupport,
+) -> Option<u8> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    match support {
+        TerminalColorSupport::TrueColor => None,
+        TerminalColorSupport::Ansi16 => {
+            let row_val = axis_pos_to_value(row.min(height - 1), height, 1) as u8;
+            let col_val = axis_pos_to_value(col.min(width - 1), width, 7) as u8;
+            Some(row_val.saturating_mul(8).saturating_add(col_val))
+        }
+        TerminalColorSupport::Ansi256 => {
+            // Reserve 1 row for grayscale ramp (if there's room).
+            let gray_h = if height >= 7 { 1 } else { 0 };
+            let cube_h = height.saturating_sub(gray_h);
+            if cube_h == 0 {
+                return Some(16);
+            }
+
+            if gray_h == 1 && row == height - 1 {
+                let gray_level = axis_pos_to_value(col.min(width - 1), width, 23) as u8;
+                Some(232u8.saturating_add(gray_level))
+            } else {
+                let g_level = axis_pos_to_value(row.min(cube_h - 1), cube_h, 5) as u8;
+                let cube_col = axis_pos_to_value(col.min(width - 1), width, 35) as u8;
+                let r_level = cube_col / 6;
+                let b_level = cube_col % 6;
+                let idx = 16u16 + (r_level as u16 * 36) + (g_level as u16 * 6) + b_level as u16;
+                Some(idx as u8)
+            }
+        }
+    }
+}
+
+fn ansi256_index_to_picker_marker(index: u8, width: u16, height: u16) -> (u16, u16, bool) {
+    // Reserve 1 row for grayscale ramp (if there's room).
+    let gray_h = if height >= 7 { 1 } else { 0 };
+    let cube_h = height.saturating_sub(gray_h).max(1);
+
+    if index >= 232 && gray_h == 1 {
+        let gray_level = (index - 232) as u16;
+        let col = axis_value_to_pos(gray_level, width, 23);
+        let row = height.saturating_sub(1);
+        return (col, row, true);
+    }
+
+    let clamped = index.clamp(16, 231);
+    let offset = (clamped - 16) as u16;
+    let r_level = offset / 36;
+    let g_level = (offset % 36) / 6;
+    let b_level = offset % 6;
+    let cube_col = r_level * 6 + b_level; // 0..35
+
+    let col = axis_value_to_pos(cube_col, width, 35);
+    let row = axis_value_to_pos(g_level, cube_h, 5);
+    (col, row, false)
 }
 
 fn paint_code_preview(painter: &mut Painter, area: Rect, state: &ThemeEditorState, theme: &Theme) {

@@ -61,6 +61,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
             &workbench.store.state().ui.theme_editor,
             &workbench.ui_theme,
             workbench.terminal_color_support,
+            workbench.last_theme_editor_ansi_cursor,
         );
         workbench.last_theme_editor_token_list_area = areas.token_list;
         workbench.last_theme_editor_hue_bar_area = areas.hue_bar;

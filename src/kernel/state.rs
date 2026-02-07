@@ -131,6 +131,7 @@ pub struct ThemeEditorState {
     pub hue: u16,
     pub saturation: u8,
     pub lightness: u8,
+    pub ansi_index: u8,
     pub preview_language: PreviewLanguage,
 }
 
@@ -143,6 +144,7 @@ impl Default for ThemeEditorState {
             hue: 0,
             saturation: 50,
             lightness: 50,
+            ansi_index: 16,
             preview_language: PreviewLanguage::Rust,
         }
     }

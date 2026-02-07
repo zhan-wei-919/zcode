@@ -226,6 +226,10 @@ Install one of the following:
 
 If you install JS/TS servers per-project, `zcode` will auto-detect `node_modules/.bin` (searching upwards from the detected project root).
 
+### macOS Terminal mouse occasionally unresponsive
+
+On macOS Terminal.app, there is a very small chance that mouse input stops working. This is a Terminal.app bug — restarting Terminal usually fixes it.
+
 ## Development
 
 ```bash

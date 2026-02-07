@@ -124,6 +124,7 @@ impl ClipboardService {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn env_is_set(name: &str) -> bool {
     std::env::var_os(name).is_some()
 }

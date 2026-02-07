@@ -11,7 +11,10 @@ use crate::kernel::{
     Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, SidebarTab,
 };
 use crate::tui::view::EventResult;
-use crate::views::theme_editor::{col_to_saturation, row_to_hue, row_to_lightness};
+use crate::ui::core::style::Color;
+use crate::views::theme_editor::{
+    col_to_saturation, picker_pos_to_ansi_index, row_to_hue, row_to_lightness,
+};
 use std::time::Instant;
 
 impl Workbench {
@@ -261,6 +264,7 @@ impl Workbench {
             self.maybe_schedule_inlay_hints_debounce(&cmd_for_schedule);
             self.maybe_schedule_folding_range_debounce(&cmd_for_schedule);
             if cmd_for_schedule == Command::OpenThemeEditor {
+                self.last_theme_editor_ansi_cursor = None;
                 self.sync_theme_editor_hsl();
             }
             if self.store.state().ui.should_quit {
@@ -350,124 +354,199 @@ impl Workbench {
 
     fn handle_theme_editor_key(&mut self, key_event: &KeyEvent) -> EventResult {
         let focus = self.store.state().ui.theme_editor.focus;
+        let color_support = self.terminal_color_support;
 
         match (key_event.code, key_event.modifiers) {
             (KeyCode::Esc, _) => {
+                self.last_theme_editor_ansi_cursor = None;
                 let _ = self.dispatch_kernel(KernelAction::ThemeEditorClose);
                 EventResult::Consumed
             }
             (KeyCode::Tab, _) => {
-                let next = match focus {
-                    ThemeEditorFocus::TokenList => ThemeEditorFocus::HueBar,
-                    ThemeEditorFocus::HueBar => ThemeEditorFocus::SvPalette,
-                    ThemeEditorFocus::SvPalette => ThemeEditorFocus::TokenList,
+                let next = match color_support {
+                    crate::ui::core::color_support::TerminalColorSupport::TrueColor => {
+                        match focus {
+                            ThemeEditorFocus::TokenList => ThemeEditorFocus::HueBar,
+                            ThemeEditorFocus::HueBar => ThemeEditorFocus::SvPalette,
+                            ThemeEditorFocus::SvPalette => ThemeEditorFocus::TokenList,
+                        }
+                    }
+                    crate::ui::core::color_support::TerminalColorSupport::Ansi256
+                    | crate::ui::core::color_support::TerminalColorSupport::Ansi16 => match focus {
+                        ThemeEditorFocus::TokenList => ThemeEditorFocus::SvPalette,
+                        ThemeEditorFocus::HueBar | ThemeEditorFocus::SvPalette => {
+                            ThemeEditorFocus::TokenList
+                        }
+                    },
                 };
                 let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus { focus: next });
                 EventResult::Consumed
             }
             (KeyCode::Up, mods) => {
-                let delta = if mods.contains(KeyModifiers::SHIFT) {
-                    10
-                } else {
-                    1
-                };
-                match focus {
-                    ThemeEditorFocus::TokenList => {
-                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorMoveTokenSelection {
-                            delta: -1,
-                        });
-                        self.sync_theme_editor_hsl();
+                match color_support {
+                    crate::ui::core::color_support::TerminalColorSupport::TrueColor => {
+                        let delta = if mods.contains(KeyModifiers::SHIFT) {
+                            10
+                        } else {
+                            1
+                        };
+                        match focus {
+                            ThemeEditorFocus::TokenList => {
+                                let _ = self.dispatch_kernel(
+                                    KernelAction::ThemeEditorMoveTokenSelection { delta: -1 },
+                                );
+                                self.sync_theme_editor_hsl();
+                            }
+                            ThemeEditorFocus::HueBar => {
+                                let _ = self.dispatch_kernel(KernelAction::ThemeEditorAdjustHue {
+                                    delta: -(delta as i16),
+                                });
+                                self.apply_theme_editor_color();
+                            }
+                            ThemeEditorFocus::SvPalette => {
+                                // Up = increase lightness
+                                let _ = self.dispatch_kernel(
+                                    KernelAction::ThemeEditorAdjustLightness { delta: delta as i8 },
+                                );
+                                self.apply_theme_editor_color();
+                            }
+                        }
                     }
-                    ThemeEditorFocus::HueBar => {
-                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorAdjustHue {
-                            delta: -(delta as i16),
-                        });
-                        self.apply_theme_editor_color();
-                    }
-                    ThemeEditorFocus::SvPalette => {
-                        // Up = increase lightness
-                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorAdjustLightness {
-                            delta: delta as i8,
-                        });
-                        self.apply_theme_editor_color();
-                    }
+                    crate::ui::core::color_support::TerminalColorSupport::Ansi256
+                    | crate::ui::core::color_support::TerminalColorSupport::Ansi16 => match focus {
+                        ThemeEditorFocus::TokenList => {
+                            let _ =
+                                self.dispatch_kernel(KernelAction::ThemeEditorMoveTokenSelection {
+                                    delta: -1,
+                                });
+                            self.sync_theme_editor_hsl();
+                        }
+                        ThemeEditorFocus::HueBar | ThemeEditorFocus::SvPalette => {
+                            self.adjust_theme_editor_ansi_index(0, -1, mods);
+                        }
+                    },
                 }
                 EventResult::Consumed
             }
             (KeyCode::Down, mods) => {
-                let delta = if mods.contains(KeyModifiers::SHIFT) {
-                    10
-                } else {
-                    1
-                };
-                match focus {
-                    ThemeEditorFocus::TokenList => {
-                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorMoveTokenSelection {
-                            delta: 1,
-                        });
-                        self.sync_theme_editor_hsl();
+                match color_support {
+                    crate::ui::core::color_support::TerminalColorSupport::TrueColor => {
+                        let delta = if mods.contains(KeyModifiers::SHIFT) {
+                            10
+                        } else {
+                            1
+                        };
+                        match focus {
+                            ThemeEditorFocus::TokenList => {
+                                let _ = self.dispatch_kernel(
+                                    KernelAction::ThemeEditorMoveTokenSelection { delta: 1 },
+                                );
+                                self.sync_theme_editor_hsl();
+                            }
+                            ThemeEditorFocus::HueBar => {
+                                let _ = self.dispatch_kernel(KernelAction::ThemeEditorAdjustHue {
+                                    delta: delta as i16,
+                                });
+                                self.apply_theme_editor_color();
+                            }
+                            ThemeEditorFocus::SvPalette => {
+                                // Down = decrease lightness
+                                let _ = self.dispatch_kernel(
+                                    KernelAction::ThemeEditorAdjustLightness {
+                                        delta: -(delta as i8),
+                                    },
+                                );
+                                self.apply_theme_editor_color();
+                            }
+                        }
                     }
-                    ThemeEditorFocus::HueBar => {
-                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorAdjustHue {
-                            delta: delta as i16,
-                        });
-                        self.apply_theme_editor_color();
-                    }
-                    ThemeEditorFocus::SvPalette => {
-                        // Down = decrease lightness
-                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorAdjustLightness {
-                            delta: -(delta as i8),
-                        });
-                        self.apply_theme_editor_color();
-                    }
+                    crate::ui::core::color_support::TerminalColorSupport::Ansi256
+                    | crate::ui::core::color_support::TerminalColorSupport::Ansi16 => match focus {
+                        ThemeEditorFocus::TokenList => {
+                            let _ =
+                                self.dispatch_kernel(KernelAction::ThemeEditorMoveTokenSelection {
+                                    delta: 1,
+                                });
+                            self.sync_theme_editor_hsl();
+                        }
+                        ThemeEditorFocus::HueBar | ThemeEditorFocus::SvPalette => {
+                            self.adjust_theme_editor_ansi_index(0, 1, mods);
+                        }
+                    },
                 }
                 EventResult::Consumed
             }
             (KeyCode::Left, mods) => {
-                let delta = if mods.contains(KeyModifiers::SHIFT) {
-                    10
-                } else {
-                    1
-                };
-                match focus {
-                    ThemeEditorFocus::HueBar => {
-                        // Left on hue bar = switch to SvPalette
-                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
-                            focus: ThemeEditorFocus::SvPalette,
-                        });
+                match color_support {
+                    crate::ui::core::color_support::TerminalColorSupport::TrueColor => {
+                        let delta = if mods.contains(KeyModifiers::SHIFT) {
+                            10
+                        } else {
+                            1
+                        };
+                        match focus {
+                            ThemeEditorFocus::HueBar => {
+                                // Left on hue bar = switch to SvPalette
+                                let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
+                                    focus: ThemeEditorFocus::SvPalette,
+                                });
+                            }
+                            ThemeEditorFocus::SvPalette => {
+                                // Left = decrease saturation
+                                let _ = self.dispatch_kernel(
+                                    KernelAction::ThemeEditorAdjustSaturation {
+                                        delta: -(delta as i8),
+                                    },
+                                );
+                                self.apply_theme_editor_color();
+                            }
+                            _ => {}
+                        }
                     }
-                    ThemeEditorFocus::SvPalette => {
-                        // Left = decrease saturation
-                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorAdjustSaturation {
-                            delta: -(delta as i8),
-                        });
-                        self.apply_theme_editor_color();
-                    }
-                    _ => {}
+                    crate::ui::core::color_support::TerminalColorSupport::Ansi256
+                    | crate::ui::core::color_support::TerminalColorSupport::Ansi16 => match focus {
+                        ThemeEditorFocus::TokenList => {}
+                        ThemeEditorFocus::HueBar | ThemeEditorFocus::SvPalette => {
+                            self.adjust_theme_editor_ansi_index(-1, 0, mods);
+                        }
+                    },
                 }
                 EventResult::Consumed
             }
             (KeyCode::Right, mods) => {
-                let delta = if mods.contains(KeyModifiers::SHIFT) {
-                    10
-                } else {
-                    1
-                };
-                match focus {
-                    ThemeEditorFocus::HueBar => {
-                        // Right on hue bar = switch to SvPalette
-                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
-                            focus: ThemeEditorFocus::SvPalette,
-                        });
+                match color_support {
+                    crate::ui::core::color_support::TerminalColorSupport::TrueColor => {
+                        let delta = if mods.contains(KeyModifiers::SHIFT) {
+                            10
+                        } else {
+                            1
+                        };
+                        match focus {
+                            ThemeEditorFocus::HueBar => {
+                                // Right on hue bar = switch to SvPalette
+                                let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
+                                    focus: ThemeEditorFocus::SvPalette,
+                                });
+                            }
+                            ThemeEditorFocus::SvPalette => {
+                                // Right = increase saturation
+                                let _ = self.dispatch_kernel(
+                                    KernelAction::ThemeEditorAdjustSaturation {
+                                        delta: delta as i8,
+                                    },
+                                );
+                                self.apply_theme_editor_color();
+                            }
+                            _ => {}
+                        }
                     }
-                    ThemeEditorFocus::SvPalette => {
-                        // Right = increase saturation
-                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorAdjustSaturation {
-                            delta: delta as i8,
-                        });
-                        self.apply_theme_editor_color();
-                    }
-                    _ => {}
+                    crate::ui::core::color_support::TerminalColorSupport::Ansi256
+                    | crate::ui::core::color_support::TerminalColorSupport::Ansi16 => match focus {
+                        ThemeEditorFocus::TokenList => {}
+                        ThemeEditorFocus::HueBar | ThemeEditorFocus::SvPalette => {
+                            self.adjust_theme_editor_ansi_index(1, 0, mods);
+                        }
+                    },
                 }
                 EventResult::Consumed
             }
@@ -499,36 +578,78 @@ impl Workbench {
         let col = event.column;
         let row = event.row;
 
-        // Check Hue Bar
-        if let Some(area) = self.last_theme_editor_hue_bar_area {
-            if col >= area.x && col < area.x + area.w && row >= area.y && row < area.y + area.h {
-                let rel_row = row - area.y;
-                let hue = row_to_hue(rel_row, area.h);
-                let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
-                    focus: ThemeEditorFocus::HueBar,
-                });
-                let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetHue { hue });
-                self.apply_theme_editor_color();
-                return EventResult::Consumed;
-            }
-        }
+        match self.terminal_color_support {
+            crate::ui::core::color_support::TerminalColorSupport::TrueColor => {
+                // Check Hue Bar
+                if let Some(area) = self.last_theme_editor_hue_bar_area {
+                    if col >= area.x
+                        && col < area.x + area.w
+                        && row >= area.y
+                        && row < area.y + area.h
+                    {
+                        let rel_row = row - area.y;
+                        let hue = row_to_hue(rel_row, area.h);
+                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
+                            focus: ThemeEditorFocus::HueBar,
+                        });
+                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetHue { hue });
+                        self.apply_theme_editor_color();
+                        return EventResult::Consumed;
+                    }
+                }
 
-        // Check SV Palette
-        if let Some(area) = self.last_theme_editor_sv_palette_area {
-            if col >= area.x && col < area.x + area.w && row >= area.y && row < area.y + area.h {
-                let rel_col = col - area.x;
-                let rel_row = row - area.y;
-                let saturation = col_to_saturation(rel_col, area.w);
-                let lightness = row_to_lightness(rel_row, area.h);
-                let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
-                    focus: ThemeEditorFocus::SvPalette,
-                });
-                let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetSaturationLightness {
-                    saturation,
-                    lightness,
-                });
-                self.apply_theme_editor_color();
-                return EventResult::Consumed;
+                // Check SV Palette
+                if let Some(area) = self.last_theme_editor_sv_palette_area {
+                    if col >= area.x
+                        && col < area.x + area.w
+                        && row >= area.y
+                        && row < area.y + area.h
+                    {
+                        let rel_col = col - area.x;
+                        let rel_row = row - area.y;
+                        let saturation = col_to_saturation(rel_col, area.w);
+                        let lightness = row_to_lightness(rel_row, area.h);
+                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
+                            focus: ThemeEditorFocus::SvPalette,
+                        });
+                        let _ =
+                            self.dispatch_kernel(KernelAction::ThemeEditorSetSaturationLightness {
+                                saturation,
+                                lightness,
+                            });
+                        self.apply_theme_editor_color();
+                        return EventResult::Consumed;
+                    }
+                }
+            }
+            crate::ui::core::color_support::TerminalColorSupport::Ansi256
+            | crate::ui::core::color_support::TerminalColorSupport::Ansi16 => {
+                if let Some(area) = self.last_theme_editor_sv_palette_area {
+                    if col >= area.x
+                        && col < area.x + area.w
+                        && row >= area.y
+                        && row < area.y + area.h
+                    {
+                        let rel_col = col - area.x;
+                        let rel_row = row - area.y;
+                        if let Some(index) = picker_pos_to_ansi_index(
+                            rel_col,
+                            rel_row,
+                            area.w,
+                            area.h,
+                            self.terminal_color_support,
+                        ) {
+                            self.last_theme_editor_ansi_cursor = Some((rel_col, rel_row));
+                            let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
+                                focus: ThemeEditorFocus::SvPalette,
+                            });
+                            let _ = self
+                                .dispatch_kernel(KernelAction::ThemeEditorSetAnsiIndex { index });
+                            self.apply_theme_editor_color();
+                            return EventResult::Consumed;
+                        }
+                    }
+                }
             }
         }
 
@@ -564,7 +685,21 @@ impl Workbench {
     pub(in super::super) fn apply_theme_editor_color(&mut self) {
         let te = &self.store.state().ui.theme_editor;
         let token = te.selected_token;
-        let (r, g, b) = crate::app::theme::hsl_to_rgb(te.hue, te.saturation, te.lightness);
+        let (r, g, b) = match self.terminal_color_support {
+            crate::ui::core::color_support::TerminalColorSupport::TrueColor => {
+                crate::app::theme::hsl_to_rgb(te.hue, te.saturation, te.lightness)
+            }
+            crate::ui::core::color_support::TerminalColorSupport::Ansi256 => {
+                let idx = te.ansi_index.max(16);
+                crate::ui::core::theme_adapter::color_to_rgb(Color::Indexed(idx))
+                    .unwrap_or((0, 0, 0))
+            }
+            crate::ui::core::color_support::TerminalColorSupport::Ansi16 => {
+                let idx = te.ansi_index % 16;
+                crate::ui::core::theme_adapter::color_to_rgb(Color::Indexed(idx))
+                    .unwrap_or((0, 0, 0))
+            }
+        };
         let color = crate::ui::core::style::Color::Rgb(r, g, b);
 
         match token {
@@ -631,6 +766,17 @@ impl Workbench {
                 saturation: s,
                 lightness: l,
             });
+
+            if self.terminal_color_support
+                != crate::ui::core::color_support::TerminalColorSupport::TrueColor
+            {
+                if let Color::Indexed(index) = crate::ui::core::theme_adapter::map_color_to_support(
+                    Color::Rgb(r, g, b),
+                    self.terminal_color_support,
+                ) {
+                    let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetAnsiIndex { index });
+                }
+            }
         }
 
         self.apply_theme_editor_color();
@@ -658,6 +804,69 @@ impl Workbench {
                 saturation: s,
                 lightness: l,
             });
+
+            if self.terminal_color_support
+                != crate::ui::core::color_support::TerminalColorSupport::TrueColor
+            {
+                if let Color::Indexed(index) = crate::ui::core::theme_adapter::map_color_to_support(
+                    Color::Rgb(r, g, b),
+                    self.terminal_color_support,
+                ) {
+                    let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetAnsiIndex { index });
+                }
+            }
         }
+    }
+
+    fn adjust_theme_editor_ansi_index(&mut self, dx: i16, dy: i16, mods: KeyModifiers) {
+        let cur = self.store.state().ui.theme_editor.ansi_index;
+        let shift = mods.contains(KeyModifiers::SHIFT);
+
+        let next = match self.terminal_color_support {
+            crate::ui::core::color_support::TerminalColorSupport::TrueColor => cur,
+            crate::ui::core::color_support::TerminalColorSupport::Ansi16 => {
+                let idx = (cur % 16) as i16;
+                let mut row = idx / 8;
+                let mut col = idx % 8;
+                let step_x = if shift { 2 } else { 1 };
+                let step_y = 1;
+                col = (col + dx * step_x).clamp(0, 7);
+                row = (row + dy * step_y).clamp(0, 1);
+                (row * 8 + col) as u8
+            }
+            crate::ui::core::color_support::TerminalColorSupport::Ansi256 => {
+                let idx = cur.max(16);
+                if idx >= 232 {
+                    let mut gray = (idx - 232) as i16;
+                    let step = if shift { 6 } else { 1 };
+                    if dx != 0 {
+                        gray = (gray + dx * step).clamp(0, 23);
+                    } else if dy != 0 {
+                        // Treat vertical movement as a faster horizontal step on the 1-row ramp.
+                        gray = (gray + dy * step).clamp(0, 23);
+                    }
+                    232 + gray as u8
+                } else {
+                    let idx = idx.min(231);
+                    let offset = (idx - 16) as i16;
+                    let r = offset / 36;
+                    let g = (offset % 36) / 6;
+                    let b = offset % 6;
+                    let mut cube_col = r * 6 + b; // 0..35
+                    let mut cube_row = g; // 0..5
+                    let step_x = if shift { 6 } else { 1 };
+                    let step_y = if shift { 2 } else { 1 };
+                    cube_col = (cube_col + dx * step_x).clamp(0, 35);
+                    cube_row = (cube_row + dy * step_y).clamp(0, 5);
+                    let r2 = cube_col / 6;
+                    let b2 = cube_col % 6;
+                    let idx = 16u16 + (r2 as u16 * 36) + (cube_row as u16 * 6) + b2 as u16;
+                    idx as u8
+                }
+            }
+        };
+
+        let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetAnsiIndex { index: next });
+        self.apply_theme_editor_color();
     }
 }

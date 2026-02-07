@@ -199,6 +199,7 @@ pub struct Workbench {
     last_theme_editor_token_list_area: Option<Rect>,
     last_theme_editor_hue_bar_area: Option<Rect>,
     last_theme_editor_sv_palette_area: Option<Rect>,
+    last_theme_editor_ansi_cursor: Option<(u16, u16)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -425,6 +426,7 @@ impl Workbench {
             last_theme_editor_token_list_area: None,
             last_theme_editor_hue_bar_area: None,
             last_theme_editor_sv_palette_area: None,
+            last_theme_editor_ansi_cursor: None,
         };
 
         if git_enabled() {

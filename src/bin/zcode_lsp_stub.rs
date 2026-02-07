@@ -63,7 +63,12 @@ impl Trace {
         let Some(file) = self.file.as_mut() else {
             return;
         };
-        let _ = writeln!(file, "{line}");
+        // Try to keep each log entry as a single append write so multiple stub
+        // processes can share the same trace file without line interleaving.
+        let mut buf = Vec::with_capacity(line.len().saturating_add(1));
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(b'\n');
+        let _ = file.write_all(&buf);
         let _ = file.flush();
     }
 }

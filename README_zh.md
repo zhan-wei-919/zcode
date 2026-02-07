@@ -226,6 +226,10 @@ zcode
 
 如果 JS/TS 按项目安装，`zcode` 会自动向上查找并使用 `node_modules/.bin`。
 
+### macOS 默认终端鼠标偶尔不响应
+
+macOS默认终端有极小概率出现不响应鼠标的情况，这个是终端的BUG，关掉重开就行
+
 ## 开发
 
 ```bash

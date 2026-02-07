@@ -41,7 +41,7 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
         indent_guide_fg: map_color_for_support(theme.indent_guide_fg, support),
     };
 
-    apply_non_truecolor_syntax_palette(&mut adapted, support);
+    apply_non_truecolor_syntax_palette(&mut adapted, theme, support);
     adapted
 }
 
@@ -61,17 +61,106 @@ pub fn color_to_hex(color: Color) -> Option<String> {
     color_to_rgb(color).map(|(r, g, b)| format!("#{:02X}{:02X}{:02X}", r, g, b))
 }
 
-fn apply_non_truecolor_syntax_palette(theme: &mut Theme, support: TerminalColorSupport) {
-    theme.syntax_comment_fg = syntax_fallback_color(support, 65, 2);
-    theme.syntax_keyword_fg = syntax_fallback_color(support, 33, 4);
-    theme.syntax_string_fg = syntax_fallback_color(support, 114, 10);
-    theme.syntax_number_fg = syntax_fallback_color(support, 108, 10);
-    theme.syntax_type_fg = syntax_fallback_color(support, 44, 6);
-    theme.syntax_attribute_fg = syntax_fallback_color(support, 44, 6);
-    theme.syntax_function_fg = syntax_fallback_color(support, 179, 11);
-    theme.syntax_variable_fg = syntax_fallback_color(support, 81, 6);
-    theme.syntax_constant_fg = syntax_fallback_color(support, 39, 12);
-    theme.syntax_regex_fg = syntax_fallback_color(support, 167, 9);
+fn apply_non_truecolor_syntax_palette(
+    adapted: &mut Theme,
+    original: &Theme,
+    support: TerminalColorSupport,
+) {
+    let defaults = Theme::default();
+
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_comment_fg,
+        original.syntax_comment_fg,
+        defaults.syntax_comment_fg,
+        support,
+        65,
+        2,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_keyword_fg,
+        original.syntax_keyword_fg,
+        defaults.syntax_keyword_fg,
+        support,
+        33,
+        4,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_string_fg,
+        original.syntax_string_fg,
+        defaults.syntax_string_fg,
+        support,
+        114,
+        10,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_number_fg,
+        original.syntax_number_fg,
+        defaults.syntax_number_fg,
+        support,
+        108,
+        10,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_type_fg,
+        original.syntax_type_fg,
+        defaults.syntax_type_fg,
+        support,
+        44,
+        6,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_attribute_fg,
+        original.syntax_attribute_fg,
+        defaults.syntax_attribute_fg,
+        support,
+        44,
+        6,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_function_fg,
+        original.syntax_function_fg,
+        defaults.syntax_function_fg,
+        support,
+        179,
+        11,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_variable_fg,
+        original.syntax_variable_fg,
+        defaults.syntax_variable_fg,
+        support,
+        81,
+        6,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_constant_fg,
+        original.syntax_constant_fg,
+        defaults.syntax_constant_fg,
+        support,
+        39,
+        12,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_regex_fg,
+        original.syntax_regex_fg,
+        defaults.syntax_regex_fg,
+        support,
+        167,
+        9,
+    );
+}
+
+fn maybe_apply_syntax_fallback(
+    out: &mut Color,
+    original: Color,
+    default: Color,
+    support: TerminalColorSupport,
+    ansi256_index: u8,
+    ansi16_index: u8,
+) {
+    if original == default {
+        *out = syntax_fallback_color(support, ansi256_index, ansi16_index);
+    }
 }
 
 fn map_color_for_support(color: Color, support: TerminalColorSupport) -> Color {
@@ -108,10 +197,12 @@ fn syntax_fallback_color(
 }
 
 fn rgb_to_ansi256_index(r: u8, g: u8, b: u8) -> u8 {
-    let mut best_index = 0u8;
+    // Note: ANSI 0..15 colors are terminal-theme-dependent. For predictable results across
+    // terminals (notably macOS Terminal.app), prefer the standardized 16..255 palette.
+    let mut best_index = 16u8;
     let mut best_distance = u32::MAX;
 
-    for index in 0u16..=255u16 {
+    for index in 16u16..=255u16 {
         let index_u8 = index as u8;
         let (pr, pg, pb) = ansi256_index_to_rgb(index_u8);
         let distance = color_distance_sq(r, g, b, pr, pg, pb);

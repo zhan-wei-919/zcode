@@ -1560,6 +1560,13 @@ impl Store {
                     state_changed: true,
                 }
             }
+            Action::ThemeEditorSetAnsiIndex { index } => {
+                self.state.ui.theme_editor.ansi_index = index;
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
+                }
+            }
             Action::ThemeEditorCycleLanguage => {
                 self.state.ui.theme_editor.preview_language =
                     self.state.ui.theme_editor.preview_language.next();

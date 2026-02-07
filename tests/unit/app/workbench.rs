@@ -440,8 +440,12 @@ fn test_drag_sidebar_splitter_updates_sidebar_width() {
 #[test]
 fn test_drag_explorer_file_into_folder_moves_path() {
     let dir = tempdir().unwrap();
-    let src_dir = dir.path().join("src");
-    let dst_dir = dir.path().join("dst");
+    let root = dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| dir.path().to_path_buf());
+    let src_dir = root.join("src");
+    let dst_dir = root.join("dst");
     std::fs::create_dir_all(&src_dir).unwrap();
     std::fs::create_dir_all(&dst_dir).unwrap();
     let from = src_dir.join("a.txt");
@@ -449,7 +453,7 @@ fn test_drag_explorer_file_into_folder_moves_path() {
     let to = dst_dir.join("a.txt");
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     // Expand `src` so its entries become visible and draggable.
     let src_row = workbench
@@ -556,8 +560,12 @@ fn test_drag_explorer_file_into_folder_moves_path() {
 #[test]
 fn test_drag_explorer_file_into_folder_conflict_cancel_keeps_original() {
     let dir = tempdir().unwrap();
-    let src_dir = dir.path().join("src");
-    let dst_dir = dir.path().join("dst");
+    let root = dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| dir.path().to_path_buf());
+    let src_dir = root.join("src");
+    let dst_dir = root.join("dst");
     std::fs::create_dir_all(&src_dir).unwrap();
     std::fs::create_dir_all(&dst_dir).unwrap();
     let from = src_dir.join("a.txt");
@@ -566,7 +574,7 @@ fn test_drag_explorer_file_into_folder_conflict_cancel_keeps_original() {
     std::fs::write(&to, "TO").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     // Expand `src` so its entries become visible and draggable.
     let src_row = workbench
@@ -683,8 +691,12 @@ fn test_drag_explorer_file_into_folder_conflict_cancel_keeps_original() {
 #[test]
 fn test_drag_explorer_file_into_folder_conflict_accept_overwrites() {
     let dir = tempdir().unwrap();
-    let src_dir = dir.path().join("src");
-    let dst_dir = dir.path().join("dst");
+    let root = dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| dir.path().to_path_buf());
+    let src_dir = root.join("src");
+    let dst_dir = root.join("dst");
     std::fs::create_dir_all(&src_dir).unwrap();
     std::fs::create_dir_all(&dst_dir).unwrap();
     let from = src_dir.join("a.txt");
@@ -693,7 +705,7 @@ fn test_drag_explorer_file_into_folder_conflict_accept_overwrites() {
     std::fs::write(&to, "TO").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     // Expand `src` so its entries become visible and draggable.
     let src_row = workbench
@@ -808,16 +820,20 @@ fn test_drag_explorer_file_into_folder_conflict_accept_overwrites() {
 #[test]
 fn test_drag_explorer_file_onto_file_row_moves_into_that_files_parent_dir() {
     let dir = tempdir().unwrap();
-    let src_dir = dir.path().join("src");
+    let root = dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| dir.path().to_path_buf());
+    let src_dir = root.join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
     let from = src_dir.join("a.txt");
     std::fs::write(&from, "hello\n").unwrap();
-    let root_target = dir.path().join("root.txt");
+    let root_target = root.join("root.txt");
     std::fs::write(&root_target, "target\n").unwrap();
-    let to = dir.path().join("a.txt");
+    let to = root.join("a.txt");
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     // Expand `src` so its entries become visible and draggable.
     let src_row = workbench
@@ -927,14 +943,18 @@ fn test_drag_explorer_file_onto_file_row_moves_into_that_files_parent_dir() {
 #[test]
 fn test_drag_explorer_file_into_root_empty_space_moves_into_root() {
     let dir = tempdir().unwrap();
-    let src_dir = dir.path().join("src");
+    let root = dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| dir.path().to_path_buf());
+    let src_dir = root.join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
     let from = src_dir.join("a.txt");
     std::fs::write(&from, "hello\n").unwrap();
-    let to = dir.path().join("a.txt");
+    let to = root.join("a.txt");
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     // Expand `src` so its entries become visible and draggable.
     let src_row = workbench
@@ -1030,11 +1050,15 @@ fn test_drag_explorer_file_into_root_empty_space_moves_into_root() {
 #[test]
 fn test_drag_explorer_file_renders_ghost_label_near_cursor() {
     let dir = tempdir().unwrap();
-    let from = dir.path().join("a.txt");
+    let root = dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| dir.path().to_path_buf());
+    let from = root.join("a.txt");
     std::fs::write(&from, "hello\n").unwrap();
 
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     render_once(&mut workbench, 120, 40);
 
@@ -1221,6 +1245,54 @@ fn test_theme_editor_ui_theme_uses_ansi_fallback_when_not_truecolor() {
         workbench.ui_theme.syntax_comment_fg,
         Color::Indexed(_)
     ));
+}
+
+#[test]
+fn test_theme_editor_apply_color_updates_preview_in_ansi256_mode() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    workbench.terminal_color_support =
+        crate::ui::core::color_support::TerminalColorSupport::Ansi256;
+
+    // Pick a concrete ANSI256 color and ensure the preview uses it.
+    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetAnsiIndex { index: 196 });
+
+    workbench.apply_theme_editor_color();
+
+    assert_eq!(workbench.ui_theme.syntax_comment_fg, Color::Indexed(196));
+}
+
+#[test]
+fn test_theme_editor_ansi_palette_marker_tracks_mouse_cell() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    workbench.terminal_color_support =
+        crate::ui::core::color_support::TerminalColorSupport::Ansi256;
+    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorOpen);
+
+    let mut backend = TestBackend::new(200, 60);
+    workbench.render(&mut backend, Rect::new(0, 0, 200, 60));
+    let area = workbench
+        .last_theme_editor_sv_palette_area
+        .expect("sv palette area");
+    assert!(area.w > 0 && area.h > 0);
+
+    let click_x = area.x.saturating_add(area.w.saturating_sub(1));
+    let click_y = area.y;
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        click_x,
+        click_y,
+    ));
+
+    let mut backend = TestBackend::new(200, 60);
+    workbench.render(&mut backend, Rect::new(0, 0, 200, 60));
+    let buf = backend.buffer();
+    assert_eq!(buf.cell(click_x, click_y).unwrap().symbol, "+");
 }
 
 #[test]
