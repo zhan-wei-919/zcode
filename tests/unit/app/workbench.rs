@@ -1,6 +1,7 @@
 use super::*;
 use crate::core::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
+use crate::kernel::editor::{ReloadCause, ReloadRequest};
 use crate::ui::backend::test::TestBackend;
 use crate::ui::core::geom::Rect;
 use crate::ui::core::id::IdPath;
@@ -1620,4 +1621,112 @@ fn test_save_failure_is_logged_and_does_not_clear_dirty() {
         .and_then(|p| p.active_tab())
         .expect("tab exists");
     assert!(tab.dirty);
+}
+
+#[test]
+fn test_file_reloaded_message_does_not_overwrite_dirty_tab_with_duplicate_path() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let shared = dir.path().join("shared.rs");
+
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::SplitEditorVertical));
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: shared.clone(),
+        content: "pane0".to_string(),
+    }));
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 1,
+        path: shared.clone(),
+        content: "pane1".to_string(),
+    }));
+
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::InsertText {
+        pane: 0,
+        text: "_dirty".to_string(),
+    }));
+
+    let pane0_before = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.tabs.iter().find(|tab| tab.path.as_ref() == Some(&shared)))
+        .expect("pane0 tab")
+        .buffer
+        .text();
+
+    workbench.handle_message(AppMessage::FileReloaded {
+        request: ReloadRequest {
+            pane: 0,
+            path: shared.clone(),
+            cause: ReloadCause::ExternalSync,
+            request_id: 1,
+        },
+        content: "disk-version".to_string(),
+    });
+
+    let pane0_after = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.tabs.iter().find(|tab| tab.path.as_ref() == Some(&shared)))
+        .expect("pane0 tab");
+
+    assert!(pane0_after.dirty, "dirty tab should not be reset by reload");
+    assert_eq!(
+        pane0_after.buffer.text(),
+        pane0_before,
+        "dirty tab content should not be replaced by disk message"
+    );
+}
+
+#[test]
+fn test_out_of_order_file_reloaded_messages_keep_latest_content() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let path = dir.path().join("race.rs");
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "base".to_string(),
+    }));
+
+    workbench.handle_message(AppMessage::FileReloaded {
+        request: ReloadRequest {
+            pane: 0,
+            path: path.clone(),
+            cause: ReloadCause::ExternalSync,
+            request_id: 2,
+        },
+        content: "newer".to_string(),
+    });
+    workbench.handle_message(AppMessage::FileReloaded {
+        request: ReloadRequest {
+            pane: 0,
+            path: path.clone(),
+            cause: ReloadCause::ExternalSync,
+            request_id: 1,
+        },
+        content: "older".to_string(),
+    });
+
+    let tab = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.tabs.iter().find(|tab| tab.path.as_ref() == Some(&path)))
+        .expect("tab exists");
+
+    assert_eq!(
+        tab.buffer.text(),
+        "newer",
+        "stale reload result should not overwrite newer disk content"
+    );
 }

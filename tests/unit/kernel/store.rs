@@ -1835,3 +1835,29 @@ fn fuzz_workspace_edit_application_does_not_break_cursor_invariants() {
         assert_cursor_invariants(tab);
     }
 }
+
+#[test]
+fn reload_from_disk_emits_reload_request_from_active_tab() {
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("reload_target.rs");
+
+    let _ = store.dispatch(Action::RunCommand(Command::SplitEditorVertical));
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "fn main() {}\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::EditorSetActivePane { pane: 0 });
+
+    let result = store.dispatch(Action::RunCommand(Command::ReloadFromDisk));
+
+    let request = match result.effects.as_slice() {
+        [Effect::ReloadFile(request)] => request,
+        other => panic!("expected one ReloadFile effect, got {other:?}"),
+    };
+    assert_eq!(request.pane, 0);
+    assert_eq!(request.path, path);
+    assert_eq!(request.cause, crate::kernel::editor::ReloadCause::ManualCommand);
+    assert_eq!(request.request_id, 1);
+    assert!(!result.state_changed);
+}

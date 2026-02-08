@@ -3,11 +3,45 @@ use crate::kernel::services::ports::{EditorConfig, LspFoldingRange, Match};
 use crate::models::{EditHistory, EditOp, Granularity, OpKind, TextBuffer};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 use unicode_xid::UnicodeXID;
 
 use super::syntax::SyntaxDocument;
 use super::{viewport, HighlightSpan, LanguageId};
+
+#[derive(Debug, Clone)]
+pub enum DiskState {
+    InSync,
+    ReloadedFromDisk { at: Instant },
+    ConflictExternalModified,
+    MissingOnDisk,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiskSnapshot {
+    pub modified: Option<SystemTime>,
+    pub size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReloadCause {
+    ExternalSync,
+    ManualCommand,
+}
+
+impl ReloadCause {
+    pub fn allows_dirty_overwrite(self) -> bool {
+        matches!(self, Self::ManualCommand)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReloadRequest {
+    pub pane: usize,
+    pub path: PathBuf,
+    pub cause: ReloadCause,
+    pub request_id: u64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchBarMode {
@@ -128,6 +162,10 @@ pub struct EditorTabState {
     pub edit_version: u64,
     pub last_edit_op: Option<EditOp>,
     pub mouse: EditorMouseState,
+    pub disk_state: DiskState,
+    pub saved_snapshot: Option<DiskSnapshot>,
+    pub last_reload_request_id: u64,
+    pub last_applied_reload_request_id: u64,
     semantic_highlight: Option<SemanticHighlightState>,
     git_gutter: Option<GitGutterMarks>,
     inlay_hints: Option<InlayHintsState>,
@@ -166,6 +204,10 @@ impl EditorTabState {
             edit_version: 0,
             last_edit_op: None,
             mouse: EditorMouseState::new(),
+            disk_state: DiskState::InSync,
+            saved_snapshot: None,
+            last_reload_request_id: 0,
+            last_applied_reload_request_id: 0,
             semantic_highlight: None,
             git_gutter: None,
             inlay_hints: None,
@@ -198,6 +240,10 @@ impl EditorTabState {
             edit_version: 0,
             last_edit_op: None,
             mouse: EditorMouseState::new(),
+            disk_state: DiskState::InSync,
+            saved_snapshot: None,
+            last_reload_request_id: 0,
+            last_applied_reload_request_id: 0,
             semantic_highlight: None,
             git_gutter: None,
             inlay_hints: None,
@@ -217,6 +263,41 @@ impl EditorTabState {
         self.git_gutter = None;
         self.inlay_hints = None;
         self.clear_folding();
+    }
+
+    pub fn next_reload_request_id(&mut self) -> u64 {
+        self.last_reload_request_id = self.last_reload_request_id.saturating_add(1);
+        self.last_reload_request_id
+    }
+
+    pub fn issue_reload_request(
+        &mut self,
+        pane: usize,
+        cause: ReloadCause,
+    ) -> Option<ReloadRequest> {
+        let path = self.path.clone()?;
+        let request_id = self.next_reload_request_id();
+        Some(ReloadRequest {
+            pane,
+            path,
+            cause,
+            request_id,
+        })
+    }
+
+    pub fn can_apply_reload(&mut self, request: &ReloadRequest) -> bool {
+        if request.request_id < self.last_reload_request_id {
+            return false;
+        }
+        if request.request_id == self.last_applied_reload_request_id {
+            return false;
+        }
+        self.last_reload_request_id = request.request_id;
+        if self.dirty && !request.cause.allows_dirty_overwrite() {
+            return false;
+        }
+        self.last_applied_reload_request_id = request.request_id;
+        true
     }
 
     pub fn set_git_gutter(&mut self, gutter: Option<GitGutterMarks>) -> bool {
@@ -246,11 +327,13 @@ impl EditorTabState {
     }
 
     pub fn display_title(&self) -> String {
-        if self.dirty {
-            format!("● {}", self.title)
-        } else {
-            self.title.clone()
-        }
+        let prefix = match &self.disk_state {
+            DiskState::ConflictExternalModified => "\u{26a0} ",
+            DiskState::MissingOnDisk => "\u{2717} ",
+            _ if self.dirty => "\u{25cf} ",
+            _ => "",
+        };
+        format!("{}{}", prefix, self.title)
     }
 
     pub fn language(&self) -> Option<LanguageId> {
@@ -711,6 +794,25 @@ impl EditorTabState {
             return;
         };
         syntax.reparse(self.buffer.rope());
+    }
+
+    pub fn reload_from_content(&mut self, content: &str, config: &EditorConfig) {
+        use crate::models::{EditHistory, TextBuffer};
+        self.buffer = TextBuffer::from_text(content);
+        self.history = EditHistory::new(self.buffer.rope().clone());
+        self.dirty = false;
+        self.edit_version = self.edit_version.saturating_add(1);
+        self.last_edit_op = None;
+        self.disk_state = DiskState::ReloadedFromDisk { at: Instant::now() };
+        self.syntax = self
+            .path
+            .as_ref()
+            .and_then(|p| SyntaxDocument::for_path(p, self.buffer.rope()));
+        self.semantic_highlight = None;
+        self.git_gutter = None;
+        self.inlay_hints = None;
+        self.clear_folding();
+        viewport::clamp_and_follow(&mut self.viewport, &self.buffer, config.tab_size);
     }
 }
 

@@ -21,6 +21,7 @@ impl Workbench {
         };
         self.sync_editor_search_slots();
         self.sync_lsp();
+        self.sync_file_watcher();
         {
             let _scope = perf::scope("kernel.effects");
             for effect in result.effects {
@@ -489,11 +490,37 @@ impl Workbench {
             KernelEffect::SaveThemeSettings { .. } => {
                 // Theme saving is handled via debounce in tick.rs
             }
+            KernelEffect::ReloadFile(request) => {
+                self.runtime.reload_file(request);
+            }
         }
     }
 }
 
 impl Workbench {
+    fn sync_file_watcher(&mut self) {
+        let Some(watcher) = self.file_watcher.as_mut() else {
+            return;
+        };
+
+        let mut current_paths = FxHashSet::default();
+        for pane in &self.store.state().editor.panes {
+            for tab in &pane.tabs {
+                if let Some(path) = tab.path.as_ref() {
+                    current_paths.insert(path.clone());
+                }
+            }
+        }
+
+        let watched = watcher.watched_paths().clone();
+        for path in watched.difference(&current_paths) {
+            watcher.unwatch(path);
+        }
+        for path in current_paths.difference(&watched) {
+            watcher.watch(path);
+        }
+    }
+
     fn sync_lsp(&mut self) {
         let Some(service) = self.kernel_services.get_mut::<LspService>() else {
             return;

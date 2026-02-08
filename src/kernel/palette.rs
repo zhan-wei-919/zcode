@@ -189,6 +189,11 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::HardReload,
     },
     PaletteItem {
+        label: "File: Reload from Disk",
+        label_lc: "file: reload from disk",
+        command: Command::ReloadFromDisk,
+    },
+    PaletteItem {
         label: "Quit",
         label_lc: "quit",
         command: Command::Quit,

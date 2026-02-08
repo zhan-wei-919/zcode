@@ -1,4 +1,5 @@
 use crate::kernel::services::ports::DirEntryInfo;
+use crate::kernel::editor::ReloadRequest;
 use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem, TerminalId};
 use std::path::PathBuf;
 
@@ -75,5 +76,9 @@ pub enum AppMessage {
     TerminalExited {
         id: TerminalId,
         code: Option<i32>,
+    },
+    FileReloaded {
+        request: ReloadRequest,
+        content: String,
     },
 }

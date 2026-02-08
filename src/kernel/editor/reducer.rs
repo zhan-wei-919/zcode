@@ -3,7 +3,7 @@ use crate::kernel::services::ports::SearchMessage;
 use crate::kernel::Effect;
 
 use super::action::EditorAction;
-use super::state::{EditorPaneState, EditorState, SearchBarMode, TabId};
+use super::state::{DiskState, EditorPaneState, EditorState, ReloadCause, ReloadRequest, SearchBarMode, TabId};
 use super::viewport;
 
 impl EditorState {
@@ -73,6 +73,18 @@ impl EditorState {
                 to_pane,
                 to_index,
             } => self.move_tab(tab_id, from_pane, to_pane, to_index),
+            EditorAction::FileReloaded {
+                content,
+                request,
+            } => self.file_reloaded(request, content),
+            EditorAction::FileExternallyModified { path } => self.file_externally_modified(path),
+            EditorAction::FileExternallyDeleted { path } => self.file_externally_deleted(path),
+            EditorAction::AcceptDiskVersion {
+                pane,
+                path,
+                content,
+            } => self.accept_disk_version(pane, path, content),
+            EditorAction::KeepMemoryVersion { pane } => self.keep_memory_version(pane),
         }
     }
 
@@ -1056,6 +1068,94 @@ impl EditorState {
             }
         }
         (true, effects)
+    }
+    fn file_reloaded(&mut self, request: ReloadRequest, content: String) -> (bool, Vec<Effect>) {
+        let config = self.config.clone();
+        let Some(pane_state) = self.panes.get_mut(request.pane) else {
+            return (false, Vec::new());
+        };
+        let Some(tab) = pane_state
+            .tabs
+            .iter_mut()
+            .find(|t| t.path.as_ref() == Some(&request.path))
+        else {
+            return (false, Vec::new());
+        };
+        if !tab.can_apply_reload(&request) {
+            return (false, Vec::new());
+        }
+        tab.reload_from_content(&content, &config);
+        self.open_paths_version = self.open_paths_version.saturating_add(1);
+        (true, Vec::new())
+    }
+
+    fn file_externally_modified(&mut self, path: std::path::PathBuf) -> (bool, Vec<Effect>) {
+        let mut changed = false;
+        let mut effects = Vec::new();
+        for (pane, pane_state) in self.panes.iter_mut().enumerate() {
+            for tab in &mut pane_state.tabs {
+                if tab.path.as_ref() != Some(&path) {
+                    continue;
+                }
+                if !tab.dirty {
+                    if let Some(request) = tab.issue_reload_request(pane, ReloadCause::ExternalSync)
+                    {
+                        effects.push(Effect::ReloadFile(request));
+                    }
+                } else {
+                    tab.disk_state = DiskState::ConflictExternalModified;
+                }
+                changed = true;
+            }
+        }
+        (changed, effects)
+    }
+
+    fn file_externally_deleted(&mut self, path: std::path::PathBuf) -> (bool, Vec<Effect>) {
+        let mut changed = false;
+        for pane_state in &mut self.panes {
+            for tab in &mut pane_state.tabs {
+                if tab.path.as_ref() == Some(&path) {
+                    tab.disk_state = DiskState::MissingOnDisk;
+                    changed = true;
+                }
+            }
+        }
+        (changed, Vec::new())
+    }
+
+    fn accept_disk_version(
+        &mut self,
+        pane: usize,
+        path: std::path::PathBuf,
+        content: String,
+    ) -> (bool, Vec<Effect>) {
+        let config = self.config.clone();
+        let Some(pane_state) = self.panes.get_mut(pane) else {
+            return (false, Vec::new());
+        };
+        let Some(tab) = pane_state
+            .tabs
+            .iter_mut()
+            .find(|t| t.path.as_ref() == Some(&path))
+        else {
+            return (false, Vec::new());
+        };
+        tab.next_reload_request_id();
+        tab.reload_from_content(&content, &config);
+        self.open_paths_version = self.open_paths_version.saturating_add(1);
+        (true, Vec::new())
+    }
+
+    fn keep_memory_version(&mut self, pane: usize) -> (bool, Vec<Effect>) {
+        let Some(pane_state) = self.panes.get_mut(pane) else {
+            return (false, Vec::new());
+        };
+        let Some(tab) = pane_state.active_tab_mut() else {
+            return (false, Vec::new());
+        };
+        tab.disk_state = DiskState::InSync;
+        (true, Vec::new())
     }
 }
 

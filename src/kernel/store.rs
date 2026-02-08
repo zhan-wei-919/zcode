@@ -45,6 +45,7 @@ use super::{
     Action, AppState, BottomPanelTab, EditorAction, Effect, FocusTarget, InputDialogKind,
     SidebarTab, SplitDirection,
 };
+use crate::kernel::editor::ReloadCause;
 
 pub struct DispatchResult {
     pub effects: Vec<Effect>,
@@ -98,9 +99,15 @@ impl Store {
     }
 
     pub fn tick(&mut self) {
+        let now = std::time::Instant::now();
         for pane in &mut self.state.editor.panes {
             for tab in &mut pane.tabs {
                 tab.history.tick();
+                if let crate::kernel::editor::DiskState::ReloadedFromDisk { at } = tab.disk_state {
+                    if now.duration_since(at) >= std::time::Duration::from_secs(3) {
+                        tab.disk_state = crate::kernel::editor::DiskState::InSync;
+                    }
+                }
             }
         }
     }
@@ -1776,6 +1783,21 @@ impl Store {
                     }],
                     state_changed: false,
                 };
+            }
+            Command::ReloadFromDisk => {
+                let pane = self.state.ui.editor_layout.active_pane;
+                if let Some(request) = self
+                    .state
+                    .editor
+                    .pane_mut(pane)
+                    .and_then(|p| p.active_tab_mut())
+                    .and_then(|t| t.issue_reload_request(pane, ReloadCause::ManualCommand))
+                {
+                    return DispatchResult {
+                        effects: vec![Effect::ReloadFile(request)],
+                        state_changed: false,
+                    };
+                }
             }
             Command::InsertChar(ch) => {
                 let pane = self.state.ui.editor_layout.active_pane;

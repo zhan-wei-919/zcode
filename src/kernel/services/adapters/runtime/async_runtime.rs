@@ -1,4 +1,5 @@
 use super::message::AppMessage;
+use crate::kernel::editor::ReloadRequest;
 use crate::kernel::services::adapters::git as git_helpers;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::{
@@ -415,6 +416,15 @@ impl AsyncRuntime {
                         error: e.to_string(),
                     });
                 }
+            }
+        });
+    }
+
+    pub fn reload_file(&self, request: ReloadRequest) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            if let Ok(content) = tokio::fs::read_to_string(&request.path).await {
+                let _ = tx.send(AppMessage::FileReloaded { request, content });
             }
         });
     }

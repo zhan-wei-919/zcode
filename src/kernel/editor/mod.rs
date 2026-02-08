@@ -12,8 +12,9 @@ mod viewport;
 pub use crate::kernel::language::LanguageId;
 pub use action::EditorAction;
 pub use state::{
-    EditorMouseState, EditorPaneState, EditorState, EditorTabState, EditorViewportState,
-    SearchBarField, SearchBarMode, SearchBarState, TabId,
+    DiskSnapshot, DiskState, EditorMouseState, EditorPaneState, EditorState, EditorTabState,
+    EditorViewportState, ReloadCause, ReloadRequest, SearchBarField, SearchBarMode,
+    SearchBarState, TabId,
 };
 pub use syntax::{highlight_snippet, HighlightKind, HighlightSpan};
 pub(crate) use viewport::clamp_and_follow;

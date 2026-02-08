@@ -59,6 +59,7 @@ pub enum Command {
     CloseTab,
     NextTab,
     PrevTab,
+    ReloadFromDisk,
 
     // ==================== Explorer（侧边栏） ====================
     ExplorerUp,
@@ -219,6 +220,7 @@ impl Command {
             Command::CloseTab => "closeTab",
             Command::NextTab => "nextTab",
             Command::PrevTab => "prevTab",
+            Command::ReloadFromDisk => "reloadFromDisk",
             Command::ExplorerUp => "explorerUp",
             Command::ExplorerDown => "explorerDown",
             Command::ExplorerActivate => "explorerActivate",
@@ -354,6 +356,7 @@ impl Command {
             "closeTab" => Command::CloseTab,
             "nextTab" => Command::NextTab,
             "prevTab" => Command::PrevTab,
+            "reloadFromDisk" => Command::ReloadFromDisk,
             "explorerUp" => Command::ExplorerUp,
             "explorerDown" => Command::ExplorerDown,
             "explorerActivate" => Command::ExplorerActivate,

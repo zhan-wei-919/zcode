@@ -2,6 +2,7 @@ use crate::kernel::services::ports::SearchMessage;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use super::ReloadRequest;
 use super::TabId;
 
 #[derive(Debug, Clone)]
@@ -122,5 +123,23 @@ pub enum EditorAction {
         from_pane: usize,
         to_pane: usize,
         to_index: usize,
+    },
+    FileReloaded {
+        content: String,
+        request: ReloadRequest,
+    },
+    FileExternallyModified {
+        path: PathBuf,
+    },
+    FileExternallyDeleted {
+        path: PathBuf,
+    },
+    AcceptDiskVersion {
+        pane: usize,
+        path: PathBuf,
+        content: String,
+    },
+    KeepMemoryVersion {
+        pane: usize,
     },
 }

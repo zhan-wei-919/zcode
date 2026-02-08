@@ -1,5 +1,6 @@
 use super::goto_byte_offset;
 use crate::core::Command;
+use crate::kernel::editor::{DiskState, ReloadCause, ReloadRequest};
 use crate::kernel::editor::action::EditorAction;
 use crate::kernel::editor::EditorState;
 use crate::kernel::editor::EditorTabState;
@@ -143,4 +144,262 @@ fn test_apply_text_edit_inserts_at_eof_multibyte() {
         editor.pane(0).unwrap().active_tab().unwrap().buffer.text(),
         "éx"
     );
+}
+
+#[test]
+fn test_reload_cause_manual_overwrites_dirty_but_external_sync_does_not() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("test.txt");
+
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "base".to_string(),
+    });
+
+    let (changed, _) = editor.apply_command(0, Command::InsertChar('x'));
+    assert!(changed);
+
+    let before = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists")
+        .buffer
+        .text();
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::FileReloaded {
+        content: "disk-external".to_string(),
+        request: ReloadRequest {
+            pane: 0,
+            path: path.clone(),
+            cause: ReloadCause::ExternalSync,
+            request_id: 1,
+        },
+    });
+    assert!(!changed);
+    assert!(effects.is_empty());
+
+    let tab_after_external = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert!(tab_after_external.dirty);
+    assert_eq!(tab_after_external.buffer.text(), before);
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::FileReloaded {
+        content: "disk-manual".to_string(),
+        request: ReloadRequest {
+            pane: 0,
+            path,
+            cause: ReloadCause::ManualCommand,
+            request_id: 2,
+        },
+    });
+    assert!(changed);
+    assert!(effects.is_empty());
+
+    let tab_after_manual = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert!(!tab_after_manual.dirty);
+    assert_eq!(tab_after_manual.buffer.text(), "disk-manual");
+}
+
+#[test]
+fn test_file_reloaded_same_request_id_is_idempotent() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("test.txt");
+
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "base".to_string(),
+    });
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::FileReloaded {
+        content: "disk-v1".to_string(),
+        request: ReloadRequest {
+            pane: 0,
+            path: path.clone(),
+            cause: ReloadCause::ExternalSync,
+            request_id: 1,
+        },
+    });
+    assert!(changed);
+    assert!(effects.is_empty());
+
+    let after_first = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    let version_after_first = after_first.edit_version;
+    assert_eq!(after_first.buffer.text(), "disk-v1");
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::FileReloaded {
+        content: "disk-v2-should-be-ignored".to_string(),
+        request: ReloadRequest {
+            pane: 0,
+            path,
+            cause: ReloadCause::ExternalSync,
+            request_id: 1,
+        },
+    });
+    assert!(!changed);
+    assert!(effects.is_empty());
+
+    let after_second = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert_eq!(after_second.buffer.text(), "disk-v1");
+    assert_eq!(after_second.edit_version, version_after_first);
+}
+
+#[test]
+fn test_file_reloaded_lower_request_id_is_ignored() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("test.txt");
+
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "base".to_string(),
+    });
+
+    let (changed, _) = editor.dispatch_action(EditorAction::FileReloaded {
+        content: "disk-newer".to_string(),
+        request: ReloadRequest {
+            pane: 0,
+            path: path.clone(),
+            cause: ReloadCause::ExternalSync,
+            request_id: 2,
+        },
+    });
+    assert!(changed);
+
+    let after_newer = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    let version_after_newer = after_newer.edit_version;
+    assert_eq!(after_newer.buffer.text(), "disk-newer");
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::FileReloaded {
+        content: "disk-older-ignored".to_string(),
+        request: ReloadRequest {
+            pane: 0,
+            path,
+            cause: ReloadCause::ExternalSync,
+            request_id: 1,
+        },
+    });
+    assert!(!changed);
+    assert!(effects.is_empty());
+
+    let after_older = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert_eq!(after_older.buffer.text(), "disk-newer");
+    assert_eq!(after_older.edit_version, version_after_newer);
+}
+
+#[test]
+fn test_file_reloaded_ignores_mismatched_pane_or_path() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path_a = PathBuf::from("a.txt");
+    let path_b = PathBuf::from("b.txt");
+
+    assert!(editor.ensure_panes(2));
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path: path_a.clone(),
+        content: "base".to_string(),
+    });
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::FileReloaded {
+        content: "ignored-by-pane".to_string(),
+        request: ReloadRequest {
+            pane: 1,
+            path: path_a.clone(),
+            cause: ReloadCause::ExternalSync,
+            request_id: 1,
+        },
+    });
+    assert!(!changed);
+    assert!(effects.is_empty());
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::FileReloaded {
+        content: "ignored-by-path".to_string(),
+        request: ReloadRequest {
+            pane: 0,
+            path: path_b,
+            cause: ReloadCause::ExternalSync,
+            request_id: 2,
+        },
+    });
+    assert!(!changed);
+    assert!(effects.is_empty());
+
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert_eq!(tab.buffer.text(), "base");
+}
+
+#[test]
+fn test_file_externally_modified_emits_reload_for_clean_and_marks_dirty_conflict() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("shared.txt");
+
+    assert!(editor.ensure_panes(2));
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "pane0".to_string(),
+    });
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 1,
+        path: path.clone(),
+        content: "pane1".to_string(),
+    });
+
+    let (changed, _) = editor.apply_command(0, Command::InsertChar('x'));
+    assert!(changed);
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::FileExternallyModified {
+        path: path.clone(),
+    });
+    assert!(changed);
+
+    let request = match effects.as_slice() {
+        [Effect::ReloadFile(request)] => request,
+        other => panic!("expected one ReloadFile effect, got {other:?}"),
+    };
+    assert_eq!(request.pane, 1);
+    assert_eq!(request.path, path);
+    assert_eq!(request.cause, ReloadCause::ExternalSync);
+    assert_eq!(request.request_id, 1);
+
+    let pane0_tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("pane0 tab");
+    assert!(matches!(
+        pane0_tab.disk_state,
+        DiskState::ConflictExternalModified
+    ));
+
+    let pane1_tab = editor
+        .pane(1)
+        .and_then(|pane| pane.active_tab())
+        .expect("pane1 tab");
+    assert!(matches!(pane1_tab.disk_state, DiskState::InSync));
 }

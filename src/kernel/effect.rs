@@ -7,6 +7,7 @@ use crate::kernel::services::ports::{
     LspWorkspaceFileEdit, ThemeSettings,
 };
 use crate::kernel::TerminalId;
+use crate::kernel::editor::ReloadRequest;
 
 #[derive(Debug, Clone)]
 pub enum Effect {
@@ -182,4 +183,5 @@ pub enum Effect {
     SaveThemeSettings {
         theme_settings: Box<ThemeSettings>,
     },
+    ReloadFile(ReloadRequest),
 }

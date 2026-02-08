@@ -3,7 +3,7 @@ use super::Workbench;
 use crate::core::Command;
 use crate::kernel::services::adapters::lsp::LspServerCommandOverride;
 use crate::kernel::services::adapters::{
-    ConfigService, KeybindingContext, KeybindingService, LspService,
+    ConfigService, FileWatchEvent, KeybindingContext, KeybindingService, LspService,
 };
 use crate::kernel::services::ports::LspServerKind;
 use crate::kernel::services::ports::{
@@ -19,6 +19,7 @@ impl Workbench {
     /// 定时检查是否需要刷盘（由主循环调用）
     pub fn tick(&mut self) -> bool {
         let mut changed = false;
+        changed |= self.poll_file_watcher();
         changed |= self.poll_editor_search();
         changed |= self.poll_global_search();
         changed |= self.poll_kernel_bus();
@@ -34,6 +35,32 @@ impl Workbench {
         changed |= self.poll_theme_save();
         self.poll_completion_rank_save();
 
+        changed
+    }
+
+    fn poll_file_watcher(&mut self) -> bool {
+        let Some(watcher) = self.file_watcher.as_mut() else {
+            return false;
+        };
+        let events = watcher.drain_events();
+        if events.is_empty() {
+            return false;
+        }
+        let mut changed = false;
+        for event in events {
+            match event {
+                FileWatchEvent::Modified(path) => {
+                    changed |= self.dispatch_kernel(KernelAction::Editor(
+                        EditorAction::FileExternallyModified { path },
+                    ));
+                }
+                FileWatchEvent::Removed(path) => {
+                    changed |= self.dispatch_kernel(KernelAction::Editor(
+                        EditorAction::FileExternallyDeleted { path },
+                    ));
+                }
+            }
+        }
         changed
     }
 

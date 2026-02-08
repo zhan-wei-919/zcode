@@ -1,4 +1,5 @@
 use super::super::Workbench;
+use crate::kernel::editor::DiskState;
 use crate::kernel::{FocusTarget, SidebarTab};
 use crate::ui::core::geom::{Pos, Rect as UiRect};
 use crate::ui::core::painter::Painter;
@@ -32,6 +33,12 @@ impl Workbench {
             if let Some(tab) = pane.active_tab() {
                 let (row, col) = tab.buffer.cursor();
                 let dirty = if tab.dirty { " [+]" } else { "" };
+                let disk_indicator = match &tab.disk_state {
+                    DiskState::ConflictExternalModified => " [CONFLICT]",
+                    DiskState::MissingOnDisk => " [DELETED]",
+                    DiskState::ReloadedFromDisk { .. } => " [RELOADED]",
+                    DiskState::InSync => "",
+                };
                 let file_name = tab
                     .path
                     .as_ref()
@@ -40,7 +47,7 @@ impl Workbench {
                     .unwrap_or_else(|| tab.title.clone());
 
                 (
-                    format!("{}{}", file_name, dirty),
+                    format!("{}{}{}", file_name, dirty, disk_indicator),
                     format!("Ln {}, Col {}", row + 1, col + 1),
                 )
             } else {

@@ -989,6 +989,7 @@ impl EditorTabState {
     pub fn on_saved(&mut self) {
         self.history.on_save(self.buffer.rope());
         self.dirty = false;
+        self.disk_state = super::state::DiskState::InSync;
     }
 }
 

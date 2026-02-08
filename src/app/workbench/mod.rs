@@ -7,8 +7,8 @@ use crate::kernel::services::adapters::lsp::LspServerCommandOverride;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::kernel::services::adapters::{
-    ClipboardService, ConfigService, FileService, GlobalSearchService, GlobalSearchTask,
-    KeybindingContext, KeybindingService, LspService, SearchService, SearchTask,
+    ClipboardService, ConfigService, FileService, FileWatcherService, GlobalSearchService,
+    GlobalSearchTask, KeybindingContext, KeybindingService, LspService, SearchService, SearchTask,
 };
 use crate::kernel::services::ports::{
     EditorConfig, GlobalSearchMessage, LspServerKind, SearchMessage,
@@ -194,6 +194,7 @@ pub struct Workbench {
     pending_restart: Option<PendingRestart>,
     pending_theme_save_deadline: Option<Instant>,
     pending_completion_rank_save_deadline: Option<Instant>,
+    file_watcher: Option<FileWatcherService>,
     last_theme_editor_token_list_area: Option<Rect>,
     last_theme_editor_hue_bar_area: Option<Rect>,
     last_theme_editor_sv_palette_area: Option<Rect>,
@@ -427,6 +428,13 @@ impl Workbench {
             pending_restart: None,
             pending_theme_save_deadline: None,
             pending_completion_rank_save_deadline: None,
+            file_watcher: match FileWatcherService::new() {
+                Ok(w) => Some(w),
+                Err(e) => {
+                    tracing::warn!(error = %e, "File watcher unavailable");
+                    None
+                }
+            },
             last_theme_editor_token_list_area: None,
             last_theme_editor_hue_bar_area: None,
             last_theme_editor_sv_palette_area: None,
@@ -589,6 +597,10 @@ impl Workbench {
                 self.file_save_versions.insert(save_key, version);
 
                 if success {
+                    if let Some(watcher) = self.file_watcher.as_mut() {
+                        watcher.suppress_next(&path);
+                    }
+
                     if let Some(service) = self.kernel_services.get_mut::<LspService>() {
                         service.save_document(&path);
                     }
@@ -674,6 +686,12 @@ impl Workbench {
             }
             AppMessage::TerminalExited { id, code } => {
                 let _ = self.dispatch_kernel(KernelAction::TerminalExited { id, code });
+            }
+            AppMessage::FileReloaded { request, content } => {
+                let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::FileReloaded {
+                    content,
+                    request,
+                }));
             }
         }
     }
