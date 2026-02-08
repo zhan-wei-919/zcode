@@ -1,12 +1,14 @@
 use crate::core::Command;
 use crate::kernel::services::ports::{
-    LspInsertTextFormat, LspPosition, LspRange, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspCompletionTriggerContext, LspPosition, LspRange, LspTextEdit, LspWorkspaceEdit,
+    LspWorkspaceFileEdit,
 };
 
 #[cfg(test)]
 use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding};
 
 mod completion;
+mod completion_rank;
 mod context_menu;
 mod explorer;
 mod git;
@@ -17,14 +19,17 @@ mod terminal;
 mod util;
 
 use completion::{
-    apply_completion_insertion_cursor, completion_should_keep_open, completion_triggered_by_insert,
-    should_close_completion_on_command, should_close_completion_on_editor_action,
-    signature_help_closed_by_insert, signature_help_should_keep_open,
-    signature_help_triggered_by_insert, sync_completion_items_from_cache, CompletionInsertion,
+    adjust_completion_multiline_indentation, apply_completion_insertion_cursor,
+    completion_replace_range, completion_should_keep_open, completion_triggered_by_insert,
+    resolve_completion_insertion, should_close_completion_on_command,
+    should_close_completion_on_editor_action, signature_help_closed_by_insert,
+    signature_help_should_keep_open, signature_help_triggered_by_insert,
+    sync_completion_items_from_cache,
 };
+pub use completion_rank::CompletionRanker;
 
 #[cfg(test)]
-use completion::expand_snippet;
+use completion::{expand_snippet, CompletionInsertion};
 use lsp::{
     lsp_position_encoding, lsp_position_encoding_for_path, lsp_position_from_buffer_pos,
     lsp_position_from_char_offset, lsp_position_to_byte_offset, lsp_range_for_full_lines,
@@ -49,15 +54,38 @@ pub struct DispatchResult {
 
 pub struct Store {
     state: AppState,
+    completion_ranker: CompletionRanker,
 }
 
 impl Store {
     pub fn new(state: AppState) -> Self {
-        Self { state }
+        Self {
+            state,
+            completion_ranker: CompletionRanker::default(),
+        }
+    }
+
+    pub fn new_with_ranker(state: AppState, completion_ranker: CompletionRanker) -> Self {
+        Self {
+            state,
+            completion_ranker,
+        }
     }
 
     pub fn state(&self) -> &AppState {
         &self.state
+    }
+
+    pub fn completion_ranker(&self) -> &CompletionRanker {
+        &self.completion_ranker
+    }
+
+    pub fn completion_ranker_is_dirty(&self) -> bool {
+        self.completion_ranker.is_dirty()
+    }
+
+    pub fn clear_completion_ranker_dirty(&mut self) {
+        self.completion_ranker.clear_dirty();
     }
 
     pub fn tick(&mut self) {
@@ -1081,42 +1109,35 @@ impl Store {
                     .selected
                     .min(self.state.ui.completion.items.len().saturating_sub(1));
                 let item = self.state.ui.completion.items[selected].clone();
-                let insertion = match item.insert_text_format {
-                    LspInsertTextFormat::PlainText => {
-                        CompletionInsertion::from_plain_text(item.insert_text.clone())
-                    }
-                    LspInsertTextFormat::Snippet => {
-                        CompletionInsertion::from_snippet(&item.insert_text)
-                    }
-                };
+
+                // Record completion usage for frequency ranking.
+                {
+                    let language = self
+                        .state
+                        .editor
+                        .pane(req.pane)
+                        .and_then(|pane| pane.active_tab())
+                        .and_then(|tab| tab.language());
+                    self.completion_ranker
+                        .record(language, &item.label, item.kind);
+                }
+
+                let mut insertion = resolve_completion_insertion(&item);
 
                 let encoding = lsp_position_encoding_for_path(&self.state, &req.path);
-                let compute_range = || {
-                    let (row, col) = tab.buffer.cursor();
-                    let cursor_char_offset = tab.buffer.pos_to_char((row, col));
-                    let rope = tab.buffer.rope();
-                    let end_char = cursor_char_offset.min(rope.len_chars());
-
-                    let mut start_char = end_char;
-                    while start_char > 0 {
-                        let ch = rope.char(start_char - 1);
-                        if ch.is_ascii_alphanumeric() || ch == '_' {
-                            start_char = start_char.saturating_sub(1);
-                        } else {
-                            break;
-                        }
-                    }
-
-                    LspRange {
-                        start: lsp_position_from_char_offset(tab, start_char, encoding),
-                        end: lsp_position_from_char_offset(tab, end_char, encoding),
-                    }
-                };
-                let replace_range = if tab.edit_version == req.version {
-                    item.replace_range.unwrap_or_else(compute_range)
-                } else {
-                    compute_range()
-                };
+                let replace_range = completion_replace_range(tab, req.version, &item, encoding);
+                let insertion_start_byte = lsp_position_to_byte_offset(
+                    tab,
+                    replace_range.start.line,
+                    replace_range.start.character,
+                    encoding,
+                );
+                let insertion_start_char = tab
+                    .buffer
+                    .rope()
+                    .byte_to_char(insertion_start_byte.min(tab.buffer.rope().len_bytes()));
+                insertion =
+                    adjust_completion_multiline_indentation(tab, insertion_start_char, insertion);
 
                 self.state.ui.completion = super::state::CompletionPopupState::default();
 
@@ -1796,7 +1817,12 @@ impl Store {
                                 version,
                             });
 
-                        effects.push(Effect::LspCompletionRequest { path, line, column });
+                        effects.push(Effect::LspCompletionRequest {
+                            path,
+                            line,
+                            column,
+                            trigger: LspCompletionTriggerContext::trigger_character(ch),
+                        });
                         state_changed = true;
                     }
                 }
@@ -3115,7 +3141,12 @@ impl Store {
                         });
 
                     return DispatchResult {
-                        effects: vec![Effect::LspCompletionRequest { path, line, column }],
+                        effects: vec![Effect::LspCompletionRequest {
+                            path,
+                            line,
+                            column,
+                            trigger: LspCompletionTriggerContext::invoked(),
+                        }],
                         state_changed: true,
                     };
                 }

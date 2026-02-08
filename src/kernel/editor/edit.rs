@@ -16,6 +16,45 @@ fn is_word_boundary_char(c: char) -> bool {
         )
 }
 
+fn supports_auto_pairs(language: Option<LanguageId>) -> bool {
+    matches!(
+        language,
+        Some(
+            LanguageId::Rust
+                | LanguageId::Go
+                | LanguageId::Python
+                | LanguageId::JavaScript
+                | LanguageId::TypeScript
+                | LanguageId::Jsx
+                | LanguageId::Tsx
+                | LanguageId::C
+                | LanguageId::Cpp
+                | LanguageId::Java
+        )
+    )
+}
+
+fn supports_brace_electric_enter(language: Option<LanguageId>) -> bool {
+    matches!(
+        language,
+        Some(
+            LanguageId::Rust
+                | LanguageId::Go
+                | LanguageId::JavaScript
+                | LanguageId::TypeScript
+                | LanguageId::Jsx
+                | LanguageId::Tsx
+                | LanguageId::C
+                | LanguageId::Cpp
+                | LanguageId::Java
+        )
+    )
+}
+
+fn supports_python_colon_indent(language: Option<LanguageId>) -> bool {
+    language == Some(LanguageId::Python)
+}
+
 impl EditorTabState {
     pub fn apply_command(
         &mut self,
@@ -158,8 +197,9 @@ impl EditorTabState {
                 if !had_selection && self.try_skip_closing(c, tab_size) {
                     return true;
                 }
+                let language = self.language();
                 if config.auto_indent
-                    && self.language() == Some(LanguageId::Rust)
+                    && supports_auto_pairs(language)
                     && !self.in_string_or_comment()
                 {
                     match c {
@@ -176,8 +216,9 @@ impl EditorTabState {
                 changed
             }
             Command::InsertNewline => {
+                let language = self.language();
                 if config.auto_indent
-                    && self.language() == Some(LanguageId::Rust)
+                    && supports_brace_electric_enter(language)
                     && !self.in_string_or_comment()
                     && self.expand_empty_brace_pair(tab_size)
                 {
@@ -704,6 +745,7 @@ impl EditorTabState {
     fn insert_newline_with_indent(&mut self, tab_size: u8) -> bool {
         let row = self.buffer.cursor().0;
         let cursor_char_offset = self.buffer.cursor_char_offset();
+        let in_string_or_comment = self.in_string_or_comment();
         let rope = self.buffer.rope();
         let line_start = rope.line_to_char(row);
         let before_cursor = slice_to_cow(rope.slice(line_start..cursor_char_offset));
@@ -719,9 +761,14 @@ impl EditorTabState {
         }
 
         let trimmed = before_cursor.trim_end_matches([' ', '\t']);
-        if trimmed.ends_with('{')
-            && self.language() == Some(LanguageId::Rust)
-            && !self.in_string_or_comment()
+        let language = self.language();
+        if supports_brace_electric_enter(language)
+            && trimmed.ends_with('{')
+            && !in_string_or_comment
+        {
+            indent.push_str(&" ".repeat(tab_size as usize));
+        }
+        if supports_python_colon_indent(language) && trimmed.ends_with(':') && !in_string_or_comment
         {
             indent.push_str(&" ".repeat(tab_size as usize));
         }

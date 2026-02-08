@@ -923,7 +923,8 @@ impl super::Store {
                     .map(|item| item.id);
 
                 let mut all_items = items;
-                sort_completion_items(&mut all_items);
+                let language = tab.language();
+                sort_completion_items(&mut all_items, &self.completion_ranker, language);
                 self.state.ui.completion.all_items = all_items;
                 self.state.ui.completion.items =
                     filtered_completion_items(tab, &self.state.ui.completion.all_items);
@@ -975,6 +976,10 @@ impl super::Store {
                 id,
                 detail,
                 documentation,
+                insert_text,
+                insert_text_format,
+                insert_range,
+                replace_range,
                 additional_text_edits,
                 command,
             } => {
@@ -1005,6 +1010,42 @@ impl super::Store {
                     if let Some(doc) = documentation.as_ref() {
                         if item.documentation.as_deref() != Some(doc) {
                             item.documentation = Some(doc.clone());
+                            changed = true;
+                        }
+                    }
+                    if let Some(text) = insert_text.as_ref() {
+                        if item.insert_text != *text {
+                            item.insert_text = text.clone();
+                            changed = true;
+                        }
+                    }
+                    if let Some(format) = insert_text_format {
+                        if item.insert_text_format != format {
+                            item.insert_text_format = format;
+                            changed = true;
+                        }
+                    }
+                    if let Some(range) = insert_range {
+                        let needs_update = item.insert_range.is_none_or(|current| {
+                            current.start.line != range.start.line
+                                || current.start.character != range.start.character
+                                || current.end.line != range.end.line
+                                || current.end.character != range.end.character
+                        });
+                        if needs_update {
+                            item.insert_range = Some(range);
+                            changed = true;
+                        }
+                    }
+                    if let Some(range) = replace_range {
+                        let needs_update = item.replace_range.is_none_or(|current| {
+                            current.start.line != range.start.line
+                                || current.start.character != range.start.character
+                                || current.end.line != range.end.line
+                                || current.end.character != range.end.character
+                        });
+                        if needs_update {
+                            item.replace_range = Some(range);
                             changed = true;
                         }
                     }

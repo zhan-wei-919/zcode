@@ -257,11 +257,11 @@ fn language_root_for_file_prefers_nearest_marker() {
     std::fs::write(js_root.join("package.json"), "{}").expect("package.json");
     let js_file = js_root.join("src").join("index.ts");
 
-    let rust = crate::kernel::lsp_registry::LspLanguage::from_path(&rust_file).expect("rust lang");
+    let rust = crate::kernel::language::LanguageId::from_path(&rust_file).expect("rust lang");
     let resolved = crate::kernel::lsp_registry::language_root_for_file(root, rust, &rust_file);
     assert_eq!(resolved, rust_root);
 
-    let ts = crate::kernel::lsp_registry::LspLanguage::from_path(&js_file).expect("ts lang");
+    let ts = crate::kernel::language::LanguageId::from_path(&js_file).expect("ts lang");
     let resolved = crate::kernel::lsp_registry::language_root_for_file(root, ts, &js_file);
     assert_eq!(resolved, js_root);
 }
@@ -274,7 +274,7 @@ fn language_root_for_file_falls_back_to_workspace_root() {
     let rust_file = root.join("src").join("main.rs");
     std::fs::create_dir_all(rust_file.parent().unwrap()).expect("mkdir");
 
-    let rust = crate::kernel::lsp_registry::LspLanguage::from_path(&rust_file).expect("rust lang");
+    let rust = crate::kernel::language::LanguageId::from_path(&rust_file).expect("rust lang");
     let resolved = crate::kernel::lsp_registry::language_root_for_file(root, rust, &rust_file);
     assert_eq!(resolved, root);
 }
@@ -290,6 +290,10 @@ fn language_id_for_path_matches_expected() {
         ("a.jsx", "javascriptreact"),
         ("a.ts", "typescript"),
         ("a.tsx", "typescriptreact"),
+        ("a.c", "c"),
+        ("a.cpp", "cpp"),
+        ("a.h", "cpp"),
+        ("a.java", "java"),
         ("a.txt", "plaintext"),
     ];
 
@@ -299,6 +303,30 @@ fn language_id_for_path_matches_expected() {
             expected
         );
     }
+}
+
+#[test]
+fn lsp_server_kind_from_settings_key_includes_c_cpp_java() {
+    assert_eq!(
+        LspServerKind::from_settings_key("clangd"),
+        Some(LspServerKind::Clangd)
+    );
+    assert_eq!(
+        LspServerKind::from_settings_key("cpp"),
+        Some(LspServerKind::Clangd)
+    );
+    assert_eq!(
+        LspServerKind::from_settings_key("c++"),
+        Some(LspServerKind::Clangd)
+    );
+    assert_eq!(
+        LspServerKind::from_settings_key("jdtls"),
+        Some(LspServerKind::Jdtls)
+    );
+    assert_eq!(
+        LspServerKind::from_settings_key("java"),
+        Some(LspServerKind::Jdtls)
+    );
 }
 
 #[test]
@@ -324,7 +352,7 @@ fn resolve_default_server_command_prefers_node_modules_bin() {
     let (cmd, args) = super::discovery::resolve_default_server_command(
         root,
         root,
-        crate::kernel::lsp_registry::LspLanguage::TypeScript,
+        crate::kernel::language::LanguageId::TypeScript,
     )
     .expect("resolved");
     assert_eq!(cmd, tls.to_string_lossy());
@@ -358,7 +386,7 @@ fn resolve_default_server_command_searches_node_modules_upwards() {
     let (cmd, args) = super::discovery::resolve_default_server_command(
         workspace_root,
         &nested_root,
-        crate::kernel::lsp_registry::LspLanguage::TypeScript,
+        crate::kernel::language::LanguageId::TypeScript,
     )
     .expect("resolved");
     assert_eq!(cmd, tls.to_string_lossy());
@@ -391,7 +419,7 @@ fn resolve_default_server_command_go_falls_back_to_gopath_bin() {
     let (cmd, args) = super::discovery::resolve_default_server_command(
         workspace_root,
         workspace_root,
-        crate::kernel::lsp_registry::LspLanguage::Go,
+        crate::kernel::language::LanguageId::Go,
     )
     .expect("resolved");
 
@@ -426,12 +454,66 @@ fn resolve_default_server_command_go_falls_back_to_home_go_bin() {
     let (cmd, args) = super::discovery::resolve_default_server_command(
         workspace_root,
         workspace_root,
-        crate::kernel::lsp_registry::LspLanguage::Go,
+        crate::kernel::language::LanguageId::Go,
     )
     .expect("resolved");
 
     assert_eq!(cmd, gopls.to_string_lossy());
     assert!(args.is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn resolve_default_server_command_c_cpp_and_java_from_path() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvRestore::capture();
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace_root = temp.path();
+
+    let clangd = workspace_root.join("clangd");
+    std::fs::write(&clangd, "#!/bin/sh\nexit 0\n").expect("write clangd");
+    let mut clangd_perms = std::fs::metadata(&clangd)
+        .expect("stat clangd")
+        .permissions();
+    use std::os::unix::fs::PermissionsExt as _;
+    clangd_perms.set_mode(0o755);
+    std::fs::set_permissions(&clangd, clangd_perms).expect("chmod clangd");
+
+    let jdtls = workspace_root.join("jdtls");
+    std::fs::write(&jdtls, "#!/bin/sh\nexit 0\n").expect("write jdtls");
+    let mut jdtls_perms = std::fs::metadata(&jdtls).expect("stat jdtls").permissions();
+    jdtls_perms.set_mode(0o755);
+    std::fs::set_permissions(&jdtls, jdtls_perms).expect("chmod jdtls");
+
+    std::env::set_var("PATH", workspace_root);
+
+    let (cmd_c, args_c) = super::discovery::resolve_default_server_command(
+        workspace_root,
+        workspace_root,
+        crate::kernel::language::LanguageId::C,
+    )
+    .expect("resolved c");
+    assert_eq!(cmd_c, clangd.to_string_lossy());
+    assert!(args_c.is_empty());
+
+    let (cmd_cpp, args_cpp) = super::discovery::resolve_default_server_command(
+        workspace_root,
+        workspace_root,
+        crate::kernel::language::LanguageId::Cpp,
+    )
+    .expect("resolved cpp");
+    assert_eq!(cmd_cpp, clangd.to_string_lossy());
+    assert!(args_cpp.is_empty());
+
+    let (cmd_java, args_java) = super::discovery::resolve_default_server_command(
+        workspace_root,
+        workspace_root,
+        crate::kernel::language::LanguageId::Java,
+    )
+    .expect("resolved java");
+    assert_eq!(cmd_java, jdtls.to_string_lossy());
+    assert!(args_java.is_empty());
 }
 
 #[test]

@@ -1,7 +1,8 @@
 use super::*;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::{
-    LspPosition, LspRange, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspCompletionTriggerKind, LspPosition, LspRange, LspTextEdit, LspWorkspaceEdit,
+    LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{
     ContextMenuItem, ContextMenuRequest, PendingAction, PendingEditorNavigation,
@@ -733,10 +734,18 @@ fn insert_dot_in_rust_triggers_lsp_completion_request() {
 
     let result = store.dispatch(Action::RunCommand(Command::InsertChar('.')));
 
-    assert!(result
-        .effects
-        .iter()
-        .any(|e| { matches!(e, Effect::LspCompletionRequest { path: p, .. } if p == &path) }));
+    assert!(result.effects.iter().any(|e| {
+        matches!(
+            e,
+            Effect::LspCompletionRequest {
+                path: p,
+                trigger,
+                ..
+            } if p == &path
+                && trigger.kind == LspCompletionTriggerKind::TriggerCharacter
+                && trigger.character == Some('.')
+        )
+    }));
     let req = store
         .state
         .ui
@@ -767,10 +776,18 @@ fn insert_double_colon_in_rust_triggers_lsp_completion_request() {
     assert!(store.state.ui.completion.request.is_none());
 
     let second = store.dispatch(Action::RunCommand(Command::InsertChar(':')));
-    assert!(second
-        .effects
-        .iter()
-        .any(|e| { matches!(e, Effect::LspCompletionRequest { path: p, .. } if p == &path) }));
+    assert!(second.effects.iter().any(|e| {
+        matches!(
+            e,
+            Effect::LspCompletionRequest {
+                path: p,
+                trigger,
+                ..
+            } if p == &path
+                && trigger.kind == LspCompletionTriggerKind::TriggerCharacter
+                && trigger.character == Some(':')
+        )
+    }));
     let req = store
         .state
         .ui
@@ -800,6 +817,33 @@ fn insert_dot_in_non_rust_does_not_trigger_lsp_completion_request() {
         .any(|e| matches!(e, Effect::LspCompletionRequest { .. })));
     assert!(store.state.ui.completion.pending_request.is_none());
     assert!(store.state.ui.completion.request.is_none());
+}
+
+#[test]
+fn command_lsp_completion_uses_invoked_trigger_context() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "fn main() { pri }\n".to_string(),
+    }));
+
+    let result = store.dispatch(Action::RunCommand(Command::LspCompletion));
+
+    assert!(result.effects.iter().any(|e| {
+        matches!(
+            e,
+            Effect::LspCompletionRequest {
+                path: p,
+                trigger,
+                ..
+            } if p == &path
+                && trigger.kind == LspCompletionTriggerKind::Invoked
+                && trigger.character.is_none()
+        )
+    }));
 }
 
 #[test]
@@ -891,6 +935,82 @@ fn lsp_completion_items_are_filtered_and_sorted() {
     assert_eq!(store.state.ui.completion.items.len(), 2);
     assert_eq!(store.state.ui.completion.items[0].label, "println!");
     assert_eq!(store.state.ui.completion.items[1].label, "Print");
+}
+
+#[test]
+fn lsp_completion_resolve_updates_insert_payload_fields() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "fn main() { pri }\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::RunCommand(Command::CursorLineEnd));
+    let _ = store.dispatch(Action::RunCommand(Command::LspCompletion));
+
+    let _ = store.dispatch(Action::LspCompletion {
+        items: vec![LspCompletionItem {
+            id: 1,
+            label: "print".to_string(),
+            detail: None,
+            kind: None,
+            documentation: None,
+            insert_text: "print".to_string(),
+            insert_text_format: crate::kernel::services::ports::LspInsertTextFormat::PlainText,
+            insert_range: None,
+            replace_range: None,
+            sort_text: None,
+            filter_text: None,
+            additional_text_edits: Vec::new(),
+            command: None,
+            data: None,
+        }],
+        is_incomplete: false,
+    });
+
+    let insert_range = LspRange {
+        start: LspPosition {
+            line: 0,
+            character: 11,
+        },
+        end: LspPosition {
+            line: 0,
+            character: 14,
+        },
+    };
+    let replace_range = LspRange {
+        start: LspPosition {
+            line: 0,
+            character: 11,
+        },
+        end: LspPosition {
+            line: 0,
+            character: 18,
+        },
+    };
+
+    let _ = store.dispatch(Action::LspCompletionResolved {
+        id: 1,
+        detail: None,
+        documentation: None,
+        insert_text: Some("print(${1:value})$0".to_string()),
+        insert_text_format: Some(crate::kernel::services::ports::LspInsertTextFormat::Snippet),
+        insert_range: Some(insert_range),
+        replace_range: Some(replace_range),
+        additional_text_edits: Vec::new(),
+        command: None,
+    });
+
+    let item = &store.state.ui.completion.items[0];
+    assert_eq!(item.insert_text, "print(${1:value})$0");
+    assert_eq!(
+        item.insert_text_format,
+        crate::kernel::services::ports::LspInsertTextFormat::Snippet
+    );
+    assert!(item.insert_range.is_some());
+    assert!(item.replace_range.is_some());
 }
 
 #[test]

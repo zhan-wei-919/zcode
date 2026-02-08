@@ -3,8 +3,8 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 use crate::kernel::services::ports::{
-    LspCompletionItem, LspPositionEncoding, LspRange, LspResourceOp, LspWorkspaceFileEdit,
-    ThemeSettings,
+    LspCompletionItem, LspCompletionTriggerContext, LspPositionEncoding, LspRange, LspResourceOp,
+    LspWorkspaceFileEdit, ThemeSettings,
 };
 use crate::kernel::TerminalId;
 
@@ -80,6 +80,7 @@ pub enum Effect {
         path: PathBuf,
         line: u32,
         column: u32,
+        trigger: LspCompletionTriggerContext,
     },
     LspCompletionResolveRequest {
         item: Box<LspCompletionItem>,

@@ -1,19 +1,10 @@
 //! Syntax support (in-process): parsing + highlighting helpers.
 
+use crate::kernel::language::LanguageId;
 use crate::models::EditOp;
 use ropey::Rope;
 use std::path::Path;
 use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LanguageId {
-    Rust,
-    Go,
-    Python,
-    JavaScript,
-    TypeScript,
-    Tsx,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HighlightKind {
@@ -53,15 +44,8 @@ pub struct SyntaxDocument {
 
 impl SyntaxDocument {
     pub fn for_path(path: &Path, rope: &Rope) -> Option<Self> {
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("rs") => Self::new(LanguageId::Rust, rope),
-            Some("go") => Self::new(LanguageId::Go, rope),
-            Some("py" | "pyi") => Self::new(LanguageId::Python, rope),
-            Some("js" | "mjs" | "cjs" | "jsx") => Self::new(LanguageId::JavaScript, rope),
-            Some("ts" | "mts" | "cts") => Self::new(LanguageId::TypeScript, rope),
-            Some("tsx") => Self::new(LanguageId::Tsx, rope),
-            _ => None,
-        }
+        let language = LanguageId::from_path(path)?;
+        Self::new(language, rope)
     }
 
     fn new(language: LanguageId, rope: &Rope) -> Option<Self> {
@@ -70,7 +54,10 @@ impl SyntaxDocument {
             LanguageId::Rust => parser.set_language(tree_sitter_rust::language()).ok()?,
             LanguageId::Go => parser.set_language(tree_sitter_go::language()).ok()?,
             LanguageId::Python => parser.set_language(tree_sitter_python::language()).ok()?,
-            LanguageId::JavaScript => parser
+            LanguageId::C => parser.set_language(tree_sitter_c::language()).ok()?,
+            LanguageId::Cpp => parser.set_language(tree_sitter_cpp::language()).ok()?,
+            LanguageId::Java => parser.set_language(tree_sitter_java::language()).ok()?,
+            LanguageId::JavaScript | LanguageId::Jsx => parser
                 .set_language(tree_sitter_javascript::language())
                 .ok()?,
             LanguageId::TypeScript => parser
@@ -207,7 +194,10 @@ pub fn highlight_snippet(language: LanguageId, text: &str) -> Vec<Vec<HighlightS
         LanguageId::Rust => parser.set_language(tree_sitter_rust::language()).is_ok(),
         LanguageId::Go => parser.set_language(tree_sitter_go::language()).is_ok(),
         LanguageId::Python => parser.set_language(tree_sitter_python::language()).is_ok(),
-        LanguageId::JavaScript => parser
+        LanguageId::C => parser.set_language(tree_sitter_c::language()).is_ok(),
+        LanguageId::Cpp => parser.set_language(tree_sitter_cpp::language()).is_ok(),
+        LanguageId::Java => parser.set_language(tree_sitter_java::language()).is_ok(),
+        LanguageId::JavaScript | LanguageId::Jsx => parser
             .set_language(tree_sitter_javascript::language())
             .is_ok(),
         LanguageId::TypeScript => parser
@@ -501,7 +491,8 @@ fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<Hi
                 return Some(kind);
             }
         }
-        LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Tsx => {
+        LanguageId::C | LanguageId::Cpp | LanguageId::Java => {}
+        LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Jsx | LanguageId::Tsx => {
             if let Some(kind) = classify_js_node(node) {
                 return Some(kind);
             }
@@ -931,8 +922,177 @@ fn is_keyword(language: LanguageId, kind: &str) -> bool {
         LanguageId::Rust => is_rust_keyword(kind),
         LanguageId::Go => is_go_keyword(kind),
         LanguageId::Python => is_python_keyword(kind),
-        LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Tsx => is_js_ts_keyword(kind),
+        LanguageId::C => is_c_keyword(kind),
+        LanguageId::Cpp => is_cpp_keyword(kind),
+        LanguageId::Java => is_java_keyword(kind),
+        LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Jsx | LanguageId::Tsx => {
+            is_js_ts_keyword(kind)
+        }
     }
+}
+
+fn is_c_keyword(kind: &str) -> bool {
+    matches!(
+        kind,
+        "auto"
+            | "break"
+            | "case"
+            | "char"
+            | "const"
+            | "continue"
+            | "default"
+            | "do"
+            | "double"
+            | "else"
+            | "enum"
+            | "extern"
+            | "float"
+            | "for"
+            | "goto"
+            | "if"
+            | "inline"
+            | "int"
+            | "long"
+            | "register"
+            | "restrict"
+            | "return"
+            | "short"
+            | "signed"
+            | "sizeof"
+            | "static"
+            | "struct"
+            | "switch"
+            | "typedef"
+            | "union"
+            | "unsigned"
+            | "void"
+            | "volatile"
+            | "while"
+            | "_Bool"
+            | "_Complex"
+            | "_Imaginary"
+    )
+}
+
+fn is_cpp_keyword(kind: &str) -> bool {
+    is_c_keyword(kind)
+        || matches!(
+            kind,
+            "alignas"
+                | "alignof"
+                | "and"
+                | "and_eq"
+                | "asm"
+                | "bitand"
+                | "bitor"
+                | "bool"
+                | "catch"
+                | "class"
+                | "compl"
+                | "concept"
+                | "constexpr"
+                | "consteval"
+                | "constinit"
+                | "delete"
+                | "dynamic_cast"
+                | "explicit"
+                | "export"
+                | "false"
+                | "friend"
+                | "mutable"
+                | "namespace"
+                | "new"
+                | "noexcept"
+                | "not"
+                | "not_eq"
+                | "nullptr"
+                | "operator"
+                | "or"
+                | "or_eq"
+                | "private"
+                | "protected"
+                | "public"
+                | "reinterpret_cast"
+                | "requires"
+                | "static_assert"
+                | "template"
+                | "this"
+                | "thread_local"
+                | "throw"
+                | "true"
+                | "try"
+                | "typeid"
+                | "typename"
+                | "using"
+                | "virtual"
+                | "wchar_t"
+                | "xor"
+                | "xor_eq"
+        )
+}
+
+fn is_java_keyword(kind: &str) -> bool {
+    matches!(
+        kind,
+        "abstract"
+            | "assert"
+            | "boolean"
+            | "break"
+            | "byte"
+            | "case"
+            | "catch"
+            | "char"
+            | "class"
+            | "const"
+            | "continue"
+            | "default"
+            | "do"
+            | "double"
+            | "else"
+            | "enum"
+            | "extends"
+            | "final"
+            | "finally"
+            | "float"
+            | "for"
+            | "goto"
+            | "if"
+            | "implements"
+            | "import"
+            | "instanceof"
+            | "int"
+            | "interface"
+            | "long"
+            | "native"
+            | "new"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            | "return"
+            | "short"
+            | "static"
+            | "strictfp"
+            | "super"
+            | "switch"
+            | "synchronized"
+            | "this"
+            | "throw"
+            | "throws"
+            | "transient"
+            | "try"
+            | "void"
+            | "volatile"
+            | "while"
+            | "true"
+            | "false"
+            | "null"
+            | "record"
+            | "sealed"
+            | "permits"
+            | "var"
+            | "yield"
+    )
 }
 
 fn is_rust_keyword(kind: &str) -> bool {

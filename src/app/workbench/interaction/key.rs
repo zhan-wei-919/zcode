@@ -196,6 +196,11 @@ impl Workbench {
                         .and_then(|pane| pane.active_tab())
                         .map(|tab| tab.edit_version);
                     let _ = self.dispatch_kernel(KernelAction::CompletionConfirm);
+
+                    // Schedule debounced save of completion frequency data.
+                    self.pending_completion_rank_save_deadline =
+                        Some(Instant::now() + std::time::Duration::from_secs(2));
+
                     let after_version = self
                         .store
                         .state()

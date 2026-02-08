@@ -33,7 +33,7 @@
 * [Rust toolchain](https://rustup.rs/) (recommended: the version pinned in `rust-toolchain.toml`)
 * Linux: a C toolchain for linking (e.g. `cc`/`gcc`) (needed for building tree-sitter grammars)
 * A terminal font with Nerd Font glyphs (recommended for UI icons)
-* Optional (for LSP features): `rust-analyzer`, `gopls`, `pyright-langserver`, `typescript-language-server`
+* Optional (for LSP features): `rust-analyzer`, `gopls`, `pyright-langserver`, `typescript-language-server`, `clangd`, `jdtls`
 
 ### Launching the Editor
 
@@ -137,8 +137,8 @@ Default key mappings are as follows:
 ## Core Features
 
 * **Fast TUI editor**: Built on `ratatui` and `crossterm`, featuring a Sidebar, Bottom Panel, Tabs, and split panes.
-* **Multi-language syntax highlighting**: Tree-sitter highlight for Rust/Go/Python/JavaScript/TypeScript (incl. JSX/TSX).
-* **Multi-language LSP support** (optional): Diagnostics, hover, completion, go-to-definition, etc, for Rust/Go/Python/JS/TS.
+* **Multi-language syntax highlighting**: Tree-sitter highlight for Rust/Go/Python/JavaScript/TypeScript (incl. JSX/TSX), Java, C, and C++.
+* **Multi-language LSP support** (optional): Diagnostics, hover, completion, go-to-definition, etc, for Rust/Go/Python/JS/TS, Java, C, and C++.
   * Monorepo-friendly: LSP root is detected per language by searching the nearest marker file (then spawns per-(language,root)).
   * Server discovery: prefers project-local `node_modules/.bin` and Python virtualenvs when available.
 * **Search**: Built-in `ripgrep`-based engine for high-performance global search and real-time in-file finding.
@@ -232,6 +232,14 @@ Install one of the following:
   npm i -g typescript-language-server typescript
   # or per-project: npm i -D typescript-language-server typescript
   ```
+
+* C/C++ (`clangd`):
+
+  Install from your system LLVM/Clang packages (for example `clangd` on Debian/Ubuntu).
+
+* Java (`jdtls`):
+
+  Install Eclipse JDT Language Server and ensure `jdtls` is available in `PATH`.
 
 If you install JS/TS servers per-project, `zcode` will auto-detect `node_modules/.bin` (searching upwards from the detected project root).
 

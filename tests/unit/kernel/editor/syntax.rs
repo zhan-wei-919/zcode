@@ -347,6 +347,30 @@ fn test_highlight_javascript_comment_string_keyword_and_in_string_or_comment() {
 }
 
 #[test]
+fn test_highlight_jsx_string_and_in_string_or_comment() {
+    let src = "const x = <div>{\"x\"}</div>\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.jsx"), &rope).expect("jsx syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, 1);
+    let line = "const x = <div>{\"x\"}</div>";
+    let idx_const = line.find("const").unwrap();
+    let idx_str = line.find("\"x\"").unwrap() + 1;
+
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_const && idx_const < s.end));
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::String && s.start <= idx_str && idx_str < s.end));
+
+    let in_string = src.find("\"x\"").unwrap() + 1;
+    assert!(doc.is_in_string_or_comment(in_string));
+    let in_code = src.find("const").unwrap();
+    assert!(!doc.is_in_string_or_comment(in_code));
+}
+
+#[test]
 fn test_highlight_tsx_string_and_in_string_or_comment() {
     let src = "const x = <div>{\"x\"}</div>\n";
     let rope = Rope::from_str(src);
@@ -368,4 +392,102 @@ fn test_highlight_tsx_string_and_in_string_or_comment() {
     assert!(doc.is_in_string_or_comment(in_string));
     let in_code = src.find("const").unwrap();
     assert!(!doc.is_in_string_or_comment(in_code));
+}
+
+#[test]
+fn test_highlight_c_comment_string_keyword_and_in_string_or_comment() {
+    let src = "int main() { const char* s = \"x\"; } // hi\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.c"), &rope).expect("c syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, 1);
+    let line = "int main() { const char* s = \"x\"; } // hi";
+    let idx_const = line.find("const").unwrap();
+    let idx_str = line.find("\"x\"").unwrap() + 1;
+    let idx_comment = line.find("//").unwrap();
+
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Keyword && s.start <= idx_const && idx_const < s.end
+    }));
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::String && s.start <= idx_str && idx_str < s.end));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Comment && s.start <= idx_comment && idx_comment < s.end
+    }));
+
+    let in_comment = src.find("// hi").unwrap() + 3;
+    assert!(doc.is_in_string_or_comment(in_comment));
+    let in_string = src.find("\"x\"").unwrap() + 1;
+    assert!(doc.is_in_string_or_comment(in_string));
+}
+
+#[test]
+fn test_highlight_cpp_comment_string_keyword_and_in_string_or_comment() {
+    let src = "class A { public: bool ok = true; };\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.cpp"), &rope).expect("cpp syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, 1);
+    let line = "class A { public: bool ok = true; };";
+    let idx_class = line.find("class").unwrap();
+    let idx_public = line.find("public").unwrap();
+    let idx_true = line.find("true").unwrap();
+
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_class && idx_class < s.end));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Keyword && s.start <= idx_public && idx_public < s.end
+    }));
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_true && idx_true < s.end));
+}
+
+#[test]
+fn test_highlight_header_defaults_to_cpp() {
+    let src = "class A {};\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.h"), &rope).expect("h syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, 1);
+    let line = "class A {};";
+    let idx_class = line.find("class").unwrap();
+
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_class && idx_class < s.end));
+}
+
+#[test]
+fn test_highlight_java_comment_string_keyword_and_in_string_or_comment() {
+    let src = "public class A { String s = \"x\"; } // hi\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("Test.java"), &rope).expect("java syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, 1);
+    let line = "public class A { String s = \"x\"; } // hi";
+    let idx_public = line.find("public").unwrap();
+    let idx_class = line.find("class").unwrap();
+    let idx_str = line.find("\"x\"").unwrap() + 1;
+    let idx_comment = line.find("//").unwrap();
+
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Keyword && s.start <= idx_public && idx_public < s.end
+    }));
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_class && idx_class < s.end));
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::String && s.start <= idx_str && idx_str < s.end));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Comment && s.start <= idx_comment && idx_comment < s.end
+    }));
+
+    let in_comment = src.find("// hi").unwrap() + 3;
+    assert!(doc.is_in_string_or_comment(in_comment));
+    let in_string = src.find("\"x\"").unwrap() + 1;
+    assert!(doc.is_in_string_or_comment(in_string));
 }

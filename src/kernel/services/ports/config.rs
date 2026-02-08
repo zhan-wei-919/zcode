@@ -16,10 +16,84 @@ pub struct EditorConfig {
     pub format_on_save: bool,
     #[serde(default = "default_show_indent_guides")]
     pub show_indent_guides: bool,
+    #[serde(default, alias = "lspInputTiming")]
+    pub lsp_input_timing: LspInputTimingConfig,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct LspInputTimingConfig {
+    #[serde(default = "default_boundary_chars", alias = "boundaryChars")]
+    pub boundary_chars: String,
+    #[serde(default = "default_boundary_immediate", alias = "boundaryImmediate")]
+    pub boundary_immediate: bool,
+    #[serde(default, alias = "identifierDebounceMs")]
+    pub identifier_debounce_ms: LspIdentifierDebounceMs,
+    #[serde(default, alias = "deleteDebounceMs")]
+    pub delete_debounce_ms: LspDeleteDebounceMs,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct LspIdentifierDebounceMs {
+    pub completion: u64,
+    pub semantic_tokens: u64,
+    pub inlay_hints: u64,
+    pub folding_range: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct LspDeleteDebounceMs {
+    pub completion: u64,
+    pub semantic_tokens: u64,
+    pub inlay_hints: u64,
+    pub folding_range: u64,
 }
 
 fn default_show_indent_guides() -> bool {
     true
+}
+
+fn default_boundary_chars() -> String {
+    " \t\n.,;:()[]{}".to_string()
+}
+
+fn default_boundary_immediate() -> bool {
+    true
+}
+
+impl Default for LspIdentifierDebounceMs {
+    fn default() -> Self {
+        Self {
+            completion: 240,
+            semantic_tokens: 360,
+            inlay_hints: 420,
+            folding_range: 480,
+        }
+    }
+}
+
+impl Default for LspDeleteDebounceMs {
+    fn default() -> Self {
+        Self {
+            completion: 120,
+            semantic_tokens: 140,
+            inlay_hints: 180,
+            folding_range: 220,
+        }
+    }
+}
+
+impl Default for LspInputTimingConfig {
+    fn default() -> Self {
+        Self {
+            boundary_chars: default_boundary_chars(),
+            boundary_immediate: default_boundary_immediate(),
+            identifier_debounce_ms: LspIdentifierDebounceMs::default(),
+            delete_debounce_ms: LspDeleteDebounceMs::default(),
+        }
+    }
 }
 
 impl Default for EditorConfig {
@@ -36,6 +110,7 @@ impl Default for EditorConfig {
             auto_indent: true,
             format_on_save: false,
             show_indent_guides: default_show_indent_guides(),
+            lsp_input_timing: LspInputTimingConfig::default(),
         }
     }
 }

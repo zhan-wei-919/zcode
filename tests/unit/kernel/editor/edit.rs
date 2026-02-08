@@ -129,6 +129,50 @@ fn test_auto_pair_and_skip_closing() {
 }
 
 #[test]
+fn test_c_auto_pair_and_electric_enter() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.c"),
+        "int main() ",
+        &config,
+    );
+
+    let end = tab.buffer.line_grapheme_len(0);
+    tab.buffer.set_cursor(0, end);
+
+    let _ = tab.apply_command(Command::InsertChar('{'), 0, &config);
+    assert_eq!(tab.buffer.text(), "int main() {}");
+    assert_eq!(tab.buffer.cursor(), (0, "int main() {".len()));
+
+    let _ = tab.apply_command(Command::InsertNewline, 0, &config);
+    assert_eq!(tab.buffer.text(), "int main() {\n    \n}");
+    assert_eq!(tab.buffer.cursor(), (1, 4));
+}
+
+#[test]
+fn test_python_auto_pair_and_colon_indent() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(TabId::new(1), PathBuf::from("test.py"), "", &config);
+
+    let _ = tab.apply_command(Command::InsertChar('('), 0, &config);
+    assert_eq!(tab.buffer.text(), "()");
+    assert_eq!(tab.buffer.cursor(), (0, 1));
+
+    let mut tab = EditorTabState::from_file(
+        TabId::new(2),
+        PathBuf::from("test.py"),
+        "if value:",
+        &config,
+    );
+    tab.buffer.set_cursor(0, "if value:".len());
+
+    let _ = tab.apply_command(Command::InsertNewline, 0, &config);
+    assert_eq!(tab.buffer.text(), "if value:\n    ");
+    assert_eq!(tab.buffer.cursor(), (1, 4));
+}
+
+#[test]
 fn semantic_highlight_and_inlay_hints_do_not_flicker_on_edit() {
     let config = EditorConfig::default();
     let mut tab = EditorTabState::from_file(

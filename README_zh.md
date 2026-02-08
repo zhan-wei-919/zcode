@@ -33,7 +33,7 @@
 * [Rust toolchain](https://rustup.rs/)（推荐使用 `rust-toolchain.toml` 固定的版本）
 * Linux: 需要 C 工具链用于链接（例如 `cc`/`gcc`）（用于编译 tree-sitter grammar）
 * 终端字体建议使用 Nerd Font（用于显示 UI 图标）
-* 可选（用于 LSP 智能功能）：`rust-analyzer`、`gopls`、`pyright-langserver`、`typescript-language-server`
+* 可选（用于 LSP 智能功能）：`rust-analyzer`、`gopls`、`pyright-langserver`、`typescript-language-server`、`clangd`、`jdtls`
 
 ### 启动编辑器
 
@@ -137,8 +137,8 @@ zcode
 ## 核心功能
 
 * **现代化 TUI 编辑器**: 基于 `ratatui` 和 `crossterm` 构建，支持侧边栏、底部面板、多标签页与分屏编辑。
-* **多语言语法高亮**: 基于 tree-sitter，为 Rust/Go/Python/JavaScript/TypeScript（含 JSX/TSX）提供语法高亮兜底。
-* **多语言 LSP 支持（可选）**: 为 Rust/Go/Python/JS/TS 提供诊断、悬停、补全、跳转定义等功能。
+* **多语言语法高亮**: 基于 tree-sitter，为 Rust/Go/Python/JavaScript/TypeScript（含 JSX/TSX）、Java、C、C++ 提供语法高亮兜底。
+* **多语言 LSP 支持（可选）**: 为 Rust/Go/Python/JS/TS、Java、C、C++ 提供诊断、悬停、补全、跳转定义等功能。
   * monorepo 友好：按语言“就近 marker”识别 root，并按 (language, root) 启动/复用 server。
   * server 自动发现：优先使用项目内 `node_modules/.bin` 与 Python 虚拟环境（如果存在）。
 * **强大的搜索**: 内置基于 `ripgrep` 的高性能全局搜索和文件内实时搜索。
@@ -232,6 +232,14 @@ zcode
   npm i -g typescript-language-server typescript
   # 或项目内：npm i -D typescript-language-server typescript
   ```
+
+* C/C++（`clangd`）：
+
+  从系统 LLVM/Clang 软件包安装（例如 Debian/Ubuntu 上安装 `clangd`）。
+
+* Java（`jdtls`）：
+
+  安装 Eclipse JDT Language Server，并确保 `jdtls` 可通过 `PATH` 访问。
 
 如果 JS/TS 按项目安装，`zcode` 会自动向上查找并使用 `node_modules/.bin`。
 

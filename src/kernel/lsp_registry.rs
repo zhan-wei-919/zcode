@@ -1,95 +1,17 @@
 use std::path::{Path, PathBuf};
 
+use crate::kernel::language::LanguageId;
 use crate::kernel::services::ports::LspClientKey;
-use crate::kernel::services::ports::LspServerKind;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LspLanguage {
-    Rust,
-    Go,
-    Python,
-    JavaScript,
-    TypeScript,
-    Jsx,
-    Tsx,
-}
-
-impl LspLanguage {
-    pub fn from_path(path: &Path) -> Option<Self> {
-        match path.extension().and_then(|s| s.to_str())? {
-            "rs" => Some(Self::Rust),
-            "go" => Some(Self::Go),
-            "py" | "pyi" => Some(Self::Python),
-            "js" | "mjs" | "cjs" => Some(Self::JavaScript),
-            "jsx" => Some(Self::Jsx),
-            "ts" | "mts" | "cts" => Some(Self::TypeScript),
-            "tsx" => Some(Self::Tsx),
-            _ => None,
-        }
-    }
-
-    pub fn server_kind(self) -> LspServerKind {
-        match self {
-            Self::Rust => LspServerKind::RustAnalyzer,
-            Self::Go => LspServerKind::Gopls,
-            Self::Python => LspServerKind::Pyright,
-            Self::JavaScript | Self::TypeScript | Self::Jsx | Self::Tsx => {
-                LspServerKind::TypeScriptLanguageServer
-            }
-        }
-    }
-
-    pub fn language_id(self) -> &'static str {
-        match self {
-            Self::Rust => "rust",
-            Self::Go => "go",
-            Self::Python => "python",
-            Self::JavaScript => "javascript",
-            Self::TypeScript => "typescript",
-            Self::Jsx => "javascriptreact",
-            Self::Tsx => "typescriptreact",
-        }
-    }
-
-    pub fn markers(self) -> &'static [&'static str] {
-        match self {
-            Self::Rust => &["Cargo.toml", "rust-project.json"],
-            Self::Go => &["go.work", "go.mod"],
-            Self::Python => &[
-                "pyproject.toml",
-                "pyrightconfig.json",
-                "setup.py",
-                "setup.cfg",
-                "requirements.txt",
-            ],
-            Self::JavaScript | Self::TypeScript | Self::Jsx | Self::Tsx => {
-                &["tsconfig.json", "jsconfig.json", "package.json"]
-            }
-        }
-    }
-
-    pub fn display_name(self) -> &'static str {
-        match self {
-            Self::Rust => "Rust",
-            Self::Go => "Go",
-            Self::Python => "Python",
-            Self::JavaScript => "JavaScript",
-            Self::TypeScript => "TypeScript",
-            Self::Jsx => "JSX",
-            Self::Tsx => "TSX",
-        }
-    }
-}
 
 pub fn is_lsp_source_path(path: &Path) -> bool {
-    LspLanguage::from_path(path).is_some()
+    LanguageId::from_path(path).is_some()
 }
 
 pub fn client_key_for_path(
     workspace_root: &Path,
     path: &Path,
-) -> Option<(LspLanguage, LspClientKey)> {
-    let language = LspLanguage::from_path(path)?;
+) -> Option<(LanguageId, LspClientKey)> {
+    let language = LanguageId::from_path(path)?;
     let server = language.server_kind();
     let root = language_root_for_file(workspace_root, language, path);
     Some((language, LspClientKey { server, root }))
@@ -97,7 +19,7 @@ pub fn client_key_for_path(
 
 pub fn language_root_for_file(
     workspace_root: &Path,
-    language: LspLanguage,
+    language: LanguageId,
     file_path: &Path,
 ) -> PathBuf {
     let Some(start_dir) = file_path.parent() else {

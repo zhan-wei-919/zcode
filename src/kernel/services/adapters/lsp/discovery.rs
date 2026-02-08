@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::kernel::lsp_registry::LspLanguage;
+use crate::kernel::language::LanguageId;
 
 /// Resolve the `rust-analyzer` executable path on this machine.
 ///
@@ -31,18 +31,28 @@ pub(super) fn resolve_rust_analyzer_command(root: &Path) -> Option<String> {
 pub(super) fn resolve_default_server_command(
     workspace_root: &Path,
     root: &Path,
-    language: LspLanguage,
+    language: LanguageId,
 ) -> Option<(String, Vec<String>)> {
     match language {
-        LspLanguage::Rust => resolve_rust_analyzer_command(root).map(|cmd| (cmd, Vec::new())),
-        LspLanguage::Go => resolve_gopls_command().map(|cmd| (cmd, Vec::new())),
-        LspLanguage::Python => resolve_pyright_langserver_command(workspace_root, root)
+        LanguageId::Rust => resolve_rust_analyzer_command(root).map(|cmd| (cmd, Vec::new())),
+        LanguageId::Go => resolve_gopls_command().map(|cmd| (cmd, Vec::new())),
+        LanguageId::Python => resolve_pyright_langserver_command(workspace_root, root)
             .map(|cmd| (cmd, vec!["--stdio".to_string()])),
-        LspLanguage::JavaScript | LspLanguage::TypeScript | LspLanguage::Jsx | LspLanguage::Tsx => {
+        LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Jsx | LanguageId::Tsx => {
             resolve_typescript_language_server_command(workspace_root, root)
                 .map(|cmd| (cmd, vec!["--stdio".to_string()]))
         }
+        LanguageId::C | LanguageId::Cpp => resolve_clangd_command().map(|cmd| (cmd, Vec::new())),
+        LanguageId::Java => resolve_jdtls_command().map(|cmd| (cmd, Vec::new())),
     }
+}
+
+fn resolve_clangd_command() -> Option<String> {
+    find_in_path("clangd").map(|path| path.to_string_lossy().to_string())
+}
+
+fn resolve_jdtls_command() -> Option<String> {
+    find_in_path("jdtls").map(|path| path.to_string_lossy().to_string())
 }
 
 fn resolve_gopls_command() -> Option<String> {

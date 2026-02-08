@@ -5,6 +5,7 @@ pub mod code_actions;
 pub mod editor;
 pub mod effect;
 pub mod git;
+pub mod language;
 pub mod locations;
 pub mod lsp_registry;
 pub mod palette;
@@ -32,6 +33,6 @@ pub use state::{
     InputDialogKind, InputDialogState, LspState, PendingAction, SidebarTab, SplitDirection,
     UiState,
 };
-pub use store::{DispatchResult, Store};
+pub use store::{CompletionRanker, DispatchResult, Store};
 pub use symbols::{SymbolItem, SymbolsState};
 pub use terminal::{TerminalId, TerminalSession, TerminalState};

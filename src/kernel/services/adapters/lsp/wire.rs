@@ -1,9 +1,9 @@
 use super::convert::{
     code_actions_from_lsp, command_from_lsp, completion_items, decode_semantic_tokens,
     definition_location, diagnostics_from_params, documentation_text, hover_text,
-    inlay_hints_from_lsp, push_document_symbols, range_from_lsp, server_capabilities_from_lsp,
-    signature_help_text, symbol_item_from_symbol_information, symbol_item_from_workspace_symbol,
-    workspace_edit_from_lsp,
+    inlay_hints_from_lsp, insert_text_format, push_document_symbols, range_from_lsp,
+    server_capabilities_from_lsp, signature_help_text, symbol_item_from_symbol_information,
+    symbol_item_from_workspace_symbol, workspace_edit_from_lsp,
 };
 use super::LspClient;
 use crate::kernel::locations::LocationItem;
@@ -792,10 +792,44 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                 .collect::<Vec<_>>();
             let command = resp.command.map(command_from_lsp);
 
+            let mut insert_range = None;
+            let mut replace_range = None;
+            let mut insert_text = None;
+
+            if let Some(text_edit) = resp.text_edit {
+                match text_edit {
+                    lsp_types::CompletionTextEdit::Edit(edit) => {
+                        let range = range_from_lsp(edit.range);
+                        insert_range = Some(range);
+                        replace_range = Some(range);
+                        insert_text = Some(edit.new_text);
+                    }
+                    lsp_types::CompletionTextEdit::InsertAndReplace(edit) => {
+                        insert_range = Some(range_from_lsp(edit.insert));
+                        replace_range = Some(range_from_lsp(edit.replace));
+                        insert_text = Some(edit.new_text);
+                    }
+                }
+            }
+
+            if insert_text.is_none() {
+                insert_text = resp.insert_text;
+            }
+
+            let insert_text_format = if insert_text.is_some() {
+                Some(insert_text_format(resp.insert_text_format))
+            } else {
+                None
+            };
+
             ctx.dispatch(Action::LspCompletionResolved {
                 id: item_id,
                 detail,
                 documentation,
+                insert_text,
+                insert_text_format,
+                insert_range,
+                replace_range,
                 additional_text_edits,
                 command,
             });

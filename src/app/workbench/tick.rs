@@ -32,6 +32,7 @@ impl Workbench {
         changed |= self.poll_idle_hover();
         changed |= self.poll_terminal_cursor_blink();
         changed |= self.poll_theme_save();
+        self.poll_completion_rank_save();
 
         changed
     }
@@ -654,6 +655,26 @@ impl Workbench {
         }
 
         false
+    }
+
+    fn poll_completion_rank_save(&mut self) {
+        let Some(deadline) = self.pending_completion_rank_save_deadline else {
+            return;
+        };
+        if Instant::now() < deadline {
+            return;
+        }
+
+        self.pending_completion_rank_save_deadline = None;
+        if !self.store.completion_ranker_is_dirty() {
+            return;
+        }
+
+        if crate::kernel::services::adapters::settings::save_completion_ranker(
+            self.store.completion_ranker(),
+        ) {
+            self.store.clear_completion_ranker_dirty();
+        }
     }
 
     fn build_theme_settings(&self) -> crate::kernel::services::ports::ThemeSettings {

@@ -9,6 +9,8 @@ pub enum LspServerKind {
     Gopls,
     Pyright,
     TypeScriptLanguageServer,
+    Clangd,
+    Jdtls,
 }
 
 impl LspServerKind {
@@ -29,6 +31,10 @@ impl LspServerKind {
             | "javascript"
             | "js"
             | "ts" => Some(Self::TypeScriptLanguageServer),
+            // C/C++
+            "clangd" | "c" | "cpp" | "c++" => Some(Self::Clangd),
+            // Java
+            "jdtls" | "java" => Some(Self::Jdtls),
             _ => None,
         }
     }
@@ -138,6 +144,35 @@ pub enum LspInsertTextFormat {
     #[default]
     PlainText,
     Snippet,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LspCompletionTriggerKind {
+    #[default]
+    Invoked,
+    TriggerCharacter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LspCompletionTriggerContext {
+    pub kind: LspCompletionTriggerKind,
+    pub character: Option<char>,
+}
+
+impl LspCompletionTriggerContext {
+    pub fn invoked() -> Self {
+        Self {
+            kind: LspCompletionTriggerKind::Invoked,
+            character: None,
+        }
+    }
+
+    pub fn trigger_character(character: char) -> Self {
+        Self {
+            kind: LspCompletionTriggerKind::TriggerCharacter,
+            character: Some(character),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

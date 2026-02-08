@@ -1,6 +1,8 @@
 use super::convert::{completion_item_to_lsp, path_to_url};
 use super::{LspClient, LspRequestKind};
-use crate::kernel::services::ports::{LspCompletionItem, LspPosition, LspRange};
+use crate::kernel::services::ports::{
+    LspCompletionItem, LspCompletionTriggerContext, LspCompletionTriggerKind, LspPosition, LspRange,
+};
 use lsp_server::{Message, Notification, Request, RequestId};
 use lsp_types::notification::Notification as _;
 use lsp_types::request::Request as _;
@@ -267,7 +269,12 @@ impl LspClient {
         self.send_message(msg, true);
     }
 
-    pub fn request_completion(&mut self, path: &Path, position: LspPosition) {
+    pub fn request_completion(
+        &mut self,
+        path: &Path,
+        position: LspPosition,
+        trigger: LspCompletionTriggerContext,
+    ) {
         if !self.ensure_started() {
             return;
         }
@@ -303,8 +310,13 @@ impl LspClient {
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
             partial_result_params: lsp_types::PartialResultParams::default(),
             context: Some(lsp_types::CompletionContext {
-                trigger_kind: lsp_types::CompletionTriggerKind::INVOKED,
-                trigger_character: None,
+                trigger_kind: match trigger.kind {
+                    LspCompletionTriggerKind::Invoked => lsp_types::CompletionTriggerKind::INVOKED,
+                    LspCompletionTriggerKind::TriggerCharacter => {
+                        lsp_types::CompletionTriggerKind::TRIGGER_CHARACTER
+                    }
+                },
+                trigger_character: trigger.character.map(|ch| ch.to_string()),
             }),
         };
 

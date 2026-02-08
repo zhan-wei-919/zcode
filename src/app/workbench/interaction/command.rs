@@ -1,4 +1,7 @@
 use super::super::Workbench;
+use super::{
+    classify_lsp_edit_trigger, lsp_debounce_duration, LspDebouncePipeline, LspDebounceTrigger,
+};
 use crate::core::Command;
 use crate::kernel::lsp_registry;
 use crate::kernel::services::adapters::perf;
@@ -163,21 +166,9 @@ impl Workbench {
             return;
         }
 
-        let edit_should_schedule = matches!(
-            cmd,
-            Command::InsertChar(_)
-                | Command::InsertNewline
-                | Command::InsertTab
-                | Command::DeleteBackward
-                | Command::DeleteForward
-                | Command::DeleteLine
-                | Command::DeleteToLineEnd
-                | Command::DeleteSelection
-                | Command::Undo
-                | Command::Redo
-                | Command::Paste
-                | Command::Cut
-        );
+        let timing = self.store.state().editor.config.lsp_input_timing.clone();
+
+        let edit_trigger = classify_lsp_edit_trigger(cmd, &timing);
 
         let supports_semantic_tokens_range =
             lsp_registry::client_key_for_path(&self.store.state().workspace_root, path)
@@ -195,9 +186,20 @@ impl Workbench {
         ) && supports_semantic_tokens_range
             && tab.buffer.len_lines().max(1) >= 2000;
 
-        if edit_should_schedule || move_should_schedule {
-            self.pending_semantic_tokens_deadline =
-                Some(Instant::now() + super::super::SEMANTIC_TOKENS_DEBOUNCE_DELAY);
+        if let Some(trigger) = edit_trigger {
+            let delay =
+                lsp_debounce_duration(&timing, LspDebouncePipeline::SemanticTokens, trigger);
+            self.pending_semantic_tokens_deadline = Some(Instant::now() + delay);
+            return;
+        }
+
+        if move_should_schedule {
+            let delay = lsp_debounce_duration(
+                &timing,
+                LspDebouncePipeline::SemanticTokens,
+                LspDebounceTrigger::Identifier,
+            );
+            self.pending_semantic_tokens_deadline = Some(Instant::now() + delay);
         }
     }
 
@@ -232,21 +234,12 @@ impl Workbench {
             return;
         }
 
-        let should_schedule = matches!(
+        let timing = self.store.state().editor.config.lsp_input_timing.clone();
+
+        let edit_trigger = classify_lsp_edit_trigger(cmd, &timing);
+        let move_should_schedule = matches!(
             cmd,
-            Command::InsertChar(_)
-                | Command::InsertNewline
-                | Command::InsertTab
-                | Command::DeleteBackward
-                | Command::DeleteForward
-                | Command::DeleteLine
-                | Command::DeleteToLineEnd
-                | Command::DeleteSelection
-                | Command::Undo
-                | Command::Redo
-                | Command::Paste
-                | Command::Cut
-                | Command::CursorUp
+            Command::CursorUp
                 | Command::CursorDown
                 | Command::ScrollUp
                 | Command::ScrollDown
@@ -254,9 +247,19 @@ impl Workbench {
                 | Command::PageDown
         );
 
-        if should_schedule {
-            self.pending_inlay_hints_deadline =
-                Some(Instant::now() + super::super::INLAY_HINTS_DEBOUNCE_DELAY);
+        if let Some(trigger) = edit_trigger {
+            let delay = lsp_debounce_duration(&timing, LspDebouncePipeline::InlayHints, trigger);
+            self.pending_inlay_hints_deadline = Some(Instant::now() + delay);
+            return;
+        }
+
+        if move_should_schedule {
+            let delay = lsp_debounce_duration(
+                &timing,
+                LspDebouncePipeline::InlayHints,
+                LspDebounceTrigger::Identifier,
+            );
+            self.pending_inlay_hints_deadline = Some(Instant::now() + delay);
         }
     }
 
@@ -291,25 +294,13 @@ impl Workbench {
             return;
         }
 
-        let should_schedule = matches!(
-            cmd,
-            Command::InsertChar(_)
-                | Command::InsertNewline
-                | Command::InsertTab
-                | Command::DeleteBackward
-                | Command::DeleteForward
-                | Command::DeleteLine
-                | Command::DeleteToLineEnd
-                | Command::DeleteSelection
-                | Command::Undo
-                | Command::Redo
-                | Command::Paste
-                | Command::Cut
-        );
+        let timing = self.store.state().editor.config.lsp_input_timing.clone();
 
-        if should_schedule {
-            self.pending_folding_range_deadline =
-                Some(Instant::now() + super::super::FOLDING_RANGE_DEBOUNCE_DELAY);
+        let edit_trigger = classify_lsp_edit_trigger(cmd, &timing);
+
+        if let Some(trigger) = edit_trigger {
+            let delay = lsp_debounce_duration(&timing, LspDebouncePipeline::FoldingRange, trigger);
+            self.pending_folding_range_deadline = Some(Instant::now() + delay);
         }
     }
 }

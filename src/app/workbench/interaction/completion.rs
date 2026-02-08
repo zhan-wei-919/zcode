@@ -1,4 +1,5 @@
 use super::super::Workbench;
+use super::classify_lsp_edit_trigger;
 use crate::core::Command;
 use crate::kernel::lsp_registry;
 use crate::kernel::FocusTarget;
@@ -36,27 +37,32 @@ impl Workbench {
             return;
         }
 
-        let should_schedule = match cmd {
-            Command::InsertChar(ch) => completion_debounce_triggered_by_inserted_char(*ch),
-            Command::DeleteBackward | Command::DeleteForward => true,
-            _ => false,
+        let timing = self.store.state().editor.config.lsp_input_timing.clone();
+        let trigger = match cmd {
+            Command::InsertChar(ch) if completion_debounce_triggered_by_inserted_char(*ch) => {
+                classify_lsp_edit_trigger(cmd, &timing)
+            }
+            Command::DeleteBackward | Command::DeleteForward => {
+                classify_lsp_edit_trigger(cmd, &timing)
+            }
+            _ => None,
         };
 
-        if !should_schedule {
+        let Some(trigger) = trigger else {
             return;
-        }
+        };
 
         if !completion_debounce_context_allowed(tab) {
             return;
         }
 
-        self.pending_completion_deadline =
-            Some(Instant::now() + super::super::COMPLETION_DEBOUNCE_DELAY);
+        let _ = trigger;
+        self.pending_completion_deadline = Some(Instant::now());
     }
 }
 
 fn completion_debounce_triggered_by_inserted_char(inserted: char) -> bool {
-    inserted.is_alphanumeric() || inserted == '_' || inserted == '.'
+    inserted.is_alphanumeric() || inserted == '_' || inserted == '.' || inserted == ':'
 }
 
 fn completion_debounce_context_allowed(tab: &crate::kernel::editor::EditorTabState) -> bool {
@@ -111,4 +117,35 @@ fn completion_debounce_context_allowed(tab: &crate::kernel::editor::EditorTabSta
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::editor::TabId;
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn completion_schedule_is_immediate() {
+        let config = EditorConfig::default();
+        let mut tab = crate::kernel::editor::EditorTabState::from_file(
+            TabId::new(1),
+            PathBuf::from("test.rs"),
+            "pri",
+            &config,
+        );
+        tab.buffer.set_cursor(0, 3);
+
+        let start = Instant::now();
+        let timing = config.lsp_input_timing.clone();
+        let trigger = classify_lsp_edit_trigger(&Command::InsertChar('x'), &timing)
+            .expect("insert trigger should exist");
+        let _ = trigger;
+        let deadline = Instant::now();
+
+        assert!(deadline <= start + Duration::from_millis(5));
+        assert!(completion_debounce_context_allowed(&tab));
+    }
 }

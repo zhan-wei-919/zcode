@@ -55,10 +55,6 @@ const EDITOR_SEARCH_CHANNEL_CAP: usize = 64;
 const GLOBAL_SEARCH_CHANNEL_CAP: usize = 64;
 const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 const HOVER_IDLE_DELAY: Duration = Duration::from_millis(500);
-const COMPLETION_DEBOUNCE_DELAY: Duration = Duration::from_millis(60);
-const SEMANTIC_TOKENS_DEBOUNCE_DELAY: Duration = Duration::from_millis(200);
-const INLAY_HINTS_DEBOUNCE_DELAY: Duration = Duration::from_millis(200);
-const FOLDING_RANGE_DEBOUNCE_DELAY: Duration = Duration::from_millis(250);
 const TERMINAL_CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
@@ -197,6 +193,7 @@ pub struct Workbench {
     last_symbols_click: Option<(Instant, usize)>,
     pending_restart: Option<PendingRestart>,
     pending_theme_save_deadline: Option<Instant>,
+    pending_completion_rank_save_deadline: Option<Instant>,
     last_theme_editor_token_list_area: Option<Rect>,
     last_theme_editor_hue_bar_area: Option<Rect>,
     last_theme_editor_sv_palette_area: Option<Rect>,
@@ -345,11 +342,12 @@ impl Workbench {
             let _ = kernel_services.register(service);
         }
 
-        let store = Store::new(crate::kernel::AppState::new(
-            absolute_root,
-            file_tree,
-            editor_config,
-        ));
+        let completion_ranker =
+            crate::kernel::services::adapters::settings::load_completion_ranker();
+        let store = Store::new_with_ranker(
+            crate::kernel::AppState::new(absolute_root, file_tree, editor_config),
+            completion_ranker,
+        );
         let panes = store.state().ui.editor_layout.panes.max(1);
         let lsp_open_paths_version = store.state().editor.open_paths_version;
 
@@ -428,6 +426,7 @@ impl Workbench {
             last_symbols_click: None,
             pending_restart: None,
             pending_theme_save_deadline: None,
+            pending_completion_rank_save_deadline: None,
             last_theme_editor_token_list_area: None,
             last_theme_editor_hue_bar_area: None,
             last_theme_editor_sv_palette_area: None,
@@ -447,7 +446,24 @@ impl Workbench {
     }
 
     pub fn take_pending_restart(&mut self) -> Option<(PathBuf, bool)> {
+        if self.pending_restart.is_some() {
+            self.flush_completion_rank_save();
+        }
         self.pending_restart.take().map(|req| (req.path, req.hard))
+    }
+
+    fn flush_completion_rank_save(&mut self) {
+        self.pending_completion_rank_save_deadline = None;
+
+        if !self.store.completion_ranker_is_dirty() {
+            return;
+        }
+
+        if crate::kernel::services::adapters::settings::save_completion_ranker(
+            self.store.completion_ranker(),
+        ) {
+            self.store.clear_completion_ranker_dirty();
+        }
     }
 
     fn hover_popup_view_height(&self) -> usize {
@@ -736,6 +752,7 @@ impl View for Workbench {
         let _scope = perf::scope("view.input");
         let result = input::handle_input(self, event);
         if matches!(result, EventResult::Quit) {
+            self.flush_completion_rank_save();
             return result;
         }
         if let Some((path, hard)) = self.take_pending_restart() {

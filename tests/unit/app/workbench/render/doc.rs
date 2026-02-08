@@ -53,6 +53,38 @@ fn natural_width_ignores_fence_markers() {
 }
 
 #[test]
+fn render_markdown_java_cpp_fences_apply_highlight() {
+    let md = r#"```java
+public class A {}
+```
+
+```cpp
+class B {};
+```
+"#;
+
+    let lines = render_markdown(md, 120, 20);
+
+    let java_line = lines
+        .iter()
+        .find(|l| l.text.contains("public class"))
+        .expect("missing java line");
+    assert!(java_line
+        .highlight
+        .as_ref()
+        .is_some_and(|spans| spans.iter().any(|s| s.kind == HighlightKind::Keyword)));
+
+    let cpp_line = lines
+        .iter()
+        .find(|l| l.text.contains("class B"))
+        .expect("missing cpp line");
+    assert!(cpp_line
+        .highlight
+        .as_ref()
+        .is_some_and(|spans| spans.iter().any(|s| s.kind == HighlightKind::Keyword)));
+}
+
+#[test]
 fn clamp_scroll_offset_limits_scroll_range() {
     assert_eq!(clamp_scroll_offset(0, 10, 3), 0);
     assert_eq!(clamp_scroll_offset(7, 10, 3), 7);

@@ -300,7 +300,12 @@ impl Workbench {
                     );
                 }
             }
-            KernelEffect::LspCompletionRequest { path, line, column } => {
+            KernelEffect::LspCompletionRequest {
+                path,
+                line,
+                column,
+                trigger,
+            } => {
                 let _scope = perf::scope("effect.lsp_completion");
                 if let Some(service) = self.kernel_services.get_mut::<LspService>() {
                     service.request_completion(
@@ -309,6 +314,7 @@ impl Workbench {
                             line,
                             character: column,
                         },
+                        trigger,
                     );
                 }
             }

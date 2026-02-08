@@ -2,10 +2,14 @@ use crate::core::event::Key;
 use crate::core::event::{KeyCode, KeyModifiers};
 use crate::core::Command;
 use crate::kernel::services::ports::settings::Settings;
+use crate::kernel::store::CompletionRanker;
+use std::fs::File;
+use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
 
 const SETTINGS_DIR: &str = ".zcode";
 const SETTINGS_FILE: &str = "setting.json";
+const COMPLETION_RANK_FILE: &str = "completion_rank.json";
 
 pub fn get_settings_path() -> Option<PathBuf> {
     get_cache_dir().map(|dir| dir.join(SETTINGS_DIR).join(SETTINGS_FILE))
@@ -102,6 +106,44 @@ fn parse_key_code(value: &str) -> Option<KeyCode> {
     };
 
     Some(code)
+}
+
+pub fn completion_ranker_path() -> Option<PathBuf> {
+    get_cache_dir().map(|dir| dir.join(SETTINGS_DIR).join(COMPLETION_RANK_FILE))
+}
+
+pub fn load_completion_ranker() -> CompletionRanker {
+    let Some(path) = completion_ranker_path() else {
+        return CompletionRanker::default();
+    };
+    let Ok(file) = File::open(path) else {
+        return CompletionRanker::default();
+    };
+
+    serde_json::from_reader::<_, CompletionRanker>(BufReader::new(file))
+        .map(CompletionRanker::from_deserialized)
+        .unwrap_or_default()
+}
+
+pub fn save_completion_ranker(ranker: &CompletionRanker) -> bool {
+    let Some(path) = completion_ranker_path() else {
+        return false;
+    };
+    if let Some(parent) = path.parent() {
+        if !parent.exists() && std::fs::create_dir_all(parent).is_err() {
+            return false;
+        }
+    }
+
+    let Ok(file) = File::create(path) else {
+        return false;
+    };
+    let mut writer = BufWriter::new(file);
+    if serde_json::to_writer(&mut writer, ranker).is_err() {
+        return false;
+    }
+
+    writer.flush().is_ok()
 }
 
 fn get_cache_dir() -> Option<PathBuf> {

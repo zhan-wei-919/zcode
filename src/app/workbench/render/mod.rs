@@ -2,6 +2,7 @@ use super::Workbench;
 use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, SearchViewport};
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::Rect;
+use std::time::Duration;
 use std::time::Instant;
 
 mod bottom_panel;
@@ -50,10 +51,11 @@ impl Workbench {
         if self.store.state().ui.focus == FocusTarget::Editor
             && self.store.state().ui.editor_layout.active_pane == pane
         {
-            self.pending_inlay_hints_deadline =
-                Some(Instant::now() + super::INLAY_HINTS_DEBOUNCE_DELAY);
-            self.pending_folding_range_deadline =
-                Some(Instant::now() + super::FOLDING_RANGE_DEBOUNCE_DELAY);
+            let timing = self.store.state().editor.config.lsp_input_timing.clone();
+            let inlay_delay = Duration::from_millis(timing.identifier_debounce_ms.inlay_hints);
+            let folding_delay = Duration::from_millis(timing.identifier_debounce_ms.folding_range);
+            self.pending_inlay_hints_deadline = Some(Instant::now() + inlay_delay);
+            self.pending_folding_range_deadline = Some(Instant::now() + folding_delay);
         }
     }
 

@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-use crate::kernel::lsp_registry::LspLanguage;
+use crate::kernel::language::LanguageId;
 
 pub(super) fn server_capabilities_from_lsp(
     caps: &lsp_types::ServerCapabilities,
@@ -1086,7 +1086,7 @@ pub(super) fn client_capabilities() -> lsp_types::ClientCapabilities {
 }
 
 pub(super) fn language_id_for_path(path: &Path) -> &'static str {
-    LspLanguage::from_path(path)
-        .map(LspLanguage::language_id)
+    LanguageId::from_path(path)
+        .map(LanguageId::language_id)
         .unwrap_or("plaintext")
 }

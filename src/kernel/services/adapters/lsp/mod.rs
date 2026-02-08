@@ -1,6 +1,7 @@
 use crate::core::Service;
 use crate::kernel::services::ports::{
-    LspCompletionItem, LspPosition, LspRange, LspServerKind, LspTextChange,
+    LspCompletionItem, LspCompletionTriggerContext, LspPosition, LspRange, LspServerKind,
+    LspTextChange,
 };
 use crate::kernel::services::KernelServiceContext;
 use lsp_server::RequestId;
@@ -11,7 +12,8 @@ use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::kernel::lsp_registry::{language_root_for_file, LspLanguage};
+use crate::kernel::language::LanguageId;
+use crate::kernel::lsp_registry::language_root_for_file;
 
 mod convert;
 mod discovery;
@@ -45,6 +47,8 @@ impl LspServerKind {
             Self::TypeScriptLanguageServer => {
                 "install typescript-language-server (e.g. `npm i -g typescript-language-server typescript`)"
             }
+            Self::Clangd => "install clangd (usually from llvm/clang toolchain packages)",
+            Self::Jdtls => "install jdtls (Eclipse JDT Language Server) and ensure `jdtls` is in PATH",
         }
     }
 }
@@ -145,20 +149,21 @@ impl LspService {
         true
     }
 
-    fn client_key_for_path(&self, path: &Path) -> Option<(LspLanguage, ClientKey)> {
-        let language = LspLanguage::from_path(path)?;
+    fn client_key_for_path(&self, path: &Path) -> Option<(LanguageId, ClientKey)> {
+        let language = LanguageId::from_path(path)?;
         let root = language_root_for_file(&self.workspace_root, language, path);
         let server = language.server_kind();
         Some((language, ClientKey { server, root }))
     }
 
-    fn default_args_for_language(language: LspLanguage) -> Vec<String> {
+    fn default_args_for_language(language: LanguageId) -> Vec<String> {
         match language {
-            LspLanguage::Python
-            | LspLanguage::JavaScript
-            | LspLanguage::TypeScript
-            | LspLanguage::Jsx
-            | LspLanguage::Tsx => vec!["--stdio".to_string()],
+            LanguageId::Python
+            | LanguageId::JavaScript
+            | LanguageId::TypeScript
+            | LanguageId::Jsx
+            | LanguageId::Tsx => vec!["--stdio".to_string()],
+            LanguageId::Java | LanguageId::C | LanguageId::Cpp => Vec::new(),
             _ => Vec::new(),
         }
     }
@@ -172,7 +177,7 @@ impl LspService {
 
     fn resolve_server_command(
         &mut self,
-        language: LspLanguage,
+        language: LanguageId,
         key: &ClientKey,
     ) -> Option<(String, Vec<String>, Option<Value>)> {
         if let Some(global) = self.command_override.clone() {
@@ -303,11 +308,16 @@ impl LspService {
         client.request_code_action(path, position);
     }
 
-    pub fn request_completion(&mut self, path: &Path, position: LspPosition) {
+    pub fn request_completion(
+        &mut self,
+        path: &Path,
+        position: LspPosition,
+        trigger: LspCompletionTriggerContext,
+    ) {
         let Some(client) = self.client_for_path_mut(path) else {
             return;
         };
-        client.request_completion(path, position);
+        client.request_completion(path, position, trigger);
     }
 
     pub fn request_completion_resolve(&mut self, item: LspCompletionItem) {
