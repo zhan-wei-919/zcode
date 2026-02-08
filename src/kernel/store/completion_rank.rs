@@ -3,7 +3,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::RefCell;
 
 const DECAY_FACTOR: f64 = 0.95;
 const MAX_ENTRIES_PER_LANGUAGE: usize = 512;
@@ -12,21 +12,54 @@ const CLEANUP_INTERVAL: u32 = 32;
 const MIN_SCALE: f64 = 1e-6;
 
 #[cfg(test)]
-static SCORE_CALLS: AtomicUsize = AtomicUsize::new(0);
-#[cfg(test)]
-static SYNC_CALLS: AtomicUsize = AtomicUsize::new(0);
-#[cfg(test)]
-static DECAY_VISITS: AtomicUsize = AtomicUsize::new(0);
-#[cfg(test)]
-static SYNC_ITEM_VISITS: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) struct CompletionRankerPerfCounters {
     pub(super) score_calls: usize,
     pub(super) sync_calls: usize,
     pub(super) decay_visits: usize,
     pub(super) sync_item_visits: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static PERF_COUNTERS: RefCell<CompletionRankerPerfCounters> =
+        RefCell::new(CompletionRankerPerfCounters::default());
+}
+
+#[cfg(test)]
+fn with_perf_counters(mut f: impl FnMut(&mut CompletionRankerPerfCounters)) {
+    PERF_COUNTERS.with(|counters| {
+        let mut counters = counters.borrow_mut();
+        f(&mut counters);
+    });
+}
+
+#[cfg(test)]
+fn add_decay_visits(value: usize) {
+    with_perf_counters(|counters| {
+        counters.decay_visits = counters.decay_visits.saturating_add(value);
+    });
+}
+
+#[cfg(test)]
+fn add_sync_calls(value: usize) {
+    with_perf_counters(|counters| {
+        counters.sync_calls = counters.sync_calls.saturating_add(value);
+    });
+}
+
+#[cfg(test)]
+fn add_sync_item_visits(value: usize) {
+    with_perf_counters(|counters| {
+        counters.sync_item_visits = counters.sync_item_visits.saturating_add(value);
+    });
+}
+
+#[cfg(test)]
+fn add_score_calls(value: usize) {
+    with_perf_counters(|counters| {
+        counters.score_calls = counters.score_calls.saturating_add(value);
+    });
 }
 
 #[derive(Debug, Clone, Default)]
@@ -136,7 +169,7 @@ impl LanguageRankState {
             for score in bucket.values_mut() {
                 #[cfg(test)]
                 {
-                    DECAY_VISITS.fetch_add(1, Ordering::Relaxed);
+                    add_decay_visits(1);
                 }
                 *score *= scale;
             }
@@ -152,7 +185,7 @@ impl LanguageRankState {
             bucket.retain(|_, score| {
                 #[cfg(test)]
                 {
-                    DECAY_VISITS.fetch_add(1, Ordering::Relaxed);
+                    add_decay_visits(1);
                 }
                 *score >= threshold
             });
@@ -260,8 +293,8 @@ impl CompletionRanker {
 
         #[cfg(test)]
         {
-            SYNC_CALLS.fetch_add(1, Ordering::Relaxed);
-            SYNC_ITEM_VISITS.fetch_add(synced_items, Ordering::Relaxed);
+            add_sync_calls(1);
+            add_sync_item_visits(synced_items);
         }
 
         CompletionRankerData { languages }
@@ -281,20 +314,14 @@ impl CompletionRanker {
 
     #[cfg(test)]
     pub(super) fn reset_perf_counters() {
-        SCORE_CALLS.store(0, Ordering::Relaxed);
-        SYNC_CALLS.store(0, Ordering::Relaxed);
-        DECAY_VISITS.store(0, Ordering::Relaxed);
-        SYNC_ITEM_VISITS.store(0, Ordering::Relaxed);
+        PERF_COUNTERS.with(|counters| {
+            *counters.borrow_mut() = CompletionRankerPerfCounters::default();
+        });
     }
 
     #[cfg(test)]
     pub(super) fn perf_counters() -> CompletionRankerPerfCounters {
-        CompletionRankerPerfCounters {
-            score_calls: SCORE_CALLS.load(Ordering::Relaxed),
-            sync_calls: SYNC_CALLS.load(Ordering::Relaxed),
-            decay_visits: DECAY_VISITS.load(Ordering::Relaxed),
-            sync_item_visits: SYNC_ITEM_VISITS.load(Ordering::Relaxed),
-        }
+        PERF_COUNTERS.with(|counters| *counters.borrow())
     }
 
     pub fn record(&mut self, language: Option<LanguageId>, label: &str, kind: Option<u32>) {
@@ -310,7 +337,7 @@ impl CompletionRanker {
     pub fn score(&self, language: Option<LanguageId>, label: &str, kind: Option<u32>) -> f64 {
         #[cfg(test)]
         {
-            SCORE_CALLS.fetch_add(1, Ordering::Relaxed);
+            add_score_calls(1);
         }
 
         let Some(lang) = language else {
