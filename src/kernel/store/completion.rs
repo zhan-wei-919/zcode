@@ -1,4 +1,3 @@
-use crate::core::Command;
 use crate::kernel::editor::EditorTabState;
 use crate::kernel::language::LanguageId;
 use crate::kernel::services::ports::{
@@ -10,6 +9,7 @@ use crate::models::{Granularity, Selection};
 use rustc_hash::FxHashMap;
 
 use super::completion_rank::CompletionRanker;
+use super::completion_strategy::CompletionStrategy;
 
 pub(super) fn should_close_completion_on_editor_action(action: &EditorAction) -> bool {
     !matches!(
@@ -18,20 +18,6 @@ pub(super) fn should_close_completion_on_editor_action(action: &EditorAction) ->
             | EditorAction::SearchStarted { .. }
             | EditorAction::SearchMessage { .. }
     )
-}
-
-pub(super) fn should_close_completion_on_command(cmd: &Command) -> bool {
-    match cmd {
-        Command::LspCompletion => false,
-        Command::LspSemanticTokens | Command::LspInlayHints | Command::LspFoldingRange => false,
-        Command::InsertChar(ch) => !completion_keeps_open_on_inserted_char(*ch),
-        Command::DeleteBackward | Command::DeleteForward | Command::DeleteSelection => false,
-        _ => true,
-    }
-}
-
-fn completion_keeps_open_on_inserted_char(inserted: char) -> bool {
-    inserted.is_alphanumeric() || inserted == '_' || inserted == '.'
 }
 
 pub(super) fn sort_completion_items(
@@ -65,12 +51,13 @@ pub(super) fn sort_completion_items(
 pub(super) fn filtered_completion_items(
     tab: &EditorTabState,
     items: &[LspCompletionItem],
+    strategy: &dyn CompletionStrategy,
 ) -> Vec<LspCompletionItem> {
     if items.is_empty() {
         return Vec::new();
     }
 
-    let prefix = completion_prefix_at_cursor(tab);
+    let prefix = completion_prefix_at_cursor(tab, strategy);
     if prefix.is_empty() {
         return items.to_vec();
     }
@@ -104,6 +91,7 @@ fn same_completion_item_ids(a: &[LspCompletionItem], b: &[LspCompletionItem]) ->
 pub(super) fn sync_completion_items_from_cache(
     completion: &mut CompletionPopupState,
     tab: &EditorTabState,
+    strategy: &dyn CompletionStrategy,
 ) -> bool {
     if completion.all_items.is_empty() {
         return false;
@@ -114,7 +102,7 @@ pub(super) fn sync_completion_items_from_cache(
         .get(completion.selected)
         .map(|item| item.id);
 
-    let new_items = filtered_completion_items(tab, &completion.all_items);
+    let new_items = filtered_completion_items(tab, &completion.all_items, strategy);
     if new_items.is_empty() {
         return false;
     }
@@ -140,50 +128,13 @@ fn starts_with_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(needle))
 }
 
-pub(super) fn completion_prefix_at_cursor(tab: &EditorTabState) -> String {
+pub(super) fn completion_prefix_at_cursor(
+    tab: &EditorTabState,
+    strategy: &dyn CompletionStrategy,
+) -> String {
     let rope = tab.buffer.rope();
-    let (start_char, end_char) = completion_prefix_bounds_at_cursor(tab);
+    let (start_char, end_char) = strategy.prefix_bounds(tab);
     rope.slice(start_char..end_char).to_string()
-}
-
-fn completion_prefix_bounds_at_cursor(tab: &EditorTabState) -> (usize, usize) {
-    let (row, col) = tab.buffer.cursor();
-    let cursor_char_offset = tab.buffer.pos_to_char((row, col));
-    let rope = tab.buffer.rope();
-    let end_char = cursor_char_offset.min(rope.len_chars());
-
-    let mut start_char = end_char;
-    while start_char > 0 {
-        let ch = rope.char(start_char - 1);
-        if ch.is_ascii_alphanumeric() || ch == '_' {
-            start_char = start_char.saturating_sub(1);
-        } else {
-            break;
-        }
-    }
-
-    (start_char, end_char)
-}
-
-pub(super) fn completion_should_keep_open(tab: &EditorTabState) -> bool {
-    if tab.is_in_string_or_comment_at_cursor() {
-        return false;
-    }
-
-    let (start_char, end_char) = completion_prefix_bounds_at_cursor(tab);
-    if start_char != end_char {
-        return true;
-    }
-
-    let rope = tab.buffer.rope();
-    if start_char > 0 && rope.char(start_char - 1) == '.' {
-        return true;
-    }
-    if start_char >= 2 && rope.char(start_char - 1) == ':' && rope.char(start_char - 2) == ':' {
-        return true;
-    }
-
-    false
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -589,96 +540,6 @@ pub(super) fn expand_snippet(snippet: &str) -> SnippetExpansion {
         cursor,
         selection,
     }
-}
-
-pub(super) fn completion_triggered_by_insert(
-    tab: &EditorTabState,
-    inserted: char,
-    triggers: &[char],
-) -> bool {
-    if triggers.is_empty() {
-        return match inserted {
-            '.' => true,
-            ':' => {
-                let (row, col) = tab.buffer.cursor();
-                let cursor_char_offset = tab.buffer.pos_to_char((row, col));
-                let rope = tab.buffer.rope();
-                let cursor_char_offset = cursor_char_offset.min(rope.len_chars());
-                if cursor_char_offset < 2 {
-                    return false;
-                }
-                rope.char(cursor_char_offset - 1) == ':' && rope.char(cursor_char_offset - 2) == ':'
-            }
-            _ => false,
-        };
-    }
-
-    match inserted {
-        ':' => {
-            if !triggers.contains(&':') {
-                return false;
-            }
-            let (row, col) = tab.buffer.cursor();
-            let cursor_char_offset = tab.buffer.pos_to_char((row, col));
-            let rope = tab.buffer.rope();
-            let cursor_char_offset = cursor_char_offset.min(rope.len_chars());
-            if cursor_char_offset < 2 {
-                return false;
-            }
-            rope.char(cursor_char_offset - 1) == ':' && rope.char(cursor_char_offset - 2) == ':'
-        }
-        ch => triggers.contains(&ch),
-    }
-}
-
-pub(super) fn signature_help_triggered_by_insert(inserted: char, triggers: &[char]) -> bool {
-    if triggers.is_empty() {
-        matches!(inserted, '(' | ',')
-    } else {
-        triggers.contains(&inserted)
-    }
-}
-
-pub(super) fn signature_help_closed_by_insert(inserted: char) -> bool {
-    matches!(inserted, ')')
-}
-
-pub(super) fn signature_help_should_keep_open(tab: &EditorTabState) -> bool {
-    if tab.is_in_string_or_comment_at_cursor() {
-        return false;
-    }
-
-    let rope = tab.buffer.rope();
-    let (row, col) = tab.buffer.cursor();
-    let cursor_char_offset = tab.buffer.pos_to_char((row, col)).min(rope.len_chars());
-    let start = cursor_char_offset.saturating_sub(4096);
-
-    let mut depth: usize = 0;
-    let mut idx = cursor_char_offset;
-    while idx > start {
-        idx = idx.saturating_sub(1);
-        let ch = rope.char(idx);
-        if ch != '(' && ch != ')' {
-            continue;
-        }
-
-        if tab.is_in_string_or_comment_at_char(idx) {
-            continue;
-        }
-
-        match ch {
-            ')' => depth = depth.saturating_add(1),
-            '(' => {
-                if depth == 0 {
-                    return true;
-                }
-                depth = depth.saturating_sub(1);
-            }
-            _ => {}
-        }
-    }
-
-    false
 }
 
 #[cfg(test)]

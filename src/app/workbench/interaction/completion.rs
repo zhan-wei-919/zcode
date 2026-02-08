@@ -2,6 +2,7 @@ use super::super::Workbench;
 use super::classify_lsp_edit_trigger;
 use crate::core::Command;
 use crate::kernel::lsp_registry;
+use crate::kernel::store::strategy_for_tab;
 use crate::kernel::FocusTarget;
 use std::time::Instant;
 
@@ -37,9 +38,10 @@ impl Workbench {
             return;
         }
 
+        let strategy = strategy_for_tab(tab);
         let timing = self.store.state().editor.config.lsp_input_timing.clone();
         let trigger = match cmd {
-            Command::InsertChar(ch) if completion_debounce_triggered_by_inserted_char(*ch) => {
+            Command::InsertChar(ch) if strategy.debounce_triggered_by_char(*ch) => {
                 classify_lsp_edit_trigger(cmd, &timing)
             }
             Command::DeleteBackward | Command::DeleteForward => {
@@ -52,7 +54,7 @@ impl Workbench {
             return;
         };
 
-        if !completion_debounce_context_allowed(tab) {
+        if !strategy.context_allows_completion(tab) {
             return;
         }
 
@@ -61,69 +63,13 @@ impl Workbench {
     }
 }
 
-fn completion_debounce_triggered_by_inserted_char(inserted: char) -> bool {
-    inserted.is_alphanumeric() || inserted == '_' || inserted == '.' || inserted == ':'
-}
-
-fn completion_debounce_context_allowed(tab: &crate::kernel::editor::EditorTabState) -> bool {
-    if tab.is_in_string_or_comment_at_cursor() {
-        return false;
-    }
-
-    let (row, col) = tab.buffer.cursor();
-    let cursor_char_offset = tab.buffer.pos_to_char((row, col));
-    let rope = tab.buffer.rope();
-    let end_char = cursor_char_offset.min(rope.len_chars());
-
-    let mut start_char = end_char;
-    while start_char > 0 {
-        let ch = rope.char(start_char - 1);
-        if ch == '_' || unicode_xid::UnicodeXID::is_xid_continue(ch) {
-            start_char = start_char.saturating_sub(1);
-        } else {
-            break;
-        }
-    }
-
-    if start_char != end_char {
-        let first = rope.char(start_char);
-        if first == '_' || unicode_xid::UnicodeXID::is_xid_start(first) {
-            return true;
-        }
-    }
-
-    if start_char > 0 && rope.char(start_char - 1) == '.' {
-        // Only trigger `.`-completion when the token before the dot looks like an identifier.
-        // This avoids popping completion on numeric literals like `1.`.
-        let mut token_start = start_char.saturating_sub(1);
-        while token_start > 0 {
-            let ch = rope.char(token_start - 1);
-            if ch == '_' || unicode_xid::UnicodeXID::is_xid_continue(ch) {
-                token_start = token_start.saturating_sub(1);
-            } else {
-                break;
-            }
-        }
-
-        if token_start < start_char.saturating_sub(1) {
-            let first = rope.char(token_start);
-            if first == '_' || unicode_xid::UnicodeXID::is_xid_start(first) {
-                return true;
-            }
-        }
-    }
-    if start_char >= 2 && rope.char(start_char - 1) == ':' && rope.char(start_char - 2) == ':' {
-        return true;
-    }
-
-    false
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::app::workbench::interaction::classify_lsp_edit_trigger;
+    use crate::core::Command;
     use crate::kernel::editor::TabId;
     use crate::kernel::services::ports::EditorConfig;
+    use crate::kernel::store::strategy_for_tab;
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
@@ -146,6 +92,7 @@ mod tests {
         let deadline = Instant::now();
 
         assert!(deadline <= start + Duration::from_millis(5));
-        assert!(completion_debounce_context_allowed(&tab));
+        let strategy = strategy_for_tab(&tab);
+        assert!(strategy.context_allows_completion(&tab));
     }
 }

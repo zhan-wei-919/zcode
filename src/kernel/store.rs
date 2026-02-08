@@ -9,6 +9,7 @@ use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding};
 
 mod completion;
 mod completion_rank;
+mod completion_strategy;
 mod context_menu;
 mod explorer;
 mod git;
@@ -20,13 +21,11 @@ mod util;
 
 use completion::{
     adjust_completion_multiline_indentation, apply_completion_insertion_cursor,
-    completion_replace_range, completion_should_keep_open, completion_triggered_by_insert,
-    resolve_completion_insertion, should_close_completion_on_command,
-    should_close_completion_on_editor_action, signature_help_closed_by_insert,
-    signature_help_should_keep_open, signature_help_triggered_by_insert,
-    sync_completion_items_from_cache,
+    completion_replace_range, resolve_completion_insertion,
+    should_close_completion_on_editor_action, sync_completion_items_from_cache,
 };
 pub use completion_rank::CompletionRanker;
+pub(crate) use completion_strategy::{strategy_for_tab, CompletionStrategy};
 
 #[cfg(test)]
 use completion::{expand_snippet, CompletionInsertion};
@@ -70,6 +69,16 @@ impl Store {
             state,
             completion_ranker,
         }
+    }
+
+    fn active_tab_strategy(&self) -> &'static dyn CompletionStrategy {
+        let lang = self
+            .state
+            .editor
+            .pane(self.state.ui.editor_layout.active_pane)
+            .and_then(|p| p.active_tab())
+            .and_then(|t| t.language());
+        completion_strategy::completion_strategy_for(lang)
     }
 
     pub fn state(&self) -> &AppState {
@@ -191,7 +200,15 @@ impl Store {
     pub fn dispatch(&mut self, action: Action) -> DispatchResult {
         match action {
             Action::RunCommand(cmd) => {
-                let completion_changed = if should_close_completion_on_command(&cmd) {
+                let active_tab = self
+                    .state
+                    .editor
+                    .pane(self.state.ui.editor_layout.active_pane)
+                    .and_then(|p| p.active_tab());
+                let completion_changed = if self
+                    .active_tab_strategy()
+                    .should_close_on_command(&cmd, active_tab)
+                {
                     let has_completion = self.state.ui.completion.visible
                         || self.state.ui.completion.request.is_some()
                         || self.state.ui.completion.pending_request.is_some()
@@ -1794,7 +1811,8 @@ impl Store {
                     let triggers: &[char] = caps
                         .map(|c| c.completion_triggers.as_slice())
                         .unwrap_or(&[]);
-                    completion_triggered_by_insert(tab, ch, triggers)
+                    completion_strategy::strategy_for_tab(tab)
+                        .triggered_by_insert(tab, ch, triggers)
                 });
 
                 if should_complete {
@@ -1841,9 +1859,11 @@ impl Store {
                                     session.pane == pane && tab.path.as_ref() == Some(&session.path)
                                 });
                         if session_ok {
+                            let strategy = completion_strategy::strategy_for_tab(tab);
                             let mut changed = sync_completion_items_from_cache(
                                 &mut self.state.ui.completion,
                                 tab,
+                                strategy,
                             );
 
                             let selected = self
@@ -1886,7 +1906,7 @@ impl Store {
                     }
                 }
 
-                if signature_help_closed_by_insert(ch) {
+                if self.active_tab_strategy().signature_help_closed_by(ch) {
                     let had = self.state.ui.signature_help.visible
                         || self.state.ui.signature_help.request.is_some()
                         || !self.state.ui.signature_help.text.is_empty();
@@ -1907,7 +1927,10 @@ impl Store {
                         .and_then(|path| lsp_server_capabilities_for_path(&self.state, path))
                         .map(|c| c.signature_help_triggers.as_slice())
                         .unwrap_or(&[]);
-                    if signature_help_triggered_by_insert(ch, triggers) {
+                    if self
+                        .active_tab_strategy()
+                        .signature_help_triggered(ch, triggers)
+                    {
                         if let Some((pane, path, line, column, version)) =
                             lsp_request_target(&self.state)
                         {
@@ -1928,7 +1951,12 @@ impl Store {
                 let had_signature_help = self.state.ui.signature_help.visible
                     || self.state.ui.signature_help.request.is_some()
                     || !self.state.ui.signature_help.text.is_empty();
-                if had_signature_help && !tab.is_some_and(signature_help_should_keep_open) {
+                if had_signature_help
+                    && !tab.is_some_and(|t| {
+                        self.active_tab_strategy()
+                            .signature_help_should_keep_open(t)
+                    })
+                {
                     self.state.ui.signature_help = super::state::SignatureHelpPopupState::default();
                     state_changed = true;
                 }
@@ -3085,8 +3113,12 @@ impl Store {
                             .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2));
 
                     if can_reuse {
-                        let mut changed =
-                            sync_completion_items_from_cache(&mut self.state.ui.completion, tab);
+                        let strategy = completion_strategy::strategy_for_tab(tab);
+                        let mut changed = sync_completion_items_from_cache(
+                            &mut self.state.ui.completion,
+                            tab,
+                            strategy,
+                        );
                         let mut effects = Vec::new();
 
                         let selected = self
@@ -3722,7 +3754,9 @@ impl Store {
                         session.pane == pane && tab.path.as_ref() == Some(&session.path)
                     });
 
-                    if session_ok && !completion_should_keep_open(tab) {
+                    let strategy = completion_strategy::strategy_for_tab(tab);
+
+                    if session_ok && !strategy.completion_should_keep_open(tab) {
                         let has_completion = self.state.ui.completion.visible
                             || self.state.ui.completion.request.is_some()
                             || self.state.ui.completion.pending_request.is_some()
@@ -3737,7 +3771,7 @@ impl Store {
                         let had_signature_help = self.state.ui.signature_help.visible
                             || self.state.ui.signature_help.request.is_some()
                             || !self.state.ui.signature_help.text.is_empty();
-                        if had_signature_help && !signature_help_should_keep_open(tab) {
+                        if had_signature_help && !strategy.signature_help_should_keep_open(tab) {
                             self.state.ui.signature_help =
                                 super::state::SignatureHelpPopupState::default();
                             state_changed = true;
@@ -3752,8 +3786,11 @@ impl Store {
                         && self.state.ui.completion.visible
                         && !self.state.ui.completion.all_items.is_empty()
                     {
-                        let mut changed =
-                            sync_completion_items_from_cache(&mut self.state.ui.completion, tab);
+                        let mut changed = sync_completion_items_from_cache(
+                            &mut self.state.ui.completion,
+                            tab,
+                            strategy,
+                        );
 
                         let selected = self
                             .state
@@ -3803,7 +3840,10 @@ impl Store {
                         .editor
                         .pane(pane)
                         .and_then(|p| p.active_tab())
-                        .is_some_and(signature_help_should_keep_open);
+                        .is_some_and(|t| {
+                            completion_strategy::strategy_for_tab(t)
+                                .signature_help_should_keep_open(t)
+                        });
                     if !keep {
                         self.state.ui.signature_help =
                             super::state::SignatureHelpPopupState::default();
@@ -3864,7 +3904,10 @@ impl Store {
                         .editor
                         .pane(pane)
                         .and_then(|p| p.active_tab())
-                        .is_some_and(signature_help_should_keep_open);
+                        .is_some_and(|t| {
+                            completion_strategy::strategy_for_tab(t)
+                                .signature_help_should_keep_open(t)
+                        });
                     if !keep {
                         self.state.ui.signature_help =
                             super::state::SignatureHelpPopupState::default();

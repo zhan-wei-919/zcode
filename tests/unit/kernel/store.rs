@@ -5,8 +5,8 @@ use crate::kernel::services::ports::{
     LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{
-    ContextMenuItem, ContextMenuRequest, PendingAction, PendingEditorNavigation,
-    PendingEditorNavigationTarget,
+    CompletionRequestContext, ContextMenuItem, ContextMenuRequest, PendingAction,
+    PendingEditorNavigation, PendingEditorNavigationTarget,
 };
 use crate::models::{FileTree, Granularity, Selection};
 use std::ffi::OsString;
@@ -16,6 +16,54 @@ fn new_store() -> Store {
     let root = std::env::temp_dir();
     let tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
     Store::new(AppState::new(root, tree, EditorConfig::default()))
+}
+
+fn test_completion_item(id: u64, label: &str) -> LspCompletionItem {
+    LspCompletionItem {
+        id,
+        label: label.to_string(),
+        detail: None,
+        kind: None,
+        documentation: None,
+        insert_text: label.to_string(),
+        insert_text_format: crate::kernel::services::ports::LspInsertTextFormat::PlainText,
+        insert_range: None,
+        replace_range: None,
+        sort_text: None,
+        filter_text: None,
+        additional_text_edits: Vec::new(),
+        command: None,
+        data: None,
+    }
+}
+
+fn seed_visible_completion_for_active_tab(
+    store: &mut Store,
+    pane: usize,
+    path: std::path::PathBuf,
+    label: &str,
+) {
+    let version = store
+        .state
+        .editor
+        .pane(pane)
+        .unwrap()
+        .active_tab()
+        .unwrap()
+        .edit_version;
+    let item = test_completion_item(1, label);
+
+    store.state.ui.completion.visible = true;
+    store.state.ui.completion.selected = 0;
+    store.state.ui.completion.items = vec![item.clone()];
+    store.state.ui.completion.all_items = vec![item];
+    store.state.ui.completion.request = Some(CompletionRequestContext {
+        pane,
+        path,
+        version,
+    });
+    store.state.ui.completion.pending_request = None;
+    store.state.ui.completion.is_incomplete = false;
 }
 
 #[test]
@@ -1114,6 +1162,242 @@ fn completion_does_not_close_on_editor_search_messages() {
 
     assert!(store.state.ui.completion.visible);
     assert!(!store.state.ui.completion.items.is_empty());
+}
+
+#[test]
+fn cpp_include_path_context_allows_completion() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "#include <vec".to_string();
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let strategy = completion_strategy::strategy_for_tab(tab);
+    assert!(strategy.context_allows_completion(tab));
+}
+
+#[test]
+fn cpp_include_trailing_comment_context_is_blocked() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "#include <vector> // trailing note".to_string();
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let strategy = completion_strategy::strategy_for_tab(tab);
+    assert!(!strategy.context_allows_completion(tab));
+}
+
+#[test]
+fn cpp_include_trailing_comment_does_not_keep_completion_open() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "#include <vector> // trailing note".to_string();
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let strategy = completion_strategy::strategy_for_tab(tab);
+    assert!(!strategy.completion_should_keep_open(tab));
+}
+
+#[test]
+fn cpp_insert_slash_outside_include_closes_completion_popup() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "int value = lhs rhs;".to_string();
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content,
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, "int value = lhs ".chars().count());
+    }
+
+    seed_visible_completion_for_active_tab(&mut store, 0, path, "lhs");
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('/')));
+
+    assert!(!store.state.ui.completion.visible);
+    assert!(store.state.ui.completion.items.is_empty());
+    assert!(store.state.ui.completion.request.is_none());
+}
+
+#[test]
+fn non_cpp_languages_insert_slash_close_completion_popup() {
+    let cases = [
+        ("main.rs", "let value = lhs rhs;", "let value = lhs "),
+        ("main.py", "value = lhs rhs", "value = lhs "),
+        ("main.ts", "const value = lhs rhs;", "const value = lhs "),
+    ];
+
+    for (filename, content, before_rhs) in cases {
+        let mut store = new_store();
+        store.state.ui.focus = FocusTarget::Editor;
+        let path = store.state.workspace_root.join(filename);
+
+        let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+            pane: 0,
+            path: path.clone(),
+            content: content.to_string(),
+        }));
+
+        {
+            let tab = store
+                .state
+                .editor
+                .pane_mut(0)
+                .unwrap()
+                .active_tab_mut()
+                .unwrap();
+            tab.buffer.set_cursor(0, before_rhs.chars().count());
+        }
+
+        seed_visible_completion_for_active_tab(&mut store, 0, path, "lhs");
+
+        let _ = store.dispatch(Action::RunCommand(Command::InsertChar('/')));
+
+        assert!(
+            !store.state.ui.completion.visible,
+            "completion popup should close on '/' for {filename}"
+        );
+        assert!(
+            store.state.ui.completion.request.is_none(),
+            "completion request should clear for {filename}"
+        );
+    }
+}
+
+#[test]
+fn cpp_insert_gt_after_dash_keeps_open_and_triggers() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "auto value = obj-".to_string();
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let strategy = completion_strategy::strategy_for_tab(tab);
+
+    assert!(!strategy.should_close_on_command(&Command::InsertChar('>'), Some(tab)));
+
+    let result = store.dispatch(Action::RunCommand(Command::InsertChar('>')));
+    assert!(result.effects.iter().any(|e| {
+        matches!(
+            e,
+            Effect::LspCompletionRequest { trigger, .. }
+                if trigger.kind == LspCompletionTriggerKind::TriggerCharacter
+                    && trigger.character == Some('>')
+        )
+    }));
+}
+
+#[test]
+fn cpp_insert_gt_in_comparison_closes_and_does_not_trigger_by_default() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "auto value = a ".to_string();
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let strategy = completion_strategy::strategy_for_tab(tab);
+
+    assert!(strategy.should_close_on_command(&Command::InsertChar('>'), Some(tab)));
+    assert!(!strategy.triggered_by_insert(tab, '>', &[]));
 }
 
 #[test]

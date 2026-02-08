@@ -926,8 +926,9 @@ impl super::Store {
                 let language = tab.language();
                 sort_completion_items(&mut all_items, &self.completion_ranker, language);
                 self.state.ui.completion.all_items = all_items;
+                let strategy = super::completion_strategy::strategy_for_tab(tab);
                 self.state.ui.completion.items =
-                    filtered_completion_items(tab, &self.state.ui.completion.all_items);
+                    filtered_completion_items(tab, &self.state.ui.completion.all_items, strategy);
                 self.state.ui.completion.selected = prev_selected
                     .and_then(|id| {
                         self.state
