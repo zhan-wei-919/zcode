@@ -9,12 +9,28 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use super::completion::{filtered_completion_items, sort_completion_items};
 use super::semantic::{
     semantic_highlight_lines_from_tokens, semantic_highlight_lines_from_tokens_range,
 };
 use super::util::find_open_tab;
 use super::util::{is_lsp_source_path, line_len_chars, open_tabs_for_path, resolve_renamed_path};
+
+#[cfg(test)]
+static LSP_CAPABILITY_LOOKUP_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(super) fn reset_lsp_capability_lookup_perf_counter() {
+    LSP_CAPABILITY_LOOKUP_CALLS.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(super) fn lsp_capability_lookup_perf_counter() -> usize {
+    LSP_CAPABILITY_LOOKUP_CALLS.load(Ordering::Relaxed)
+}
 
 pub(super) fn problem_byte_offset(
     tab: &crate::kernel::editor::EditorTabState,
@@ -92,6 +108,11 @@ pub(super) fn lsp_server_capabilities_for_path<'a>(
     state: &'a crate::kernel::AppState,
     path: &Path,
 ) -> Option<&'a LspServerCapabilities> {
+    #[cfg(test)]
+    {
+        LSP_CAPABILITY_LOOKUP_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+
     let key = lsp_client_key_for_path(state, path)?;
     state.lsp.server_capabilities.get(&key)
 }

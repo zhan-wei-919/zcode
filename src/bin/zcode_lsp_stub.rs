@@ -136,6 +136,30 @@ fn main() {
                                     params.text_document.language_id
                                 ));
                             }
+                        } else if marker == "didChange" {
+                            if let Ok(params) = serde_json::from_value::<
+                                lsp_types::DidChangeTextDocumentParams,
+                            >(not.params.clone())
+                            {
+                                let details: Vec<Value> = params
+                                    .content_changes
+                                    .iter()
+                                    .map(|change| {
+                                        json!({
+                                            "full": change.range.is_none(),
+                                            "text": change.text,
+                                        })
+                                    })
+                                    .collect();
+
+                                trace.log(&format!(
+                                    "didChange detail {}",
+                                    json!({
+                                        "version": params.text_document.version,
+                                        "changes": details,
+                                    })
+                                ));
+                            }
                         }
                         let params = publish_diagnostics(uri, marker);
                         let msg = Message::Notification(Notification::new(

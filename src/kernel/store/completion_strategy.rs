@@ -2,6 +2,9 @@ use crate::core::Command;
 use crate::kernel::editor::EditorTabState;
 use crate::kernel::language::LanguageId;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 /// Strategy trait that governs completion behavior per language.
 ///
 /// All methods have default implementations extracted from the original
@@ -78,6 +81,19 @@ pub(crate) trait CompletionStrategy: Send + Sync {
 
         false
     }
+}
+
+#[cfg(test)]
+static INCLUDE_CONTEXT_BOUNDS_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn reset_include_context_perf_counter() {
+    INCLUDE_CONTEXT_BOUNDS_CALLS.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn include_context_perf_counter() -> usize {
+    INCLUDE_CONTEXT_BOUNDS_CALLS.load(Ordering::Relaxed)
 }
 
 // ── Default free functions (extracted from original hard-coded logic) ──
@@ -261,11 +277,15 @@ impl CompletionStrategy for CppCompletionStrategy {
     }
 
     fn context_allows_completion(&self, tab: &EditorTabState) -> bool {
-        if include_context_bounds(tab).is_some() {
+        let include = include_line_context(tab);
+        if include.bounds.is_some() {
             return true;
         }
-        if is_include_directive_line(tab) {
+        if include.is_directive {
             return false;
+        }
+        if is_hash_at_line_start(tab) {
+            return true;
         }
         default_context_allows_completion(tab)
     }
@@ -300,17 +320,18 @@ impl CompletionStrategy for CppCompletionStrategy {
     fn should_close_on_command(&self, cmd: &Command, tab: Option<&EditorTabState>) -> bool {
         match cmd {
             Command::InsertChar('/') | Command::InsertChar('<') => {
-                !tab.is_some_and(|t| include_context_bounds(t).is_some())
+                tab.is_none_or(|t| include_context_bounds(t).is_none())
             }
-            Command::InsertChar('>') => !tab.is_some_and(|t| {
-                preceded_by_dash_for_insert(t) || include_context_bounds(t).is_some()
+            Command::InsertChar('>') => tab.is_none_or(|t| {
+                !preceded_by_dash_for_insert(t) && include_context_bounds(t).is_none()
             }),
             _ => default_should_close_on_command(self, cmd),
         }
     }
 
     fn completion_should_keep_open(&self, tab: &EditorTabState) -> bool {
-        if let Some((start_char, end_char)) = include_context_bounds(tab) {
+        let include = include_line_context(tab);
+        if let Some((start_char, end_char)) = include.bounds {
             if start_char != end_char {
                 return true;
             }
@@ -324,7 +345,7 @@ impl CompletionStrategy for CppCompletionStrategy {
             return false;
         }
 
-        if is_include_directive_line(tab) {
+        if include.is_directive {
             return false;
         }
 
@@ -354,66 +375,106 @@ impl CompletionStrategy for CppCompletionStrategy {
 
 // ── C/C++ helper functions ──
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IncludeLineContext {
+    is_directive: bool,
+    bounds: Option<(usize, usize)>,
+}
+
 fn include_context_bounds(tab: &EditorTabState) -> Option<(usize, usize)> {
+    #[cfg(test)]
+    {
+        INCLUDE_CONTEXT_BOUNDS_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    include_line_context(tab).bounds
+}
+
+fn include_line_context(tab: &EditorTabState) -> IncludeLineContext {
     let rope = tab.buffer.rope();
     let (row, col) = tab.buffer.cursor();
     let cursor_char_offset = tab.buffer.pos_to_char((row, col)).min(rope.len_chars());
     let line_start = rope.line_to_char(row);
-    let line_to_cursor: String = rope.slice(line_start..cursor_char_offset).to_string();
-    let chars: Vec<char> = line_to_cursor.chars().collect();
+    let mut idx = line_start;
 
-    let mut idx = include_keyword_end(&chars)?;
-    while idx < chars.len() && (chars[idx] == ' ' || chars[idx] == '\t') {
-        idx += 1;
-    }
-    if idx >= chars.len() {
-        return None;
-    }
-
-    let closer = match chars[idx] {
-        '<' => '>',
-        '"' => '"',
-        _ => return None,
-    };
-
-    if chars[idx + 1..].contains(&closer) {
-        return None;
+    while idx < cursor_char_offset {
+        let ch = rope.char(idx);
+        if ch == ' ' || ch == '\t' {
+            idx += 1;
+            continue;
+        }
+        break;
     }
 
-    Some((line_start + idx + 1, cursor_char_offset))
-}
-
-fn is_include_directive_line(tab: &EditorTabState) -> bool {
-    let rope = tab.buffer.rope();
-    let (row, col) = tab.buffer.cursor();
-    let cursor_char_offset = tab.buffer.pos_to_char((row, col)).min(rope.len_chars());
-    let line_start = rope.line_to_char(row);
-    let line_to_cursor: String = rope.slice(line_start..cursor_char_offset).to_string();
-    include_keyword_end(&line_to_cursor.chars().collect::<Vec<_>>()).is_some()
-}
-
-fn include_keyword_end(chars: &[char]) -> Option<usize> {
-    let mut idx = 0;
-    while idx < chars.len() && (chars[idx] == ' ' || chars[idx] == '\t') {
-        idx += 1;
-    }
-    if chars.get(idx).copied() != Some('#') {
-        return None;
+    if idx >= cursor_char_offset || rope.char(idx) != '#' {
+        return IncludeLineContext {
+            is_directive: false,
+            bounds: None,
+        };
     }
     idx += 1;
 
-    while idx < chars.len() && (chars[idx] == ' ' || chars[idx] == '\t') {
-        idx += 1;
+    while idx < cursor_char_offset {
+        let ch = rope.char(idx);
+        if ch == ' ' || ch == '\t' {
+            idx += 1;
+            continue;
+        }
+        break;
     }
 
-    for ch in ['i', 'n', 'c', 'l', 'u', 'd', 'e'] {
-        if chars.get(idx).copied() != Some(ch) {
-            return None;
+    for expected in ['i', 'n', 'c', 'l', 'u', 'd', 'e'] {
+        if idx >= cursor_char_offset || rope.char(idx) != expected {
+            return IncludeLineContext {
+                is_directive: false,
+                bounds: None,
+            };
         }
         idx += 1;
     }
 
-    Some(idx)
+    while idx < cursor_char_offset {
+        let ch = rope.char(idx);
+        if ch == ' ' || ch == '\t' {
+            idx += 1;
+            continue;
+        }
+        break;
+    }
+
+    if idx >= cursor_char_offset {
+        return IncludeLineContext {
+            is_directive: true,
+            bounds: None,
+        };
+    }
+
+    let closer = match rope.char(idx) {
+        '<' => '>',
+        '"' => '"',
+        _ => {
+            return IncludeLineContext {
+                is_directive: true,
+                bounds: None,
+            };
+        }
+    };
+
+    let mut scan = idx.saturating_add(1);
+    while scan < cursor_char_offset {
+        if rope.char(scan) == closer {
+            return IncludeLineContext {
+                is_directive: true,
+                bounds: None,
+            };
+        }
+        scan += 1;
+    }
+
+    IncludeLineContext {
+        is_directive: true,
+        bounds: Some((idx + 1, cursor_char_offset)),
+    }
 }
 
 fn is_hash_at_line_start(tab: &EditorTabState) -> bool {

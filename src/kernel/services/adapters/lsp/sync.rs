@@ -31,9 +31,17 @@ impl LspClient {
             return;
         }
 
-        match change {
-            Some(change) => self.did_change(path, "", version, Some(change)),
-            None => {
+        let Some(previous_version) = self.doc_versions.get(path).copied() else {
+            let text = text();
+            self.did_open(path, &text, version);
+            return;
+        };
+
+        let can_apply_incremental = previous_version.saturating_add(1) == version;
+
+        match (change, can_apply_incremental) {
+            (Some(change), true) => self.did_change(path, "", version, Some(change)),
+            _ => {
                 let text = text();
                 self.did_change(path, &text, version, None);
             }

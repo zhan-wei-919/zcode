@@ -1795,6 +1795,26 @@ impl Store {
                     .editor
                     .pane(pane)
                     .and_then(|pane| pane.active_tab());
+                let tab_strategy = tab.map(completion_strategy::strategy_for_tab);
+                let (
+                    tab_supports_completion,
+                    tab_completion_triggers,
+                    tab_supports_signature_help,
+                    tab_signature_help_triggers,
+                    tab_supports_completion_resolve,
+                ) = tab
+                    .and_then(|t| t.path.as_ref())
+                    .and_then(|path| lsp_server_capabilities_for_path(&self.state, path))
+                    .map(|caps| {
+                        (
+                            caps.completion,
+                            caps.completion_triggers.clone(),
+                            caps.signature_help,
+                            caps.signature_help_triggers.clone(),
+                            caps.completion_resolve,
+                        )
+                    })
+                    .unwrap_or((true, Vec::new(), true, Vec::new(), true));
                 let should_complete = tab.is_some_and(|tab| {
                     let Some(path) = tab.path.as_ref() else {
                         return false;
@@ -1803,15 +1823,13 @@ impl Store {
                         return false;
                     }
 
-                    let caps = lsp_server_capabilities_for_path(&self.state, path);
-                    if !caps.is_none_or(|c| c.completion) {
+                    if !tab_supports_completion {
                         return false;
                     }
 
-                    let triggers: &[char] = caps
-                        .map(|c| c.completion_triggers.as_slice())
-                        .unwrap_or(&[]);
-                    completion_strategy::strategy_for_tab(tab)
+                    let triggers: &[char] = tab_completion_triggers.as_slice();
+                    tab_strategy
+                        .expect("strategy should exist when tab exists")
                         .triggered_by_insert(tab, ch, triggers)
                 });
 
@@ -1859,7 +1877,8 @@ impl Store {
                                     session.pane == pane && tab.path.as_ref() == Some(&session.path)
                                 });
                         if session_ok {
-                            let strategy = completion_strategy::strategy_for_tab(tab);
+                            let strategy =
+                                tab_strategy.expect("strategy should exist when tab exists");
                             let mut changed = sync_completion_items_from_cache(
                                 &mut self.state.ui.completion,
                                 tab,
@@ -1873,16 +1892,7 @@ impl Store {
                                 .selected
                                 .min(self.state.ui.completion.items.len().saturating_sub(1));
                             if let Some(item) = self.state.ui.completion.items.get(selected) {
-                                let supports_resolve = self
-                                    .state
-                                    .ui
-                                    .completion
-                                    .request
-                                    .as_ref()
-                                    .and_then(|req| {
-                                        lsp_server_capabilities_for_path(&self.state, &req.path)
-                                    })
-                                    .is_none_or(|c| c.completion_resolve);
+                                let supports_resolve = tab_supports_completion_resolve;
                                 if supports_resolve
                                     && item.data.is_some()
                                     && item
@@ -1906,7 +1916,10 @@ impl Store {
                     }
                 }
 
-                if self.active_tab_strategy().signature_help_closed_by(ch) {
+                if tab_strategy
+                    .unwrap_or_else(|| self.active_tab_strategy())
+                    .signature_help_closed_by(ch)
+                {
                     let had = self.state.ui.signature_help.visible
                         || self.state.ui.signature_help.request.is_some()
                         || !self.state.ui.signature_help.text.is_empty();
@@ -1917,16 +1930,9 @@ impl Store {
                     }
                 }
 
-                let supports_signature_help = tab
-                    .and_then(|tab| tab.path.as_ref())
-                    .and_then(|path| lsp_server_capabilities_for_path(&self.state, path))
-                    .is_none_or(|c| c.signature_help);
+                let supports_signature_help = tab_supports_signature_help;
                 if supports_signature_help {
-                    let triggers: &[char] = tab
-                        .and_then(|tab| tab.path.as_ref())
-                        .and_then(|path| lsp_server_capabilities_for_path(&self.state, path))
-                        .map(|c| c.signature_help_triggers.as_slice())
-                        .unwrap_or(&[]);
+                    let triggers: &[char] = tab_signature_help_triggers.as_slice();
                     if self
                         .active_tab_strategy()
                         .signature_help_triggered(ch, triggers)
@@ -1953,7 +1959,8 @@ impl Store {
                     || !self.state.ui.signature_help.text.is_empty();
                 if had_signature_help
                     && !tab.is_some_and(|t| {
-                        self.active_tab_strategy()
+                        tab_strategy
+                            .expect("strategy should exist when tab exists")
                             .signature_help_should_keep_open(t)
                     })
                 {

@@ -5,6 +5,7 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use serde_json::Value;
 use tempfile::tempdir;
 use zcode::app::Workbench;
 use zcode::core::event::{
@@ -1488,6 +1489,154 @@ fn test_lsp_completion_resolve_and_confirm_applies_snippet_and_auto_import() {
                         .buffer
                         .selection()
                         .is_some_and(|sel| sel.range() == ((1, arg_start), (1, arg_end)))
+            })
+    });
+}
+
+#[test]
+fn test_lsp_completion_auto_import_uses_full_sync_after_multi_edit_apply() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "fn main() {}\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    for _ in 0.."fn main() {}".chars().count() {
+        let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Right,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+    }
+
+    let completion = KeyEvent {
+        code: KeyCode::Char(' '),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(completion));
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().ui.completion.visible
+            && w.state()
+                .ui
+                .completion
+                .items
+                .iter()
+                .any(|item| item.label == "stubSnippet")
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Tab,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        let completion = &w.state().ui.completion;
+        let Some(item) = completion.items.get(completion.selected) else {
+            return false;
+        };
+        item.label == "stubSnippet" && item.detail.as_deref() == Some("resolved:2")
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |_| {
+        let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        trace.contains("didChange detail")
+    });
+
+    let first_change = std::fs::read_to_string(&trace_path)
+        .unwrap_or_default()
+        .lines()
+        .find_map(|line| {
+            let payload = line.strip_prefix("didChange detail ")?;
+            let parsed: Value = serde_json::from_str(payload).ok()?;
+            let version = parsed.get("version")?.as_i64()?;
+            let full = parsed
+                .get("changes")
+                .and_then(Value::as_array)
+                .and_then(|changes| changes.first())
+                .and_then(|change| change.get("full"))
+                .and_then(Value::as_bool)?;
+            Some((version, full))
+        })
+        .unwrap_or((-1, false));
+
+    assert_eq!(first_change, (2, true));
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char('x'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |_| {
+        let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        trace
+            .lines()
+            .filter_map(|line| line.strip_prefix("didChange detail "))
+            .filter_map(|payload| serde_json::from_str::<Value>(payload).ok())
+            .any(|parsed| {
+                parsed.get("version").and_then(Value::as_i64) == Some(4)
+                    && parsed
+                        .get("changes")
+                        .and_then(Value::as_array)
+                        .and_then(|changes| changes.first())
+                        .and_then(|change| change.get("full"))
+                        .and_then(Value::as_bool)
+                        == Some(true)
+            })
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char('y'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |_| {
+        let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        trace
+            .lines()
+            .filter_map(|line| line.strip_prefix("didChange detail "))
+            .filter_map(|payload| serde_json::from_str::<Value>(payload).ok())
+            .any(|parsed| {
+                parsed.get("version").and_then(Value::as_i64) == Some(5)
+                    && parsed
+                        .get("changes")
+                        .and_then(Value::as_array)
+                        .and_then(|changes| changes.first())
+                        .and_then(|change| change.get("full"))
+                        .and_then(Value::as_bool)
+                        == Some(false)
             })
     });
 }

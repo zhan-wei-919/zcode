@@ -62,18 +62,18 @@ pub(super) fn filtered_completion_items(
         return items.to_vec();
     }
 
-    if !items
-        .iter()
-        .any(|item| completion_item_matches_prefix(item, &prefix))
-    {
-        return items.to_vec();
+    let mut filtered = Vec::with_capacity(items.len());
+    for item in items {
+        if completion_item_matches_prefix(item, &prefix) {
+            filtered.push(item.clone());
+        }
     }
 
-    items
-        .iter()
-        .filter(|item| completion_item_matches_prefix(item, &prefix))
-        .cloned()
-        .collect()
+    if filtered.is_empty() {
+        items.to_vec()
+    } else {
+        filtered
+    }
 }
 
 fn same_completion_item_ids(a: &[LspCompletionItem], b: &[LspCompletionItem]) -> bool {

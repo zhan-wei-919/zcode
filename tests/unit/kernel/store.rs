@@ -1,3 +1,4 @@
+use super::completion_strategy;
 use super::*;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::{
@@ -10,6 +11,7 @@ use crate::kernel::state::{
 };
 use crate::models::{FileTree, Granularity, Selection};
 use std::ffi::OsString;
+use std::time::Instant;
 use tempfile::tempdir;
 
 fn new_store() -> Store {
@@ -1398,6 +1400,143 @@ fn cpp_insert_gt_in_comparison_closes_and_does_not_trigger_by_default() {
 
     assert!(strategy.should_close_on_command(&Command::InsertChar('>'), Some(tab)));
     assert!(!strategy.triggered_by_insert(tab, '>', &[]));
+}
+
+#[test]
+fn experiment_completion_filtering_scale_baseline() {
+    use crate::kernel::store::completion::{
+        filtered_completion_items, sync_completion_items_from_cache,
+    };
+
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "pr".to_string(),
+    }));
+
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let strategy = completion_strategy::strategy_for_tab(tab);
+
+    let items: Vec<LspCompletionItem> = (0..10_000)
+        .map(|i| test_completion_item(i, &format!("item_{i:05}")))
+        .collect();
+
+    let warm = filtered_completion_items(tab, &items, strategy);
+    assert!(!warm.is_empty());
+
+    let start = Instant::now();
+    let mut total = 0usize;
+    for _ in 0..50 {
+        total = total.saturating_add(filtered_completion_items(tab, &items, strategy).len());
+    }
+    let elapsed = start.elapsed();
+
+    let mut popup = crate::kernel::state::CompletionPopupState {
+        all_items: items,
+        ..Default::default()
+    };
+    let start_sync = Instant::now();
+    let mut changed_count = 0usize;
+    for _ in 0..50 {
+        if sync_completion_items_from_cache(&mut popup, tab, strategy) {
+            changed_count += 1;
+        }
+    }
+    let elapsed_sync = start_sync.elapsed();
+
+    eprintln!(
+        "[experiment] filtering_scale loops=50 items=10000 filtered_total={} elapsed_ms={} sync_elapsed_ms={} changed_count={}",
+        total,
+        elapsed.as_millis(),
+        elapsed_sync.as_millis(),
+        changed_count
+    );
+}
+
+#[test]
+fn experiment_cpp_include_context_lookup_counts() {
+    completion_strategy::reset_include_context_perf_counter();
+
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "#include <vector>".to_string();
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let strategy = completion_strategy::strategy_for_tab(tab);
+
+    for _ in 0..1000 {
+        let _ = strategy.context_allows_completion(tab);
+        let _ = strategy.prefix_bounds(tab);
+        let _ = strategy.completion_should_keep_open(tab);
+    }
+
+    let calls = completion_strategy::include_context_perf_counter();
+    eprintln!(
+        "[experiment] cpp_include_context loops=1000 include_context_bounds_calls={}",
+        calls
+    );
+
+    assert!(
+        calls >= 1,
+        "expected at least one include lookup, calls={calls}"
+    );
+}
+
+#[test]
+fn experiment_insert_char_signature_help_capability_lookup_counts() {
+    use crate::kernel::store::lsp::{
+        lsp_capability_lookup_perf_counter, reset_lsp_capability_lookup_perf_counter,
+    };
+
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "fn main() { foo".to_string(),
+    }));
+
+    reset_lsp_capability_lookup_perf_counter();
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('x')));
+    let calls_for_x = lsp_capability_lookup_perf_counter();
+
+    reset_lsp_capability_lookup_perf_counter();
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('(')));
+    let calls_for_lparen = lsp_capability_lookup_perf_counter();
+
+    eprintln!(
+        "[experiment] insert_char_capability_lookup x_calls={} lparen_calls={}",
+        calls_for_x, calls_for_lparen
+    );
+
+    assert!(
+        calls_for_x >= 1,
+        "expected at least one capability lookup, got {calls_for_x}"
+    );
+    assert!(
+        calls_for_lparen >= 1,
+        "expected at least one capability lookup, got {calls_for_lparen}"
+    );
 }
 
 #[test]
