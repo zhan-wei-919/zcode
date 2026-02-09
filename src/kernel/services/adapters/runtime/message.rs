@@ -1,5 +1,5 @@
-use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::editor::ReloadRequest;
+use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem, TerminalId};
 use std::path::PathBuf;
 

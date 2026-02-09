@@ -2,12 +2,12 @@ use ropey::Rope;
 use serde_json::Value;
 use std::path::PathBuf;
 
+use crate::kernel::editor::ReloadRequest;
 use crate::kernel::services::ports::{
     LspCompletionItem, LspCompletionTriggerContext, LspPositionEncoding, LspRange, LspResourceOp,
     LspWorkspaceFileEdit, ThemeSettings,
 };
 use crate::kernel::TerminalId;
-use crate::kernel::editor::ReloadRequest;
 
 #[derive(Debug, Clone)]
 pub enum Effect {

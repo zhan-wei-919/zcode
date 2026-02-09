@@ -1857,7 +1857,10 @@ fn reload_from_disk_emits_reload_request_from_active_tab() {
     };
     assert_eq!(request.pane, 0);
     assert_eq!(request.path, path);
-    assert_eq!(request.cause, crate::kernel::editor::ReloadCause::ManualCommand);
+    assert_eq!(
+        request.cause,
+        crate::kernel::editor::ReloadCause::ManualCommand
+    );
     assert_eq!(request.request_id, 1);
     assert!(!result.state_changed);
 }

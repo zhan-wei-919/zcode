@@ -3,7 +3,9 @@ use crate::kernel::services::ports::SearchMessage;
 use crate::kernel::Effect;
 
 use super::action::EditorAction;
-use super::state::{DiskState, EditorPaneState, EditorState, ReloadCause, ReloadRequest, SearchBarMode, TabId};
+use super::state::{
+    DiskState, EditorPaneState, EditorState, ReloadCause, ReloadRequest, SearchBarMode, TabId,
+};
 use super::viewport;
 
 impl EditorState {
@@ -73,10 +75,7 @@ impl EditorState {
                 to_pane,
                 to_index,
             } => self.move_tab(tab_id, from_pane, to_pane, to_index),
-            EditorAction::FileReloaded {
-                content,
-                request,
-            } => self.file_reloaded(request, content),
+            EditorAction::FileReloaded { content, request } => self.file_reloaded(request, content),
             EditorAction::FileExternallyModified { path } => self.file_externally_modified(path),
             EditorAction::FileExternallyDeleted { path } => self.file_externally_deleted(path),
             EditorAction::AcceptDiskVersion {

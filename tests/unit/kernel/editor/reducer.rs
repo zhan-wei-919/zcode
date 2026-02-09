@@ -1,10 +1,10 @@
 use super::goto_byte_offset;
 use crate::core::Command;
-use crate::kernel::editor::{DiskState, ReloadCause, ReloadRequest};
 use crate::kernel::editor::action::EditorAction;
 use crate::kernel::editor::EditorState;
 use crate::kernel::editor::EditorTabState;
 use crate::kernel::editor::TabId;
+use crate::kernel::editor::{DiskState, ReloadCause, ReloadRequest};
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::Effect;
 use ropey::Rope;
@@ -374,9 +374,8 @@ fn test_file_externally_modified_emits_reload_for_clean_and_marks_dirty_conflict
     let (changed, _) = editor.apply_command(0, Command::InsertChar('x'));
     assert!(changed);
 
-    let (changed, effects) = editor.dispatch_action(EditorAction::FileExternallyModified {
-        path: path.clone(),
-    });
+    let (changed, effects) =
+        editor.dispatch_action(EditorAction::FileExternallyModified { path: path.clone() });
     assert!(changed);
 
     let request = match effects.as_slice() {

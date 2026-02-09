@@ -1653,7 +1653,11 @@ fn test_file_reloaded_message_does_not_overwrite_dirty_tab_with_duplicate_path()
         .state()
         .editor
         .pane(0)
-        .and_then(|pane| pane.tabs.iter().find(|tab| tab.path.as_ref() == Some(&shared)))
+        .and_then(|pane| {
+            pane.tabs
+                .iter()
+                .find(|tab| tab.path.as_ref() == Some(&shared))
+        })
         .expect("pane0 tab")
         .buffer
         .text();
@@ -1673,7 +1677,11 @@ fn test_file_reloaded_message_does_not_overwrite_dirty_tab_with_duplicate_path()
         .state()
         .editor
         .pane(0)
-        .and_then(|pane| pane.tabs.iter().find(|tab| tab.path.as_ref() == Some(&shared)))
+        .and_then(|pane| {
+            pane.tabs
+                .iter()
+                .find(|tab| tab.path.as_ref() == Some(&shared))
+        })
         .expect("pane0 tab");
 
     assert!(pane0_after.dirty, "dirty tab should not be reset by reload");
@@ -1721,7 +1729,11 @@ fn test_out_of_order_file_reloaded_messages_keep_latest_content() {
         .state()
         .editor
         .pane(0)
-        .and_then(|pane| pane.tabs.iter().find(|tab| tab.path.as_ref() == Some(&path)))
+        .and_then(|pane| {
+            pane.tabs
+                .iter()
+                .find(|tab| tab.path.as_ref() == Some(&path))
+        })
         .expect("tab exists");
 
     assert_eq!(

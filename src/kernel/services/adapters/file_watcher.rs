@@ -110,8 +110,8 @@ impl FileWatcherService {
 mod tests {
     use super::*;
 
-    fn create_service_with_channel(
-    ) -> (FileWatcherService, std::sync::mpsc::Sender<FileWatchEvent>) {
+    fn create_service_with_channel() -> (FileWatcherService, std::sync::mpsc::Sender<FileWatchEvent>)
+    {
         let (tx, rx) = mpsc::channel();
         let watcher = RecommendedWatcher::new(
             |_| {},
