@@ -570,7 +570,7 @@ impl Workbench {
             let _ = self.kernel_services.register(keybindings);
         }
         if let Some(service) = self.kernel_services.get_mut::<ConfigService>() {
-            *service.editor_mut() = editor_config.clone();
+            *service.editor_mut() = editor_config;
         } else {
             let _ = self
                 .kernel_services

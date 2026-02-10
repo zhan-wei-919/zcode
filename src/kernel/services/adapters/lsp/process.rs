@@ -227,11 +227,7 @@ impl LspClient {
             return false;
         }
 
-        self.process = Some(LspProcess {
-            tx: tx.clone(),
-            pending,
-            child,
-        });
+        self.process = Some(LspProcess { tx, pending, child });
 
         self.send_initialize(init_id);
         true

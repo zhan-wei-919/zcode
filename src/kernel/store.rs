@@ -55,6 +55,72 @@ pub struct DispatchResult {
     pub state_changed: bool,
 }
 
+fn perf_action_label(action: &Action) -> &'static str {
+    match action {
+        Action::RunCommand(_) => "kernel.action.run_command",
+        Action::Editor(_) => "kernel.action.editor",
+        Action::Tick => "kernel.action.tick",
+        Action::LspCompletion { .. } => "kernel.action.lsp_completion",
+        Action::LspCompletionResolved { .. } => "kernel.action.lsp_completion_resolved",
+        Action::LspSemanticTokens { .. } => "kernel.action.lsp_semantic_tokens",
+        Action::LspSemanticTokensRange { .. } => "kernel.action.lsp_semantic_tokens_range",
+        Action::LspInlayHints { .. } => "kernel.action.lsp_inlay_hints",
+        Action::LspFoldingRanges { .. } => "kernel.action.lsp_folding_ranges",
+        Action::LspDiagnostics { .. } => "kernel.action.lsp_diagnostics",
+        Action::LspHover { .. } => "kernel.action.lsp_hover",
+        Action::LspDefinition { .. } => "kernel.action.lsp_definition",
+        Action::LspReferences { .. } => "kernel.action.lsp_references",
+        Action::LspCodeActions { .. } => "kernel.action.lsp_code_actions",
+        Action::LspSymbols { .. } => "kernel.action.lsp_symbols",
+        Action::LspSignatureHelp { .. } => "kernel.action.lsp_signature_help",
+        Action::LspApplyWorkspaceEdit { .. } => "kernel.action.lsp_apply_workspace_edit",
+        Action::LspServerCapabilities { .. } => "kernel.action.lsp_server_capabilities",
+        Action::LspProgressEnd => "kernel.action.lsp_progress_end",
+        Action::SearchMessage(_) => "kernel.action.search_message",
+        Action::SearchStarted { .. } => "kernel.action.search_started",
+        Action::DirLoaded { .. } => "kernel.action.dir_loaded",
+        Action::DirLoadError { .. } => "kernel.action.dir_load_error",
+        Action::GitStatusUpdated { .. } => "kernel.action.git_status_updated",
+        Action::GitDiffUpdated { .. } => "kernel.action.git_diff_updated",
+        Action::TerminalOutput { .. } => "kernel.action.terminal_output",
+        _ => "kernel.action.other",
+    }
+}
+
+fn perf_command_label(command: &Command) -> &'static str {
+    match command {
+        Command::InsertChar(_) => "kernel.command.insert_char",
+        Command::DeleteBackward => "kernel.command.delete_backward",
+        Command::DeleteForward => "kernel.command.delete_forward",
+        Command::DeleteSelection => "kernel.command.delete_selection",
+        Command::CursorLeft => "kernel.command.cursor_left",
+        Command::CursorRight => "kernel.command.cursor_right",
+        Command::CursorUp => "kernel.command.cursor_up",
+        Command::CursorDown => "kernel.command.cursor_down",
+        Command::LspCompletion => "kernel.command.lsp_completion",
+        Command::LspSemanticTokens => "kernel.command.lsp_semantic_tokens",
+        Command::LspInlayHints => "kernel.command.lsp_inlay_hints",
+        Command::LspFoldingRange => "kernel.command.lsp_folding_range",
+        Command::LspHover => "kernel.command.lsp_hover",
+        Command::LspSignatureHelp => "kernel.command.lsp_signature_help",
+        Command::EditorSearchBarBackspace => "kernel.command.editor_search_backspace",
+        Command::GlobalSearchBackspace => "kernel.command.global_search_backspace",
+        Command::Find => "kernel.command.find",
+        Command::FindNext => "kernel.command.find_next",
+        Command::FindPrev => "kernel.command.find_prev",
+        Command::Save => "kernel.command.save",
+        Command::OpenFile => "kernel.command.open_file",
+        Command::CloseTab => "kernel.command.close_tab",
+        Command::FocusEditor => "kernel.command.focus_editor",
+        Command::FocusExplorer => "kernel.command.focus_explorer",
+        Command::FocusSearch => "kernel.command.focus_search",
+        Command::FocusBottomPanel => "kernel.command.focus_bottom_panel",
+        Command::CommandPalette => "kernel.command.command_palette",
+        Command::Escape => "kernel.command.escape",
+        _ => "kernel.command.other",
+    }
+}
+
 pub struct Store {
     state: AppState,
     completion_ranker: CompletionRanker,
@@ -219,8 +285,12 @@ impl Store {
     }
 
     pub fn dispatch(&mut self, action: Action) -> DispatchResult {
+        let _action_scope =
+            crate::kernel::services::adapters::perf::scope(perf_action_label(&action));
         match action {
             Action::RunCommand(cmd) => {
+                let _command_scope =
+                    crate::kernel::services::adapters::perf::scope(perf_command_label(&cmd));
                 let active_tab = self
                     .state
                     .editor
@@ -3307,3 +3377,7 @@ impl Store {
 #[cfg(test)]
 #[path = "../../tests/unit/kernel/store.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/unit/kernel/store_lsp_perf.rs"]
+mod tests_lsp_perf;

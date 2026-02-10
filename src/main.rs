@@ -318,9 +318,10 @@ where
 
 fn resolve_startup_paths(cwd: &Path, arg: Option<&str>) -> io::Result<StartupPaths> {
     let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let cwd_for_default = cwd.clone();
 
     let path = match arg {
-        None => cwd.to_path_buf(),
+        None => cwd_for_default,
         Some(raw) => {
             let p = PathBuf::from(raw);
             if p.is_absolute() {

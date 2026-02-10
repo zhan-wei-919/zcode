@@ -687,21 +687,18 @@ impl super::Store {
                             continue;
                         }
 
-                        let lines = match snapshot_lines.as_ref() {
-                            Some(lines) => lines.clone(),
-                            None => {
-                                let lines = semantic_highlight_lines_from_tokens(
-                                    tab.buffer.rope(),
-                                    &tokens,
-                                    &legend,
-                                    encoding,
-                                );
-                                snapshot_lines = Some(lines.clone());
-                                lines
-                            }
-                        };
+                        if snapshot_lines.is_none() {
+                            snapshot_lines = Some(semantic_highlight_lines_from_tokens(
+                                tab.buffer.rope(),
+                                &tokens,
+                                &legend,
+                                encoding,
+                            ));
+                        }
 
-                        changed |= tab.set_semantic_highlight(version, lines);
+                        if let Some(lines) = snapshot_lines.as_ref() {
+                            changed |= tab.set_semantic_highlight_from_slice(version, lines);
+                        }
                     }
                 }
 
@@ -746,23 +743,22 @@ impl super::Store {
                             continue;
                         }
 
-                        let lines = match snapshot_lines.as_ref() {
-                            Some(lines) => lines.clone(),
-                            None => {
-                                let lines = semantic_highlight_lines_from_tokens_range(
-                                    tab.buffer.rope(),
-                                    &tokens,
-                                    &legend,
-                                    encoding,
-                                    start_line,
-                                    end_line_exclusive,
-                                );
-                                snapshot_lines = Some(lines.clone());
-                                lines
-                            }
-                        };
+                        if snapshot_lines.is_none() {
+                            snapshot_lines = Some(semantic_highlight_lines_from_tokens_range(
+                                tab.buffer.rope(),
+                                &tokens,
+                                &legend,
+                                encoding,
+                                start_line,
+                                end_line_exclusive,
+                            ));
+                        }
 
-                        changed |= tab.set_semantic_highlight_range(version, start_line, lines);
+                        if let Some(lines) = snapshot_lines.as_ref() {
+                            changed |= tab.set_semantic_highlight_range_from_slice(
+                                version, start_line, lines,
+                            );
+                        }
                     }
                 }
 
@@ -798,46 +794,45 @@ impl super::Store {
                         }
                         matched_tabs += 1;
 
-                        let lines = match snapshot.as_ref() {
-                            Some(lines) => lines.clone(),
-                            None => {
-                                let mut per_line = vec![
-                                    Vec::<(u32, String)>::new();
-                                    end_line_exclusive - start_line
-                                ];
+                        if snapshot.is_none() {
+                            let mut per_line =
+                                vec![Vec::<(u32, String)>::new(); end_line_exclusive - start_line];
 
-                                for hint in &hints {
-                                    let line = hint.position.line as usize;
-                                    if line < start_line || line >= end_line_exclusive {
-                                        continue;
-                                    }
-
-                                    let mut text = String::new();
-                                    if hint.padding_left {
-                                        text.push(' ');
-                                    }
-                                    text.push_str(hint.label.as_str());
-                                    if hint.padding_right {
-                                        text.push(' ');
-                                    }
-
-                                    per_line[line - start_line]
-                                        .push((hint.position.character, text));
+                            for hint in &hints {
+                                let line = hint.position.line as usize;
+                                if line < start_line || line >= end_line_exclusive {
+                                    continue;
                                 }
 
-                                let mut lines = Vec::with_capacity(per_line.len());
-                                for mut row in per_line {
-                                    row.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-                                    lines.push(row.into_iter().map(|(_, s)| s).collect());
+                                let mut text = String::new();
+                                if hint.padding_left {
+                                    text.push(' ');
+                                }
+                                text.push_str(hint.label.as_str());
+                                if hint.padding_right {
+                                    text.push(' ');
                                 }
 
-                                snapshot = Some(lines.clone());
-                                lines
+                                per_line[line - start_line].push((hint.position.character, text));
                             }
-                        };
 
-                        changed |=
-                            tab.set_inlay_hints(version, start_line, end_line_exclusive, lines);
+                            let mut lines = Vec::with_capacity(per_line.len());
+                            for mut row in per_line {
+                                row.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+                                lines.push(row.into_iter().map(|(_, s)| s).collect());
+                            }
+
+                            snapshot = Some(lines);
+                        }
+
+                        if let Some(lines) = snapshot.as_ref() {
+                            changed |= tab.set_inlay_hints_from_slice(
+                                version,
+                                start_line,
+                                end_line_exclusive,
+                                lines,
+                            );
+                        }
                     }
                 }
 
@@ -862,8 +857,6 @@ impl super::Store {
                 version,
                 ranges,
             } => {
-                let mut snapshot: Option<Vec<crate::kernel::services::ports::LspFoldingRange>> =
-                    None;
                 let mut changed = false;
 
                 for pane in &mut self.state.editor.panes {
@@ -872,15 +865,7 @@ impl super::Store {
                             continue;
                         }
 
-                        let ranges = match snapshot.as_ref() {
-                            Some(ranges) => ranges.clone(),
-                            None => {
-                                snapshot = Some(ranges.clone());
-                                ranges.clone()
-                            }
-                        };
-
-                        changed |= tab.set_folding_ranges(version, ranges);
+                        changed |= tab.set_folding_ranges_from_slice(version, &ranges);
                     }
                 }
 
@@ -947,6 +932,7 @@ impl super::Store {
                 let language = tab.language();
                 sort_completion_items(&mut all_items, &self.completion_ranker, language);
                 self.state.ui.completion.all_items = all_items;
+                self.state.ui.completion.invalidate_filter_cache();
                 let strategy = super::completion_strategy::strategy_for_tab(tab);
                 self.state.ui.completion.items =
                     filtered_completion_items(tab, &self.state.ui.completion.all_items, strategy);
