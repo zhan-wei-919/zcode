@@ -164,6 +164,7 @@ struct ThemeEditorLayoutCache {
     hue_bar_area: Option<Rect>,
     sv_palette_area: Option<Rect>,
     ansi_cursor: Option<(u16, u16)>,
+    language_bar_area: Option<Rect>,
 }
 
 #[derive(Debug, Default)]

@@ -719,6 +719,8 @@ impl Workbench {
             syntax_number_fg: color_to_hex(t.syntax_number_fg),
             syntax_type_fg: color_to_hex(t.syntax_type_fg),
             syntax_attribute_fg: color_to_hex(t.syntax_attribute_fg),
+            syntax_namespace_fg: color_to_hex(t.syntax_namespace_fg),
+            syntax_macro_fg: color_to_hex(t.syntax_macro_fg),
             syntax_function_fg: color_to_hex(t.syntax_function_fg),
             syntax_variable_fg: color_to_hex(t.syntax_variable_fg),
             syntax_constant_fg: color_to_hex(t.syntax_constant_fg),

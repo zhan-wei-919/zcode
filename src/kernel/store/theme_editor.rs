@@ -107,6 +107,13 @@ impl super::Store {
                     state_changed: true,
                 }
             }
+            Action::ThemeEditorSetLanguage { language } => {
+                self.state.ui.theme_editor.preview_language = language;
+                super::DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: true,
+                }
+            }
             Action::ThemeEditorResetToken => super::DispatchResult {
                 effects: Vec::new(),
                 state_changed: true,

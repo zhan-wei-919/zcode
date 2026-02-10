@@ -6,7 +6,7 @@ use crate::core::event::{
 use crate::core::Command;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{KeybindingContext, KeybindingService};
-use crate::kernel::state::ThemeEditorFocus;
+use crate::kernel::state::{PreviewLanguage, ThemeEditorFocus};
 use crate::kernel::{
     Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, SidebarTab,
 };
@@ -658,6 +658,30 @@ impl Workbench {
             }
         }
 
+        // Check Language Bar
+        if let Some(area) = self.theme_editor_layout.language_bar_area {
+            if col >= area.x
+                && col < area.x + area.w
+                && row >= area.y
+                && row < area.y + area.h
+                && matches!(event.kind, MouseEventKind::Down(MouseButton::Left))
+            {
+                // Compute which button was clicked based on x position
+                let mut x = area.x.saturating_add(1);
+                for (i, lang) in PreviewLanguage::ALL.iter().enumerate() {
+                    let btn_w = lang.label().len() as u16 + 2; // "[" + label + "]"
+                    if col >= x && col < x.saturating_add(btn_w) {
+                        let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetLanguage {
+                            language: PreviewLanguage::from_index(i),
+                        });
+                        return EventResult::Consumed;
+                    }
+                    x = x.saturating_add(btn_w).saturating_add(1); // +1 gap
+                }
+                return EventResult::Consumed;
+            }
+        }
+
         // Check Token List
         if let Some(area) = self.theme_editor_layout.token_list_area {
             if col >= area.x
@@ -726,6 +750,12 @@ impl Workbench {
             crate::kernel::state::ThemeEditorToken::Attribute => {
                 self.theme.syntax_attribute_fg = color;
             }
+            crate::kernel::state::ThemeEditorToken::Namespace => {
+                self.theme.syntax_namespace_fg = color;
+            }
+            crate::kernel::state::ThemeEditorToken::Macro => {
+                self.theme.syntax_macro_fg = color;
+            }
             crate::kernel::state::ThemeEditorToken::Function => {
                 self.theme.syntax_function_fg = color;
             }
@@ -773,6 +803,8 @@ impl Workbench {
             crate::kernel::state::ThemeEditorToken::Number => defaults.syntax_number_fg,
             crate::kernel::state::ThemeEditorToken::Type => defaults.syntax_type_fg,
             crate::kernel::state::ThemeEditorToken::Attribute => defaults.syntax_attribute_fg,
+            crate::kernel::state::ThemeEditorToken::Namespace => defaults.syntax_namespace_fg,
+            crate::kernel::state::ThemeEditorToken::Macro => defaults.syntax_macro_fg,
             crate::kernel::state::ThemeEditorToken::Function => defaults.syntax_function_fg,
             crate::kernel::state::ThemeEditorToken::Variable => defaults.syntax_variable_fg,
             crate::kernel::state::ThemeEditorToken::Constant => defaults.syntax_constant_fg,
@@ -816,6 +848,8 @@ impl Workbench {
             crate::kernel::state::ThemeEditorToken::Number => self.theme.syntax_number_fg,
             crate::kernel::state::ThemeEditorToken::Type => self.theme.syntax_type_fg,
             crate::kernel::state::ThemeEditorToken::Attribute => self.theme.syntax_attribute_fg,
+            crate::kernel::state::ThemeEditorToken::Namespace => self.theme.syntax_namespace_fg,
+            crate::kernel::state::ThemeEditorToken::Macro => self.theme.syntax_macro_fg,
             crate::kernel::state::ThemeEditorToken::Function => self.theme.syntax_function_fg,
             crate::kernel::state::ThemeEditorToken::Variable => self.theme.syntax_variable_fg,
             crate::kernel::state::ThemeEditorToken::Constant => self.theme.syntax_constant_fg,

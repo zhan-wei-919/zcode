@@ -18,6 +18,7 @@ pub enum HighlightKind {
     Lifetime,
     Function,
     Macro,
+    Namespace,
     Variable,
     Constant,
 }
@@ -34,6 +35,7 @@ struct AbsHighlightSpan {
     start: usize,
     end: usize,
     kind: HighlightKind,
+    depth: usize,
 }
 
 pub struct SyntaxDocument {
@@ -396,10 +398,10 @@ fn collect_highlights(
     end_byte: usize,
 ) -> Vec<AbsHighlightSpan> {
     let root = tree.root_node();
-    let mut stack = vec![root];
+    let mut stack = vec![(root, 0usize)];
     let mut spans = Vec::new();
 
-    while let Some(node) = stack.pop() {
+    while let Some((node, depth)) = stack.pop() {
         let node_start = node.start_byte();
         let node_end = node.end_byte();
 
@@ -412,6 +414,7 @@ fn collect_highlights(
                 start: node_start,
                 end: node_end,
                 kind,
+                depth,
             });
 
             if matches!(
@@ -428,13 +431,99 @@ fn collect_highlights(
         let child_count = node.child_count();
         for i in (0..child_count).rev() {
             if let Some(child) = node.child(i) {
-                stack.push(child);
+                stack.push((child, depth.saturating_add(1)));
             }
         }
     }
 
-    spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
-    spans
+    normalize_overlapping_highlight_spans(spans)
+}
+
+fn normalize_overlapping_highlight_spans(
+    mut spans: Vec<AbsHighlightSpan>,
+) -> Vec<AbsHighlightSpan> {
+    if spans.len() <= 1 {
+        return spans;
+    }
+
+    spans.sort_by(|a, b| {
+        b.depth
+            .cmp(&a.depth)
+            .then_with(|| (a.end - a.start).cmp(&(b.end - b.start)))
+            .then(a.start.cmp(&b.start))
+            .then(a.end.cmp(&b.end))
+    });
+
+    let mut flattened: Vec<AbsHighlightSpan> = Vec::with_capacity(spans.len());
+    for span in spans {
+        let mut fragments = vec![(span.start, span.end)];
+
+        for existing in &flattened {
+            fragments = subtract_interval_fragments(fragments, existing.start, existing.end);
+            if fragments.is_empty() {
+                break;
+            }
+        }
+
+        for (start, end) in fragments {
+            if start < end {
+                flattened.push(AbsHighlightSpan {
+                    start,
+                    end,
+                    kind: span.kind,
+                    depth: span.depth,
+                });
+            }
+        }
+    }
+
+    flattened.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+    merge_adjacent_abs_spans(&mut flattened);
+    flattened
+}
+
+fn subtract_interval_fragments(
+    fragments: Vec<(usize, usize)>,
+    cut_start: usize,
+    cut_end: usize,
+) -> Vec<(usize, usize)> {
+    if cut_start >= cut_end {
+        return fragments;
+    }
+
+    let mut out = Vec::with_capacity(fragments.len());
+    for (start, end) in fragments {
+        if cut_end <= start || cut_start >= end {
+            out.push((start, end));
+            continue;
+        }
+
+        if start < cut_start {
+            out.push((start, cut_start.min(end)));
+        }
+        if cut_end < end {
+            out.push((cut_end.max(start), end));
+        }
+    }
+    out
+}
+
+fn merge_adjacent_abs_spans(spans: &mut Vec<AbsHighlightSpan>) {
+    if spans.len() <= 1 {
+        return;
+    }
+
+    let mut out: Vec<AbsHighlightSpan> = Vec::with_capacity(spans.len());
+    for span in spans.drain(..) {
+        if let Some(prev) = out.last_mut() {
+            if prev.kind == span.kind && prev.depth == span.depth && span.start <= prev.end {
+                prev.end = prev.end.max(span.end);
+                continue;
+            }
+        }
+        out.push(span);
+    }
+    *spans = out;
 }
 
 fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<HighlightKind> {

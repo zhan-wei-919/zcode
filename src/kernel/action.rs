@@ -19,7 +19,7 @@ use crate::kernel::services::ports::LspServerCapabilities;
 use crate::kernel::services::ports::LspServerKind;
 use crate::kernel::services::ports::LspTextEdit;
 use crate::kernel::services::ports::LspWorkspaceEdit;
-use crate::kernel::state::{BottomPanelTab, ThemeEditorFocus};
+use crate::kernel::state::{BottomPanelTab, PreviewLanguage, ThemeEditorFocus};
 use crate::kernel::symbols::SymbolItem;
 use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem, TerminalId};
 
@@ -323,5 +323,8 @@ pub enum Action {
         index: u8,
     },
     ThemeEditorCycleLanguage,
+    ThemeEditorSetLanguage {
+        language: PreviewLanguage,
+    },
     ThemeEditorResetToken,
 }

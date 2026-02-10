@@ -94,6 +94,10 @@ pub struct ThemeSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_attribute_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_namespace_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_macro_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_function_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_variable_fg: Option<String>,
@@ -158,6 +162,8 @@ impl Default for ThemeSettings {
             syntax_number_fg: Some("#B5CEA8".to_string()),
             syntax_type_fg: Some("#4EC9B0".to_string()),
             syntax_attribute_fg: Some("#4EC9B0".to_string()),
+            syntax_namespace_fg: Some("#4EC9B0".to_string()),
+            syntax_macro_fg: Some("#569CD6".to_string()),
             syntax_function_fg: Some("#DCDCAA".to_string()),
             syntax_variable_fg: Some("#9CDCFE".to_string()),
             syntax_constant_fg: Some("#4FC1FF".to_string()),

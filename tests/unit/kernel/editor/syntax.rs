@@ -19,6 +19,36 @@ fn test_highlight_comment_range_rust() {
 }
 
 #[test]
+fn test_highlight_rust_macro_string_prefers_string_over_macro() {
+    let src = "fn main() {\n    tracing::info!(settings_path = %path.display(), \"settings ready\");\n}\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.rs"), &rope).expect("rust syntax");
+
+    let spans = doc.highlight_lines(&rope, 1, 2);
+    let line = "    tracing::info!(settings_path = %path.display(), \"settings ready\");";
+    let in_string = line.find("settings ready").unwrap();
+
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::String && s.start <= in_string && in_string < s.end));
+
+    assert!(!spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Macro && s.start <= in_string && in_string < s.end));
+
+    let mut cursor = 0usize;
+    while cursor < spans[0].len() && spans[0][cursor].end <= in_string {
+        cursor += 1;
+    }
+    let chosen_kind = spans[0]
+        .get(cursor)
+        .filter(|span| span.start <= in_string && in_string < span.end)
+        .map(|span| span.kind);
+
+    assert_eq!(chosen_kind, Some(HighlightKind::String));
+}
+
+#[test]
 fn test_highlight_go_comment_string_keyword_and_in_string_or_comment() {
     let src = "package main\n// hi\nfunc main() { println(\"x\") }\n";
     let rope = Rope::from_str(src);

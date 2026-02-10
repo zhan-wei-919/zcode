@@ -15,6 +15,7 @@ pub struct ThemeEditorAreas {
     pub token_list: Option<Rect>,
     pub hue_bar: Option<Rect>,
     pub sv_palette: Option<Rect>,
+    pub language_bar: Option<Rect>,
 }
 
 pub fn paint_theme_editor(
@@ -29,6 +30,7 @@ pub fn paint_theme_editor(
         token_list: None,
         hue_bar: None,
         sv_palette: None,
+        language_bar: None,
     };
 
     if area.is_empty() || area.h < 5 || area.w < 20 {
@@ -81,7 +83,7 @@ pub fn paint_theme_editor(
         color_support,
         ansi_cursor,
     );
-    paint_code_preview(painter, right_inner, state, theme);
+    paint_code_preview(painter, right_inner, state, theme, &mut areas);
     areas
 }
 
@@ -149,8 +151,8 @@ fn paint_left_panel(
         return;
     }
 
-    // Reserve 2 rows at bottom for hex color + language label
-    let (picker_area, bottom_area) = rest.split_bottom(2);
+    // Reserve 1 row at bottom for hex color
+    let (picker_area, bottom_area) = rest.split_bottom(1);
 
     if picker_area.h >= 3 && picker_area.w >= 6 {
         paint_color_picker(
@@ -164,7 +166,7 @@ fn paint_left_panel(
         );
     }
 
-    // Hex color + language label
+    // Hex color
     if bottom_area.h >= 1 {
         let (label, preview_color) = match color_support {
             TerminalColorSupport::TrueColor => {
@@ -188,25 +190,13 @@ fn paint_left_panel(
             }
         };
         let color_preview = Style::default().fg(preview_color).add_mod(UiMod::BOLD);
-        let (hex_row, rest2) = bottom_area.split_top(1);
+        let (hex_row, _) = bottom_area.split_top(1);
         painter.text_clipped(
             Pos::new(hex_row.x, hex_row.y),
             &label,
             color_preview,
             hex_row,
         );
-
-        if !rest2.is_empty() {
-            let (lang_row, _) = rest2.split_top(1);
-            let lang_label = format!("[{}]", state.preview_language.label());
-            let muted = Style::default().fg(theme.palette_muted_fg);
-            painter.text_clipped(
-                Pos::new(lang_row.x, lang_row.y),
-                &lang_label,
-                muted,
-                lang_row,
-            );
-        }
     }
 }
 
@@ -218,6 +208,8 @@ fn token_color(token: ThemeEditorToken, theme: &Theme) -> Color {
         ThemeEditorToken::Number => theme.syntax_number_fg,
         ThemeEditorToken::Type => theme.syntax_type_fg,
         ThemeEditorToken::Attribute => theme.syntax_attribute_fg,
+        ThemeEditorToken::Namespace => theme.syntax_namespace_fg,
+        ThemeEditorToken::Macro => theme.syntax_macro_fg,
         ThemeEditorToken::Function => theme.syntax_function_fg,
         ThemeEditorToken::Variable => theme.syntax_variable_fg,
         ThemeEditorToken::Constant => theme.syntax_constant_fg,
@@ -735,9 +727,28 @@ fn ansi256_index_to_picker_marker(index: u8, width: u16, height: u16) -> (u16, u
     (col, row, false)
 }
 
-fn paint_code_preview(painter: &mut Painter, area: Rect, state: &ThemeEditorState, theme: &Theme) {
+fn paint_code_preview(
+    painter: &mut Painter,
+    area: Rect,
+    state: &ThemeEditorState,
+    theme: &Theme,
+    areas: &mut ThemeEditorAreas,
+) {
     if area.is_empty() {
         return;
+    }
+
+    // Reserve 1 row at bottom for language buttons
+    let (code_area, lang_bar_area) = if area.h > 2 {
+        area.split_bottom(1)
+    } else {
+        (area, Rect::default())
+    };
+
+    // Paint language button bar
+    if !lang_bar_area.is_empty() {
+        areas.language_bar = Some(lang_bar_area);
+        paint_language_bar(painter, lang_bar_area, state, theme);
     }
 
     let (lang_id, snippet) = preview_language_snippet(state.preview_language);
@@ -748,17 +759,42 @@ fn paint_code_preview(painter: &mut Painter, area: Rect, state: &ThemeEditorStat
     let base_style = Style::default().fg(theme.palette_fg);
 
     for (i, line) in lines.iter().enumerate() {
-        let y = area.y.saturating_add(i as u16);
-        if y >= area.bottom() {
+        let y = code_area.y.saturating_add(i as u16);
+        if y >= code_area.bottom() {
             break;
         }
-        let row = Rect::new(area.x.saturating_add(1), y, area.w.saturating_sub(1), 1);
+        let row = Rect::new(
+            code_area.x.saturating_add(1),
+            y,
+            code_area.w.saturating_sub(1),
+            1,
+        );
         if row.is_empty() {
             continue;
         }
 
         let spans = highlights.get(i).map(|s| s.as_slice());
         paint_highlighted_line(painter, row, line, spans, base_style, theme);
+    }
+}
+
+fn paint_language_bar(painter: &mut Painter, area: Rect, state: &ThemeEditorState, theme: &Theme) {
+    let mut x = area.x.saturating_add(1);
+    for lang in &PreviewLanguage::ALL {
+        let label = lang.label();
+        // Format: [Label] with 1-char gap
+        let btn_text = format!("[{}]", label);
+        let btn_w = btn_text.len() as u16;
+        if x.saturating_add(btn_w) > area.right() {
+            break;
+        }
+        let style = if *lang == state.preview_language {
+            Style::default().fg(theme.accent_fg).add_mod(UiMod::BOLD)
+        } else {
+            Style::default().fg(theme.palette_muted_fg)
+        };
+        painter.text_clipped(Pos::new(x, area.y), &btn_text, style, area);
+        x = x.saturating_add(btn_w).saturating_add(1);
     }
 }
 
@@ -779,6 +815,10 @@ fn preview_language_snippet(language: PreviewLanguage) -> (LanguageId, &'static 
         PreviewLanguage::Python => (LanguageId::Python, snippets::PYTHON_SNIPPET),
         PreviewLanguage::Go => (LanguageId::Go, snippets::GO_SNIPPET),
         PreviewLanguage::JavaScript => (LanguageId::JavaScript, snippets::JS_SNIPPET),
+        PreviewLanguage::TypeScript => (LanguageId::TypeScript, snippets::TS_SNIPPET),
+        PreviewLanguage::C => (LanguageId::C, snippets::C_SNIPPET),
+        PreviewLanguage::Cpp => (LanguageId::Cpp, snippets::CPP_SNIPPET),
+        PreviewLanguage::Java => (LanguageId::Java, snippets::JAVA_SNIPPET),
     }
 }
 
@@ -793,7 +833,8 @@ fn style_for_highlight(kind: HighlightKind, theme: &Theme) -> Style {
         HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),
         HighlightKind::Lifetime => Style::default().fg(theme.syntax_keyword_fg),
         HighlightKind::Function => Style::default().fg(theme.syntax_function_fg),
-        HighlightKind::Macro => Style::default().fg(theme.syntax_attribute_fg),
+        HighlightKind::Macro => Style::default().fg(theme.syntax_macro_fg),
+        HighlightKind::Namespace => Style::default().fg(theme.syntax_namespace_fg),
         HighlightKind::Variable => Style::default().fg(theme.syntax_variable_fg),
         HighlightKind::Constant => Style::default().fg(theme.syntax_constant_fg),
     }

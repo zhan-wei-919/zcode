@@ -34,6 +34,8 @@ pub enum ThemeEditorToken {
     Number,
     Type,
     Attribute,
+    Namespace,
+    Macro,
     Function,
     Variable,
     Constant,
@@ -47,13 +49,15 @@ pub enum ThemeEditorToken {
 }
 
 impl ThemeEditorToken {
-    pub const ALL: [ThemeEditorToken; 15] = [
+    pub const ALL: [ThemeEditorToken; 17] = [
         ThemeEditorToken::Comment,
         ThemeEditorToken::Keyword,
         ThemeEditorToken::String,
         ThemeEditorToken::Number,
         ThemeEditorToken::Type,
         ThemeEditorToken::Attribute,
+        ThemeEditorToken::Namespace,
+        ThemeEditorToken::Macro,
         ThemeEditorToken::Function,
         ThemeEditorToken::Variable,
         ThemeEditorToken::Constant,
@@ -73,6 +77,8 @@ impl ThemeEditorToken {
             Self::Number => "Number",
             Self::Type => "Type",
             Self::Attribute => "Attribute",
+            Self::Namespace => "Namespace",
+            Self::Macro => "Macro",
             Self::Function => "Function",
             Self::Variable => "Variable",
             Self::Constant => "Constant",
@@ -93,15 +99,17 @@ impl ThemeEditorToken {
             Self::Number => 3,
             Self::Type => 4,
             Self::Attribute => 5,
-            Self::Function => 6,
-            Self::Variable => 7,
-            Self::Constant => 8,
-            Self::Regex => 9,
-            Self::EditorBg => 10,
-            Self::SidebarBg => 11,
-            Self::ActivityBg => 12,
-            Self::PopupBg => 13,
-            Self::StatusbarBg => 14,
+            Self::Namespace => 6,
+            Self::Macro => 7,
+            Self::Function => 8,
+            Self::Variable => 9,
+            Self::Constant => 10,
+            Self::Regex => 11,
+            Self::EditorBg => 12,
+            Self::SidebarBg => 13,
+            Self::ActivityBg => 14,
+            Self::PopupBg => 15,
+            Self::StatusbarBg => 16,
         }
     }
 
@@ -123,15 +131,34 @@ pub enum PreviewLanguage {
     Python,
     Go,
     JavaScript,
+    TypeScript,
+    C,
+    Cpp,
+    Java,
 }
 
 impl PreviewLanguage {
+    pub const ALL: [PreviewLanguage; 8] = [
+        PreviewLanguage::Rust,
+        PreviewLanguage::Python,
+        PreviewLanguage::Go,
+        PreviewLanguage::JavaScript,
+        PreviewLanguage::TypeScript,
+        PreviewLanguage::C,
+        PreviewLanguage::Cpp,
+        PreviewLanguage::Java,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Rust => "Rust",
-            Self::Python => "Python",
+            Self::Python => "Py",
             Self::Go => "Go",
-            Self::JavaScript => "JavaScript",
+            Self::JavaScript => "JS",
+            Self::TypeScript => "TS",
+            Self::C => "C",
+            Self::Cpp => "C++",
+            Self::Java => "Java",
         }
     }
 
@@ -140,8 +167,16 @@ impl PreviewLanguage {
             Self::Rust => Self::Python,
             Self::Python => Self::Go,
             Self::Go => Self::JavaScript,
-            Self::JavaScript => Self::Rust,
+            Self::JavaScript => Self::TypeScript,
+            Self::TypeScript => Self::C,
+            Self::C => Self::Cpp,
+            Self::Cpp => Self::Java,
+            Self::Java => Self::Rust,
         }
+    }
+
+    pub fn from_index(i: usize) -> Self {
+        Self::ALL[i % Self::ALL.len()]
     }
 }
 

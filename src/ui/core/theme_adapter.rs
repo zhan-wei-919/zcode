@@ -18,6 +18,8 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
         syntax_number_fg: map_color_for_support(theme.syntax_number_fg, support),
         syntax_type_fg: map_color_for_support(theme.syntax_type_fg, support),
         syntax_attribute_fg: map_color_for_support(theme.syntax_attribute_fg, support),
+        syntax_namespace_fg: map_color_for_support(theme.syntax_namespace_fg, support),
+        syntax_macro_fg: map_color_for_support(theme.syntax_macro_fg, support),
         syntax_function_fg: map_color_for_support(theme.syntax_function_fg, support),
         syntax_variable_fg: map_color_for_support(theme.syntax_variable_fg, support),
         syntax_constant_fg: map_color_for_support(theme.syntax_constant_fg, support),
@@ -119,6 +121,22 @@ fn apply_non_truecolor_syntax_palette(
         support,
         44,
         6,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_namespace_fg,
+        original.syntax_namespace_fg,
+        defaults.syntax_namespace_fg,
+        support,
+        44,
+        6,
+    );
+    maybe_apply_syntax_fallback(
+        &mut adapted.syntax_macro_fg,
+        original.syntax_macro_fg,
+        defaults.syntax_macro_fg,
+        support,
+        68,
+        4,
     );
     maybe_apply_syntax_fallback(
         &mut adapted.syntax_function_fg,

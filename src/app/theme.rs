@@ -16,6 +16,8 @@ pub struct UiTheme {
     pub syntax_number_fg: Color,
     pub syntax_type_fg: Color,
     pub syntax_attribute_fg: Color,
+    pub syntax_namespace_fg: Color,
+    pub syntax_macro_fg: Color,
     pub syntax_function_fg: Color,
     pub syntax_variable_fg: Color,
     pub syntax_constant_fg: Color,
@@ -56,6 +58,8 @@ impl Default for UiTheme {
             syntax_number_fg: Color::Rgb(0xB5, 0xCE, 0xA8),
             syntax_type_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
             syntax_attribute_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
+            syntax_namespace_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
+            syntax_macro_fg: Color::Rgb(0x56, 0x9C, 0xD6),
             syntax_function_fg: Color::Rgb(0xDC, 0xDC, 0xAA),
             syntax_variable_fg: Color::Rgb(0x9C, 0xDC, 0xFE),
             syntax_constant_fg: Color::Rgb(0x4F, 0xC1, 0xFF),
@@ -135,6 +139,16 @@ impl UiTheme {
         if let Some(v) = &settings.syntax_attribute_fg {
             if let Some(c) = parse_color(v) {
                 self.syntax_attribute_fg = c;
+            }
+        }
+        if let Some(v) = &settings.syntax_namespace_fg {
+            if let Some(c) = parse_color(v) {
+                self.syntax_namespace_fg = c;
+            }
+        }
+        if let Some(v) = &settings.syntax_macro_fg {
+            if let Some(c) = parse_color(v) {
+                self.syntax_macro_fg = c;
             }
         }
         if let Some(v) = &settings.syntax_function_fg {
@@ -319,6 +333,8 @@ pub(crate) fn to_core_theme(theme: &UiTheme) -> CoreTheme {
         syntax_number_fg: theme.syntax_number_fg,
         syntax_type_fg: theme.syntax_type_fg,
         syntax_attribute_fg: theme.syntax_attribute_fg,
+        syntax_namespace_fg: theme.syntax_namespace_fg,
+        syntax_macro_fg: theme.syntax_macro_fg,
         syntax_function_fg: theme.syntax_function_fg,
         syntax_variable_fg: theme.syntax_variable_fg,
         syntax_constant_fg: theme.syntax_constant_fg,

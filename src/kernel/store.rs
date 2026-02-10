@@ -1168,6 +1168,7 @@ impl Store {
             | action @ Action::ThemeEditorSetSaturationLightness { .. }
             | action @ Action::ThemeEditorSetAnsiIndex { .. }
             | action @ Action::ThemeEditorCycleLanguage
+            | action @ Action::ThemeEditorSetLanguage { .. }
             | action @ Action::ThemeEditorResetToken => self.reduce_theme_editor_action(action),
         }
     }

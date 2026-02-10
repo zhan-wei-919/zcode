@@ -149,7 +149,8 @@ fn highlight_kind_for_semantic_token(
                 Some(HighlightKind::Variable)
             }
         }
-        "namespace" | "module" | "label" | "decorator" => Some(HighlightKind::Attribute),
+        "namespace" | "module" => Some(HighlightKind::Namespace),
+        "label" | "decorator" => Some(HighlightKind::Attribute),
         _ => None,
     }
 }
@@ -242,6 +243,30 @@ mod tests {
         assert_eq!(
             highlight_kind_for_semantic_token("variable", 1, &legend),
             Some(HighlightKind::Constant)
+        );
+    }
+
+    #[test]
+    fn semantic_token_namespace_maps_to_namespace() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("namespace", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Namespace)
+        );
+    }
+
+    #[test]
+    fn semantic_token_module_maps_to_namespace() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("module", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Namespace)
+        );
+    }
+
+    #[test]
+    fn semantic_token_decorator_maps_to_attribute() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("decorator", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Attribute)
         );
     }
 }

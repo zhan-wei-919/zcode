@@ -944,7 +944,8 @@ fn style_for_highlight(
         HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),
         HighlightKind::Lifetime => Style::default().fg(theme.syntax_keyword_fg),
         HighlightKind::Function => Style::default().fg(theme.syntax_function_fg),
-        HighlightKind::Macro => Style::default().fg(theme.syntax_attribute_fg),
+        HighlightKind::Macro => Style::default().fg(theme.syntax_macro_fg),
+        HighlightKind::Namespace => Style::default().fg(theme.syntax_namespace_fg),
         HighlightKind::Variable => Style::default().fg(theme.syntax_variable_fg),
         HighlightKind::Constant => Style::default().fg(theme.syntax_constant_fg),
     };

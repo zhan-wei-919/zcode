@@ -109,6 +109,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         workbench.theme_editor_layout.token_list_area = areas.token_list;
         workbench.theme_editor_layout.hue_bar_area = areas.hue_bar;
         workbench.theme_editor_layout.sv_palette_area = areas.sv_palette;
+        workbench.theme_editor_layout.language_bar_area = areas.language_bar;
         backend.draw(editor_area, painter.cmds());
     } else {
         let _scope = perf::scope("render.editors");
