@@ -1,3 +1,4 @@
+pub mod color;
 pub mod color_support;
 pub mod geom;
 pub mod id;

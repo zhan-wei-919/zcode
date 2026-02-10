@@ -4,13 +4,8 @@ use crate::core::event::MouseButton;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DragPayload {
-    Tab {
-        from_pane: usize,
-        tab_id: crate::kernel::editor::TabId,
-    },
-    ExplorerNode {
-        node_id: crate::models::NodeId,
-    },
+    Tab { from_pane: usize, tab_id: u64 },
+    ExplorerNode { node_id: u64 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

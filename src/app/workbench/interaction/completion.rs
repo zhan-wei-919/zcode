@@ -59,7 +59,7 @@ impl Workbench {
         }
 
         let _ = trigger;
-        self.pending_completion_deadline = Some(Instant::now());
+        self.lsp_debounce.completion = Some(Instant::now());
     }
 }
 

@@ -506,6 +506,8 @@ fn explorer_context_menu_confirm_rename_opens_rename_dialog() {
             ContextMenuItem::ExplorerNewFolder,
             ContextMenuItem::ExplorerRename,
             ContextMenuItem::ExplorerDelete,
+            ContextMenuItem::ExplorerCopyPath,
+            ContextMenuItem::ExplorerCopyRelativePath,
         ]
     );
 
@@ -529,6 +531,86 @@ fn explorer_context_menu_confirm_rename_opens_rename_dialog() {
             overwrite: false
         }]
             if from == &root.join("a.txt") && to == &root.join("b.txt")
+    ));
+}
+
+#[test]
+fn explorer_context_menu_confirm_copy_path_sets_clipboard_text() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let mut tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
+    let file_id = tree
+        .insert_child(
+            tree.root(),
+            OsString::from("a.txt"),
+            crate::models::NodeKind::File,
+        )
+        .unwrap();
+
+    let mut store = Store::new(AppState::new(root.clone(), tree, EditorConfig::default()));
+    let tree_row = store
+        .state
+        .explorer
+        .rows
+        .iter()
+        .position(|row| row.id == file_id)
+        .unwrap();
+
+    let _ = store.dispatch(Action::ContextMenuOpen {
+        request: ContextMenuRequest::Explorer {
+            tree_row: Some(tree_row),
+        },
+        x: 10,
+        y: 5,
+    });
+
+    let _ = store.dispatch(Action::ContextMenuSetSelected { index: 4 });
+    let result = store.dispatch(Action::ContextMenuConfirm);
+
+    assert!(result.state_changed);
+    assert!(matches!(
+        result.effects.as_slice(),
+        [Effect::SetClipboardText(text)] if text == &root.join("a.txt").to_string_lossy()
+    ));
+}
+
+#[test]
+fn explorer_context_menu_confirm_copy_relative_path_sets_clipboard_text() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let mut tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
+    let file_id = tree
+        .insert_child(
+            tree.root(),
+            OsString::from("a.txt"),
+            crate::models::NodeKind::File,
+        )
+        .unwrap();
+
+    let mut store = Store::new(AppState::new(root, tree, EditorConfig::default()));
+    let tree_row = store
+        .state
+        .explorer
+        .rows
+        .iter()
+        .position(|row| row.id == file_id)
+        .unwrap();
+
+    let _ = store.dispatch(Action::ContextMenuOpen {
+        request: ContextMenuRequest::Explorer {
+            tree_row: Some(tree_row),
+        },
+        x: 10,
+        y: 5,
+    });
+
+    let _ = store.dispatch(Action::ContextMenuSetSelected { index: 5 });
+    let result = store.dispatch(Action::ContextMenuConfirm);
+
+    assert!(result.state_changed);
+    assert!(matches!(
+        result.effects.as_slice(),
+        [Effect::SetClipboardText(text)] if text == "a.txt"
     ));
 }
 

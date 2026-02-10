@@ -13,10 +13,13 @@ mod completion_strategy;
 mod context_menu;
 mod explorer;
 mod git;
+mod input_dialog;
 mod lsp;
+mod palette;
 mod search;
 mod semantic;
 mod terminal;
+mod theme_editor;
 mod util;
 
 use completion::{
@@ -40,7 +43,7 @@ use util::{
     prev_bottom_panel_tab, search_viewport_for_focus,
 };
 
-use super::state::{ThemeEditorFocus, ThemeEditorToken};
+use super::state::ThemeEditorFocus;
 use super::{
     Action, AppState, BottomPanelTab, EditorAction, Effect, FocusTarget, InputDialogKind,
     SidebarTab, SplitDirection,
@@ -184,24 +187,35 @@ impl Store {
 
         // Popups are positioned relative to the editor pane; reset them after collapsing.
         self.state.ui.signature_help = super::state::SignatureHelpPopupState::default();
-        self.state.ui.completion = super::state::CompletionPopupState::default();
+        let _ = self.state.ui.completion.close();
 
-        if let Some(repo_root) = self.state.git.repo_root.clone() {
-            let path = self
-                .state
-                .editor
-                .pane(0)
-                .and_then(|pane_state| pane_state.active_tab())
-                .and_then(|tab| tab.path.clone());
-            if let Some(path) = path {
-                effects.push(Effect::GitRefreshStatus {
-                    repo_root: repo_root.clone(),
-                });
-                effects.push(Effect::GitRefreshDiff { repo_root, path });
-            }
-        }
+        self.push_git_refresh_for_pane(0, effects);
 
         true
+    }
+
+    fn push_git_refresh_for_path(&self, path: std::path::PathBuf, effects: &mut Vec<Effect>) {
+        let Some(repo_root) = self.state.git.repo_root.clone() else {
+            return;
+        };
+
+        effects.push(Effect::GitRefreshStatus {
+            repo_root: repo_root.clone(),
+        });
+        effects.push(Effect::GitRefreshDiff { repo_root, path });
+    }
+
+    fn push_git_refresh_for_pane(&self, pane: usize, effects: &mut Vec<Effect>) {
+        let path = self
+            .state
+            .editor
+            .pane(pane)
+            .and_then(|pane_state| pane_state.active_tab())
+            .and_then(|tab| tab.path.clone());
+
+        if let Some(path) = path {
+            self.push_git_refresh_for_path(path, effects);
+        }
     }
 
     pub fn dispatch(&mut self, action: Action) -> DispatchResult {
@@ -216,17 +230,7 @@ impl Store {
                     .active_tab_strategy()
                     .should_close_on_command(&cmd, active_tab)
                 {
-                    let has_completion = self.state.ui.completion.visible
-                        || self.state.ui.completion.request.is_some()
-                        || self.state.ui.completion.pending_request.is_some()
-                        || !self.state.ui.completion.all_items.is_empty()
-                        || !self.state.ui.completion.items.is_empty();
-                    if has_completion {
-                        self.state.ui.completion = super::state::CompletionPopupState::default();
-                        true
-                    } else {
-                        false
-                    }
+                    self.state.ui.completion.close()
                 } else {
                     false
                 };
@@ -238,17 +242,7 @@ impl Store {
             Action::Editor(editor_action) => {
                 let completion_changed = if should_close_completion_on_editor_action(&editor_action)
                 {
-                    let has_completion = self.state.ui.completion.visible
-                        || self.state.ui.completion.request.is_some()
-                        || self.state.ui.completion.pending_request.is_some()
-                        || !self.state.ui.completion.all_items.is_empty()
-                        || !self.state.ui.completion.items.is_empty();
-                    if has_completion {
-                        self.state.ui.completion = super::state::CompletionPopupState::default();
-                        true
-                    } else {
-                        false
-                    }
+                    self.state.ui.completion.close()
                 } else {
                     false
                 };
@@ -412,15 +406,7 @@ impl Store {
                             }
                         }
 
-                        if let Some(repo_root) = self.state.git.repo_root.clone() {
-                            effects.push(Effect::GitRefreshStatus {
-                                repo_root: repo_root.clone(),
-                            });
-                            effects.push(Effect::GitRefreshDiff {
-                                repo_root,
-                                path: opened_path_for_git,
-                            });
-                        }
+                        self.push_git_refresh_for_path(opened_path_for_git, &mut effects);
 
                         DispatchResult {
                             effects,
@@ -433,20 +419,7 @@ impl Store {
                             .editor
                             .dispatch_action(EditorAction::SetActiveTab { pane, index });
 
-                        if let Some(repo_root) = self.state.git.repo_root.clone() {
-                            let path = self
-                                .state
-                                .editor
-                                .pane(pane)
-                                .and_then(|pane_state| pane_state.active_tab())
-                                .and_then(|tab| tab.path.clone());
-                            if let Some(path) = path {
-                                effects.push(Effect::GitRefreshStatus {
-                                    repo_root: repo_root.clone(),
-                                });
-                                effects.push(Effect::GitRefreshDiff { repo_root, path });
-                            }
-                        }
+                        self.push_git_refresh_for_pane(pane, &mut effects);
 
                         DispatchResult {
                             effects,
@@ -469,15 +442,7 @@ impl Store {
                             });
 
                         if success {
-                            if let Some(repo_root) = self.state.git.repo_root.clone() {
-                                effects.push(Effect::GitRefreshStatus {
-                                    repo_root: repo_root.clone(),
-                                });
-                                effects.push(Effect::GitRefreshDiff {
-                                    repo_root,
-                                    path: saved_path,
-                                });
-                            }
+                            self.push_git_refresh_for_path(saved_path, &mut effects);
                         }
 
                         DispatchResult {
@@ -491,20 +456,7 @@ impl Store {
                             .editor
                             .dispatch_action(EditorAction::CloseTabAt { pane, index });
 
-                        if let Some(repo_root) = self.state.git.repo_root.clone() {
-                            let path = self
-                                .state
-                                .editor
-                                .pane(pane)
-                                .and_then(|pane_state| pane_state.active_tab())
-                                .and_then(|tab| tab.path.clone());
-                            if let Some(path) = path {
-                                effects.push(Effect::GitRefreshStatus {
-                                    repo_root: repo_root.clone(),
-                                });
-                                effects.push(Effect::GitRefreshDiff { repo_root, path });
-                            }
-                        }
+                        self.push_git_refresh_for_pane(pane, &mut effects);
 
                         DispatchResult {
                             effects,
@@ -559,300 +511,14 @@ impl Store {
                     }
                 }
             }
-            Action::InputDialogAppend(ch) => {
-                let dialog = &mut self.state.ui.input_dialog;
-                if !dialog.visible {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                dialog.error = None;
-                if dialog.cursor > dialog.value.len() {
-                    dialog.cursor = dialog.value.len();
-                }
-                dialog.value.insert(dialog.cursor, ch);
-                dialog.cursor += ch.len_utf8();
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::InputDialogBackspace => {
-                let dialog = &mut self.state.ui.input_dialog;
-                if !dialog.visible || dialog.cursor == 0 {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                dialog.error = None;
-                let prev = dialog.value[..dialog.cursor]
-                    .char_indices()
-                    .last()
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
-                dialog.value.drain(prev..dialog.cursor);
-                dialog.cursor = prev;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::InputDialogCursorLeft => {
-                let dialog = &mut self.state.ui.input_dialog;
-                if !dialog.visible || dialog.cursor == 0 {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let prev = dialog.value[..dialog.cursor]
-                    .char_indices()
-                    .last()
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
-                let changed = prev != dialog.cursor;
-                dialog.cursor = prev;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: changed,
-                }
-            }
-            Action::InputDialogCursorRight => {
-                let dialog = &mut self.state.ui.input_dialog;
-                if !dialog.visible || dialog.cursor >= dialog.value.len() {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let next = dialog.value[dialog.cursor..]
-                    .chars()
-                    .next()
-                    .map(|ch| dialog.cursor + ch.len_utf8())
-                    .unwrap_or(dialog.value.len());
-                let changed = next != dialog.cursor;
-                dialog.cursor = next;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: changed,
-                }
-            }
-            Action::InputDialogAccept => {
-                let dialog = &mut self.state.ui.input_dialog;
-                if !dialog.visible {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let Some(kind) = dialog.kind.as_ref() else {
-                    dialog.visible = false;
-                    dialog.title.clear();
-                    dialog.value.clear();
-                    dialog.cursor = 0;
-                    dialog.error = None;
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: true,
-                    };
-                };
-
-                let value = dialog.value.trim();
-                match kind {
-                    InputDialogKind::NewFile { .. }
-                    | InputDialogKind::NewFolder { .. }
-                    | InputDialogKind::ExplorerRename { .. } => {
-                        if value.is_empty() {
-                            let prev = dialog.error.replace("Name required".to_string());
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                        if value.contains('/')
-                            || value.contains('\\')
-                            || value == "."
-                            || value == ".."
-                        {
-                            let prev = dialog.error.replace("Invalid name".to_string());
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                    }
-                    InputDialogKind::LspRename { .. } => {
-                        if value.is_empty() {
-                            let prev = dialog.error.replace("Name required".to_string());
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                        if value.chars().any(|ch| ch.is_whitespace()) {
-                            let prev = dialog
-                                .error
-                                .replace("Name cannot contain spaces".to_string());
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                    }
-                    InputDialogKind::LspWorkspaceSymbols => {
-                        if value.is_empty() {
-                            let prev = dialog.error.replace("Query required".to_string());
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                    }
-                    InputDialogKind::GitWorktreeAdd { .. } => {
-                        if value.is_empty() {
-                            let prev = dialog.error.replace("Branch required".to_string());
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                        if value.chars().any(|ch| ch.is_whitespace()) {
-                            let prev = dialog
-                                .error
-                                .replace("Branch cannot contain spaces".to_string());
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                        if value.contains('\\') || value.contains("..") || value.starts_with('/') {
-                            let prev = dialog.error.replace("Invalid branch".to_string());
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                    }
-                }
-
-                let value = value.to_string();
-                let kind = dialog.kind.take();
-                dialog.visible = false;
-                dialog.title.clear();
-                dialog.value.clear();
-                dialog.cursor = 0;
-                dialog.error = None;
-
-                let Some(kind) = kind else {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: true,
-                    };
-                };
-
-                let effect = match kind {
-                    InputDialogKind::NewFile { parent_dir } => {
-                        Effect::CreateFile(parent_dir.join(&value))
-                    }
-                    InputDialogKind::NewFolder { parent_dir } => {
-                        Effect::CreateDir(parent_dir.join(&value))
-                    }
-                    InputDialogKind::ExplorerRename { from } => {
-                        let Some(parent) = from.parent() else {
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: true,
-                            };
-                        };
-                        let to = parent.join(&value);
-                        if to == from {
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: true,
-                            };
-                        }
-                        let root = self.state.workspace_root.as_path();
-                        if from.as_path() == root
-                            || to.as_path() == root
-                            || !from.starts_with(root)
-                            || !to.starts_with(root)
-                        {
-                            return DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: true,
-                            };
-                        }
-                        Effect::RenamePath {
-                            from,
-                            to,
-                            overwrite: false,
-                        }
-                    }
-                    InputDialogKind::LspRename { path, line, column } => Effect::LspRenameRequest {
-                        path,
-                        line,
-                        column,
-                        new_name: value,
-                    },
-                    InputDialogKind::LspWorkspaceSymbols => {
-                        let _ = self.state.symbols.clear();
-                        self.state.ui.bottom_panel.visible = true;
-                        self.state.ui.bottom_panel.active_tab = BottomPanelTab::Symbols;
-                        self.state.ui.focus = FocusTarget::BottomPanel;
-                        Effect::LspWorkspaceSymbolsRequest { query: value }
-                    }
-                    InputDialogKind::GitWorktreeAdd { repo_root } => {
-                        let branch = value
-                            .strip_prefix("refs/heads/")
-                            .unwrap_or(value.as_str())
-                            .to_string();
-                        Effect::GitWorktreeAdd { repo_root, branch }
-                    }
-                };
-
-                DispatchResult {
-                    effects: vec![effect],
-                    state_changed: true,
-                }
-            }
-            Action::InputDialogCancel => {
-                let dialog = &mut self.state.ui.input_dialog;
-                if !dialog.visible {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-                dialog.visible = false;
-                dialog.title.clear();
-                dialog.value.clear();
-                dialog.cursor = 0;
-                dialog.error = None;
-                dialog.kind = None;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
+            action @ Action::InputDialogAppend(_)
+            | action @ Action::InputDialogBackspace
+            | action @ Action::InputDialogCursorLeft
+            | action @ Action::InputDialogCursorRight
+            | action @ Action::InputDialogAccept
+            | action @ Action::InputDialogCancel => self.reduce_input_dialog_action(action),
             Action::EditorSetActivePane { pane } => {
-                let completion_changed = {
-                    let had = self.state.ui.completion.visible
-                        || self.state.ui.completion.request.is_some()
-                        || self.state.ui.completion.pending_request.is_some()
-                        || !self.state.ui.completion.all_items.is_empty()
-                        || !self.state.ui.completion.items.is_empty();
-                    if had {
-                        self.state.ui.completion = super::state::CompletionPopupState::default();
-                    }
-                    had
-                };
+                let completion_changed = { self.state.ui.completion.close() };
 
                 let panes = self.state.ui.editor_layout.panes.max(1);
                 let pane = pane.min(panes - 1);
@@ -864,20 +530,7 @@ impl Store {
 
                 let mut effects = Vec::new();
                 if pane != prev {
-                    if let Some(repo_root) = self.state.git.repo_root.clone() {
-                        let path = self
-                            .state
-                            .editor
-                            .pane(pane)
-                            .and_then(|pane_state| pane_state.active_tab())
-                            .and_then(|tab| tab.path.clone());
-                        if let Some(path) = path {
-                            effects.push(Effect::GitRefreshStatus {
-                                repo_root: repo_root.clone(),
-                            });
-                            effects.push(Effect::GitRefreshDiff { repo_root, path });
-                        }
-                    }
+                    self.push_git_refresh_for_pane(pane, &mut effects);
                 }
 
                 DispatchResult {
@@ -1015,14 +668,7 @@ impl Store {
                 state_changed: true,
             },
             Action::CompletionClose => {
-                let had = self.state.ui.completion.visible
-                    || self.state.ui.completion.request.is_some()
-                    || self.state.ui.completion.pending_request.is_some()
-                    || !self.state.ui.completion.all_items.is_empty()
-                    || !self.state.ui.completion.items.is_empty();
-                if had {
-                    self.state.ui.completion = super::state::CompletionPopupState::default();
-                }
+                let had = self.state.ui.completion.close();
                 DispatchResult {
                     effects: Vec::new(),
                     state_changed: had,
@@ -1082,12 +728,7 @@ impl Store {
                 }
 
                 let Some(req) = self.state.ui.completion.request.clone() else {
-                    let had = self.state.ui.completion.visible
-                        || self.state.ui.completion.request.is_some()
-                        || self.state.ui.completion.pending_request.is_some()
-                        || !self.state.ui.completion.all_items.is_empty()
-                        || !self.state.ui.completion.items.is_empty();
-                    self.state.ui.completion = super::state::CompletionPopupState::default();
+                    let had = self.state.ui.completion.close();
                     return DispatchResult {
                         effects: Vec::new(),
                         state_changed: had,
@@ -1100,12 +741,7 @@ impl Store {
                     .pane(req.pane)
                     .and_then(|pane| pane.active_tab())
                 else {
-                    let had = self.state.ui.completion.visible
-                        || self.state.ui.completion.request.is_some()
-                        || self.state.ui.completion.pending_request.is_some()
-                        || !self.state.ui.completion.all_items.is_empty()
-                        || !self.state.ui.completion.items.is_empty();
-                    self.state.ui.completion = super::state::CompletionPopupState::default();
+                    let had = self.state.ui.completion.close();
                     return DispatchResult {
                         effects: Vec::new(),
                         state_changed: had,
@@ -1114,12 +750,7 @@ impl Store {
 
                 let valid = tab.path.as_ref() == Some(&req.path);
                 if !valid {
-                    let had = self.state.ui.completion.visible
-                        || self.state.ui.completion.request.is_some()
-                        || self.state.ui.completion.pending_request.is_some()
-                        || !self.state.ui.completion.all_items.is_empty()
-                        || !self.state.ui.completion.items.is_empty();
-                    self.state.ui.completion = super::state::CompletionPopupState::default();
+                    let had = self.state.ui.completion.close();
                     return DispatchResult {
                         effects: Vec::new(),
                         state_changed: had,
@@ -1163,7 +794,7 @@ impl Store {
                 insertion =
                     adjust_completion_multiline_indentation(tab, insertion_start_char, insertion);
 
-                self.state.ui.completion = super::state::CompletionPopupState::default();
+                let _ = self.state.ui.completion.close();
 
                 let mut edits = item.additional_text_edits.clone();
                 edits.push(LspTextEdit {
@@ -1340,78 +971,10 @@ impl Store {
                     state_changed,
                 }
             }
-            Action::PaletteAppend(ch) => {
-                if !self.state.ui.command_palette.visible {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                self.state.ui.command_palette.query.push(ch);
-                self.state.ui.command_palette.selected = 0;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::PaletteBackspace => {
-                if !self.state.ui.command_palette.visible {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let removed = self.state.ui.command_palette.query.pop().is_some();
-                if removed {
-                    self.state.ui.command_palette.selected = 0;
-                }
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: removed,
-                }
-            }
-            Action::PaletteMoveSelection(delta) => {
-                if !self.state.ui.command_palette.visible || delta == 0 {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let selected = &mut self.state.ui.command_palette.selected;
-                if delta > 0 {
-                    *selected = selected.saturating_add(delta as usize);
-                } else {
-                    *selected = selected.saturating_sub((-delta) as usize);
-                }
-
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::PaletteClose => {
-                if !self.state.ui.command_palette.visible {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                self.state.ui.command_palette.visible = false;
-                self.state.ui.command_palette.query.clear();
-                self.state.ui.command_palette.selected = 0;
-                if self.state.ui.focus == FocusTarget::CommandPalette {
-                    self.state.ui.focus = FocusTarget::Editor;
-                }
-
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
+            action @ Action::PaletteAppend(_)
+            | action @ Action::PaletteBackspace
+            | action @ Action::PaletteMoveSelection(_)
+            | action @ Action::PaletteClose => self.reduce_palette_action(action),
             Action::SetHoveredTab { pane, index } => {
                 let prev = self.state.ui.hovered_tab;
                 self.state.ui.hovered_tab = Some((pane, index));
@@ -1524,110 +1087,18 @@ impl Store {
                     state_changed: true,
                 }
             }
-            Action::ThemeEditorOpen => {
-                self.state.ui.theme_editor.visible = true;
-                self.state.ui.theme_editor.focus = ThemeEditorFocus::TokenList;
-                self.state.ui.focus = FocusTarget::ThemeEditor;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorClose => {
-                self.state.ui.theme_editor.visible = false;
-                self.state.ui.focus = FocusTarget::Editor;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorMoveTokenSelection { delta } => {
-                if !self.state.ui.theme_editor.visible {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-                let count = ThemeEditorToken::ALL.len() as isize;
-                let cur = self.state.ui.theme_editor.selected_token.index() as isize;
-                let next = ((cur + delta).rem_euclid(count)) as usize;
-                self.state.ui.theme_editor.selected_token = ThemeEditorToken::from_index(next);
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorSetFocus { focus } => {
-                self.state.ui.theme_editor.focus = focus;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorAdjustHue { delta } => {
-                let cur = self.state.ui.theme_editor.hue as i32;
-                let next = ((cur + delta as i32).rem_euclid(360)) as u16;
-                self.state.ui.theme_editor.hue = next;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorSetHue { hue } => {
-                self.state.ui.theme_editor.hue = hue % 360;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorAdjustSaturation { delta } => {
-                let cur = self.state.ui.theme_editor.saturation as i16;
-                let next = (cur + delta as i16).clamp(0, 100) as u8;
-                self.state.ui.theme_editor.saturation = next;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorAdjustLightness { delta } => {
-                let cur = self.state.ui.theme_editor.lightness as i16;
-                let next = (cur + delta as i16).clamp(0, 100) as u8;
-                self.state.ui.theme_editor.lightness = next;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorSetSaturationLightness {
-                saturation,
-                lightness,
-            } => {
-                self.state.ui.theme_editor.saturation = saturation.min(100);
-                self.state.ui.theme_editor.lightness = lightness.min(100);
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorSetAnsiIndex { index } => {
-                self.state.ui.theme_editor.ansi_index = index;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorCycleLanguage => {
-                self.state.ui.theme_editor.preview_language =
-                    self.state.ui.theme_editor.preview_language.next();
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
-                }
-            }
-            Action::ThemeEditorResetToken => DispatchResult {
-                effects: Vec::new(),
-                state_changed: true,
-            },
+            action @ Action::ThemeEditorOpen
+            | action @ Action::ThemeEditorClose
+            | action @ Action::ThemeEditorMoveTokenSelection { .. }
+            | action @ Action::ThemeEditorSetFocus { .. }
+            | action @ Action::ThemeEditorAdjustHue { .. }
+            | action @ Action::ThemeEditorSetHue { .. }
+            | action @ Action::ThemeEditorAdjustSaturation { .. }
+            | action @ Action::ThemeEditorAdjustLightness { .. }
+            | action @ Action::ThemeEditorSetSaturationLightness { .. }
+            | action @ Action::ThemeEditorSetAnsiIndex { .. }
+            | action @ Action::ThemeEditorCycleLanguage
+            | action @ Action::ThemeEditorResetToken => self.reduce_theme_editor_action(action),
         }
     }
 
@@ -1638,9 +1109,7 @@ impl Store {
         match command {
             Command::Escape => {
                 if self.state.ui.command_palette.visible {
-                    self.state.ui.command_palette.visible = false;
-                    self.state.ui.command_palette.query.clear();
-                    self.state.ui.command_palette.selected = 0;
+                    self.state.ui.command_palette.reset();
                     if self.state.ui.focus == FocusTarget::CommandPalette {
                         self.state.ui.focus = FocusTarget::Editor;
                     }
@@ -1750,11 +1219,9 @@ impl Store {
                     };
                 };
 
+                self.state.ui.input_dialog.reset();
                 self.state.ui.input_dialog.visible = true;
                 self.state.ui.input_dialog.title = "Git Worktree".to_string();
-                self.state.ui.input_dialog.value.clear();
-                self.state.ui.input_dialog.cursor = 0;
-                self.state.ui.input_dialog.error = None;
                 self.state.ui.input_dialog.kind =
                     Some(InputDialogKind::GitWorktreeAdd { repo_root });
                 state_changed = true;
@@ -1817,7 +1284,7 @@ impl Store {
                     .editor
                     .pane(pane)
                     .and_then(|pane| pane.active_tab());
-                let tab_strategy = tab.map(completion_strategy::strategy_for_tab);
+                let tab_with_strategy = tab.map(|t| (t, completion_strategy::strategy_for_tab(t)));
                 let (
                     tab_supports_completion,
                     tab_completion_triggers,
@@ -1837,7 +1304,7 @@ impl Store {
                         )
                     })
                     .unwrap_or((true, Vec::new(), true, Vec::new(), true));
-                let should_complete = tab.is_some_and(|tab| {
+                let should_complete = tab_with_strategy.is_some_and(|(tab, strategy)| {
                     let Some(path) = tab.path.as_ref() else {
                         return false;
                     };
@@ -1850,9 +1317,7 @@ impl Store {
                     }
 
                     let triggers: &[char] = tab_completion_triggers.as_slice();
-                    tab_strategy
-                        .expect("strategy should exist when tab exists")
-                        .triggered_by_insert(tab, ch, triggers)
+                    strategy.triggered_by_insert(tab, ch, triggers)
                 });
 
                 if should_complete {
@@ -1860,14 +1325,7 @@ impl Store {
                         lsp_request_target(&self.state)
                     {
                         self.state.ui.hover_message = None;
-                        self.state.ui.completion.visible = false;
-                        self.state.ui.completion.items.clear();
-                        self.state.ui.completion.all_items.clear();
-                        self.state.ui.completion.selected = 0;
-                        self.state.ui.completion.request = None;
-                        self.state.ui.completion.is_incomplete = false;
-                        self.state.ui.completion.resolve_inflight = None;
-                        self.state.ui.completion.session_started_at = None;
+                        self.state.ui.completion.close();
                         self.state.ui.completion.pending_request =
                             Some(super::state::CompletionRequestContext {
                                 pane,
@@ -1888,7 +1346,7 @@ impl Store {
                     && self.state.ui.completion.visible
                     && !self.state.ui.completion.all_items.is_empty()
                 {
-                    if let Some(tab) = tab {
+                    if let Some((tab, strategy)) = tab_with_strategy {
                         let session_ok =
                             self.state
                                 .ui
@@ -1899,8 +1357,6 @@ impl Store {
                                     session.pane == pane && tab.path.as_ref() == Some(&session.path)
                                 });
                         if session_ok {
-                            let strategy =
-                                tab_strategy.expect("strategy should exist when tab exists");
                             let mut changed = sync_completion_items_from_cache(
                                 &mut self.state.ui.completion,
                                 tab,
@@ -1938,7 +1394,8 @@ impl Store {
                     }
                 }
 
-                if tab_strategy
+                if tab_with_strategy
+                    .map(|(_, s)| s)
                     .unwrap_or_else(|| self.active_tab_strategy())
                     .signature_help_closed_by(ch)
                 {
@@ -1980,11 +1437,8 @@ impl Store {
                     || self.state.ui.signature_help.request.is_some()
                     || !self.state.ui.signature_help.text.is_empty();
                 if had_signature_help
-                    && !tab.is_some_and(|t| {
-                        tab_strategy
-                            .expect("strategy should exist when tab exists")
-                            .signature_help_should_keep_open(t)
-                    })
+                    && !tab_with_strategy
+                        .is_some_and(|(t, strategy)| strategy.signature_help_should_keep_open(t))
                 {
                     self.state.ui.signature_help = super::state::SignatureHelpPopupState::default();
                     state_changed = true;
@@ -2048,20 +1502,7 @@ impl Store {
                 if state_changed {
                     let pane = self.state.ui.editor_layout.active_pane;
                     let mut effects = effects;
-                    if let Some(repo_root) = self.state.git.repo_root.clone() {
-                        let path = self
-                            .state
-                            .editor
-                            .pane(pane)
-                            .and_then(|pane_state| pane_state.active_tab())
-                            .and_then(|tab| tab.path.clone());
-                        if let Some(path) = path {
-                            effects.push(Effect::GitRefreshStatus {
-                                repo_root: repo_root.clone(),
-                            });
-                            effects.push(Effect::GitRefreshDiff { repo_root, path });
-                        }
-                    }
+                    self.push_git_refresh_for_pane(pane, &mut effects);
                     return DispatchResult {
                         effects,
                         state_changed,
@@ -2089,20 +1530,7 @@ impl Store {
                 if state_changed {
                     let pane = self.state.ui.editor_layout.active_pane;
                     let mut effects = effects;
-                    if let Some(repo_root) = self.state.git.repo_root.clone() {
-                        let path = self
-                            .state
-                            .editor
-                            .pane(pane)
-                            .and_then(|pane_state| pane_state.active_tab())
-                            .and_then(|tab| tab.path.clone());
-                        if let Some(path) = path {
-                            effects.push(Effect::GitRefreshStatus {
-                                repo_root: repo_root.clone(),
-                            });
-                            effects.push(Effect::GitRefreshDiff { repo_root, path });
-                        }
-                    }
+                    self.push_git_refresh_for_pane(pane, &mut effects);
                     return DispatchResult {
                         effects,
                         state_changed,
@@ -2121,20 +1549,7 @@ impl Store {
 
                     let pane = self.state.ui.editor_layout.active_pane;
                     let mut effects = effects;
-                    if let Some(repo_root) = self.state.git.repo_root.clone() {
-                        let path = self
-                            .state
-                            .editor
-                            .pane(pane)
-                            .and_then(|pane_state| pane_state.active_tab())
-                            .and_then(|tab| tab.path.clone());
-                        if let Some(path) = path {
-                            effects.push(Effect::GitRefreshStatus {
-                                repo_root: repo_root.clone(),
-                            });
-                            effects.push(Effect::GitRefreshDiff { repo_root, path });
-                        }
-                    }
+                    self.push_git_refresh_for_pane(pane, &mut effects);
                     return DispatchResult {
                         effects,
                         state_changed,
@@ -2159,20 +1574,7 @@ impl Store {
 
                 let pane = self.state.ui.editor_layout.active_pane;
                 let mut effects = effects;
-                if let Some(repo_root) = self.state.git.repo_root.clone() {
-                    let path = self
-                        .state
-                        .editor
-                        .pane(pane)
-                        .and_then(|pane_state| pane_state.active_tab())
-                        .and_then(|tab| tab.path.clone());
-                    if let Some(path) = path {
-                        effects.push(Effect::GitRefreshStatus {
-                            repo_root: repo_root.clone(),
-                        });
-                        effects.push(Effect::GitRefreshDiff { repo_root, path });
-                    }
-                }
+                self.push_git_refresh_for_pane(pane, &mut effects);
 
                 return DispatchResult {
                     effects,
@@ -2201,20 +1603,7 @@ impl Store {
 
                 let pane = self.state.ui.editor_layout.active_pane;
                 let mut effects = effects;
-                if let Some(repo_root) = self.state.git.repo_root.clone() {
-                    let path = self
-                        .state
-                        .editor
-                        .pane(pane)
-                        .and_then(|pane_state| pane_state.active_tab())
-                        .and_then(|tab| tab.path.clone());
-                    if let Some(path) = path {
-                        effects.push(Effect::GitRefreshStatus {
-                            repo_root: repo_root.clone(),
-                        });
-                        effects.push(Effect::GitRefreshDiff { repo_root, path });
-                    }
-                }
+                self.push_git_refresh_for_pane(pane, &mut effects);
 
                 return DispatchResult {
                     effects,
@@ -2300,23 +1689,18 @@ impl Store {
             }
             Command::CommandPalette => {
                 let visible = !self.state.ui.command_palette.visible;
+                self.state.ui.command_palette.reset();
                 self.state.ui.command_palette.visible = visible;
                 if visible {
                     self.state.ui.focus = FocusTarget::CommandPalette;
-                    self.state.ui.command_palette.query.clear();
-                    self.state.ui.command_palette.selected = 0;
                 } else if self.state.ui.focus == FocusTarget::CommandPalette {
                     self.state.ui.focus = FocusTarget::Editor;
-                    self.state.ui.command_palette.query.clear();
-                    self.state.ui.command_palette.selected = 0;
                 }
                 state_changed = true;
             }
             Command::PaletteClose => {
                 if self.state.ui.command_palette.visible {
-                    self.state.ui.command_palette.visible = false;
-                    self.state.ui.command_palette.query.clear();
-                    self.state.ui.command_palette.selected = 0;
+                    self.state.ui.command_palette.reset();
                     if self.state.ui.focus == FocusTarget::CommandPalette {
                         self.state.ui.focus = FocusTarget::Editor;
                     }
@@ -2359,9 +1743,7 @@ impl Store {
                 let matches = crate::kernel::palette::match_items(&query);
 
                 let palette_closed = true;
-                self.state.ui.command_palette.visible = false;
-                self.state.ui.command_palette.query.clear();
-                self.state.ui.command_palette.selected = 0;
+                self.state.ui.command_palette.reset();
                 if self.state.ui.focus == FocusTarget::CommandPalette {
                     self.state.ui.focus = FocusTarget::Editor;
                 }
@@ -2435,11 +1817,9 @@ impl Store {
                 }
 
                 let parent_dir = self.state.explorer.selected_create_parent_dir();
+                self.state.ui.input_dialog.reset();
                 self.state.ui.input_dialog.visible = true;
                 self.state.ui.input_dialog.title = "New File".to_string();
-                self.state.ui.input_dialog.value.clear();
-                self.state.ui.input_dialog.cursor = 0;
-                self.state.ui.input_dialog.error = None;
                 self.state.ui.input_dialog.kind = Some(InputDialogKind::NewFile { parent_dir });
                 state_changed = true;
             }
@@ -2452,11 +1832,9 @@ impl Store {
                 }
 
                 let parent_dir = self.state.explorer.selected_create_parent_dir();
+                self.state.ui.input_dialog.reset();
                 self.state.ui.input_dialog.visible = true;
                 self.state.ui.input_dialog.title = "New Folder".to_string();
-                self.state.ui.input_dialog.value.clear();
-                self.state.ui.input_dialog.cursor = 0;
-                self.state.ui.input_dialog.error = None;
                 self.state.ui.input_dialog.kind = Some(InputDialogKind::NewFolder { parent_dir });
                 state_changed = true;
             }
@@ -2493,11 +1871,11 @@ impl Store {
                     };
                 }
 
+                self.state.ui.input_dialog.reset();
                 self.state.ui.input_dialog.visible = true;
                 self.state.ui.input_dialog.title = "Rename".to_string();
                 self.state.ui.input_dialog.value = file_name;
                 self.state.ui.input_dialog.cursor = self.state.ui.input_dialog.value.len();
-                self.state.ui.input_dialog.error = None;
                 self.state.ui.input_dialog.kind =
                     Some(InputDialogKind::ExplorerRename { from: path });
                 state_changed = true;
@@ -3185,14 +2563,7 @@ impl Store {
                     let keep_open = self.state.ui.completion.visible
                         && !self.state.ui.completion.items.is_empty();
                     if !keep_open {
-                        self.state.ui.completion.visible = false;
-                        self.state.ui.completion.all_items.clear();
-                        self.state.ui.completion.items.clear();
-                        self.state.ui.completion.selected = 0;
-                        self.state.ui.completion.request = None;
-                        self.state.ui.completion.is_incomplete = false;
-                        self.state.ui.completion.resolve_inflight = None;
-                        self.state.ui.completion.session_started_at = None;
+                        self.state.ui.completion.close();
                     }
                     self.state.ui.completion.pending_request =
                         Some(super::state::CompletionRequestContext {
@@ -3349,11 +2720,9 @@ impl Store {
                     };
                 }
 
+                self.state.ui.input_dialog.reset();
                 self.state.ui.input_dialog.visible = true;
                 self.state.ui.input_dialog.title = "Rename Symbol".to_string();
-                self.state.ui.input_dialog.value.clear();
-                self.state.ui.input_dialog.cursor = 0;
-                self.state.ui.input_dialog.error = None;
                 self.state.ui.input_dialog.kind =
                     Some(InputDialogKind::LspRename { path, line, column });
                 state_changed = true;
@@ -3456,11 +2825,9 @@ impl Store {
                     };
                 }
 
+                self.state.ui.input_dialog.reset();
                 self.state.ui.input_dialog.visible = true;
                 self.state.ui.input_dialog.title = "Workspace Symbols".to_string();
-                self.state.ui.input_dialog.value.clear();
-                self.state.ui.input_dialog.cursor = 0;
-                self.state.ui.input_dialog.error = None;
                 self.state.ui.input_dialog.kind = Some(InputDialogKind::LspWorkspaceSymbols);
                 state_changed = true;
             }
@@ -3786,14 +3153,7 @@ impl Store {
                     let strategy = completion_strategy::strategy_for_tab(tab);
 
                     if session_ok && !strategy.completion_should_keep_open(tab) {
-                        let has_completion = self.state.ui.completion.visible
-                            || self.state.ui.completion.request.is_some()
-                            || self.state.ui.completion.pending_request.is_some()
-                            || !self.state.ui.completion.all_items.is_empty()
-                            || !self.state.ui.completion.items.is_empty();
-                        if has_completion {
-                            self.state.ui.completion =
-                                super::state::CompletionPopupState::default();
+                        if self.state.ui.completion.close() {
                             state_changed = true;
                         }
 
@@ -3907,20 +3267,7 @@ impl Store {
                 }
 
                 if should_git_refresh && !collapsed {
-                    if let Some(repo_root) = self.state.git.repo_root.clone() {
-                        let path = self
-                            .state
-                            .editor
-                            .pane(pane)
-                            .and_then(|pane_state| pane_state.active_tab())
-                            .and_then(|tab| tab.path.clone());
-                        if let Some(path) = path {
-                            effects.push(Effect::GitRefreshStatus {
-                                repo_root: repo_root.clone(),
-                            });
-                            effects.push(Effect::GitRefreshDiff { repo_root, path });
-                        }
-                    }
+                    self.push_git_refresh_for_pane(pane, &mut effects);
                 }
 
                 let had_signature_help = self.state.ui.signature_help.visible

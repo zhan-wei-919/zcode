@@ -190,9 +190,9 @@ impl Workbench {
                             drained += 1;
                             changed |= self.dispatch_kernel(action);
                             if is_progress_end {
-                                self.pending_semantic_tokens_deadline = Some(Instant::now());
-                                self.pending_inlay_hints_deadline = Some(Instant::now());
-                                self.pending_folding_range_deadline = Some(Instant::now());
+                                self.lsp_debounce.semantic_tokens = Some(Instant::now());
+                                self.lsp_debounce.inlay_hints = Some(Instant::now());
+                                self.lsp_debounce.folding_range = Some(Instant::now());
                             }
                         }
                     }
@@ -287,7 +287,8 @@ impl Workbench {
 
         let active_pane = self.store.state().ui.editor_layout.active_pane;
         let (pane, pos, anchor) = self
-            .idle_hover_target
+            .hover_popup
+            .target
             .filter(|t| self.store.state().editor.pane(t.pane).is_some())
             .map(|t| (t.pane, (t.row, t.col), Some(t.anchor)))
             .unwrap_or_else(|| (active_pane, (usize::MAX, usize::MAX), None));
@@ -343,11 +344,11 @@ impl Workbench {
 
         let (line, column) = lsp_position_from_buffer_pos(tab, buf_pos, encoding);
         let key = (path.clone(), line, column, tab.edit_version);
-        if self.idle_hover_last_request.as_ref() == Some(&key) {
+        if self.hover_popup.last_request.as_ref() == Some(&key) {
             return false;
         }
-        self.idle_hover_last_request = Some(key);
-        self.idle_hover_last_anchor = anchor;
+        self.hover_popup.last_request = Some(key);
+        self.hover_popup.last_anchor = anchor;
 
         if let Some(service) = self
             .kernel_services
@@ -365,7 +366,7 @@ impl Workbench {
     }
 
     fn poll_completion_debounce(&mut self) -> bool {
-        let Some(deadline) = self.pending_completion_deadline else {
+        let Some(deadline) = self.lsp_debounce.completion else {
             return false;
         };
         let now = Instant::now();
@@ -382,7 +383,7 @@ impl Workbench {
             );
         }
 
-        self.pending_completion_deadline = None;
+        self.lsp_debounce.completion = None;
 
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;
@@ -399,14 +400,14 @@ impl Workbench {
     }
 
     fn poll_semantic_tokens_debounce(&mut self) -> bool {
-        let Some(deadline) = self.pending_semantic_tokens_deadline else {
+        let Some(deadline) = self.lsp_debounce.semantic_tokens else {
             return false;
         };
         if Instant::now() < deadline {
             return false;
         }
 
-        self.pending_semantic_tokens_deadline = None;
+        self.lsp_debounce.semantic_tokens = None;
 
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;
@@ -423,14 +424,14 @@ impl Workbench {
     }
 
     fn poll_inlay_hints_debounce(&mut self) -> bool {
-        let Some(deadline) = self.pending_inlay_hints_deadline else {
+        let Some(deadline) = self.lsp_debounce.inlay_hints else {
             return false;
         };
         if Instant::now() < deadline {
             return false;
         }
 
-        self.pending_inlay_hints_deadline = None;
+        self.lsp_debounce.inlay_hints = None;
 
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;
@@ -447,14 +448,14 @@ impl Workbench {
     }
 
     fn poll_folding_range_debounce(&mut self) -> bool {
-        let Some(deadline) = self.pending_folding_range_deadline else {
+        let Some(deadline) = self.lsp_debounce.folding_range else {
             return false;
         };
         if Instant::now() < deadline {
             return false;
         }
 
-        self.pending_folding_range_deadline = None;
+        self.lsp_debounce.folding_range = None;
 
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;

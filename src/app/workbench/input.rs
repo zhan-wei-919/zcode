@@ -1,10 +1,53 @@
 use super::Workbench;
 use crate::core::event::InputEvent;
-use crate::kernel::{FocusTarget, SidebarTab};
+use crate::kernel::Action as KernelAction;
 use crate::tui::view::EventResult;
 use crate::ui::core::id::IdPath;
 use crate::ui::core::input::UiEvent;
+use crate::ui::core::runtime::UiRuntimeOutput;
 use crate::ui::core::tree::NodeKind;
+
+use super::mouse_route::{mouse_target_from_focus, plan_mouse_dispatch, FocusPlan, MouseTarget};
+
+fn apply_focus_plan(
+    workbench: &mut Workbench,
+    event: &crate::core::event::MouseEvent,
+    focus_plan: FocusPlan,
+) -> bool {
+    match focus_plan {
+        FocusPlan::BottomPanel
+        | FocusPlan::ActivityBar
+        | FocusPlan::SidebarTabs
+        | FocusPlan::SidebarArea => workbench.handle_mouse_area(event),
+        FocusPlan::EditorPane { pane } => {
+            workbench.dispatch_kernel(KernelAction::EditorSetActivePane { pane })
+        }
+    }
+}
+
+fn dispatch_by_target(
+    workbench: &mut Workbench,
+    target: MouseTarget,
+    mouse_event: &crate::core::event::MouseEvent,
+    ui_out: &UiRuntimeOutput,
+) -> EventResult {
+    match target {
+        MouseTarget::SidebarSplitter => workbench
+            .handle_sidebar_split_mouse(mouse_event, ui_out)
+            .unwrap_or(EventResult::Ignored),
+        MouseTarget::EditorSplitter => workbench
+            .handle_editor_split_mouse(mouse_event, ui_out)
+            .unwrap_or(EventResult::Ignored),
+        MouseTarget::Explorer => workbench.handle_explorer_mouse(mouse_event, ui_out),
+        MouseTarget::Search => workbench.handle_search_mouse(mouse_event),
+        MouseTarget::Editor => workbench.handle_editor_mouse(mouse_event, ui_out),
+        MouseTarget::BottomPanel => workbench.handle_bottom_panel_mouse(mouse_event),
+        MouseTarget::ContextMenu
+        | MouseTarget::ThemeEditor
+        | MouseTarget::CommandPalette
+        | MouseTarget::ByFocus => EventResult::Ignored,
+    }
+}
 
 pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> EventResult {
     if matches!(
@@ -18,18 +61,27 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
         InputEvent::Key(key_event) => workbench.handle_key_event(key_event),
         InputEvent::Paste(text) => workbench.handle_paste(text),
         InputEvent::Mouse(mouse_event) => {
-            if workbench.store.state().ui.context_menu.visible {
+            let plan = plan_mouse_dispatch(workbench, mouse_event);
+
+            if !workbench.store.state().ui.sidebar_visible
+                && workbench.ui_runtime.capture().is_some()
+            {
+                workbench.ui_runtime.reset_pointer_state();
+            }
+
+            let ui_out = workbench.ui_runtime.on_input(event, &workbench.ui_tree);
+
+            if plan.target == MouseTarget::ContextMenu {
                 let overlay_id = IdPath::root("workbench")
                     .push_str("context_menu")
                     .push_str("overlay")
                     .finish();
-                let out = workbench.ui_runtime.on_input(event, &workbench.ui_tree);
 
                 let mut state_changed = false;
-                for ev in out.events {
+                for ev in &ui_out.events {
                     match ev {
                         UiEvent::HoverChanged { to: Some(id), .. } => {
-                            if let Some(node) = workbench.ui_tree.node(id) {
+                            if let Some(node) = workbench.ui_tree.node(*id) {
                                 if let NodeKind::MenuItem { index, .. } = node.kind {
                                     state_changed |= workbench.dispatch_kernel(
                                         crate::kernel::Action::ContextMenuSetSelected { index },
@@ -38,7 +90,7 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
                             }
                         }
                         UiEvent::Click { id, .. } => {
-                            if let Some(node) = workbench.ui_tree.node(id) {
+                            if let Some(node) = workbench.ui_tree.node(*id) {
                                 match node.kind {
                                     NodeKind::MenuItem { index, .. } => {
                                         state_changed |= workbench.dispatch_kernel(
@@ -49,14 +101,14 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
                                         );
                                     }
                                     _ => {
-                                        if id == overlay_id {
+                                        if *id == overlay_id {
                                             state_changed |= workbench.dispatch_kernel(
                                                 crate::kernel::Action::ContextMenuClose,
                                             );
                                         }
                                     }
                                 }
-                            } else if id == overlay_id {
+                            } else if *id == overlay_id {
                                 state_changed |= workbench
                                     .dispatch_kernel(crate::kernel::Action::ContextMenuClose);
                             }
@@ -69,7 +121,7 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
                     }
                 }
 
-                if state_changed || out.needs_redraw {
+                if state_changed || ui_out.needs_redraw {
                     return EventResult::Consumed;
                 }
 
@@ -77,38 +129,31 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
                 return EventResult::Ignored;
             }
 
-            // When theme editor is visible, handle mouse directly without
-            // area-based focus switching (which would steal focus to Editor).
-            if workbench.store.state().ui.theme_editor.visible {
+            if plan.target == MouseTarget::ThemeEditor {
                 return workbench.handle_theme_editor_mouse(mouse_event);
             }
 
-            if let Some(result) = workbench.handle_sidebar_split_mouse(mouse_event) {
-                return result;
+            if plan.target == MouseTarget::CommandPalette {
+                return EventResult::Ignored;
             }
 
-            if let Some(result) = workbench.handle_editor_split_mouse(mouse_event) {
-                return result;
+            let mut state_changed = false;
+            if let Some(focus_plan) = plan.focus_plan {
+                state_changed = apply_focus_plan(workbench, mouse_event, focus_plan);
             }
 
-            let state_changed = workbench.handle_mouse_area(mouse_event);
-            let focus = workbench.store.state().ui.focus;
-
-            let result = match focus {
-                FocusTarget::Explorer => {
-                    if workbench.store.state().ui.sidebar_tab == SidebarTab::Search {
-                        workbench.handle_search_mouse(mouse_event)
-                    } else {
-                        workbench.handle_explorer_mouse(mouse_event)
-                    }
-                }
-                FocusTarget::Editor => workbench.handle_editor_mouse(mouse_event),
-                FocusTarget::BottomPanel => workbench.handle_bottom_panel_mouse(mouse_event),
-                FocusTarget::CommandPalette => EventResult::Ignored,
-                FocusTarget::ThemeEditor => workbench.handle_theme_editor_mouse(mouse_event),
+            let dispatch_target = if plan.target == MouseTarget::ByFocus {
+                mouse_target_from_focus(
+                    workbench.store.state().ui.focus,
+                    workbench.store.state().ui.sidebar_tab,
+                )
+            } else {
+                plan.target
             };
 
-            if state_changed && matches!(result, EventResult::Ignored) {
+            let result = dispatch_by_target(workbench, dispatch_target, mouse_event, &ui_out);
+
+            if (state_changed || ui_out.needs_redraw) && matches!(result, EventResult::Ignored) {
                 return EventResult::Consumed;
             }
 

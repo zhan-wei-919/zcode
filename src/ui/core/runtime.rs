@@ -73,6 +73,13 @@ impl UiRuntime {
         self.last_pos
     }
 
+    pub fn reset_pointer_state(&mut self) {
+        self.pressed = None;
+        self.capture = None;
+        self.dragging = false;
+        self.drag = None;
+    }
+
     pub fn on_input(&mut self, input: &InputEvent, tree: &UiTree) -> UiRuntimeOutput {
         let mut out = UiRuntimeOutput::empty();
 

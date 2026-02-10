@@ -196,3 +196,32 @@ fn move_dir_cross_device_falls_back_to_copy_remove() {
     assert!(!from.exists());
     assert_eq!(std::fs::read_to_string(to.join("a.txt")).unwrap(), "hello");
 }
+
+#[cfg(feature = "terminal")]
+#[test]
+fn terminal_ops_do_not_panic_when_terminals_lock_is_poisoned() {
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let runtime = AsyncRuntime::new(tx).expect("runtime");
+
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = runtime.terminals.lock().expect("terminals lock");
+        panic!("poison terminals lock");
+    }));
+
+    assert!(runtime.terminals.lock().is_err(), "lock should be poisoned");
+
+    let write_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.terminal_write(1, b"echo hi".to_vec());
+    }));
+    assert!(write_result.is_ok(), "terminal_write should not panic");
+
+    let resize_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.terminal_resize(1, 80, 24);
+    }));
+    assert!(resize_result.is_ok(), "terminal_resize should not panic");
+
+    let kill_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.terminal_kill(1);
+    }));
+    assert!(kill_result.is_ok(), "terminal_kill should not panic");
+}

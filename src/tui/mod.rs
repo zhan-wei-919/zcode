@@ -7,4 +7,3 @@ pub mod crossterm;
 pub mod osc52;
 pub mod terminal_guard;
 pub mod view;
-pub mod wakeup;

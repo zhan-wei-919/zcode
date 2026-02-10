@@ -23,7 +23,7 @@ impl Workbench {
             event,
             InputEvent::Mouse(me)
                 if self.store.state().ui.hover_message.is_some()
-                    && self.last_hover_popup_area.is_some_and(|a| {
+                    && self.hover_popup.last_area.is_some_and(|a| {
                         super::super::util::rect_contains(a, me.column, me.row)
                     })
                     && matches!(
@@ -38,12 +38,12 @@ impl Workbench {
 
         self.last_input_at = Instant::now();
         if !preserve_hover {
-            self.idle_hover_last_request = None;
-            self.idle_hover_last_anchor = None;
+            self.hover_popup.last_request = None;
+            self.hover_popup.last_anchor = None;
         }
-        self.pending_completion_deadline = None;
-        self.pending_inlay_hints_deadline = None;
-        self.pending_folding_range_deadline = None;
+        self.lsp_debounce.completion = None;
+        self.lsp_debounce.inlay_hints = None;
+        self.lsp_debounce.folding_range = None;
         if self.store.state().ui.focus == FocusTarget::BottomPanel
             && self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal
         {
@@ -148,10 +148,10 @@ impl Workbench {
             match (key_event.code, key_event.modifiers) {
                 (KeyCode::Esc, _) => {
                     let _ = self.dispatch_kernel(KernelAction::CompletionClose);
-                    self.completion_doc_scroll = 0;
-                    self.completion_doc_total_lines = 0;
-                    self.completion_doc_key = None;
-                    self.last_completion_doc_area = None;
+                    self.completion_doc.scroll = 0;
+                    self.completion_doc.total_lines = 0;
+                    self.completion_doc.key = None;
+                    self.completion_doc.last_area = None;
                     return EventResult::Consumed;
                 }
                 (KeyCode::Tab, _) => {
@@ -217,10 +217,10 @@ impl Workbench {
 
                     // Completion session ends; reset doc scroll for the next popup.
                     if !self.store.state().ui.completion.visible {
-                        self.completion_doc_scroll = 0;
-                        self.completion_doc_total_lines = 0;
-                        self.completion_doc_key = None;
-                        self.last_completion_doc_area = None;
+                        self.completion_doc.scroll = 0;
+                        self.completion_doc.total_lines = 0;
+                        self.completion_doc.key = None;
+                        self.completion_doc.last_area = None;
                     }
                     return EventResult::Consumed;
                 }
@@ -269,7 +269,7 @@ impl Workbench {
             self.maybe_schedule_inlay_hints_debounce(&cmd_for_schedule);
             self.maybe_schedule_folding_range_debounce(&cmd_for_schedule);
             if cmd_for_schedule == Command::OpenThemeEditor {
-                self.last_theme_editor_ansi_cursor = None;
+                self.theme_editor_layout.ansi_cursor = None;
                 self.sync_theme_editor_hsl();
             }
             if self.store.state().ui.should_quit {
@@ -363,7 +363,7 @@ impl Workbench {
 
         match (key_event.code, key_event.modifiers) {
             (KeyCode::Esc, _) => {
-                self.last_theme_editor_ansi_cursor = None;
+                self.theme_editor_layout.ansi_cursor = None;
                 let _ = self.dispatch_kernel(KernelAction::ThemeEditorClose);
                 EventResult::Consumed
             }
@@ -586,7 +586,7 @@ impl Workbench {
         match self.terminal_color_support {
             crate::ui::core::color_support::TerminalColorSupport::TrueColor => {
                 // Check Hue Bar
-                if let Some(area) = self.last_theme_editor_hue_bar_area {
+                if let Some(area) = self.theme_editor_layout.hue_bar_area {
                     if col >= area.x
                         && col < area.x + area.w
                         && row >= area.y
@@ -604,7 +604,7 @@ impl Workbench {
                 }
 
                 // Check SV Palette
-                if let Some(area) = self.last_theme_editor_sv_palette_area {
+                if let Some(area) = self.theme_editor_layout.sv_palette_area {
                     if col >= area.x
                         && col < area.x + area.w
                         && row >= area.y
@@ -629,7 +629,7 @@ impl Workbench {
             }
             crate::ui::core::color_support::TerminalColorSupport::Ansi256
             | crate::ui::core::color_support::TerminalColorSupport::Ansi16 => {
-                if let Some(area) = self.last_theme_editor_sv_palette_area {
+                if let Some(area) = self.theme_editor_layout.sv_palette_area {
                     if col >= area.x
                         && col < area.x + area.w
                         && row >= area.y
@@ -644,7 +644,7 @@ impl Workbench {
                             area.h,
                             self.terminal_color_support,
                         ) {
-                            self.last_theme_editor_ansi_cursor = Some((rel_col, rel_row));
+                            self.theme_editor_layout.ansi_cursor = Some((rel_col, rel_row));
                             let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
                                 focus: ThemeEditorFocus::SvPalette,
                             });
@@ -659,7 +659,7 @@ impl Workbench {
         }
 
         // Check Token List
-        if let Some(area) = self.last_theme_editor_token_list_area {
+        if let Some(area) = self.theme_editor_layout.token_list_area {
             if col >= area.x
                 && col < area.x + area.w
                 && row >= area.y

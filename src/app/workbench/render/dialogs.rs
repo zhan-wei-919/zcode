@@ -213,7 +213,7 @@ pub(super) fn render_input_dialog(workbench: &Workbench, painter: &mut Painter, 
 }
 
 pub(super) fn input_dialog_cursor(workbench: &Workbench) -> Option<(u16, u16)> {
-    let area = workbench.last_render_area?;
+    let area = workbench.layout_cache.render_area?;
     let dialog = &workbench.store.state().ui.input_dialog;
     if !dialog.visible {
         return None;

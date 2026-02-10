@@ -1,20 +1,27 @@
 use super::super::util;
 use super::super::Workbench;
-use crate::core::event::{InputEvent, MouseButton, MouseEvent, MouseEventKind};
+use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::kernel::services::adapters::perf;
 use crate::kernel::Action as KernelAction;
+use crate::models::NodeId;
 use crate::tui::view::EventResult;
 use crate::ui::core::input::{DragPayload, UiEvent};
+use crate::ui::core::runtime::UiRuntimeOutput;
 use crate::ui::core::tree::NodeKind;
 use std::path::Path;
 use std::time::Instant;
 
 impl Workbench {
-    pub(in super::super) fn handle_explorer_mouse(&mut self, event: &MouseEvent) -> EventResult {
+    pub(in super::super) fn handle_explorer_mouse(
+        &mut self,
+        event: &MouseEvent,
+        ui_out: &UiRuntimeOutput,
+    ) -> EventResult {
         let _scope = perf::scope("input.mouse.explorer");
         let in_tree = self.explorer.contains(event.column, event.row);
         let in_git = self
-            .last_git_panel_area
+            .layout_cache
+            .git_panel_area
             .is_some_and(|a| util::rect_contains(a, event.column, event.row));
 
         let is_armed = self.ui_runtime.is_pressed() || self.ui_runtime.capture().is_some();
@@ -34,7 +41,8 @@ impl Workbench {
             MouseEventKind::Down(MouseButton::Left) => {
                 if in_git {
                     let Some((branch, _)) = self
-                        .last_git_branch_areas
+                        .layout_cache
+                        .git_branch_areas
                         .iter()
                         .find(|(_, rect)| util::rect_contains(*rect, event.column, event.row))
                     else {
@@ -52,45 +60,33 @@ impl Workbench {
                     }
                     return EventResult::Consumed;
                 }
-
-                // Arm the UI runtime so we can detect click vs drag.
-                let _ = self
-                    .ui_runtime
-                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
                 EventResult::Consumed
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                let out = self
-                    .ui_runtime
-                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
-
                 let captured_is_explorer_row = self
                     .ui_runtime
                     .capture()
                     .and_then(|id| self.ui_tree.node(id))
                     .is_some_and(|n| matches!(n.kind, NodeKind::ExplorerRow { .. }));
 
-                if out.needs_redraw || captured_is_explorer_row {
+                if ui_out.needs_redraw || captured_is_explorer_row {
                     return EventResult::Consumed;
                 }
 
                 EventResult::Ignored
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                let out = self
-                    .ui_runtime
-                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
-
                 let mut handled = false;
-                for ev in out.events {
+                for ev in &ui_out.events {
                     match ev {
                         UiEvent::Click { id, .. } => {
-                            let Some(node) = self.ui_tree.node(id) else {
+                            let Some(node) = self.ui_tree.node(*id) else {
                                 continue;
                             };
                             let NodeKind::ExplorerRow { node_id } = node.kind else {
                                 continue;
                             };
+                            let node_id = NodeId::from_raw(node_id);
 
                             let Some(row) = self
                                 .store
@@ -111,13 +107,14 @@ impl Workbench {
                         UiEvent::Drop {
                             payload, target, ..
                         } => {
-                            let Some(target_node) = self.ui_tree.node(target) else {
+                            let Some(target_node) = self.ui_tree.node(*target) else {
                                 continue;
                             };
 
-                            let DragPayload::ExplorerNode { node_id } = payload else {
+                            let DragPayload::ExplorerNode { node_id } = *payload else {
                                 continue;
                             };
+                            let node_id = NodeId::from_raw(node_id);
 
                             match target_node.kind {
                                 NodeKind::EditorArea { pane } => {
@@ -138,6 +135,7 @@ impl Workbench {
                                     handled = true;
                                 }
                                 NodeKind::ExplorerFolderDrop { node_id: to_dir_id } => {
+                                    let to_dir_id = NodeId::from_raw(to_dir_id);
                                     let Some((from_path, from_is_dir)) =
                                         self.store.state().explorer.path_and_kind_for(node_id)
                                     else {
@@ -168,6 +166,7 @@ impl Workbench {
                                     handled = true;
                                 }
                                 NodeKind::ExplorerRow { node_id: to_row_id } => {
+                                    let to_row_id = NodeId::from_raw(to_row_id);
                                     let state = self.store.state();
                                     let explorer = &state.explorer;
 
@@ -211,7 +210,7 @@ impl Workbench {
                     }
                 }
 
-                if handled || out.needs_redraw || captured_is_explorer_row {
+                if handled || ui_out.needs_redraw || captured_is_explorer_row {
                     return EventResult::Consumed;
                 }
 
@@ -221,30 +220,25 @@ impl Workbench {
                 if in_git {
                     return EventResult::Consumed;
                 }
-                let _ = self
-                    .ui_runtime
-                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
                 EventResult::Consumed
             }
             MouseEventKind::Up(MouseButton::Right) => {
-                let out = self
-                    .ui_runtime
-                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
-
                 let mut handled = false;
-                for ev in out.events {
-                    let UiEvent::ContextMenu { id, pos } = ev else {
+                for ev in &ui_out.events {
+                    let UiEvent::ContextMenu { id, pos } = *ev else {
                         continue;
                     };
 
                     let tree_row = match self.ui_tree.node(id).map(|n| n.kind) {
-                        Some(NodeKind::ExplorerRow { node_id }) => self
-                            .store
-                            .state()
-                            .explorer
-                            .rows
-                            .iter()
-                            .position(|r| r.id == node_id),
+                        Some(NodeKind::ExplorerRow { node_id }) => {
+                            let node_id = NodeId::from_raw(node_id);
+                            self.store
+                                .state()
+                                .explorer
+                                .rows
+                                .iter()
+                                .position(|r| r.id == node_id)
+                        }
                         _ => None,
                     };
 

@@ -8,7 +8,7 @@ pub(super) fn cursor_position_terminal(workbench: &Workbench) -> Option<(u16, u1
         return None;
     }
 
-    let panel = workbench.last_bottom_panel_area?;
+    let panel = workbench.layout_cache.bottom_panel_area?;
     if panel.w == 0 || panel.h <= 1 {
         return None;
     }

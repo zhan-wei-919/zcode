@@ -11,6 +11,17 @@ use std::{
 
 new_key_type! { pub struct NodeId; }
 
+impl NodeId {
+    pub fn to_raw(self) -> u64 {
+        use slotmap::Key;
+        self.data().as_ffi()
+    }
+
+    pub fn from_raw(raw: u64) -> Self {
+        slotmap::KeyData::from_ffi(raw).into()
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum NodeKind {
     File,

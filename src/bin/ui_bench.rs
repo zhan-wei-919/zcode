@@ -96,11 +96,13 @@ fn main() -> std::io::Result<()> {
 
     for _ in 0..10 {
         workbench.render(&mut backend, area);
+        let _ = workbench.flush_post_render_sync();
     }
 
     let render_start = Instant::now();
     for _ in 0..frames {
         workbench.render(&mut backend, area);
+        let _ = workbench.flush_post_render_sync();
     }
     let render_elapsed = render_start.elapsed();
     print_render_summary(frames, render_elapsed);

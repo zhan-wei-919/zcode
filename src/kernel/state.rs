@@ -192,11 +192,17 @@ impl Default for EditorLayoutState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CommandPaletteState {
     pub visible: bool,
     pub query: String,
     pub selected: usize,
+}
+
+impl CommandPaletteState {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -229,6 +235,12 @@ pub struct InputDialogState {
     pub cursor: usize,
     pub error: Option<String>,
     pub kind: Option<InputDialogKind>,
+}
+
+impl InputDialogState {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +306,25 @@ pub struct CompletionPopupState {
     pub session_started_at: Option<Instant>,
 }
 
+impl CompletionPopupState {
+    pub fn is_active(&self) -> bool {
+        self.visible
+            || self.request.is_some()
+            || self.pending_request.is_some()
+            || !self.all_items.is_empty()
+            || !self.items.is_empty()
+    }
+
+    pub fn close(&mut self) -> bool {
+        if self.is_active() {
+            *self = Self::default();
+            true
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SignatureHelpRequestContext {
     pub pane: usize,
@@ -321,6 +352,8 @@ pub enum ContextMenuItem {
     ExplorerNewFolder,
     ExplorerRename,
     ExplorerDelete,
+    ExplorerCopyPath,
+    ExplorerCopyRelativePath,
     TabClose,
     EditorCopy,
     EditorPaste,
@@ -333,6 +366,8 @@ impl ContextMenuItem {
             ContextMenuItem::ExplorerNewFolder => "New Folder",
             ContextMenuItem::ExplorerRename => "Rename",
             ContextMenuItem::ExplorerDelete => "Delete",
+            ContextMenuItem::ExplorerCopyPath => "Copy Path",
+            ContextMenuItem::ExplorerCopyRelativePath => "Copy Relative Path",
             ContextMenuItem::TabClose => "Close",
             ContextMenuItem::EditorCopy => "Copy",
             ContextMenuItem::EditorPaste => "Paste",

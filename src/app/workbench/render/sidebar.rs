@@ -8,7 +8,6 @@ use crate::ui::core::id::IdPath;
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::{Mod, Style as UiStyle};
 use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, UiTree};
-use slotmap::Key;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 impl Workbench {
@@ -101,8 +100,8 @@ impl Workbench {
 
     pub(super) fn render_sidebar(&mut self, backend: &mut dyn Backend, area: UiRect) {
         if area.is_empty() {
-            self.last_sidebar_tabs_area = None;
-            self.last_sidebar_content_area = None;
+            self.layout_cache.sidebar_tabs_area = None;
+            self.layout_cache.sidebar_content_area = None;
             return;
         }
 
@@ -145,8 +144,8 @@ impl Workbench {
         }
 
         if inner.is_empty() {
-            self.last_sidebar_tabs_area = None;
-            self.last_sidebar_content_area = None;
+            self.layout_cache.sidebar_tabs_area = None;
+            self.layout_cache.sidebar_content_area = None;
             backend.draw(ui_full, painter.cmds());
             return;
         }
@@ -156,16 +155,16 @@ impl Workbench {
 
         let tab_height = 1u16;
         if inner.h <= tab_height {
-            self.last_sidebar_tabs_area = Some(inner);
-            self.last_sidebar_content_area = None;
+            self.layout_cache.sidebar_tabs_area = Some(inner);
+            self.layout_cache.sidebar_content_area = None;
             backend.draw(ui_full, painter.cmds());
             return;
         }
 
         let (tabs_area, content_area) = inner.split_top(tab_height);
 
-        self.last_sidebar_tabs_area = Some(tabs_area);
-        self.last_sidebar_content_area = Some(content_area);
+        self.layout_cache.sidebar_tabs_area = Some(tabs_area);
+        self.layout_cache.sidebar_content_area = Some(content_area);
 
         let active_tab = self.store.state().ui.sidebar_tab;
         let tab_active = UiStyle::default()
@@ -202,8 +201,8 @@ impl Workbench {
 
         match active_tab {
             SidebarTab::Explorer => {
-                self.last_git_panel_area = None;
-                self.last_git_branch_areas.clear();
+                self.layout_cache.git_panel_area = None;
+                self.layout_cache.git_branch_areas.clear();
 
                 let (show_git_panel, branches_len) = {
                     let state = self.store.state();
@@ -307,7 +306,9 @@ fn push_explorer_nodes(
                 layer: 0,
                 z: 0,
                 sense: Sense::DROP_TARGET,
-                kind: NodeKind::ExplorerFolderDrop { node_id: root_id },
+                kind: NodeKind::ExplorerFolderDrop {
+                    node_id: root_id.to_raw(),
+                },
             });
         }
     } else {
@@ -320,7 +321,9 @@ fn push_explorer_nodes(
             layer: 0,
             z: 0,
             sense: Sense::DROP_TARGET,
-            kind: NodeKind::ExplorerFolderDrop { node_id: root_id },
+            kind: NodeKind::ExplorerFolderDrop {
+                node_id: root_id.to_raw(),
+            },
         });
         return;
     }
@@ -340,7 +343,7 @@ fn push_explorer_nodes(
             break;
         }
 
-        let row_id = row.id.data().as_ffi();
+        let row_id = row.id.to_raw();
         let rect = UiRect::new(area.x, y, area.w, 1);
 
         let id = IdPath::root("workbench")
@@ -353,7 +356,9 @@ fn push_explorer_nodes(
             layer: 0,
             z: 0,
             sense: Sense::CLICK | Sense::DRAG_SOURCE | Sense::CONTEXT_MENU | Sense::DROP_TARGET,
-            kind: NodeKind::ExplorerRow { node_id: row.id },
+            kind: NodeKind::ExplorerRow {
+                node_id: row.id.to_raw(),
+            },
         });
 
         if row.is_dir {
@@ -367,7 +372,9 @@ fn push_explorer_nodes(
                 layer: 0,
                 z: 0,
                 sense: Sense::DROP_TARGET,
-                kind: NodeKind::ExplorerFolderDrop { node_id: row.id },
+                kind: NodeKind::ExplorerFolderDrop {
+                    node_id: row.id.to_raw(),
+                },
             });
         }
     }

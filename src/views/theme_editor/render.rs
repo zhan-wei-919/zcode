@@ -1,6 +1,6 @@
-use crate::app::theme::hsl_to_rgb;
 use crate::kernel::editor::{highlight_snippet, HighlightKind, HighlightSpan, LanguageId};
 use crate::kernel::state::{PreviewLanguage, ThemeEditorFocus, ThemeEditorState, ThemeEditorToken};
+use crate::ui::core::color::hsl_to_rgb;
 use crate::ui::core::color_support::TerminalColorSupport;
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::painter::Painter;

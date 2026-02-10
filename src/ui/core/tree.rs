@@ -47,33 +47,14 @@ pub enum SplitDrop {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeKind {
     Unknown,
-    Splitter {
-        axis: Axis,
-    },
-    Tab {
-        pane: usize,
-        tab_id: crate::kernel::editor::TabId,
-    },
-    TabBar {
-        pane: usize,
-    },
-    ExplorerRow {
-        node_id: crate::models::NodeId,
-    },
-    ExplorerFolderDrop {
-        node_id: crate::models::NodeId,
-    },
-    EditorArea {
-        pane: usize,
-    },
-    EditorSplitDrop {
-        pane: usize,
-        drop: SplitDrop,
-    },
-    MenuItem {
-        menu_id: u32,
-        index: usize,
-    },
+    Splitter { axis: Axis },
+    Tab { pane: usize, tab_id: u64 },
+    TabBar { pane: usize },
+    ExplorerRow { node_id: u64 },
+    ExplorerFolderDrop { node_id: u64 },
+    EditorArea { pane: usize },
+    EditorSplitDrop { pane: usize, drop: SplitDrop },
+    MenuItem { menu_id: u32, index: usize },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

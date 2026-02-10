@@ -126,7 +126,7 @@ pub(super) fn render(workbench: &Workbench, painter: &mut Painter, area: UiRect)
 }
 
 pub(super) fn cursor(workbench: &Workbench) -> Option<(u16, u16)> {
-    let area = workbench.last_render_area?;
+    let area = workbench.layout_cache.render_area?;
     let popup_area = util::centered_rect(90, 10, area);
 
     let query = &workbench.store.state().ui.command_palette.query;

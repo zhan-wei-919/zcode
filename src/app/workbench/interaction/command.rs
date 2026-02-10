@@ -189,7 +189,7 @@ impl Workbench {
         if let Some(trigger) = edit_trigger {
             let delay =
                 lsp_debounce_duration(&timing, LspDebouncePipeline::SemanticTokens, trigger);
-            self.pending_semantic_tokens_deadline = Some(Instant::now() + delay);
+            self.lsp_debounce.semantic_tokens = Some(Instant::now() + delay);
             return;
         }
 
@@ -199,7 +199,7 @@ impl Workbench {
                 LspDebouncePipeline::SemanticTokens,
                 LspDebounceTrigger::Identifier,
             );
-            self.pending_semantic_tokens_deadline = Some(Instant::now() + delay);
+            self.lsp_debounce.semantic_tokens = Some(Instant::now() + delay);
         }
     }
 
@@ -249,7 +249,7 @@ impl Workbench {
 
         if let Some(trigger) = edit_trigger {
             let delay = lsp_debounce_duration(&timing, LspDebouncePipeline::InlayHints, trigger);
-            self.pending_inlay_hints_deadline = Some(Instant::now() + delay);
+            self.lsp_debounce.inlay_hints = Some(Instant::now() + delay);
             return;
         }
 
@@ -259,7 +259,7 @@ impl Workbench {
                 LspDebouncePipeline::InlayHints,
                 LspDebounceTrigger::Identifier,
             );
-            self.pending_inlay_hints_deadline = Some(Instant::now() + delay);
+            self.lsp_debounce.inlay_hints = Some(Instant::now() + delay);
         }
     }
 
@@ -300,7 +300,7 @@ impl Workbench {
 
         if let Some(trigger) = edit_trigger {
             let delay = lsp_debounce_duration(&timing, LspDebouncePipeline::FoldingRange, trigger);
-            self.pending_folding_range_deadline = Some(Instant::now() + delay);
+            self.lsp_debounce.folding_range = Some(Instant::now() + delay);
         }
     }
 }

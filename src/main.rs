@@ -139,7 +139,7 @@ fn run_app(
     let mut root_path = path.to_path_buf();
     let (mut tx, mut rx) = mpsc::channel();
 
-    let (wakeup_tx, wakeup_rx) = zcode::tui::wakeup::wakeup_pipe()?;
+    let (wakeup_tx, wakeup_rx) = zcode::core::wakeup::wakeup_pipe()?;
     let mut workbench = Workbench::new(
         root_path.as_path(),
         AsyncRuntime::new(tx.clone())?,
@@ -162,7 +162,7 @@ fn run_app(
 
         if dirty {
             terminal.draw(|backend, area| workbench.render(backend, area))?;
-            dirty = false;
+            dirty = workbench.flush_post_render_sync();
         }
 
         let timeout = tick_rate

@@ -9,18 +9,20 @@ use crate::ui::core::geom::Pos;
 use crate::ui::core::geom::Rect;
 use crate::ui::core::id::IdPath;
 use crate::ui::core::input::UiEvent;
+use crate::ui::core::runtime::UiRuntimeOutput;
 use crate::ui::core::tree::Sense;
 
 impl Workbench {
     fn editor_pane_at(&self, x: u16, y: u16) -> Option<usize> {
-        self.last_editor_areas
+        self.layout_cache
+            .editor_areas
             .iter()
             .enumerate()
             .find_map(|(i, area)| util::rect_contains(*area, x, y).then_some(i))
     }
 
     fn handle_activity_bar_click(&mut self, event: &MouseEvent) -> bool {
-        let Some(area) = self.last_activity_bar_area else {
+        let Some(area) = self.layout_cache.activity_bar_area else {
             return false;
         };
         let row = event.row.saturating_sub(area.y);
@@ -130,7 +132,7 @@ impl Workbench {
     }
 
     fn handle_sidebar_tabs_click(&mut self, event: &MouseEvent) -> bool {
-        let Some(area) = self.last_sidebar_tabs_area else {
+        let Some(area) = self.layout_cache.sidebar_tabs_area else {
             return false;
         };
 
@@ -148,23 +150,27 @@ impl Workbench {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if self
-                    .last_bottom_panel_area
+                    .layout_cache
+                    .bottom_panel_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     return self
                         .dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
                 } else if self
-                    .last_activity_bar_area
+                    .layout_cache
+                    .activity_bar_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     return self.handle_activity_bar_click(event);
                 } else if self
-                    .last_sidebar_tabs_area
+                    .layout_cache
+                    .sidebar_tabs_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     return self.handle_sidebar_tabs_click(event);
                 } else if self
-                    .last_sidebar_area
+                    .layout_cache
+                    .sidebar_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     let cmd = match self.store.state().ui.sidebar_tab {
@@ -178,13 +184,15 @@ impl Workbench {
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 if self
-                    .last_bottom_panel_area
+                    .layout_cache
+                    .bottom_panel_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     return self
                         .dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
                 } else if self
-                    .last_sidebar_area
+                    .layout_cache
+                    .sidebar_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     let cmd = match self.store.state().ui.sidebar_tab {
@@ -201,7 +209,11 @@ impl Workbench {
         false
     }
 
-    pub(super) fn handle_editor_split_mouse(&mut self, event: &MouseEvent) -> Option<EventResult> {
+    pub(super) fn handle_editor_split_mouse(
+        &mut self,
+        event: &MouseEvent,
+        ui_out: &UiRuntimeOutput,
+    ) -> Option<EventResult> {
         let _scope = perf::scope("input.mouse.split");
         let splitter_id = IdPath::root("workbench")
             .push_str("editor_splitter")
@@ -215,11 +227,6 @@ impl Workbench {
                 return None;
             }
 
-            self.ui_runtime.on_input(
-                &crate::core::event::InputEvent::Mouse(*event),
-                &self.ui_tree,
-            );
-
             self.editor_split_dragging = true;
             let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::FocusEditor));
             self.update_editor_split_ratio(event.column, event.row);
@@ -232,23 +239,18 @@ impl Workbench {
             return None;
         }
 
-        let out = self.ui_runtime.on_input(
-            &crate::core::event::InputEvent::Mouse(*event),
-            &self.ui_tree,
-        );
-
         let mut handled = false;
-        for ev in out.events {
+        for ev in &ui_out.events {
             match ev {
-                UiEvent::DragStart { id, pos } if id == splitter_id => {
+                UiEvent::DragStart { id, pos } if *id == splitter_id => {
                     handled = true;
                     self.update_editor_split_ratio(pos.x, pos.y);
                 }
-                UiEvent::DragMove { id, pos, .. } if id == splitter_id => {
+                UiEvent::DragMove { id, pos, .. } if *id == splitter_id => {
                     handled = true;
                     self.update_editor_split_ratio(pos.x, pos.y);
                 }
-                UiEvent::DragEnd { id, .. } if id == splitter_id => {
+                UiEvent::DragEnd { id, .. } if *id == splitter_id => {
                     handled = true;
                 }
                 _ => {}
@@ -263,13 +265,19 @@ impl Workbench {
         handled.then_some(EventResult::Consumed)
     }
 
-    pub(super) fn handle_sidebar_split_mouse(&mut self, event: &MouseEvent) -> Option<EventResult> {
+    pub(super) fn handle_sidebar_split_mouse(
+        &mut self,
+        event: &MouseEvent,
+        ui_out: &UiRuntimeOutput,
+    ) -> Option<EventResult> {
         let _scope = perf::scope("input.mouse.sidebar_split");
         let splitter_id = IdPath::root("workbench")
             .push_str("sidebar_splitter")
             .finish();
 
-        if !self.store.state().ui.sidebar_visible || self.last_sidebar_container_area.is_none() {
+        if !self.store.state().ui.sidebar_visible
+            || self.layout_cache.sidebar_container_area.is_none()
+        {
             self.sidebar_split_dragging = false;
             return None;
         }
@@ -282,11 +290,6 @@ impl Workbench {
                 return None;
             }
 
-            self.ui_runtime.on_input(
-                &crate::core::event::InputEvent::Mouse(*event),
-                &self.ui_tree,
-            );
-
             self.sidebar_split_dragging = true;
             self.update_sidebar_width(event.column);
             return Some(EventResult::Consumed);
@@ -296,23 +299,18 @@ impl Workbench {
             return None;
         }
 
-        let out = self.ui_runtime.on_input(
-            &crate::core::event::InputEvent::Mouse(*event),
-            &self.ui_tree,
-        );
-
         let mut handled = false;
-        for ev in out.events {
+        for ev in &ui_out.events {
             match ev {
-                UiEvent::DragStart { id, pos } if id == splitter_id => {
+                UiEvent::DragStart { id, pos } if *id == splitter_id => {
                     handled = true;
                     self.update_sidebar_width(pos.x);
                 }
-                UiEvent::DragMove { id, pos, .. } if id == splitter_id => {
+                UiEvent::DragMove { id, pos, .. } if *id == splitter_id => {
                     handled = true;
                     self.update_sidebar_width(pos.x);
                 }
-                UiEvent::DragEnd { id, .. } if id == splitter_id => {
+                UiEvent::DragEnd { id, .. } if *id == splitter_id => {
                     handled = true;
                 }
                 _ => {}
@@ -328,7 +326,7 @@ impl Workbench {
     }
 
     fn update_editor_split_ratio(&mut self, column: u16, row: u16) {
-        let Some(area) = self.last_editor_container_area else {
+        let Some(area) = self.layout_cache.editor_container_area else {
             return;
         };
 
@@ -340,7 +338,7 @@ impl Workbench {
     }
 
     fn update_sidebar_width(&mut self, column: u16) {
-        let Some(area) = self.last_sidebar_container_area else {
+        let Some(area) = self.layout_cache.sidebar_container_area else {
             return;
         };
         if area.w == 0 {

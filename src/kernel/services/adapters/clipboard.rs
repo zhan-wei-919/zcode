@@ -233,6 +233,12 @@ mod linux {
     use std::io::{Read, Write};
     use std::process::{Command, Stdio};
 
+    pub(super) fn wl_paste_command() -> Command {
+        let mut cmd = Command::new("wl-paste");
+        cmd.arg("--no-newline");
+        cmd
+    }
+
     fn read_command_text(mut cmd: Command) -> Result<String, ClipboardError> {
         let mut child = cmd
             .stdin(Stdio::null())
@@ -307,7 +313,7 @@ mod linux {
     }
 
     pub(super) fn wl_paste_text() -> Result<String, ClipboardError> {
-        read_command_text(Command::new("wl-paste"))
+        read_command_text(wl_paste_command())
     }
 
     pub(super) fn wl_copy_text(text: &str) -> Result<(), ClipboardError> {

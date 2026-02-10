@@ -8,7 +8,7 @@ use super::bus::{kernel_bus, KernelBusReceiver, KernelBusSender, KernelMessage};
 use super::ports::{AsyncExecutor, BoxFuture};
 use std::sync::mpsc::TryRecvError;
 
-use crate::tui::wakeup::WakeupSender;
+use crate::core::wakeup::WakeupSender;
 
 pub struct KernelServiceHost {
     registry: ServiceRegistry,

@@ -1,10 +1,12 @@
 use super::super::{util, Workbench};
-use crate::core::event::{InputEvent, MouseButton, MouseEvent, MouseEventKind};
+use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::core::Command;
+use crate::kernel::editor::TabId;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::{Action as KernelAction, EditorAction, PendingAction};
 use crate::tui::view::EventResult;
 use crate::ui::core::input::{DragPayload, UiEvent};
+use crate::ui::core::runtime::UiRuntimeOutput;
 use crate::ui::core::tree::NodeKind;
 use crate::views::{
     compute_editor_pane_layout, hit_test_editor_mouse, hit_test_editor_tab, hit_test_tab_hover,
@@ -13,7 +15,11 @@ use crate::views::{
 use std::time::Instant;
 
 impl Workbench {
-    pub(in super::super) fn handle_editor_mouse(&mut self, event: &MouseEvent) -> EventResult {
+    pub(in super::super) fn handle_editor_mouse(
+        &mut self,
+        event: &MouseEvent,
+        ui_out: &UiRuntimeOutput,
+    ) -> EventResult {
         let _scope = perf::scope("input.mouse.editor");
         let active_pane = self.store.state().ui.editor_layout.active_pane;
 
@@ -24,10 +30,11 @@ impl Workbench {
         };
 
         let area = self
-            .last_editor_inner_areas
+            .layout_cache
+            .editor_inner_areas
             .get(pane)
             .copied()
-            .or_else(|| self.last_editor_inner_areas.first().copied());
+            .or_else(|| self.layout_cache.editor_inner_areas.first().copied());
         let Some(area) = area else {
             return EventResult::Ignored;
         };
@@ -73,11 +80,7 @@ impl Workbench {
                         }
                         // Title clicks are handled on MouseUp via UiRuntime so we can support
                         // drag-and-drop without switching tabs on MouseDown.
-                        TabHitResult::Title(_index) => {
-                            let _ = self
-                                .ui_runtime
-                                .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
-                        }
+                        TabHitResult::Title(_index) => {}
                     }
                     return EventResult::Consumed;
                 }
@@ -121,16 +124,8 @@ impl Workbench {
                 }
                 EventResult::Ignored
             }
-            MouseEventKind::Down(MouseButton::Right) => {
-                let _ = self
-                    .ui_runtime
-                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
-                EventResult::Consumed
-            }
+            MouseEventKind::Down(MouseButton::Right) => EventResult::Consumed,
             MouseEventKind::Drag(MouseButton::Left) => {
-                let _ = self
-                    .ui_runtime
-                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
                 let captured_is_tab = self
                     .ui_runtime
                     .capture()
@@ -152,16 +147,13 @@ impl Workbench {
                 EventResult::Ignored
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                let out = self
-                    .ui_runtime
-                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
-
                 let mut handled = false;
-                for ev in out.events {
+                for ev in &ui_out.events {
                     match ev {
                         UiEvent::Click { id, .. } => {
-                            if let Some(node) = self.ui_tree.node(id) {
+                            if let Some(node) = self.ui_tree.node(*id) {
                                 if let NodeKind::Tab { pane, tab_id } = node.kind {
+                                    let tab_id = TabId::new(tab_id);
                                     let Some(index) =
                                         self.store.state().editor.pane(pane).and_then(|p| {
                                             p.tabs.iter().position(|t| t.id == tab_id)
@@ -179,7 +171,7 @@ impl Workbench {
                         UiEvent::DragEnd { id, .. } => {
                             if self
                                 .ui_tree
-                                .node(id)
+                                .node(*id)
                                 .is_some_and(|n| matches!(n.kind, NodeKind::Tab { .. }))
                             {
                                 handled = true;
@@ -190,12 +182,13 @@ impl Workbench {
                             target,
                             pos,
                         } => {
-                            let Some(target_node) = self.ui_tree.node(target) else {
+                            let Some(target_node) = self.ui_tree.node(*target) else {
                                 continue;
                             };
-                            let DragPayload::Tab { from_pane, tab_id } = payload else {
+                            let DragPayload::Tab { from_pane, tab_id } = *payload else {
                                 continue;
                             };
+                            let tab_id = TabId::new(tab_id);
 
                             match target_node.kind {
                                 NodeKind::TabBar { pane: to_pane } => {
@@ -204,10 +197,14 @@ impl Workbench {
                                     else {
                                         continue;
                                     };
-                                    let Some(to_area) =
-                                        self.last_editor_inner_areas.get(to_pane).copied().or_else(
-                                            || self.last_editor_inner_areas.first().copied(),
-                                        )
+                                    let Some(to_area) = self
+                                        .layout_cache
+                                        .editor_inner_areas
+                                        .get(to_pane)
+                                        .copied()
+                                        .or_else(|| {
+                                            self.layout_cache.editor_inner_areas.first().copied()
+                                        })
                                     else {
                                         continue;
                                     };
@@ -295,13 +292,9 @@ impl Workbench {
                 EventResult::Consumed
             }
             MouseEventKind::Up(MouseButton::Right) => {
-                let out = self
-                    .ui_runtime
-                    .on_input(&InputEvent::Mouse(*event), &self.ui_tree);
-
                 let mut handled = false;
-                for ev in out.events {
-                    let UiEvent::ContextMenu { id, pos } = ev else {
+                for ev in &ui_out.events {
+                    let UiEvent::ContextMenu { id, pos } = *ev else {
                         continue;
                     };
 
@@ -310,6 +303,7 @@ impl Workbench {
                     };
                     match node.kind {
                         NodeKind::Tab { pane, tab_id } => {
+                            let tab_id = TabId::new(tab_id);
                             let Some(index) = self
                                 .store
                                 .state()
@@ -380,7 +374,7 @@ impl Workbench {
                         None
                     };
 
-                self.idle_hover_target = idle_target;
+                self.hover_popup.target = idle_target;
 
                 if let Some(index) =
                     hit_test_tab_hover(&layout, pane_state, event.column, event.row, hovered_idx)
@@ -395,7 +389,8 @@ impl Workbench {
             MouseEventKind::ScrollUp => {
                 if self.store.state().ui.completion.visible
                     && self
-                        .last_completion_doc_area
+                        .completion_doc
+                        .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     let step = config.scroll_step().max(1) as isize;
@@ -404,7 +399,8 @@ impl Workbench {
                 }
                 if self.store.state().ui.hover_message.is_some()
                     && self
-                        .last_hover_popup_area
+                        .hover_popup
+                        .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     let step = config.scroll_step().max(1) as isize;
@@ -426,7 +422,8 @@ impl Workbench {
             MouseEventKind::ScrollDown => {
                 if self.store.state().ui.completion.visible
                     && self
-                        .last_completion_doc_area
+                        .completion_doc
+                        .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     let step = config.scroll_step().max(1) as isize;
@@ -435,7 +432,8 @@ impl Workbench {
                 }
                 if self.store.state().ui.hover_message.is_some()
                     && self
-                        .last_hover_popup_area
+                        .hover_popup
+                        .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     let step = config.scroll_step().max(1) as isize;

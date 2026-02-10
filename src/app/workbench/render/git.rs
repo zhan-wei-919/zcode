@@ -18,7 +18,7 @@ impl Workbench {
             return;
         }
 
-        self.last_git_panel_area = Some(area);
+        self.layout_cache.git_panel_area = Some(area);
 
         let ui_area = area;
 
@@ -95,7 +95,8 @@ impl Workbench {
             let line_area = UiRect::new(area.x, y, area.w, 1);
             painter.fill_rect(line_area, style);
             painter.text_clipped(Pos::new(area.x, y), label, style, line_area);
-            self.last_git_branch_areas
+            self.layout_cache
+                .git_branch_areas
                 .push((branch.to_string(), UiRect::new(area.x, y, area.w, 1)));
         }
     }

@@ -40,8 +40,8 @@ impl Workbench {
     }
 
     pub(super) fn paint_hover_popup(&mut self, painter: &mut Painter, area: UiRect) {
-        self.last_hover_popup_area = None;
-        self.hover_popup_total_lines = 0;
+        self.hover_popup.last_area = None;
+        self.hover_popup.total_lines = 0;
 
         let has_text = self
             .store
@@ -51,13 +51,13 @@ impl Workbench {
             .as_deref()
             .is_some_and(|t| !t.trim().is_empty());
         if !has_text {
-            self.hover_popup_scroll = 0;
-            self.hover_popup_hash = None;
+            self.hover_popup.scroll = 0;
+            self.hover_popup.hash = None;
             return;
         }
 
         let active_pane = self.store.state().ui.editor_layout.active_pane;
-        let pane_area = match self.last_editor_areas.get(active_pane) {
+        let pane_area = match self.layout_cache.editor_areas.get(active_pane) {
             Some(area) => *area,
             None => return,
         };
@@ -66,7 +66,7 @@ impl Workbench {
         };
         let config = &self.store.state().editor.config;
         let layout = compute_editor_pane_layout(pane_area, pane_state, config);
-        let (cx, cy) = if let Some((x, y)) = self.idle_hover_last_anchor {
+        let (cx, cy) = if let Some((x, y)) = self.hover_popup.last_anchor {
             (x, y)
         } else {
             let Some((cx, cy)) = cursor_position_editor(&layout, pane_state, config) else {
@@ -106,11 +106,11 @@ impl Workbench {
         };
 
         let total_lines = rendered.len();
-        if self.hover_popup_hash != Some(text_hash) {
+        if self.hover_popup.hash != Some(text_hash) {
             self.reset_hover_popup_scroll();
         }
-        self.hover_popup_hash = Some(text_hash);
-        self.hover_popup_total_lines = total_lines;
+        self.hover_popup.hash = Some(text_hash);
+        self.hover_popup.total_lines = total_lines;
 
         let desired_width = inner_w.saturating_add(2).max(3);
 
@@ -163,7 +163,7 @@ impl Workbench {
         }
 
         let popup_area = UiRect::new(x, y, width, height);
-        self.last_hover_popup_area = Some(popup_area);
+        self.hover_popup.last_area = Some(popup_area);
 
         let base_style = UiStyle::default()
             .bg(self.ui_theme.palette_bg)
@@ -176,15 +176,15 @@ impl Workbench {
         }
 
         let view_h = inner.h as usize;
-        self.hover_popup_scroll =
-            doc::clamp_scroll_offset(self.hover_popup_scroll, total_lines, view_h);
+        self.hover_popup.scroll =
+            doc::clamp_scroll_offset(self.hover_popup.scroll, total_lines, view_h);
         doc::paint_doc_lines(
             painter,
             inner,
             &rendered,
             &self.ui_theme,
             base_style,
-            self.hover_popup_scroll,
+            self.hover_popup.scroll,
         );
     }
 
@@ -195,7 +195,7 @@ impl Workbench {
         }
 
         let active_pane = self.store.state().ui.editor_layout.active_pane;
-        let pane_area = match self.last_editor_areas.get(active_pane) {
+        let pane_area = match self.layout_cache.editor_areas.get(active_pane) {
             Some(area) => *area,
             None => return,
         };
@@ -283,13 +283,13 @@ impl Workbench {
     }
 
     pub(super) fn paint_completion_popup(&mut self, painter: &mut Painter, area: UiRect) {
-        self.last_completion_doc_area = None;
-        self.completion_doc_total_lines = 0;
+        self.completion_doc.last_area = None;
+        self.completion_doc.total_lines = 0;
 
         let completion = &self.store.state().ui.completion;
         if !completion.visible || completion.items.is_empty() {
-            self.completion_doc_scroll = 0;
-            self.completion_doc_key = None;
+            self.completion_doc.scroll = 0;
+            self.completion_doc.key = None;
             return;
         }
 
@@ -300,9 +300,10 @@ impl Workbench {
             .map(|req| req.pane)
             .unwrap_or(active_pane);
         let pane_area = match self
-            .last_editor_areas
+            .layout_cache
+            .editor_areas
             .get(pane)
-            .or_else(|| self.last_editor_areas.get(active_pane))
+            .or_else(|| self.layout_cache.editor_areas.get(active_pane))
         {
             Some(area) => *area,
             None => return,
@@ -435,10 +436,10 @@ impl Workbench {
             version: req.version,
             selected,
         });
-        if self.completion_doc_key.as_ref() != doc_key.as_ref() {
-            self.completion_doc_scroll = 0;
+        if self.completion_doc.key.as_ref() != doc_key.as_ref() {
+            self.completion_doc.scroll = 0;
         }
-        self.completion_doc_key = doc_key;
+        self.completion_doc.key = doc_key;
 
         // Documentation panel (Helix-like): show docs for the currently selected item.
         let doc_text = completion.items.get(selected).and_then(|item| {
@@ -468,7 +469,7 @@ impl Workbench {
 
             let rendered = doc::render_markdown(doc_text, inner_w, doc::MAX_RENDER_LINES);
             let total_lines = rendered.len();
-            self.completion_doc_total_lines = total_lines;
+            self.completion_doc.total_lines = total_lines;
 
             let desired_h = total_lines.saturating_add(2).min(u16::MAX as usize).max(3) as u16;
             let desired_w = inner_w.saturating_add(2).max(3);
@@ -492,7 +493,7 @@ impl Workbench {
             painter.fill_rect(doc_area_max, base_style);
             painter.border(doc_area_max, border_style, BorderKind::Plain);
 
-            self.last_completion_doc_area = Some(doc_area_max);
+            self.completion_doc.last_area = Some(doc_area_max);
 
             let inner = doc_area_max.inset(Insets::all(1));
             if inner.is_empty() {
@@ -500,15 +501,15 @@ impl Workbench {
             }
 
             let view_h = inner.h as usize;
-            self.completion_doc_scroll =
-                doc::clamp_scroll_offset(self.completion_doc_scroll, total_lines, view_h);
+            self.completion_doc.scroll =
+                doc::clamp_scroll_offset(self.completion_doc.scroll, total_lines, view_h);
             doc::paint_doc_lines(
                 painter,
                 inner,
                 &rendered,
                 &self.ui_theme,
                 base_style,
-                self.completion_doc_scroll,
+                self.completion_doc.scroll,
             );
         }
     }
@@ -540,19 +541,24 @@ impl Workbench {
         let panes = self.store.state().ui.editor_layout.panes.max(1);
         let hovered = self.store.state().ui.hovered_tab;
         let workspace_empty = self.store.state().explorer.rows.is_empty();
-        self.last_editor_areas.clear();
-        self.last_editor_areas.reserve(panes.min(2));
-        self.last_editor_inner_areas.clear();
-        self.last_editor_inner_areas.reserve(panes.min(2));
-        self.last_editor_content_sizes.resize_with(panes, || (0, 0));
-        self.last_editor_container_area = (!area.is_empty()).then_some(area);
+        self.layout_cache.editor_areas.clear();
+        self.layout_cache.editor_areas.reserve(panes.min(2));
+        self.layout_cache.editor_inner_areas.clear();
+        self.layout_cache.editor_inner_areas.reserve(panes.min(2));
+        self.viewport_cache
+            .editor_content_sizes
+            .resize_with(panes, || (0, 0));
+        self.viewport_cache
+            .applied_editor_content_sizes
+            .resize_with(panes, || (0, 0));
+        self.layout_cache.editor_container_area = (!area.is_empty()).then_some(area);
         let hovered_for_pane = |p: usize| hovered.filter(|(hp, _)| *hp == p).map(|(_, i)| i);
 
         match panes {
             1 => {
                 self.editor_split_dragging = false;
-                self.last_editor_areas.push(area);
-                self.last_editor_inner_areas.push(area);
+                self.layout_cache.editor_areas.push(area);
+                self.layout_cache.editor_inner_areas.push(area);
 
                 let layout = {
                     let Some(pane_state) = self.store.state().editor.pane(0) else {
@@ -588,8 +594,8 @@ impl Workbench {
                         let available = area.w;
                         if available < 3 {
                             self.editor_split_dragging = false;
-                            self.last_editor_areas.push(area);
-                            self.last_editor_inner_areas.push(area);
+                            self.layout_cache.editor_areas.push(area);
+                            self.layout_cache.editor_inner_areas.push(area);
 
                             let active = self.store.state().ui.editor_layout.active_pane.min(1);
                             let layout = {
@@ -633,8 +639,8 @@ impl Workbench {
                             UiRect::new(area.x + left_width + 1, area.y, right_width, area.h);
                         self.register_editor_splitter_node(sep_area, SplitDirection::Vertical);
 
-                        self.last_editor_areas.push(left_area);
-                        self.last_editor_areas.push(right_area);
+                        self.layout_cache.editor_areas.push(left_area);
+                        self.layout_cache.editor_areas.push(right_area);
 
                         // Split separator: avoid box borders (more nvim-like), just paint a 1-cell bar.
                         if !sep_area.is_empty() {
@@ -654,7 +660,7 @@ impl Workbench {
                         }
 
                         let left_inner = left_area;
-                        self.last_editor_inner_areas.push(left_inner);
+                        self.layout_cache.editor_inner_areas.push(left_inner);
                         if !left_inner.is_empty() {
                             let layout = {
                                 let Some(pane_state) = self.store.state().editor.pane(0) else {
@@ -684,7 +690,7 @@ impl Workbench {
                         }
 
                         let right_inner = right_area;
-                        self.last_editor_inner_areas.push(right_inner);
+                        self.layout_cache.editor_inner_areas.push(right_inner);
                         if !right_inner.is_empty() {
                             let layout = {
                                 let Some(pane_state) = self.store.state().editor.pane(1) else {
@@ -717,8 +723,8 @@ impl Workbench {
                         let available = area.h;
                         if available < 3 {
                             self.editor_split_dragging = false;
-                            self.last_editor_areas.push(area);
-                            self.last_editor_inner_areas.push(area);
+                            self.layout_cache.editor_areas.push(area);
+                            self.layout_cache.editor_inner_areas.push(area);
 
                             let active = self.store.state().ui.editor_layout.active_pane.min(1);
                             let layout = {
@@ -762,8 +768,8 @@ impl Workbench {
                             UiRect::new(area.x, area.y + top_height + 1, area.w, bottom_height);
                         self.register_editor_splitter_node(sep_area, SplitDirection::Horizontal);
 
-                        self.last_editor_areas.push(top_area);
-                        self.last_editor_areas.push(bottom_area);
+                        self.layout_cache.editor_areas.push(top_area);
+                        self.layout_cache.editor_areas.push(bottom_area);
 
                         // Split separator: avoid box borders (more nvim-like), just paint a 1-cell bar.
                         if !sep_area.is_empty() {
@@ -783,7 +789,7 @@ impl Workbench {
                         }
 
                         let top_inner = top_area;
-                        self.last_editor_inner_areas.push(top_inner);
+                        self.layout_cache.editor_inner_areas.push(top_inner);
                         if !top_inner.is_empty() {
                             let layout = {
                                 let Some(pane_state) = self.store.state().editor.pane(0) else {
@@ -813,7 +819,7 @@ impl Workbench {
                         }
 
                         let bottom_inner = bottom_area;
-                        self.last_editor_inner_areas.push(bottom_inner);
+                        self.layout_cache.editor_inner_areas.push(bottom_inner);
                         if !bottom_inner.is_empty() {
                             let layout = {
                                 let Some(pane_state) = self.store.state().editor.pane(1) else {
@@ -846,8 +852,8 @@ impl Workbench {
             }
             _ => {
                 self.editor_split_dragging = false;
-                self.last_editor_areas.push(area);
-                self.last_editor_inner_areas.push(area);
+                self.layout_cache.editor_areas.push(area);
+                self.layout_cache.editor_inner_areas.push(area);
 
                 let active = self
                     .store
@@ -1128,7 +1134,7 @@ fn push_editor_tab_nodes(
                 sense: Sense::CLICK | Sense::DRAG_SOURCE | Sense::CONTEXT_MENU,
                 kind: NodeKind::Tab {
                     pane,
-                    tab_id: tab.id,
+                    tab_id: tab.id.raw(),
                 },
             });
         }

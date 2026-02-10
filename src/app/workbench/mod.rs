@@ -2,6 +2,7 @@
 
 use super::theme::UiTheme;
 use crate::core::event::InputEvent;
+use crate::core::wakeup::WakeupSender;
 use crate::core::Command;
 use crate::kernel::services::adapters::lsp::LspServerCommandOverride;
 use crate::kernel::services::adapters::perf;
@@ -17,7 +18,6 @@ use crate::kernel::services::KernelServiceHost;
 use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, Store};
 use crate::models::build_file_tree;
 use crate::tui::view::{EventResult, View};
-use crate::tui::wakeup::WakeupSender;
 use crate::ui::backend::Backend;
 use crate::ui::core::color_support::{detect_terminal_color_support, TerminalColorSupport};
 use crate::ui::core::geom::Rect;
@@ -33,6 +33,7 @@ mod bridge;
 mod input;
 mod interaction;
 mod mouse;
+mod mouse_route;
 mod paint;
 mod palette;
 mod render;
@@ -122,6 +123,89 @@ fn git_enabled() -> bool {
     true
 }
 
+#[derive(Debug, Default)]
+struct HoverPopupState {
+    last_request: Option<(PathBuf, u32, u32, u64)>,
+    last_anchor: Option<(u16, u16)>,
+    target: Option<IdleHoverTarget>,
+    scroll: usize,
+    total_lines: usize,
+    hash: Option<u64>,
+    last_area: Option<Rect>,
+}
+
+#[derive(Debug, Default)]
+struct CompletionDocState {
+    scroll: usize,
+    total_lines: usize,
+    key: Option<CompletionDocKey>,
+    last_area: Option<Rect>,
+}
+
+#[derive(Debug, Default)]
+struct LspDebounceState {
+    completion: Option<Instant>,
+    semantic_tokens: Option<Instant>,
+    inlay_hints: Option<Instant>,
+    folding_range: Option<Instant>,
+}
+
+#[derive(Debug, Default)]
+struct ClickTracker {
+    problems: Option<(Instant, usize)>,
+    locations: Option<(Instant, usize)>,
+    code_actions: Option<(Instant, usize)>,
+    symbols: Option<(Instant, usize)>,
+}
+
+#[derive(Debug, Default)]
+struct ThemeEditorLayoutCache {
+    token_list_area: Option<Rect>,
+    hue_bar_area: Option<Rect>,
+    sv_palette_area: Option<Rect>,
+    ansi_cursor: Option<(u16, u16)>,
+}
+
+#[derive(Debug, Default)]
+struct ViewportCache {
+    editor_content_sizes: Vec<(u16, u16)>,
+    applied_editor_content_sizes: Vec<(u16, u16)>,
+    explorer_view_height: Option<u16>,
+    applied_explorer_view_height: Option<u16>,
+    search_sidebar_results_height: Option<u16>,
+    applied_search_sidebar_results_height: Option<u16>,
+    search_panel_results_height: Option<u16>,
+    applied_search_panel_results_height: Option<u16>,
+    problems_panel_height: Option<u16>,
+    applied_problems_panel_height: Option<u16>,
+    locations_panel_height: Option<u16>,
+    applied_locations_panel_height: Option<u16>,
+    code_actions_panel_height: Option<u16>,
+    applied_code_actions_panel_height: Option<u16>,
+    symbols_panel_height: Option<u16>,
+    applied_symbols_panel_height: Option<u16>,
+    terminal_panel_id: Option<crate::kernel::TerminalId>,
+    terminal_panel_size: Option<(u16, u16)>,
+    applied_terminal_panel_id: Option<crate::kernel::TerminalId>,
+    applied_terminal_panel_size: Option<(u16, u16)>,
+}
+
+#[derive(Debug, Default)]
+struct LayoutCache {
+    render_area: Option<Rect>,
+    activity_bar_area: Option<Rect>,
+    sidebar_area: Option<Rect>,
+    sidebar_tabs_area: Option<Rect>,
+    sidebar_content_area: Option<Rect>,
+    sidebar_container_area: Option<Rect>,
+    git_panel_area: Option<Rect>,
+    git_branch_areas: Vec<(String, Rect)>,
+    bottom_panel_area: Option<Rect>,
+    editor_areas: Vec<Rect>,
+    editor_inner_areas: Vec<Rect>,
+    editor_container_area: Option<Rect>,
+}
+
 pub struct Workbench {
     store: Store,
     explorer: ExplorerView,
@@ -135,21 +219,9 @@ pub struct Workbench {
     last_settings_check: Instant,
     last_settings_modified: Option<SystemTime>,
     last_input_at: Instant,
-    idle_hover_last_request: Option<(PathBuf, u32, u32, u64)>,
-    idle_hover_last_anchor: Option<(u16, u16)>,
-    idle_hover_target: Option<IdleHoverTarget>,
-    hover_popup_scroll: usize,
-    hover_popup_total_lines: usize,
-    hover_popup_hash: Option<u64>,
-    last_hover_popup_area: Option<Rect>,
-    completion_doc_scroll: usize,
-    completion_doc_total_lines: usize,
-    completion_doc_key: Option<CompletionDocKey>,
-    last_completion_doc_area: Option<Rect>,
-    pending_completion_deadline: Option<Instant>,
-    pending_semantic_tokens_deadline: Option<Instant>,
-    pending_inlay_hints_deadline: Option<Instant>,
-    pending_folding_range_deadline: Option<Instant>,
+    hover_popup: HoverPopupState,
+    completion_doc: CompletionDocState,
+    lsp_debounce: LspDebounceState,
     file_save_versions: FxHashMap<(usize, PathBuf), u64>,
     lsp_open_paths_version: u64,
     lsp_open_paths: FxHashSet<PathBuf>,
@@ -162,43 +234,18 @@ pub struct Workbench {
     kernel_services: KernelServiceHost,
     global_search_task: Option<GlobalSearchTask>,
     global_search_rx: Option<Receiver<GlobalSearchMessage>>,
-    last_render_area: Option<Rect>,
-    last_activity_bar_area: Option<Rect>,
-    last_sidebar_area: Option<Rect>,
-    last_sidebar_tabs_area: Option<Rect>,
-    last_sidebar_content_area: Option<Rect>,
-    last_sidebar_container_area: Option<Rect>,
-    last_git_panel_area: Option<Rect>,
-    last_git_branch_areas: Vec<(String, Rect)>,
-    last_bottom_panel_area: Option<Rect>,
-    last_editor_areas: Vec<Rect>,
-    last_editor_inner_areas: Vec<Rect>,
-    last_editor_content_sizes: Vec<(u16, u16)>,
-    last_explorer_view_height: Option<u16>,
-    last_search_sidebar_results_height: Option<u16>,
-    last_search_panel_results_height: Option<u16>,
-    last_problems_panel_height: Option<u16>,
-    last_locations_panel_height: Option<u16>,
-    last_code_actions_panel_height: Option<u16>,
-    last_symbols_panel_height: Option<u16>,
-    last_terminal_panel_size: Option<(u16, u16)>,
+    layout_cache: LayoutCache,
+    viewport_cache: ViewportCache,
     terminal_cursor_visible: bool,
     terminal_cursor_last_blink: Instant,
-    last_editor_container_area: Option<Rect>,
     editor_split_dragging: bool,
     sidebar_split_dragging: bool,
-    last_problems_click: Option<(Instant, usize)>,
-    last_locations_click: Option<(Instant, usize)>,
-    last_code_actions_click: Option<(Instant, usize)>,
-    last_symbols_click: Option<(Instant, usize)>,
+    click_tracker: ClickTracker,
     pending_restart: Option<PendingRestart>,
     pending_theme_save_deadline: Option<Instant>,
     pending_completion_rank_save_deadline: Option<Instant>,
     file_watcher: Option<FileWatcherService>,
-    last_theme_editor_token_list_area: Option<Rect>,
-    last_theme_editor_hue_bar_area: Option<Rect>,
-    last_theme_editor_sv_palette_area: Option<Rect>,
-    last_theme_editor_ansi_cursor: Option<(u16, u16)>,
+    theme_editor_layout: ThemeEditorLayoutCache,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -369,21 +416,9 @@ impl Workbench {
             last_settings_check: Instant::now(),
             last_settings_modified,
             last_input_at: Instant::now(),
-            idle_hover_last_request: None,
-            idle_hover_last_anchor: None,
-            idle_hover_target: None,
-            hover_popup_scroll: 0,
-            hover_popup_total_lines: 0,
-            hover_popup_hash: None,
-            last_hover_popup_area: None,
-            completion_doc_scroll: 0,
-            completion_doc_total_lines: 0,
-            completion_doc_key: None,
-            last_completion_doc_area: None,
-            pending_completion_deadline: None,
-            pending_semantic_tokens_deadline: None,
-            pending_inlay_hints_deadline: None,
-            pending_folding_range_deadline: None,
+            hover_popup: HoverPopupState::default(),
+            completion_doc: CompletionDocState::default(),
+            lsp_debounce: LspDebounceState::default(),
             file_save_versions: FxHashMap::default(),
             lsp_open_paths_version,
             lsp_open_paths: FxHashSet::default(),
@@ -396,35 +431,17 @@ impl Workbench {
             kernel_services,
             global_search_task: None,
             global_search_rx: None,
-            last_render_area: None,
-            last_activity_bar_area: None,
-            last_sidebar_area: None,
-            last_sidebar_tabs_area: None,
-            last_sidebar_content_area: None,
-            last_sidebar_container_area: None,
-            last_git_panel_area: None,
-            last_git_branch_areas: Vec::new(),
-            last_bottom_panel_area: None,
-            last_editor_areas: Vec::new(),
-            last_editor_inner_areas: Vec::new(),
-            last_editor_content_sizes: vec![(0, 0); panes],
-            last_explorer_view_height: None,
-            last_search_sidebar_results_height: None,
-            last_search_panel_results_height: None,
-            last_problems_panel_height: None,
-            last_locations_panel_height: None,
-            last_code_actions_panel_height: None,
-            last_symbols_panel_height: None,
-            last_terminal_panel_size: None,
+            layout_cache: LayoutCache::default(),
+            viewport_cache: ViewportCache {
+                editor_content_sizes: vec![(0, 0); panes],
+                applied_editor_content_sizes: vec![(0, 0); panes],
+                ..ViewportCache::default()
+            },
             terminal_cursor_visible: true,
             terminal_cursor_last_blink: Instant::now(),
-            last_editor_container_area: None,
             editor_split_dragging: false,
             sidebar_split_dragging: false,
-            last_problems_click: None,
-            last_locations_click: None,
-            last_code_actions_click: None,
-            last_symbols_click: None,
+            click_tracker: ClickTracker::default(),
             pending_restart: None,
             pending_theme_save_deadline: None,
             pending_completion_rank_save_deadline: None,
@@ -435,10 +452,7 @@ impl Workbench {
                     None
                 }
             },
-            last_theme_editor_token_list_area: None,
-            last_theme_editor_hue_bar_area: None,
-            last_theme_editor_sv_palette_area: None,
-            last_theme_editor_ansi_cursor: None,
+            theme_editor_layout: ThemeEditorLayoutCache::default(),
         };
 
         if git_enabled() {
@@ -475,65 +489,69 @@ impl Workbench {
     }
 
     fn hover_popup_view_height(&self) -> usize {
-        self.last_hover_popup_area
+        self.hover_popup
+            .last_area
             .map(|a| a.h.saturating_sub(2) as usize)
             .unwrap_or(0)
     }
 
     fn scroll_hover_popup_by(&mut self, delta_lines: isize) -> bool {
         let view_h = self.hover_popup_view_height();
-        if view_h == 0 || self.hover_popup_total_lines <= view_h {
+        if view_h == 0 || self.hover_popup.total_lines <= view_h {
             return false;
         }
 
-        let max_scroll = self.hover_popup_total_lines.saturating_sub(view_h);
+        let max_scroll = self.hover_popup.total_lines.saturating_sub(view_h);
         let next = if delta_lines < 0 {
-            self.hover_popup_scroll
+            self.hover_popup
+                .scroll
                 .saturating_sub(delta_lines.unsigned_abs())
         } else {
-            (self.hover_popup_scroll + delta_lines as usize).min(max_scroll)
+            (self.hover_popup.scroll + delta_lines as usize).min(max_scroll)
         };
 
-        if next == self.hover_popup_scroll {
+        if next == self.hover_popup.scroll {
             return false;
         }
-        self.hover_popup_scroll = next;
+        self.hover_popup.scroll = next;
         true
     }
 
     fn reset_hover_popup_scroll(&mut self) {
-        self.hover_popup_scroll = 0;
+        self.hover_popup.scroll = 0;
     }
 
     fn completion_doc_view_height(&self) -> usize {
-        self.last_completion_doc_area
+        self.completion_doc
+            .last_area
             .map(|a| a.h.saturating_sub(2) as usize)
             .unwrap_or(0)
     }
 
     fn scroll_completion_doc_by(&mut self, delta_lines: isize) -> bool {
         let view_h = self.completion_doc_view_height();
-        if view_h == 0 || self.completion_doc_total_lines <= view_h {
+        if view_h == 0 || self.completion_doc.total_lines <= view_h {
             return false;
         }
 
-        let max_scroll = self.completion_doc_total_lines.saturating_sub(view_h);
+        let max_scroll = self.completion_doc.total_lines.saturating_sub(view_h);
         let next = if delta_lines < 0 {
-            self.completion_doc_scroll
+            self.completion_doc
+                .scroll
                 .saturating_sub(delta_lines.unsigned_abs())
         } else {
-            (self.completion_doc_scroll + delta_lines as usize).min(max_scroll)
+            (self.completion_doc.scroll + delta_lines as usize).min(max_scroll)
         };
 
-        if next == self.completion_doc_scroll {
+        if next == self.completion_doc.scroll {
             return false;
         }
-        self.completion_doc_scroll = next;
+        self.completion_doc.scroll = next;
         true
     }
 
     fn reset_completion_doc_scroll(&mut self) {
-        self.completion_doc_scroll = 0;
+        self.completion_doc.scroll = 0;
     }
 
     pub(super) fn open_settings(&mut self) {

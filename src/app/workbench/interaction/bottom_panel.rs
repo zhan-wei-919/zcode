@@ -13,7 +13,7 @@ impl Workbench {
         &mut self,
         event: &MouseEvent,
     ) -> EventResult {
-        let Some(panel_area) = self.last_bottom_panel_area else {
+        let Some(panel_area) = self.layout_cache.bottom_panel_area else {
             return EventResult::Ignored;
         };
         if !util::rect_contains(panel_area, event.column, event.row) {
@@ -111,7 +111,8 @@ impl Workbench {
                     let now = Instant::now();
                     let double_click_ms = self.store.state().editor.config.double_click_ms;
                     let is_double = self
-                        .last_problems_click
+                        .click_tracker
+                        .problems
                         .map(|(last_time, last_row)| {
                             last_row == row
                                 && now.duration_since(last_time).as_millis() as u64
@@ -120,9 +121,9 @@ impl Workbench {
                         .unwrap_or(false);
 
                     if is_double {
-                        self.last_problems_click = None;
+                        self.click_tracker.problems = None;
                     } else {
-                        self.last_problems_click = Some((now, row));
+                        self.click_tracker.problems = Some((now, row));
                     }
 
                     let _ = self.dispatch_kernel(KernelAction::ProblemsClickRow { row });
@@ -149,7 +150,8 @@ impl Workbench {
                     let now = Instant::now();
                     let double_click_ms = self.store.state().editor.config.double_click_ms;
                     let is_double = self
-                        .last_locations_click
+                        .click_tracker
+                        .locations
                         .map(|(last_time, last_row)| {
                             last_row == row
                                 && now.duration_since(last_time).as_millis() as u64
@@ -158,9 +160,9 @@ impl Workbench {
                         .unwrap_or(false);
 
                     if is_double {
-                        self.last_locations_click = None;
+                        self.click_tracker.locations = None;
                     } else {
-                        self.last_locations_click = Some((now, row));
+                        self.click_tracker.locations = Some((now, row));
                     }
 
                     let _ = self.dispatch_kernel(KernelAction::LocationsClickRow { row });
@@ -187,7 +189,8 @@ impl Workbench {
                     let now = Instant::now();
                     let double_click_ms = self.store.state().editor.config.double_click_ms;
                     let is_double = self
-                        .last_symbols_click
+                        .click_tracker
+                        .symbols
                         .map(|(last_time, last_row)| {
                             last_row == row
                                 && now.duration_since(last_time).as_millis() as u64
@@ -196,9 +199,9 @@ impl Workbench {
                         .unwrap_or(false);
 
                     if is_double {
-                        self.last_symbols_click = None;
+                        self.click_tracker.symbols = None;
                     } else {
-                        self.last_symbols_click = Some((now, row));
+                        self.click_tracker.symbols = Some((now, row));
                     }
 
                     let _ = self.dispatch_kernel(KernelAction::SymbolsClickRow { row });
@@ -225,7 +228,8 @@ impl Workbench {
                     let now = Instant::now();
                     let double_click_ms = self.store.state().editor.config.double_click_ms;
                     let is_double = self
-                        .last_code_actions_click
+                        .click_tracker
+                        .code_actions
                         .map(|(last_time, last_row)| {
                             last_row == row
                                 && now.duration_since(last_time).as_millis() as u64
@@ -234,9 +238,9 @@ impl Workbench {
                         .unwrap_or(false);
 
                     if is_double {
-                        self.last_code_actions_click = None;
+                        self.click_tracker.code_actions = None;
                     } else {
-                        self.last_code_actions_click = Some((now, row));
+                        self.click_tracker.code_actions = Some((now, row));
                     }
 
                     let _ = self.dispatch_kernel(KernelAction::CodeActionsClickRow { row });

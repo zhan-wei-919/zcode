@@ -1,9 +1,29 @@
 use crate::core::Command;
 use crate::kernel::editor::EditorAction;
 use crate::kernel::state::{ContextMenuItem, ContextMenuRequest, ContextMenuState, PendingAction};
-use crate::kernel::{Action, FocusTarget, SidebarTab};
+use crate::kernel::{Action, Effect, FocusTarget, SidebarTab};
 
 impl super::Store {
+    fn explorer_selected_path_text(&self, relative: bool) -> Option<String> {
+        let (path, _) = self.state.explorer.selected_path_and_kind()?;
+        if !relative {
+            return Some(path.to_string_lossy().to_string());
+        }
+
+        Some(
+            path.strip_prefix(&self.state.workspace_root)
+                .ok()
+                .and_then(|rel| {
+                    if rel.as_os_str().is_empty() {
+                        None
+                    } else {
+                        Some(rel.to_string_lossy().to_string())
+                    }
+                })
+                .unwrap_or_else(|| path.to_string_lossy().to_string()),
+        )
+    }
+
     pub(super) fn reduce_context_menu_action(&mut self, action: Action) -> super::DispatchResult {
         match action {
             Action::ContextMenuOpen { request, x, y } => {
@@ -51,6 +71,8 @@ impl super::Store {
                         if !selected_is_root {
                             items.push(ContextMenuItem::ExplorerRename);
                             items.push(ContextMenuItem::ExplorerDelete);
+                            items.push(ContextMenuItem::ExplorerCopyPath);
+                            items.push(ContextMenuItem::ExplorerCopyRelativePath);
                         }
 
                         let prev = self.state.ui.context_menu.clone();
@@ -233,6 +255,32 @@ impl super::Store {
                         let mut result = self.dispatch(Action::RunCommand(Command::ExplorerDelete));
                         result.state_changed = true;
                         result
+                    }
+                    (ContextMenuItem::ExplorerCopyPath, _) => {
+                        let Some(text) = self.explorer_selected_path_text(false) else {
+                            return super::DispatchResult {
+                                effects: Vec::new(),
+                                state_changed: true,
+                            };
+                        };
+
+                        super::DispatchResult {
+                            effects: vec![Effect::SetClipboardText(text)],
+                            state_changed: true,
+                        }
+                    }
+                    (ContextMenuItem::ExplorerCopyRelativePath, _) => {
+                        let Some(text) = self.explorer_selected_path_text(true) else {
+                            return super::DispatchResult {
+                                effects: Vec::new(),
+                                state_changed: true,
+                            };
+                        };
+
+                        super::DispatchResult {
+                            effects: vec![Effect::SetClipboardText(text)],
+                            state_changed: true,
+                        }
                     }
                     (ContextMenuItem::TabClose, Some(ContextMenuRequest::Tab { pane, index })) => {
                         let is_dirty = self

@@ -2,6 +2,7 @@ use super::*;
 use crate::core::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::kernel::editor::{ReloadCause, ReloadRequest};
+use crate::models::NodeId;
 use crate::ui::backend::test::TestBackend;
 use crate::ui::core::geom::Rect;
 use crate::ui::core::id::IdPath;
@@ -49,6 +50,7 @@ fn drive_until(
 fn render_once(workbench: &mut Workbench, w: u16, h: u16) {
     let mut backend = TestBackend::new(w, h);
     workbench.render(&mut backend, Rect::new(0, 0, w, h));
+    let _ = workbench.flush_post_render_sync();
 }
 
 fn mouse(kind: MouseEventKind, x: u16, y: u16) -> InputEvent {
@@ -146,7 +148,7 @@ fn test_drag_tab_to_split_right_creates_two_panes() {
         .ui_tree
         .nodes()
         .iter()
-        .find(|n| matches!(n.kind, NodeKind::Tab { pane: 0, tab_id } if tab_id == b_tab_id))
+        .find(|n| matches!(n.kind, NodeKind::Tab { pane: 0, tab_id } if tab_id == b_tab_id.raw()))
         .expect("tab node");
     let right_node = workbench
         .ui_tree
@@ -250,7 +252,7 @@ fn test_drag_tab_to_split_down_creates_two_panes() {
         .ui_tree
         .nodes()
         .iter()
-        .find(|n| matches!(n.kind, NodeKind::Tab { pane: 0, tab_id } if tab_id == b_tab_id))
+        .find(|n| matches!(n.kind, NodeKind::Tab { pane: 0, tab_id } if tab_id == b_tab_id.raw()))
         .expect("tab node");
     let down_node = workbench
         .ui_tree
@@ -348,7 +350,7 @@ fn test_drag_tab_renders_ghost_label_near_cursor() {
         .ui_tree
         .nodes()
         .iter()
-        .find(|n| matches!(n.kind, NodeKind::Tab { pane: 0, tab_id: id } if id == tab_id))
+        .find(|n| matches!(n.kind, NodeKind::Tab { pane: 0, tab_id: id } if id == tab_id.raw()))
         .expect("tab node");
 
     let start_x = tab_node.rect.x.saturating_add(1);
@@ -424,7 +426,8 @@ fn test_drag_sidebar_splitter_updates_sidebar_width() {
     ));
 
     let container = workbench
-        .last_sidebar_container_area
+        .layout_cache
+        .sidebar_container_area
         .expect("sidebar container");
     let desired = drag_x.saturating_sub(container.x).saturating_add(1);
     let expected = util::clamp_sidebar_width(container.w, desired);
@@ -433,9 +436,87 @@ fn test_drag_sidebar_splitter_updates_sidebar_width() {
 
     render_once(&mut workbench, 120, 40);
     assert_eq!(
-        workbench.last_sidebar_area.expect("sidebar area").w,
+        workbench.layout_cache.sidebar_area.expect("sidebar area").w,
         expected
     );
+}
+
+#[test]
+fn test_command_palette_visible_mouse_down_does_not_steal_focus() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    render_once(&mut workbench, 120, 40);
+
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::CommandPalette));
+    assert!(workbench.store.state().ui.command_palette.visible);
+    assert_eq!(
+        workbench.store.state().ui.focus,
+        FocusTarget::CommandPalette
+    );
+
+    let editor_area = *workbench
+        .layout_cache
+        .editor_inner_areas
+        .first()
+        .expect("editor area");
+    let click_x = editor_area.x.saturating_add(1);
+    let click_y = editor_area.y.saturating_add(1);
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        click_x,
+        click_y,
+    ));
+
+    assert!(workbench.store.state().ui.command_palette.visible);
+    assert_eq!(
+        workbench.store.state().ui.focus,
+        FocusTarget::CommandPalette
+    );
+}
+
+#[test]
+fn test_splitter_capture_clears_when_sidebar_hidden_before_mouse_up() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    render_once(&mut workbench, 120, 40);
+
+    let splitter_id = IdPath::root("workbench")
+        .push_str("sidebar_splitter")
+        .finish();
+    let splitter = workbench
+        .ui_tree
+        .node(splitter_id)
+        .expect("sidebar splitter");
+
+    let start_x = splitter.rect.x;
+    let start_y = splitter.rect.y.saturating_add(1);
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        start_x.saturating_add(1),
+        start_y,
+    ));
+    assert!(workbench.ui_runtime.capture().is_some());
+
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::ToggleSidebar));
+    assert!(!workbench.store.state().ui.sidebar_visible);
+
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+    assert_eq!(workbench.store.state().ui.focus, FocusTarget::BottomPanel);
+
+    let _ = workbench.handle_input(&mouse(MouseEventKind::Up(MouseButton::Left), 0, 0));
+
+    assert_eq!(workbench.ui_runtime.capture(), None);
 }
 
 #[test]
@@ -494,7 +575,7 @@ fn test_drag_explorer_file_into_folder_moves_path() {
                 .store
                 .state()
                 .explorer
-                .path_and_kind_for(node_id)
+                .path_and_kind_for(NodeId::from_raw(node_id))
                 .filter(|(path, is_dir)| !*is_dir && *path == from)
                 .map(|_| node_id),
             _ => None,
@@ -516,7 +597,7 @@ fn test_drag_explorer_file_into_folder_moves_path() {
                 .store
                 .state()
                 .explorer
-                .path_and_kind_for(node_id)
+                .path_and_kind_for(NodeId::from_raw(node_id))
                 .is_some_and(|(path, is_dir)| is_dir && path == dst_dir),
             _ => false,
         })
@@ -553,7 +634,11 @@ fn test_drag_explorer_file_into_folder_moves_path() {
         to.exists() && !from.exists()
     });
     assert_eq!(
-        workbench.store.state().explorer.path_and_kind_for(file_id),
+        workbench
+            .store
+            .state()
+            .explorer
+            .path_and_kind_for(NodeId::from_raw(file_id)),
         Some((to, false))
     );
 }
@@ -615,7 +700,7 @@ fn test_drag_explorer_file_into_folder_conflict_cancel_keeps_original() {
                 .store
                 .state()
                 .explorer
-                .path_and_kind_for(node_id)
+                .path_and_kind_for(NodeId::from_raw(node_id))
                 .filter(|(path, is_dir)| !*is_dir && *path == from)
                 .map(|_| node_id),
             _ => None,
@@ -637,7 +722,7 @@ fn test_drag_explorer_file_into_folder_conflict_cancel_keeps_original() {
                 .store
                 .state()
                 .explorer
-                .path_and_kind_for(node_id)
+                .path_and_kind_for(NodeId::from_raw(node_id))
                 .is_some_and(|(path, is_dir)| is_dir && path == dst_dir),
             _ => false,
         })
@@ -674,7 +759,11 @@ fn test_drag_explorer_file_into_folder_conflict_cancel_keeps_original() {
     assert!(from.exists());
     assert_eq!(std::fs::read_to_string(&to).unwrap(), "TO");
     assert_eq!(
-        workbench.store.state().explorer.path_and_kind_for(file_id),
+        workbench
+            .store
+            .state()
+            .explorer
+            .path_and_kind_for(NodeId::from_raw(file_id)),
         Some((from.clone(), false))
     );
 
@@ -684,7 +773,11 @@ fn test_drag_explorer_file_into_folder_conflict_cancel_keeps_original() {
     assert!(from.exists());
     assert_eq!(std::fs::read_to_string(&to).unwrap(), "TO");
     assert_eq!(
-        workbench.store.state().explorer.path_and_kind_for(file_id),
+        workbench
+            .store
+            .state()
+            .explorer
+            .path_and_kind_for(NodeId::from_raw(file_id)),
         Some((from, false))
     );
 }
@@ -746,7 +839,7 @@ fn test_drag_explorer_file_into_folder_conflict_accept_overwrites() {
                 .store
                 .state()
                 .explorer
-                .path_and_kind_for(node_id)
+                .path_and_kind_for(NodeId::from_raw(node_id))
                 .filter(|(path, is_dir)| !*is_dir && *path == from)
                 .map(|_| node_id),
             _ => None,
@@ -768,7 +861,7 @@ fn test_drag_explorer_file_into_folder_conflict_accept_overwrites() {
                 .store
                 .state()
                 .explorer
-                .path_and_kind_for(node_id)
+                .path_and_kind_for(NodeId::from_raw(node_id))
                 .is_some_and(|(path, is_dir)| is_dir && path == dst_dir),
             _ => false,
         })
@@ -813,7 +906,11 @@ fn test_drag_explorer_file_into_folder_conflict_accept_overwrites() {
 
     assert_eq!(std::fs::read_to_string(&to).unwrap(), "FROM");
     assert_eq!(
-        workbench.store.state().explorer.path_and_kind_for(file_id),
+        workbench
+            .store
+            .state()
+            .explorer
+            .path_and_kind_for(NodeId::from_raw(file_id)),
         Some((to, false))
     );
 }
@@ -869,7 +966,7 @@ fn test_drag_explorer_file_onto_file_row_moves_into_that_files_parent_dir() {
                 .store
                 .state()
                 .explorer
-                .path_and_kind_for(node_id)
+                .path_and_kind_for(NodeId::from_raw(node_id))
                 .filter(|(path, is_dir)| !*is_dir && *path == from)
                 .map(|_| node_id),
             _ => None,
@@ -891,7 +988,7 @@ fn test_drag_explorer_file_onto_file_row_moves_into_that_files_parent_dir() {
                 .store
                 .state()
                 .explorer
-                .path_and_kind_for(node_id)
+                .path_and_kind_for(NodeId::from_raw(node_id))
                 .filter(|(path, is_dir)| !*is_dir && *path == root_target)
                 .map(|_| node_id),
             _ => None,
@@ -936,7 +1033,11 @@ fn test_drag_explorer_file_onto_file_row_moves_into_that_files_parent_dir() {
     });
     assert!(root_target.exists(), "drop target file should not be moved");
     assert_eq!(
-        workbench.store.state().explorer.path_and_kind_for(file_id),
+        workbench
+            .store
+            .state()
+            .explorer
+            .path_and_kind_for(NodeId::from_raw(file_id)),
         Some((to, false))
     );
 }
@@ -990,7 +1091,7 @@ fn test_drag_explorer_file_into_root_empty_space_moves_into_root() {
                 .store
                 .state()
                 .explorer
-                .path_and_kind_for(node_id)
+                .path_and_kind_for(NodeId::from_raw(node_id))
                 .filter(|(path, is_dir)| !*is_dir && *path == from)
                 .map(|_| node_id),
             _ => None,
@@ -1043,7 +1144,11 @@ fn test_drag_explorer_file_into_root_empty_space_moves_into_root() {
         to.exists() && !from.exists()
     });
     assert_eq!(
-        workbench.store.state().explorer.path_and_kind_for(file_id),
+        workbench
+            .store
+            .state()
+            .explorer
+            .path_and_kind_for(NodeId::from_raw(file_id)),
         Some((to, false))
     );
 }
@@ -1072,7 +1177,7 @@ fn test_drag_explorer_file_renders_ghost_label_near_cursor() {
                 .store
                 .state()
                 .explorer
-                .path_and_kind_for(node_id)
+                .path_and_kind_for(NodeId::from_raw(node_id))
                 .filter(|(path, is_dir)| !*is_dir && *path == from)
                 .map(|_| node_id),
             _ => None,
@@ -1278,7 +1383,8 @@ fn test_theme_editor_ansi_palette_marker_tracks_mouse_cell() {
     let mut backend = TestBackend::new(200, 60);
     workbench.render(&mut backend, Rect::new(0, 0, 200, 60));
     let area = workbench
-        .last_theme_editor_sv_palette_area
+        .theme_editor_layout
+        .sv_palette_area
         .expect("sv palette area");
     assert!(area.w > 0 && area.h > 0);
 
@@ -1741,4 +1847,53 @@ fn test_out_of_order_file_reloaded_messages_keep_latest_content() {
         "newer",
         "stale reload result should not overwrite newer disk content"
     );
+}
+
+#[test]
+fn test_context_menu_visible_mouse_events_do_not_steal_focus() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    render_once(&mut workbench, 120, 40);
+
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+    assert_eq!(workbench.store.state().ui.focus, FocusTarget::BottomPanel);
+
+    let editor_area = *workbench
+        .layout_cache
+        .editor_inner_areas
+        .first()
+        .expect("editor area");
+    let menu_x = editor_area.x.saturating_add(1);
+    let menu_y = editor_area.y.saturating_add(1);
+
+    let _ = workbench.dispatch_kernel(KernelAction::ContextMenuOpen {
+        request: crate::kernel::state::ContextMenuRequest::EditorArea { pane: 0 },
+        x: menu_x,
+        y: menu_y,
+    });
+    assert!(workbench.store.state().ui.context_menu.visible);
+
+    let focus_with_menu = workbench.store.state().ui.focus;
+
+    let click_x = editor_area
+        .x
+        .saturating_add(editor_area.w.saturating_sub(1));
+    let click_y = editor_area
+        .y
+        .saturating_add(editor_area.h.saturating_sub(1));
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        click_x,
+        click_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        click_x,
+        click_y,
+    ));
+
+    assert_eq!(workbench.store.state().ui.focus, focus_with_menu);
 }

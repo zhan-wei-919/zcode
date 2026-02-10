@@ -11,6 +11,7 @@ pub mod context;
 pub mod event;
 pub mod service;
 pub mod text_window;
+pub mod wakeup;
 
 pub use command::Command;
 pub use context::AppContext;

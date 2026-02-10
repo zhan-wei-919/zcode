@@ -142,7 +142,7 @@ fn drag_drop_emits_drop_for_supported_targets() {
         z: 0,
         sense: Sense::HOVER | Sense::DRAG_SOURCE,
         kind: NodeKind::ExplorerRow {
-            node_id: crate::models::NodeId::null(),
+            node_id: crate::models::NodeId::null().to_raw(),
         },
     };
     let editor = Node {
@@ -191,7 +191,7 @@ fn drag_drop_prefers_topmost_compatible_target_when_overlapping() {
         z: 0,
         sense: Sense::HOVER | Sense::DRAG_SOURCE,
         kind: NodeKind::ExplorerRow {
-            node_id: crate::models::NodeId::null(),
+            node_id: crate::models::NodeId::null().to_raw(),
         },
     };
 
@@ -249,7 +249,7 @@ fn drag_drop_emits_drop_for_tab_split_targets() {
         sense: Sense::HOVER | Sense::DRAG_SOURCE,
         kind: NodeKind::Tab {
             pane: 0,
-            tab_id: crate::kernel::editor::TabId::new(42),
+            tab_id: 42u64,
         },
     };
     let split = Node {
@@ -283,6 +283,6 @@ fn drag_drop_emits_drop_for_tab_split_targets() {
         e,
         UiEvent::Drop { target, payload, .. }
             if *target == Id::raw(2)
-                && matches!(payload, DragPayload::Tab { from_pane: 0, tab_id } if *tab_id == crate::kernel::editor::TabId::new(42))
+                && matches!(payload, DragPayload::Tab { from_pane: 0, tab_id } if *tab_id == 42u64)
     )));
 }

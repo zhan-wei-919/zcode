@@ -2341,6 +2341,7 @@ fn test_inlay_hints_refresh_after_viewport_size_change() {
             &mut backend,
             zcode::ui::core::geom::Rect::new(0, 0, 120, 80),
         );
+        let _ = workbench.flush_post_render_sync();
     }
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
@@ -2398,6 +2399,7 @@ fn test_inlay_hints_refresh_after_mouse_scroll() {
             &mut backend,
             zcode::ui::core::geom::Rect::new(0, 0, 120, 50),
         );
+        let _ = workbench.flush_post_render_sync();
     }
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {

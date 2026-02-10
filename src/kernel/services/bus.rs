@@ -1,7 +1,7 @@
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::Instant;
 
-use crate::tui::wakeup::WakeupSender;
+use crate::core::wakeup::WakeupSender;
 
 pub struct KernelMessage {
     pub payload: KernelMessagePayload,

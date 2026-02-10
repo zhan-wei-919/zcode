@@ -19,13 +19,15 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 #[cfg(feature = "terminal")]
+use std::sync::MutexGuard;
+#[cfg(feature = "terminal")]
 use std::sync::{Arc, Mutex};
 
 pub struct AsyncRuntime {
     runtime: tokio::runtime::Runtime,
     tx: Sender<AppMessage>,
     #[cfg(feature = "terminal")]
-    terminals: Arc<Mutex<HashMap<TerminalId, TerminalHandle>>>,
+    terminals: Arc<Mutex<HashMap<TerminalId, Arc<Mutex<TerminalHandle>>>>>,
 }
 
 #[cfg(feature = "terminal")]
@@ -771,8 +773,8 @@ impl AsyncRuntime {
 
             match result {
                 Ok(Ok((handle, title))) => {
-                    let mut guard = terminals.lock().unwrap();
-                    guard.insert(id, handle);
+                    let mut guard = lock_or_recover(&terminals, "terminal spawn");
+                    guard.insert(id, Arc::new(Mutex::new(handle)));
                     let _ = tx.send(AppMessage::TerminalSpawned { id, title });
                 }
                 Ok(Err(e)) => {
@@ -805,11 +807,15 @@ impl AsyncRuntime {
             return;
         }
 
-        let mut guard = self.terminals.lock().unwrap();
-        let Some(handle) = guard.get_mut(&id) else {
+        let handle = {
+            let guard = lock_or_recover(&self.terminals, "terminal write");
+            guard.get(&id).cloned()
+        };
+        let Some(handle) = handle else {
             return;
         };
 
+        let mut handle = lock_or_recover(&handle, "terminal writer");
         let _ = handle.writer.write_all(&bytes);
         let _ = handle.writer.flush();
     }
@@ -823,11 +829,15 @@ impl AsyncRuntime {
             return;
         }
 
-        let guard = self.terminals.lock().unwrap();
-        let Some(handle) = guard.get(&id) else {
+        let handle = {
+            let guard = lock_or_recover(&self.terminals, "terminal resize");
+            guard.get(&id).cloned()
+        };
+        let Some(handle) = handle else {
             return;
         };
 
+        let handle = lock_or_recover(&handle, "terminal resize handle");
         let _ = handle.master.resize(PtySize {
             rows,
             cols,
@@ -841,14 +851,31 @@ impl AsyncRuntime {
 
     #[cfg(feature = "terminal")]
     pub fn terminal_kill(&self, id: TerminalId) {
-        let mut guard = self.terminals.lock().unwrap();
-        if let Some(mut handle) = guard.remove(&id) {
-            let _ = handle.killer.kill();
-        }
+        let handle = {
+            let mut guard = lock_or_recover(&self.terminals, "terminal kill");
+            guard.remove(&id)
+        };
+        let Some(handle) = handle else {
+            return;
+        };
+
+        let mut handle = lock_or_recover(&handle, "terminal killer");
+        let _ = handle.killer.kill();
     }
 
     #[cfg(not(feature = "terminal"))]
     pub fn terminal_kill(&self, _id: TerminalId) {}
+}
+
+#[cfg(feature = "terminal")]
+fn lock_or_recover<'a, T>(mutex: &'a Mutex<T>, context: &str) -> MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::error!(context = context, "recovering from poisoned terminal mutex");
+            poisoned.into_inner()
+        }
+    }
 }
 
 #[cfg(feature = "terminal")]

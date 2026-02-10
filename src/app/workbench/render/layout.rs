@@ -4,8 +4,10 @@ use super::dialogs::{
     input_dialog_cursor, render_confirm_dialog, render_context_menu, render_input_dialog,
 };
 use super::terminal::cursor_position_terminal;
+use crate::kernel::editor::TabId;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::{BottomPanelTab, FocusTarget, SidebarTab};
+use crate::models::NodeId;
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::input::DragPayload;
@@ -20,7 +22,7 @@ use crate::views::{
 
 pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area: Rect) {
     let _scope = perf::scope("render.frame");
-    workbench.last_render_area = Some(area);
+    workbench.layout_cache.render_area = Some(area);
     workbench.ui_tree.clear();
 
     let (body_area, status_area) = area.split_bottom(super::super::STATUS_HEIGHT);
@@ -34,7 +36,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
 
     let (activity_area, content_area) = body_area.split_left(super::super::ACTIVITY_BAR_WIDTH);
 
-    workbench.last_activity_bar_area = (!activity_area.is_empty()).then_some(activity_area);
+    workbench.layout_cache.activity_bar_area = (!activity_area.is_empty()).then_some(activity_area);
     if !activity_area.is_empty() {
         let _scope = perf::scope("render.activity");
         let mut painter = Painter::new();
@@ -51,7 +53,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         (content_area, None)
     };
 
-    workbench.last_bottom_panel_area = bottom_panel_area;
+    workbench.layout_cache.bottom_panel_area = bottom_panel_area;
 
     if workbench.store.state().ui.theme_editor.visible {
         let mut painter = Painter::new();
@@ -61,14 +63,14 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
             &workbench.store.state().ui.theme_editor,
             &workbench.ui_theme,
             workbench.terminal_color_support,
-            workbench.last_theme_editor_ansi_cursor,
+            workbench.theme_editor_layout.ansi_cursor,
         );
-        workbench.last_theme_editor_token_list_area = areas.token_list;
-        workbench.last_theme_editor_hue_bar_area = areas.hue_bar;
-        workbench.last_theme_editor_sv_palette_area = areas.sv_palette;
+        workbench.theme_editor_layout.token_list_area = areas.token_list;
+        workbench.theme_editor_layout.hue_bar_area = areas.hue_bar;
+        workbench.theme_editor_layout.sv_palette_area = areas.sv_palette;
         backend.draw(main_area, painter.cmds());
     } else if workbench.store.state().ui.sidebar_visible && main_area.w > 0 {
-        workbench.last_sidebar_container_area = Some(main_area);
+        workbench.layout_cache.sidebar_container_area = Some(main_area);
 
         let available = main_area.w;
         let desired = workbench
@@ -80,23 +82,23 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         let sidebar_width = super::super::util::clamp_sidebar_width(available, desired);
         let (sidebar_area, editor_area) = main_area.split_left(sidebar_width);
 
-        workbench.last_sidebar_area = (!sidebar_area.is_empty()).then_some(sidebar_area);
+        workbench.layout_cache.sidebar_area = (!sidebar_area.is_empty()).then_some(sidebar_area);
 
         if !sidebar_area.is_empty() {
             let _scope = perf::scope("render.sidebar");
             workbench.render_sidebar(backend, sidebar_area);
         } else {
-            workbench.last_sidebar_tabs_area = None;
-            workbench.last_sidebar_content_area = None;
+            workbench.layout_cache.sidebar_tabs_area = None;
+            workbench.layout_cache.sidebar_content_area = None;
         }
 
         let _scope = perf::scope("render.editors");
         workbench.render_editor_panes(backend, editor_area);
     } else {
-        workbench.last_sidebar_area = None;
-        workbench.last_sidebar_tabs_area = None;
-        workbench.last_sidebar_content_area = None;
-        workbench.last_sidebar_container_area = None;
+        workbench.layout_cache.sidebar_area = None;
+        workbench.layout_cache.sidebar_tabs_area = None;
+        workbench.layout_cache.sidebar_content_area = None;
+        workbench.layout_cache.sidebar_container_area = None;
         workbench.sidebar_split_dragging = false;
         let _scope = perf::scope("render.editors");
         workbench.render_editor_panes(backend, main_area);
@@ -173,36 +175,42 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
 
     if let Some(pos) = workbench.ui_runtime.last_pos() {
         let label = match payload {
-            DragPayload::Tab { from_pane, tab_id } => workbench
-                .store
-                .state()
-                .editor
-                .pane(*from_pane)
-                .and_then(|pane| pane.tabs.iter().find(|t| t.id == *tab_id))
-                .or_else(|| {
-                    workbench
-                        .store
-                        .state()
-                        .editor
-                        .panes
-                        .iter()
-                        .flat_map(|pane| pane.tabs.iter())
-                        .find(|t| t.id == *tab_id)
-                })
-                .map(|tab| tab.title.clone()),
-            DragPayload::ExplorerNode { node_id } => workbench
-                .store
-                .state()
-                .explorer
-                .path_and_kind_for(*node_id)
-                .map(|(path, is_dir)| {
-                    let name = path
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| path.to_string_lossy().to_string());
-                    let suffix = if is_dir { "/" } else { "" };
-                    format!("{name}{suffix}")
-                }),
+            DragPayload::Tab { from_pane, tab_id } => {
+                let tab_id = TabId::new(*tab_id);
+                workbench
+                    .store
+                    .state()
+                    .editor
+                    .pane(*from_pane)
+                    .and_then(|pane| pane.tabs.iter().find(|t| t.id == tab_id))
+                    .or_else(|| {
+                        workbench
+                            .store
+                            .state()
+                            .editor
+                            .panes
+                            .iter()
+                            .flat_map(|pane| pane.tabs.iter())
+                            .find(|t| t.id == tab_id)
+                    })
+                    .map(|tab| tab.title.clone())
+            }
+            DragPayload::ExplorerNode { node_id } => {
+                let node_id = NodeId::from_raw(*node_id);
+                workbench
+                    .store
+                    .state()
+                    .explorer
+                    .path_and_kind_for(node_id)
+                    .map(|(path, is_dir)| {
+                        let name = path
+                            .file_name()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.to_string_lossy().to_string());
+                        let suffix = if is_dir { "/" } else { "" };
+                        format!("{name}{suffix}")
+                    })
+            }
         };
 
         if let Some(label) = label {
@@ -230,10 +238,11 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
             if let Some(pos) = workbench.ui_runtime.last_pos() {
                 if let Some(pane_state) = workbench.store.state().editor.pane(pane) {
                     if let Some(to_area) = workbench
-                        .last_editor_inner_areas
+                        .layout_cache
+                        .editor_inner_areas
                         .get(pane)
                         .copied()
-                        .or_else(|| workbench.last_editor_inner_areas.first().copied())
+                        .or_else(|| workbench.layout_cache.editor_inner_areas.first().copied())
                     {
                         let config = &workbench.store.state().editor.config;
                         let layout = compute_editor_pane_layout(to_area, pane_state, config);
@@ -278,10 +287,11 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
         (DragPayload::ExplorerNode { .. }, NodeKind::EditorArea { pane }) => {
             if let Some(pane_state) = workbench.store.state().editor.pane(pane) {
                 if let Some(to_area) = workbench
-                    .last_editor_inner_areas
+                    .layout_cache
+                    .editor_inner_areas
                     .get(pane)
                     .copied()
-                    .or_else(|| workbench.last_editor_inner_areas.first().copied())
+                    .or_else(|| workbench.layout_cache.editor_inner_areas.first().copied())
                 {
                     let config = &workbench.store.state().editor.config;
                     let layout = compute_editor_pane_layout(to_area, pane_state, config);
@@ -417,7 +427,7 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
         }
         FocusTarget::Editor => {
             let pane = workbench.store.state().ui.editor_layout.active_pane;
-            let area = *workbench.last_editor_inner_areas.get(pane)?;
+            let area = *workbench.layout_cache.editor_inner_areas.get(pane)?;
             let pane_state = workbench.store.state().editor.pane(pane)?;
             let config = &workbench.store.state().editor.config;
             let layout = compute_editor_pane_layout(area, pane_state, config);
