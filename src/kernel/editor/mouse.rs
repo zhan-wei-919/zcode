@@ -64,10 +64,7 @@ impl EditorTabState {
 
         self.buffer.set_cursor(pos.0, pos.1);
 
-        let mut selection = Selection::new(pos, granularity);
-        if granularity != Granularity::Char {
-            selection.update_cursor(pos, self.buffer.rope());
-        }
+        let selection = Selection::from_pos(pos, granularity, self.buffer.rope());
         self.buffer.set_selection(Some(selection));
 
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);

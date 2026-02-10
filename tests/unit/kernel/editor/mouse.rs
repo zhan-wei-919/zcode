@@ -1,5 +1,6 @@
 use crate::kernel::editor::{EditorTabState, TabId};
 use crate::kernel::services::ports::EditorConfig;
+use std::time::Duration;
 use std::time::Instant;
 
 fn tab_with_content(text: &str, viewport_height: usize) -> EditorTabState {
@@ -100,4 +101,65 @@ fn drag_below_eof_stops_at_last_line() {
     let result = tab.mouse_drag(0, 2, tab_size, 100, false);
     assert!(result);
     assert_eq!(tab.viewport.line_offset, 0);
+}
+
+fn double_click_selects_word_at_column(tab: &mut EditorTabState, x: u16, now: Instant) {
+    let config = EditorConfig::default();
+    assert!(tab.mouse_down(x, 0, now, config.tab_size, config.click_slop, 500));
+    assert!(tab.mouse_down(
+        x,
+        0,
+        now + Duration::from_millis(100),
+        config.tab_size,
+        config.click_slop,
+        500,
+    ));
+}
+
+#[test]
+fn double_click_left_half_selects_full_word() {
+    let mut tab = tab_with_content(
+        "if let Ok(path) = zcode::kernel::services::adapters::ensure_settings_file()\n",
+        10,
+    );
+    tab.viewport.width = 200;
+
+    let line = tab
+        .buffer
+        .line(0)
+        .expect("line 0 should exist for double-click test");
+    let adapters_start = line
+        .find("adapters")
+        .expect("test line should contain adapters") as u16;
+
+    let x = adapters_start + 3; // 'p' in "adapters"
+    let now = Instant::now();
+
+    double_click_selects_word_at_column(&mut tab, x, now);
+
+    assert_eq!(tab.buffer.get_selection_text().as_deref(), Some("adapters"));
+}
+
+#[test]
+fn double_click_right_half_selects_full_word() {
+    let mut tab = tab_with_content(
+        "if let Ok(path) = zcode::kernel::services::adapters::ensure_settings_file()\n",
+        10,
+    );
+    tab.viewport.width = 200;
+
+    let line = tab
+        .buffer
+        .line(0)
+        .expect("line 0 should exist for double-click test");
+    let adapters_start = line
+        .find("adapters")
+        .expect("test line should contain adapters") as u16;
+
+    let x = adapters_start + 4; // 't' in "adapters"
+    let now = Instant::now();
+
+    double_click_selects_word_at_column(&mut tab, x, now);
+
+    assert_eq!(tab.buffer.get_selection_text().as_deref(), Some("adapters"));
 }

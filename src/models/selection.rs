@@ -28,6 +28,12 @@ impl Selection {
         }
     }
 
+    pub fn from_pos(pos: (usize, usize), granularity: Granularity, rope: &Rope) -> Self {
+        let mut selection = Self::new(pos, granularity);
+        selection.normalize_initial_bounds(rope);
+        selection
+    }
+
     pub fn anchor(&self) -> (usize, usize) {
         self.anchor
     }
@@ -46,6 +52,25 @@ impl Selection {
             Granularity::Word => self.snap_to_word(pos, rope),
             Granularity::Line => self.snap_to_line(pos, rope),
         };
+    }
+
+    fn normalize_initial_bounds(&mut self, rope: &Rope) {
+        match self.granularity {
+            Granularity::Char => {}
+            Granularity::Word => {
+                let row = self.anchor.0;
+                let slice = rope.line(row);
+                let line = slice_to_cow(slice);
+                let (start, end) = Self::word_bounds_at(&line, self.anchor.1);
+                self.anchor = (row, start);
+                self.cursor = (row, end);
+            }
+            Granularity::Line => {
+                let row = self.anchor.0;
+                self.anchor = (row, 0);
+                self.cursor = (row, Self::line_grapheme_len(rope, row));
+            }
+        }
     }
 
     fn snap_to_word(&self, pos: (usize, usize), rope: &Rope) -> (usize, usize) {

@@ -44,3 +44,22 @@ fn test_word_selection_out_of_bounds_cursor() {
     sel.update_cursor((0, 100), &rope);
     assert_eq!(sel.cursor(), (0, 5));
 }
+
+#[test]
+fn test_word_selection_from_pos_expands_to_whole_word() {
+    let line = "zcode::kernel::services::adapters::ensure";
+    let rope = Rope::from_str(&format!("{line}\n"));
+    let sel = Selection::from_pos((0, 29), Granularity::Word, &rope);
+    let start = line.find("adapters").expect("line should contain adapters");
+    let end = start + "adapters".len();
+
+    assert_eq!(sel.range(), ((0, start), (0, end)));
+}
+
+#[test]
+fn test_line_selection_from_pos_expands_to_whole_line() {
+    let rope = Rope::from_str("hello world\nnext\n");
+    let sel = Selection::from_pos((0, 4), Granularity::Line, &rope);
+
+    assert_eq!(sel.range(), ((0, 0), (0, 11)));
+}
