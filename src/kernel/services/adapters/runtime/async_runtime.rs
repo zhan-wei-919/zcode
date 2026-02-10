@@ -929,7 +929,7 @@ fn spawn_terminal_session(
         }
     });
 
-    let tx_exit = tx.clone();
+    let tx_exit = tx;
     std::thread::spawn(move || {
         let code = child.wait().ok().map(|status| status.exit_code() as i32);
         let _ = tx_exit.send(AppMessage::TerminalExited { id, code });

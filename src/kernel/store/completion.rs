@@ -76,16 +76,34 @@ pub(super) fn filtered_completion_items(
     }
 }
 
-fn same_completion_item_ids(a: &[LspCompletionItem], b: &[LspCompletionItem]) -> bool {
-    if a.len() != b.len() {
+fn same_completion_item_ids_with_indices(
+    items: &[LspCompletionItem],
+    all_items: &[LspCompletionItem],
+    indices: &[usize],
+) -> bool {
+    if items.len() != indices.len() {
         return false;
     }
-    for (a, b) in a.iter().zip(b.iter()) {
-        if a.id != b.id {
+    for (item, idx) in items.iter().zip(indices.iter().copied()) {
+        if item.id != all_items[idx].id {
             return false;
         }
     }
     true
+}
+
+fn collect_matching_indices(
+    all_items: &[LspCompletionItem],
+    prefix: &str,
+    base_indices: impl Iterator<Item = usize>,
+) -> Vec<usize> {
+    let mut matched = Vec::new();
+    for idx in base_indices {
+        if completion_item_matches_prefix(&all_items[idx], prefix) {
+            matched.push(idx);
+        }
+    }
+    matched
 }
 
 pub(super) fn sync_completion_items_from_cache(
@@ -97,24 +115,66 @@ pub(super) fn sync_completion_items_from_cache(
         return false;
     }
 
+    completion.reset_filter_cache_if_source_changed();
+    let source_len = completion.all_items.len();
+    let source_changed = !completion.filter_cache_valid;
+
     let selected_id = completion
         .items
         .get(completion.selected)
         .map(|item| item.id);
 
-    let new_items = filtered_completion_items(tab, &completion.all_items, strategy);
-    if new_items.is_empty() {
-        return false;
+    let prefix = completion_prefix_at_cursor(tab, strategy);
+    let can_use_cached_base = completion.filter_cache_valid
+        && completion.filter_cache_source_len == source_len
+        && prefix.starts_with(&completion.filter_cache_prefix);
+
+    let mut new_indices = if prefix.is_empty() {
+        (0..source_len).collect()
+    } else if can_use_cached_base {
+        collect_matching_indices(
+            &completion.all_items,
+            &prefix,
+            completion.filter_cache_indices.iter().copied(),
+        )
+    } else {
+        collect_matching_indices(&completion.all_items, &prefix, 0..source_len)
+    };
+
+    if new_indices.is_empty() {
+        new_indices.extend(0..source_len);
     }
 
-    let changed = !same_completion_item_ids(&completion.items, &new_items);
-    completion.items = new_items;
+    let items_changed = source_changed
+        || !same_completion_item_ids_with_indices(
+            &completion.items,
+            &completion.all_items,
+            &new_indices,
+        );
+
+    if items_changed {
+        let mut items = Vec::with_capacity(new_indices.len());
+        for idx in new_indices.iter().copied() {
+            items.push(completion.all_items[idx].clone());
+        }
+        completion.items = items;
+    }
+
     completion.selected = selected_id
-        .and_then(|id| completion.items.iter().position(|item| item.id == id))
+        .and_then(|id| {
+            new_indices
+                .iter()
+                .position(|idx| completion.all_items[*idx].id == id)
+        })
         .unwrap_or(0)
-        .min(completion.items.len().saturating_sub(1));
+        .min(new_indices.len().saturating_sub(1));
+
+    completion.filter_cache_prefix = prefix;
+    completion.filter_cache_indices = new_indices;
+    completion.filter_cache_source_len = source_len;
+    completion.filter_cache_valid = true;
     completion.visible = true;
-    changed
+    items_changed
 }
 
 fn completion_item_matches_prefix(item: &LspCompletionItem, prefix: &str) -> bool {
@@ -548,7 +608,234 @@ mod tests {
     use crate::kernel::editor::TabId;
     use crate::kernel::language::LanguageId;
     use crate::kernel::services::ports::{EditorConfig, LspPosition, LspRange};
+    use crate::kernel::state::CompletionPopupState;
+    use crate::kernel::store::completion_strategy;
     use std::path::PathBuf;
+
+    fn completion_item(id: u64, label: &str) -> LspCompletionItem {
+        LspCompletionItem {
+            id,
+            label: label.to_string(),
+            detail: None,
+            kind: Some(3),
+            documentation: None,
+            insert_text: label.to_string(),
+            insert_text_format: LspInsertTextFormat::PlainText,
+            insert_range: None,
+            replace_range: None,
+            sort_text: None,
+            filter_text: None,
+            additional_text_edits: Vec::new(),
+            command: None,
+            data: None,
+        }
+    }
+
+    fn tab_with_cursor(content: &str, col: usize) -> crate::kernel::editor::EditorTabState {
+        let config = EditorConfig::default();
+        let mut tab = crate::kernel::editor::EditorTabState::from_file(
+            TabId::new(1),
+            PathBuf::from("test.rs"),
+            content,
+            &config,
+        );
+        tab.buffer.set_cursor(0, col);
+        tab
+    }
+
+    fn completion_labels(completion: &CompletionPopupState) -> Vec<String> {
+        completion
+            .items
+            .iter()
+            .map(|item| item.label.clone())
+            .collect()
+    }
+
+    #[test]
+    fn sync_completion_items_incremental_prefix_matches_expected_items() {
+        let mut tab = tab_with_cursor("pri", 1);
+        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let mut completion = CompletionPopupState {
+            all_items: vec![
+                completion_item(1, "piano"),
+                completion_item(2, "print"),
+                completion_item(3, "private"),
+                completion_item(4, "probe"),
+            ],
+            visible: true,
+            ..Default::default()
+        };
+
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        assert_eq!(
+            completion_labels(&completion),
+            ["piano", "print", "private", "probe"]
+        );
+        assert_eq!(completion.filter_cache_prefix, "p");
+
+        tab.buffer.set_cursor(0, 2);
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        assert_eq!(
+            completion_labels(&completion),
+            ["print", "private", "probe"]
+        );
+        assert_eq!(completion.filter_cache_prefix, "pr");
+
+        tab.buffer.set_cursor(0, 3);
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        assert_eq!(completion_labels(&completion), ["print", "private"]);
+        assert_eq!(completion.filter_cache_prefix, "pri");
+    }
+
+    #[test]
+    fn sync_completion_items_prefix_shrink_recomputes_correct_result() {
+        let mut tab = tab_with_cursor("pri", 3);
+        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let mut completion = CompletionPopupState {
+            all_items: vec![
+                completion_item(1, "piano"),
+                completion_item(2, "print"),
+                completion_item(3, "private"),
+                completion_item(4, "probe"),
+            ],
+            visible: true,
+            ..Default::default()
+        };
+
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        assert_eq!(completion_labels(&completion), ["print", "private"]);
+
+        tab.buffer.set_cursor(0, 2);
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        assert_eq!(
+            completion_labels(&completion),
+            ["print", "private", "probe"]
+        );
+        assert_eq!(completion.filter_cache_prefix, "pr");
+    }
+
+    #[test]
+    fn sync_completion_items_no_match_falls_back_to_full_list() {
+        let tab = tab_with_cursor("zzz", 3);
+        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let mut completion = CompletionPopupState {
+            all_items: vec![
+                completion_item(1, "piano"),
+                completion_item(2, "print"),
+                completion_item(3, "private"),
+            ],
+            visible: true,
+            ..Default::default()
+        };
+
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        assert_eq!(
+            completion_labels(&completion),
+            ["piano", "print", "private"]
+        );
+        assert_eq!(completion.filter_cache_indices, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn sync_completion_items_keeps_selected_id_stable() {
+        let mut tab = tab_with_cursor("pri", 1);
+        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let mut completion = CompletionPopupState {
+            all_items: vec![
+                completion_item(1, "piano"),
+                completion_item(2, "print"),
+                completion_item(3, "private"),
+                completion_item(4, "probe"),
+            ],
+            visible: true,
+            ..Default::default()
+        };
+
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        completion.selected = 2;
+        let selected_id = completion.items[completion.selected].id;
+
+        tab.buffer.set_cursor(0, 2);
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        assert_eq!(completion.items[completion.selected].id, selected_id);
+
+        tab.buffer.set_cursor(0, 3);
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        assert_eq!(completion.items[completion.selected].id, selected_id);
+    }
+
+    #[test]
+    fn sync_completion_items_respects_cache_invalidation_after_source_replace() {
+        let tab = tab_with_cursor("pr", 2);
+        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let mut completion = CompletionPopupState {
+            all_items: vec![
+                completion_item(1, "print"),
+                completion_item(2, "private"),
+                completion_item(3, "probe"),
+            ],
+            visible: true,
+            ..Default::default()
+        };
+
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        assert_eq!(
+            completion_labels(&completion),
+            ["print", "private", "probe"]
+        );
+
+        completion.all_items = vec![completion_item(100, "prism"), completion_item(101, "proto")];
+        completion.invalidate_filter_cache();
+
+        assert!(sync_completion_items_from_cache(
+            &mut completion,
+            &tab,
+            strategy
+        ));
+        assert_eq!(completion_labels(&completion), ["prism", "proto"]);
+        assert_eq!(completion.filter_cache_source_len, 2);
+        assert!(completion.filter_cache_valid);
+    }
 
     #[test]
     fn resolve_plain_callable_completion_adds_parentheses_and_cursor() {

@@ -528,7 +528,7 @@ impl EditHistory {
             }
         }
         let mut history = Self {
-            base_snapshot: base_snapshot.clone(),
+            base_snapshot,
             ops,
             head,
             saved_head: OpId::root(),

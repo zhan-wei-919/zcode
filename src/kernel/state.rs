@@ -299,6 +299,10 @@ pub struct CompletionPopupState {
     pub all_items: Vec<LspCompletionItem>,
     pub items: Vec<LspCompletionItem>,
     pub selected: usize,
+    pub filter_cache_prefix: String,
+    pub filter_cache_indices: Vec<usize>,
+    pub filter_cache_source_len: usize,
+    pub filter_cache_valid: bool,
     pub request: Option<CompletionRequestContext>,
     pub pending_request: Option<CompletionRequestContext>,
     pub is_incomplete: bool,
@@ -307,6 +311,19 @@ pub struct CompletionPopupState {
 }
 
 impl CompletionPopupState {
+    pub fn invalidate_filter_cache(&mut self) {
+        self.filter_cache_prefix.clear();
+        self.filter_cache_indices.clear();
+        self.filter_cache_source_len = self.all_items.len();
+        self.filter_cache_valid = false;
+    }
+
+    pub fn reset_filter_cache_if_source_changed(&mut self) {
+        if self.filter_cache_source_len != self.all_items.len() {
+            self.invalidate_filter_cache();
+        }
+    }
+
     pub fn is_active(&self) -> bool {
         self.visible
             || self.request.is_some()

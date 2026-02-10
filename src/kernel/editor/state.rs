@@ -408,19 +408,32 @@ impl EditorTabState {
     }
 
     pub fn set_semantic_highlight(&mut self, version: u64, lines: Vec<Vec<HighlightSpan>>) -> bool {
-        let segment = SemanticHighlightSegment::new(0, lines.clone());
         let same = self
             .semantic_highlight
             .as_ref()
-            .is_some_and(|s| s.version == version && s.segments == vec![segment.clone()]);
+            .is_some_and(|s| s.matches_full(version, &lines));
         if same {
             return false;
         }
 
-        self.semantic_highlight = Some(SemanticHighlightState {
-            version,
-            segments: vec![segment],
-        });
+        self.semantic_highlight = Some(SemanticHighlightState::from_full(version, lines));
+        true
+    }
+
+    pub fn set_semantic_highlight_from_slice(
+        &mut self,
+        version: u64,
+        lines: &[Vec<HighlightSpan>],
+    ) -> bool {
+        let same = self
+            .semantic_highlight
+            .as_ref()
+            .is_some_and(|s| s.matches_full(version, lines));
+        if same {
+            return false;
+        }
+
+        self.semantic_highlight = Some(SemanticHighlightState::from_full(version, lines.to_vec()));
         true
     }
 
@@ -430,11 +443,29 @@ impl EditorTabState {
         start_line: usize,
         lines: Vec<Vec<HighlightSpan>>,
     ) -> bool {
+        self.set_semantic_highlight_range_from_slice(version, start_line, &lines)
+    }
+
+    pub fn set_semantic_highlight_range_from_slice(
+        &mut self,
+        version: u64,
+        start_line: usize,
+        lines: &[Vec<HighlightSpan>],
+    ) -> bool {
         if lines.is_empty() {
             return false;
         }
 
         let end_line_exclusive = start_line.saturating_add(lines.len());
+        if self.semantic_highlight.as_ref().is_some_and(|semantic| {
+            semantic.version == version
+                && semantic
+                    .lines(start_line, end_line_exclusive)
+                    .is_some_and(|current| current == lines)
+        }) {
+            return false;
+        }
+
         let semantic = self
             .semantic_highlight
             .get_or_insert_with(|| SemanticHighlightState {
@@ -447,7 +478,7 @@ impl EditorTabState {
             semantic.segments.clear();
         }
 
-        semantic.replace_range(start_line, end_line_exclusive, lines);
+        semantic.replace_range(start_line, end_line_exclusive, lines.to_vec());
         true
     }
 
@@ -542,6 +573,32 @@ impl EditorTabState {
             start_line,
             end_line_exclusive,
             lines,
+        });
+        true
+    }
+
+    pub fn set_inlay_hints_from_slice(
+        &mut self,
+        version: u64,
+        start_line: usize,
+        end_line_exclusive: usize,
+        lines: &[Vec<String>],
+    ) -> bool {
+        let same = self.inlay_hints.as_ref().is_some_and(|s| {
+            s.version == version
+                && s.start_line == start_line
+                && s.end_line_exclusive == end_line_exclusive
+                && s.lines.as_slice() == lines
+        });
+        if same {
+            return false;
+        }
+
+        self.inlay_hints = Some(InlayHintsState {
+            version,
+            start_line,
+            end_line_exclusive,
+            lines: lines.to_vec(),
         });
         true
     }
@@ -770,6 +827,38 @@ impl EditorTabState {
         true
     }
 
+    pub fn set_folding_ranges_from_slice(
+        &mut self,
+        version: u64,
+        ranges: &[LspFoldingRange],
+    ) -> bool {
+        let mut collapsed = self
+            .folding
+            .as_ref()
+            .map(|s| s.collapsed.clone())
+            .unwrap_or_default();
+
+        let fold_starts = FoldingState::build_fold_starts(ranges);
+        collapsed.retain(|start| fold_starts.contains_key(start));
+        let hidden_ranges = FoldingState::build_hidden_ranges(&collapsed, &fold_starts);
+
+        let next = FoldingState {
+            version,
+            ranges: ranges.to_vec(),
+            fold_starts,
+            collapsed,
+            hidden_ranges,
+        };
+
+        let same = self.folding.as_ref().is_some_and(|s| s == &next);
+        if same {
+            return false;
+        }
+
+        self.folding = Some(next);
+        true
+    }
+
     pub(super) fn syntax(&self) -> Option<&SyntaxDocument> {
         self.syntax.as_ref()
     }
@@ -839,6 +928,20 @@ impl SemanticHighlightSegment {
 }
 
 impl SemanticHighlightState {
+    fn from_full(version: u64, lines: Vec<Vec<HighlightSpan>>) -> Self {
+        Self {
+            version,
+            segments: vec![SemanticHighlightSegment::new(0, lines)],
+        }
+    }
+
+    fn matches_full(&self, version: u64, lines: &[Vec<HighlightSpan>]) -> bool {
+        self.version == version
+            && self.segments.len() == 1
+            && self.segments[0].start_line == 0
+            && self.segments[0].lines.as_slice() == lines
+    }
+
     fn replace_range(
         &mut self,
         start_line: usize,
