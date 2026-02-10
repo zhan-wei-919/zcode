@@ -9,6 +9,19 @@ use std::time::Instant;
 use unicode_width::UnicodeWidthStr;
 
 impl Workbench {
+    fn terminal_cell_from_mouse(
+        &self,
+        content_area: Rect,
+        event: &MouseEvent,
+    ) -> Option<super::super::TerminalCellPos> {
+        if content_area.is_empty() || !util::rect_contains(content_area, event.column, event.row) {
+            return None;
+        }
+        let row = event.row.saturating_sub(content_area.y);
+        let col = event.column.saturating_sub(content_area.x);
+        Some(super::super::TerminalCellPos { row, col })
+    }
+
     pub(in super::super) fn handle_bottom_panel_mouse(
         &mut self,
         event: &MouseEvent,
@@ -54,6 +67,17 @@ impl Workbench {
                 }
 
                 let active_tab = self.store.state().ui.bottom_panel.active_tab.clone();
+                if active_tab == BottomPanelTab::Terminal {
+                    if let Some(cell) = self.terminal_cell_from_mouse(content_area, event) {
+                        self.terminal_selection = Some(super::super::TerminalSelection {
+                            anchor: cell,
+                            cursor: cell,
+                        });
+                        self.terminal_selecting = true;
+                        return EventResult::Consumed;
+                    }
+                    return EventResult::Ignored;
+                }
                 if active_tab == BottomPanelTab::SearchResults {
                     if content_area.is_empty() {
                         return EventResult::Ignored;
@@ -255,12 +279,39 @@ impl Workbench {
 
                 EventResult::Ignored
             }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
+                    if !self.terminal_selecting {
+                        return EventResult::Ignored;
+                    }
+                    if let Some(cell) = self.terminal_cell_from_mouse(content_area, event) {
+                        if let Some(selection) = self.terminal_selection.as_mut() {
+                            selection.cursor = cell;
+                        }
+                        return EventResult::Consumed;
+                    }
+                }
+                EventResult::Ignored
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
+                    self.terminal_selecting = false;
+                    if let Some(cell) = self.terminal_cell_from_mouse(content_area, event) {
+                        if let Some(selection) = self.terminal_selection.as_mut() {
+                            selection.cursor = cell;
+                        }
+                    }
+                    return EventResult::Consumed;
+                }
+                EventResult::Ignored
+            }
             MouseEventKind::ScrollUp => {
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
                     if let Some(id) = self.store.state().terminal.active_session().map(|s| s.id) {
-                        let _ =
-                            self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: -3 });
+                        let _ = self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: 3 });
                     }
+                    self.terminal_selection = None;
+                    self.terminal_selecting = false;
                     return EventResult::Consumed;
                 }
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::SearchResults {
@@ -295,8 +346,11 @@ impl Workbench {
             MouseEventKind::ScrollDown => {
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
                     if let Some(id) = self.store.state().terminal.active_session().map(|s| s.id) {
-                        let _ = self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: 3 });
+                        let _ =
+                            self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: -3 });
                     }
+                    self.terminal_selection = None;
+                    self.terminal_selecting = false;
                     return EventResult::Consumed;
                 }
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::SearchResults {

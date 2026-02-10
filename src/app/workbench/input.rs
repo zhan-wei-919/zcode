@@ -35,6 +35,9 @@ fn dispatch_by_target(
         MouseTarget::SidebarSplitter => workbench
             .handle_sidebar_split_mouse(mouse_event, ui_out)
             .unwrap_or(EventResult::Ignored),
+        MouseTarget::BottomPanelSplitter => workbench
+            .handle_bottom_panel_split_mouse(mouse_event, ui_out)
+            .unwrap_or(EventResult::Ignored),
         MouseTarget::EditorSplitter => workbench
             .handle_editor_split_mouse(mouse_event, ui_out)
             .unwrap_or(EventResult::Ignored),

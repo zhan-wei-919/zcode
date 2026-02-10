@@ -81,6 +81,14 @@ impl Workbench {
         self.set_clipboard_text(&text);
     }
 
+    pub(in super::super) fn copy_terminal_selection_to_clipboard(&mut self) -> bool {
+        let Some(text) = self.terminal_selection_text() else {
+            return false;
+        };
+        self.set_clipboard_text(&text);
+        true
+    }
+
     pub(in super::super) fn maybe_warn_clipboard_unavailable(&mut self) {
         if self.clipboard_unavailable_warned {
             return;

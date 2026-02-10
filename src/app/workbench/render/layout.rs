@@ -14,7 +14,7 @@ use crate::ui::core::input::DragPayload;
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::{Mod as UiMod, Style as UiStyle};
 use crate::ui::core::theme::Theme;
-use crate::ui::core::tree::NodeKind;
+use crate::ui::core::tree::{Axis, Node, NodeKind, Sense};
 use crate::views::theme_editor::paint_theme_editor;
 use crate::views::{
     compute_editor_pane_layout, cursor_position_editor, tab_insertion_index, tab_insertion_x,
@@ -23,6 +23,7 @@ use crate::views::{
 pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area: Rect) {
     let _scope = perf::scope("render.frame");
     workbench.layout_cache.render_area = Some(area);
+    workbench.layout_cache.bottom_panel_splitter_area = None;
     workbench.ui_tree.clear();
 
     let (body_area, status_area) = area.split_bottom(super::super::STATUS_HEIGHT);
@@ -44,15 +45,34 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         backend.draw(activity_area, painter.cmds());
     }
 
-    let (main_area, bottom_panel_area) = if workbench.store.state().ui.bottom_panel.visible {
-        let panel_height = super::super::util::bottom_panel_height(content_area.h);
-        let (main_area, panel_area) = content_area.split_bottom(panel_height);
-        let panel_area = (!panel_area.is_empty()).then_some(panel_area);
-        (main_area, panel_area)
-    } else {
-        (content_area, None)
-    };
+    let (main_area, bottom_panel_splitter_area, bottom_panel_area) =
+        if workbench.store.state().ui.bottom_panel.visible {
+            let min_panel_h = 3u16;
+            let total = content_area.h;
+            if total <= min_panel_h {
+                (content_area, None, None)
+            } else {
+                let total_without_splitter = total.saturating_sub(1);
+                let mut panel_height = ((total_without_splitter as u32)
+                    * (workbench.store.state().ui.bottom_panel.height_ratio as u32)
+                    / 1000) as u16;
+                panel_height =
+                    panel_height.clamp(min_panel_h, total_without_splitter.saturating_sub(1));
 
+                let (main_with_splitter, panel_area) = content_area.split_bottom(panel_height);
+                let (main_area, splitter_area) = main_with_splitter.split_bottom(1);
+
+                let splitter_area = (!splitter_area.is_empty()).then_some(splitter_area);
+                let panel_area = (!panel_area.is_empty()).then_some(panel_area);
+
+                (main_area, splitter_area, panel_area)
+            }
+        } else {
+            workbench.bottom_panel_split_dragging = false;
+            (content_area, None, None)
+        };
+
+    workbench.layout_cache.bottom_panel_splitter_area = bottom_panel_splitter_area;
     workbench.layout_cache.bottom_panel_area = bottom_panel_area;
 
     let (_sidebar_area, editor_area) = if workbench.store.state().ui.sidebar_visible
@@ -121,6 +141,39 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         let mut painter = Painter::new();
         workbench.paint_bottom_panel(&mut painter, panel_area);
         backend.draw(panel_area, painter.cmds());
+    }
+
+    if let Some(splitter_area) = bottom_panel_splitter_area {
+        let splitter_id = crate::ui::core::id::IdPath::root("workbench")
+            .push_str("bottom_panel_splitter")
+            .finish();
+        workbench.ui_tree.push(Node {
+            id: splitter_id,
+            rect: splitter_area,
+            layer: 0,
+            z: 0,
+            sense: Sense::HOVER | Sense::DRAG_SOURCE,
+            kind: NodeKind::Splitter {
+                axis: Axis::Horizontal,
+            },
+        });
+
+        let hovered = workbench.ui_runtime.hovered() == Some(splitter_id)
+            || workbench.bottom_panel_split_dragging;
+        let fg = if hovered {
+            workbench.ui_theme.focus_border
+        } else {
+            workbench.ui_theme.separator
+        };
+        let style = UiStyle::default().fg(fg).bg(workbench.ui_theme.editor_bg);
+        let mut painter = Painter::new();
+        painter.hline(
+            Pos::new(splitter_area.x, splitter_area.y),
+            splitter_area.w,
+            '─',
+            style,
+        );
+        backend.draw(splitter_area, painter.cmds());
     }
 
     render_drag_preview(workbench, backend, area);

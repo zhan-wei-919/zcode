@@ -167,6 +167,34 @@ struct ThemeEditorLayoutCache {
     language_bar_area: Option<Rect>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TerminalCellPos {
+    row: u16,
+    col: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TerminalSelection {
+    anchor: TerminalCellPos,
+    cursor: TerminalCellPos,
+}
+
+impl TerminalSelection {
+    fn is_empty(self) -> bool {
+        self.anchor == self.cursor
+    }
+
+    fn normalized(self) -> (TerminalCellPos, TerminalCellPos) {
+        let anchor_key = (self.anchor.row, self.anchor.col);
+        let cursor_key = (self.cursor.row, self.cursor.col);
+        if anchor_key <= cursor_key {
+            (self.anchor, self.cursor)
+        } else {
+            (self.cursor, self.anchor)
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct ViewportCache {
     editor_content_sizes: Vec<(u16, u16)>,
@@ -201,6 +229,7 @@ struct LayoutCache {
     sidebar_container_area: Option<Rect>,
     git_panel_area: Option<Rect>,
     git_branch_areas: Vec<(String, Rect)>,
+    bottom_panel_splitter_area: Option<Rect>,
     bottom_panel_area: Option<Rect>,
     editor_areas: Vec<Rect>,
     editor_inner_areas: Vec<Rect>,
@@ -241,6 +270,9 @@ pub struct Workbench {
     terminal_cursor_last_blink: Instant,
     editor_split_dragging: bool,
     sidebar_split_dragging: bool,
+    bottom_panel_split_dragging: bool,
+    terminal_selection: Option<TerminalSelection>,
+    terminal_selecting: bool,
     click_tracker: ClickTracker,
     pending_restart: Option<PendingRestart>,
     pending_theme_save_deadline: Option<Instant>,
@@ -442,6 +474,9 @@ impl Workbench {
             terminal_cursor_last_blink: Instant::now(),
             editor_split_dragging: false,
             sidebar_split_dragging: false,
+            bottom_panel_split_dragging: false,
+            terminal_selection: None,
+            terminal_selecting: false,
             click_tracker: ClickTracker::default(),
             pending_restart: None,
             pending_theme_save_deadline: None,
@@ -701,6 +736,8 @@ impl Workbench {
                 let _ = self.dispatch_kernel(KernelAction::TerminalSpawned { id, title });
             }
             AppMessage::TerminalOutput { id, bytes } => {
+                self.terminal_selection = None;
+                self.terminal_selecting = false;
                 let _ = self.dispatch_kernel(KernelAction::TerminalOutput { id, bytes });
             }
             AppMessage::TerminalExited { id, code } => {

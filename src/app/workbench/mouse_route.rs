@@ -12,6 +12,7 @@ pub(super) enum MouseTarget {
     ThemeEditor,
     CommandPalette,
     SidebarSplitter,
+    BottomPanelSplitter,
     EditorSplitter,
     ByFocus,
     Explorer,
@@ -35,6 +36,7 @@ pub(super) enum MouseRouteReason {
     ThemeEditorModal,
     CommandPaletteModal,
     SidebarSplitterHit,
+    BottomPanelSplitterHit,
     EditorSplitterHit,
     FocusByArea,
     FocusDispatch,
@@ -169,6 +171,17 @@ fn split_target(workbench: &Workbench, event: &MouseEvent) -> Option<MouseTarget
         return Some(MouseTarget::SidebarSplitter);
     }
 
+    let bottom_panel_splitter = IdPath::root("workbench")
+        .push_str("bottom_panel_splitter")
+        .finish();
+    if hit.is_some_and(|node| node.id == bottom_panel_splitter)
+        || workbench.bottom_panel_split_dragging
+            && workbench.store.state().ui.bottom_panel.visible
+            && workbench.layout_cache.bottom_panel_splitter_area.is_some()
+    {
+        return Some(MouseTarget::BottomPanelSplitter);
+    }
+
     let editor_splitter = IdPath::root("workbench")
         .push_str("editor_splitter")
         .finish();
@@ -206,6 +219,7 @@ pub(super) fn plan_mouse_dispatch(workbench: &Workbench, event: &MouseEvent) -> 
     if let Some(target) = split_target(workbench, event) {
         let reason = match target {
             MouseTarget::SidebarSplitter => MouseRouteReason::SidebarSplitterHit,
+            MouseTarget::BottomPanelSplitter => MouseRouteReason::BottomPanelSplitterHit,
             MouseTarget::EditorSplitter => MouseRouteReason::EditorSplitterHit,
             _ => MouseRouteReason::NoRoute,
         };

@@ -245,6 +245,26 @@ impl Workbench {
                 Some(Command::ToggleBottomPanel | Command::FocusBottomPanel)
             )
         {
+            if matches!(cmd.as_ref(), Some(Command::Copy))
+                && self.copy_terminal_selection_to_clipboard()
+            {
+                return EventResult::Consumed;
+            }
+
+            if key_event.code == KeyCode::PageUp {
+                if let Some(id) = self.store.state().terminal.active_session().map(|s| s.id) {
+                    let _ = self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: 20 });
+                }
+                return EventResult::Consumed;
+            }
+
+            if key_event.code == KeyCode::PageDown {
+                if let Some(id) = self.store.state().terminal.active_session().map(|s| s.id) {
+                    let _ = self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: -20 });
+                }
+                return EventResult::Consumed;
+            }
+
             if let Some(bytes) = terminal_bytes_for_key_event(key_event) {
                 if let Some(id) = self.store.state().terminal.active_session().map(|s| s.id) {
                     let _ = self.dispatch_kernel(KernelAction::TerminalWrite { id, bytes });

@@ -112,6 +112,9 @@ pub enum Action {
     BottomPanelSetActiveTab {
         tab: BottomPanelTab,
     },
+    BottomPanelSetHeightRatio {
+        ratio: u16,
+    },
     SearchSetViewHeight {
         viewport: SearchViewport,
         height: usize,

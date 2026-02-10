@@ -666,6 +666,15 @@ impl Store {
                     state_changed,
                 }
             }
+            Action::BottomPanelSetHeightRatio { ratio } => {
+                let ratio = ratio.clamp(100, 900);
+                let prev = self.state.ui.bottom_panel.height_ratio;
+                self.state.ui.bottom_panel.height_ratio = ratio;
+                DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: prev != ratio,
+                }
+            }
             action @ Action::SearchSetViewHeight { .. }
             | action @ Action::SearchAppend(_)
             | action @ Action::SearchBackspace

@@ -325,6 +325,66 @@ impl Workbench {
         handled.then_some(EventResult::Consumed)
     }
 
+    pub(super) fn handle_bottom_panel_split_mouse(
+        &mut self,
+        event: &MouseEvent,
+        ui_out: &UiRuntimeOutput,
+    ) -> Option<EventResult> {
+        let _scope = perf::scope("input.mouse.bottom_panel_split");
+        let splitter_id = IdPath::root("workbench")
+            .push_str("bottom_panel_splitter")
+            .finish();
+
+        if !self.store.state().ui.bottom_panel.visible
+            || self.layout_cache.bottom_panel_splitter_area.is_none()
+            || self.layout_cache.render_area.is_none()
+        {
+            self.bottom_panel_split_dragging = false;
+            return None;
+        }
+
+        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
+            let pos = Pos::new(event.column, event.row);
+            let hit = self.ui_tree.hit_test_with_sense(pos, Sense::DRAG_SOURCE);
+            if hit.is_none_or(|n| n.id != splitter_id) {
+                return None;
+            }
+
+            self.bottom_panel_split_dragging = true;
+            self.update_bottom_panel_height_ratio(event.row);
+            return Some(EventResult::Consumed);
+        }
+
+        if !self.bottom_panel_split_dragging {
+            return None;
+        }
+
+        let mut handled = false;
+        for ev in &ui_out.events {
+            match ev {
+                UiEvent::DragStart { id, pos } if *id == splitter_id => {
+                    handled = true;
+                    self.update_bottom_panel_height_ratio(pos.y);
+                }
+                UiEvent::DragMove { id, pos, .. } if *id == splitter_id => {
+                    handled = true;
+                    self.update_bottom_panel_height_ratio(pos.y);
+                }
+                UiEvent::DragEnd { id, .. } if *id == splitter_id => {
+                    handled = true;
+                }
+                _ => {}
+            }
+        }
+
+        if matches!(event.kind, MouseEventKind::Up(MouseButton::Left)) {
+            self.bottom_panel_split_dragging = false;
+            handled = true;
+        }
+
+        handled.then_some(EventResult::Consumed)
+    }
+
     fn update_editor_split_ratio(&mut self, column: u16, row: u16) {
         let Some(area) = self.layout_cache.editor_container_area else {
             return;
@@ -349,6 +409,32 @@ impl Workbench {
         let desired = column.saturating_sub(area.x).saturating_add(1);
         let width = util::clamp_sidebar_width(area.w, desired);
         let _ = self.dispatch_kernel(KernelAction::SidebarSetWidth { width });
+    }
+
+    fn update_bottom_panel_height_ratio(&mut self, row: u16) {
+        let Some(area) = self.layout_cache.render_area else {
+            return;
+        };
+        let body_h = area.h.saturating_sub(super::STATUS_HEIGHT);
+        if body_h < 5 {
+            return;
+        }
+
+        let content_h = body_h;
+        let splitter_h = 1u16;
+        let total_without_splitter = content_h.saturating_sub(splitter_h);
+        if total_without_splitter < 2 {
+            return;
+        }
+
+        let bottom_h = area
+            .bottom()
+            .saturating_sub(super::STATUS_HEIGHT)
+            .saturating_sub(row)
+            .saturating_sub(splitter_h);
+        let bottom_h = bottom_h.clamp(1, total_without_splitter.saturating_sub(1));
+        let ratio = ((bottom_h as u32) * 1000 / (total_without_splitter as u32)) as u16;
+        let _ = self.dispatch_kernel(KernelAction::BottomPanelSetHeightRatio { ratio });
     }
 }
 

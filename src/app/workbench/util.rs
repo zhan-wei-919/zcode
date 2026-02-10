@@ -95,16 +95,6 @@ pub(super) fn rect_contains(area: Rect, x: u16, y: u16) -> bool {
     x >= area.x && x < area.x + area.w && y >= area.y && y < area.y + area.h
 }
 
-pub(super) fn bottom_panel_height(body_height: u16) -> u16 {
-    let max_height = body_height.saturating_sub(1);
-    if max_height == 0 {
-        return 0;
-    }
-
-    let desired = body_height.saturating_div(3);
-    desired.max(6).min(max_height)
-}
-
 pub(super) fn sidebar_width(available: u16) -> u16 {
     if available == 0 {
         return 0;

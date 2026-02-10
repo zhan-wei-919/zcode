@@ -235,6 +235,8 @@ impl Workbench {
             {
                 self.viewport_cache.applied_terminal_panel_id = Some(id);
                 self.viewport_cache.applied_terminal_panel_size = Some((width, height));
+                self.terminal_selection = None;
+                self.terminal_selecting = false;
                 changed |= self.dispatch_kernel(KernelAction::TerminalResize {
                     id,
                     cols: width,

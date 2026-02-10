@@ -304,6 +304,7 @@ impl InputDialogState {
 pub struct BottomPanelState {
     pub visible: bool,
     pub active_tab: BottomPanelTab,
+    pub height_ratio: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -490,6 +491,7 @@ impl Default for UiState {
             bottom_panel: BottomPanelState {
                 visible: false,
                 active_tab: BottomPanelTab::Problems,
+                height_ratio: 333,
             },
             focus: FocusTarget::Editor,
             editor_layout: EditorLayoutState::default(),

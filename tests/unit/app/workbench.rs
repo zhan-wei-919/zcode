@@ -630,8 +630,14 @@ fn test_drag_explorer_file_into_folder_moves_path() {
         drop_y,
     ));
 
-    drive_until(&mut workbench, &rx, Duration::from_secs(2), |_| {
-        to.exists() && !from.exists()
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
+        to.exists()
+            && !from.exists()
+            && w.store
+                .state()
+                .explorer
+                .path_and_kind_for(NodeId::from_raw(file_id))
+                .is_some_and(|(path, is_dir)| !is_dir && path == to)
     });
     assert_eq!(
         workbench
@@ -900,8 +906,14 @@ fn test_drag_explorer_file_into_folder_conflict_accept_overwrites() {
 
     let _ = workbench.dispatch_kernel(KernelAction::ConfirmDialogAccept);
 
-    drive_until(&mut workbench, &rx, Duration::from_secs(2), |_| {
-        to.exists() && !from.exists()
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
+        to.exists()
+            && !from.exists()
+            && w.store
+                .state()
+                .explorer
+                .path_and_kind_for(NodeId::from_raw(file_id))
+                .is_some_and(|(path, is_dir)| !is_dir && path == to)
     });
 
     assert_eq!(std::fs::read_to_string(&to).unwrap(), "FROM");
@@ -1028,8 +1040,14 @@ fn test_drag_explorer_file_onto_file_row_moves_into_that_files_parent_dir() {
         drop_y,
     ));
 
-    drive_until(&mut workbench, &rx, Duration::from_secs(2), |_| {
-        to.exists() && !from.exists()
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
+        to.exists()
+            && !from.exists()
+            && w.store
+                .state()
+                .explorer
+                .path_and_kind_for(NodeId::from_raw(file_id))
+                .is_some_and(|(path, is_dir)| !is_dir && path == to)
     });
     assert!(root_target.exists(), "drop target file should not be moved");
     assert_eq!(
@@ -1140,8 +1158,14 @@ fn test_drag_explorer_file_into_root_empty_space_moves_into_root() {
         drop_y,
     ));
 
-    drive_until(&mut workbench, &rx, Duration::from_secs(2), |_| {
-        to.exists() && !from.exists()
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
+        to.exists()
+            && !from.exists()
+            && w.store
+                .state()
+                .explorer
+                .path_and_kind_for(NodeId::from_raw(file_id))
+                .is_some_and(|(path, is_dir)| !is_dir && path == to)
     });
     assert_eq!(
         workbench
@@ -1243,6 +1267,270 @@ fn test_focus_bottom_panel() {
     assert!(result.is_consumed());
     assert!(workbench.bottom_panel_visible());
     assert_eq!(workbench.focus(), FocusTarget::BottomPanel);
+}
+
+#[test]
+fn test_drag_bottom_panel_splitter_updates_height_ratio() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::ToggleBottomPanel));
+    render_once(&mut workbench, 120, 40);
+
+    let splitter_id = IdPath::root("workbench")
+        .push_str("bottom_panel_splitter")
+        .finish();
+    let splitter = workbench
+        .ui_tree
+        .node(splitter_id)
+        .expect("bottom panel splitter");
+
+    let start_x = splitter.rect.x.saturating_add(2);
+    let start_y = splitter.rect.y;
+    let drag_y = start_y.saturating_sub(6);
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        start_x,
+        drag_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        start_x,
+        drag_y,
+    ));
+
+    assert_ne!(workbench.store.state().ui.bottom_panel.height_ratio, 333);
+}
+
+#[test]
+fn test_terminal_mouse_scroll_up_moves_into_history() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let _ = workbench.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
+        tab: BottomPanelTab::Terminal,
+    });
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+
+    render_once(&mut workbench, 120, 40);
+
+    let id = workbench
+        .store
+        .state()
+        .terminal
+        .active
+        .expect("terminal session");
+    let mut bytes = Vec::new();
+    for idx in 0..120 {
+        bytes.extend_from_slice(format!("line-{idx}\n").as_bytes());
+    }
+    let _ = workbench.dispatch_kernel(KernelAction::TerminalOutput { id, bytes });
+
+    let panel = workbench
+        .layout_cache
+        .bottom_panel_area
+        .expect("bottom panel area");
+    let x = panel.x.saturating_add(2);
+    let y = panel.y.saturating_add(2);
+
+    let _ = workbench.handle_input(&mouse(MouseEventKind::ScrollUp, x, y));
+
+    let offset = workbench
+        .store
+        .state()
+        .terminal
+        .active_session()
+        .expect("terminal session")
+        .scroll_offset;
+    assert!(offset > 0, "scroll-up should move terminal into history");
+}
+
+#[test]
+fn test_terminal_pageup_pagedown_scroll_history() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let _ = workbench.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
+        tab: BottomPanelTab::Terminal,
+    });
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+
+    let id = workbench
+        .store
+        .state()
+        .terminal
+        .active
+        .expect("terminal session");
+    let mut bytes = Vec::new();
+    for idx in 0..120 {
+        bytes.extend_from_slice(format!("line-{idx}\n").as_bytes());
+    }
+    let _ = workbench.dispatch_kernel(KernelAction::TerminalOutput { id, bytes });
+
+    let page_up = KeyEvent {
+        code: KeyCode::PageUp,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(page_up));
+
+    let mut offset = workbench
+        .store
+        .state()
+        .terminal
+        .active_session()
+        .expect("terminal session")
+        .scroll_offset;
+    assert!(offset > 0, "PageUp should scroll terminal history");
+
+    let page_down = KeyEvent {
+        code: KeyCode::PageDown,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    };
+    for _ in 0..16 {
+        let _ = workbench.handle_input(&InputEvent::Key(page_down));
+    }
+
+    offset = workbench
+        .store
+        .state()
+        .terminal
+        .active_session()
+        .expect("terminal session")
+        .scroll_offset;
+    assert_eq!(offset, 0, "PageDown should return to terminal bottom");
+}
+
+#[test]
+fn test_terminal_drag_selection_highlights_cells() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let _ = workbench.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
+        tab: BottomPanelTab::Terminal,
+    });
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+
+    render_once(&mut workbench, 120, 40);
+
+    let id = workbench
+        .store
+        .state()
+        .terminal
+        .active
+        .expect("terminal session");
+    let _ = workbench.dispatch_kernel(KernelAction::TerminalOutput {
+        id,
+        bytes: b"select-this\n".to_vec(),
+    });
+
+    render_once(&mut workbench, 120, 40);
+    let panel = workbench
+        .layout_cache
+        .bottom_panel_area
+        .expect("bottom panel area");
+    let y = panel.y.saturating_add(1);
+    let x0 = panel.x;
+    let x1 = panel.x.saturating_add(5);
+
+    let _ = workbench.handle_input(&mouse(MouseEventKind::Down(MouseButton::Left), x0, y));
+    let _ = workbench.handle_input(&mouse(MouseEventKind::Drag(MouseButton::Left), x1, y));
+    let _ = workbench.handle_input(&mouse(MouseEventKind::Up(MouseButton::Left), x1, y));
+
+    let mut backend = TestBackend::new(120, 40);
+    workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
+
+    let cell = backend
+        .buffer()
+        .cell(panel.x.saturating_add(2), y)
+        .expect("selection cell");
+    assert_eq!(cell.style.bg, Some(workbench.ui_theme.palette_selected_bg));
+}
+
+#[test]
+fn test_terminal_renders_ansi_colors_from_vt100_cells() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let _ = workbench.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
+        tab: BottomPanelTab::Terminal,
+    });
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+
+    render_once(&mut workbench, 120, 40);
+
+    let id = workbench
+        .store
+        .state()
+        .terminal
+        .active
+        .expect("terminal session");
+    let bytes = b"\x1b[32mzhanwei@zhanwei\x1b[0m:\x1b[34m~/project/zcode\x1b[0m$ ".to_vec();
+    let _ = workbench.dispatch_kernel(KernelAction::TerminalOutput { id, bytes });
+
+    let mut backend = TestBackend::new(120, 40);
+    workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
+
+    let panel = workbench
+        .layout_cache
+        .bottom_panel_area
+        .expect("bottom panel area");
+    let y = panel.y.saturating_add(1);
+
+    let username_cell = backend.buffer().cell(panel.x, y).expect("username cell");
+    assert_eq!(username_cell.symbol, "z");
+    assert_eq!(username_cell.style.fg, Some(Color::Indexed(2)));
+
+    let path_cell = backend
+        .buffer()
+        .cell(panel.x.saturating_add(16), y)
+        .expect("path cell");
+    assert_eq!(path_cell.symbol, "~");
+    assert_eq!(path_cell.style.fg, Some(Color::Indexed(4)));
+}
+
+#[test]
+fn test_terminal_selection_text_trims_line_tail_spaces() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let _ = workbench.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
+        tab: BottomPanelTab::Terminal,
+    });
+
+    let id = workbench
+        .store
+        .state()
+        .terminal
+        .active
+        .expect("terminal session");
+    let _ = workbench.dispatch_kernel(KernelAction::TerminalOutput {
+        id,
+        bytes: b"abc   \n".to_vec(),
+    });
+
+    workbench.terminal_selection = Some(super::TerminalSelection {
+        anchor: super::TerminalCellPos { row: 0, col: 0 },
+        cursor: super::TerminalCellPos { row: 0, col: 5 },
+    });
+
+    let selected = workbench
+        .terminal_selection_text()
+        .expect("terminal selection text");
+    assert_eq!(selected, "abc");
 }
 
 #[test]
