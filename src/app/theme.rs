@@ -37,6 +37,10 @@ pub struct UiTheme {
     pub palette_selected_fg: Color,
     pub palette_muted_fg: Color,
     pub indent_guide_fg: Color,
+    pub editor_bg: Color,
+    pub sidebar_bg: Color,
+    pub popup_bg: Color,
+    pub statusbar_bg: Color,
 }
 
 impl Default for UiTheme {
@@ -73,6 +77,10 @@ impl Default for UiTheme {
             palette_selected_fg: Color::Indexed(15), // White
             palette_muted_fg: Color::Indexed(8),     // DarkGray
             indent_guide_fg: Color::Indexed(8),      // DarkGray
+            editor_bg: Color::Reset,
+            sidebar_bg: Color::Reset,
+            popup_bg: Color::Reset,
+            statusbar_bg: Color::Reset,
         }
     }
 }
@@ -234,6 +242,26 @@ impl UiTheme {
                 self.indent_guide_fg = c;
             }
         }
+        if let Some(v) = &settings.editor_bg {
+            if let Some(c) = parse_color(v) {
+                self.editor_bg = c;
+            }
+        }
+        if let Some(v) = &settings.sidebar_bg {
+            if let Some(c) = parse_color(v) {
+                self.sidebar_bg = c;
+            }
+        }
+        if let Some(v) = &settings.popup_bg {
+            if let Some(c) = parse_color(v) {
+                self.popup_bg = c;
+            }
+        }
+        if let Some(v) = &settings.statusbar_bg {
+            if let Some(c) = parse_color(v) {
+                self.statusbar_bg = c;
+            }
+        }
     }
 }
 
@@ -312,5 +340,9 @@ pub(crate) fn to_core_theme(theme: &UiTheme) -> CoreTheme {
         palette_selected_fg: theme.palette_selected_fg,
         palette_muted_fg: theme.palette_muted_fg,
         indent_guide_fg: theme.indent_guide_fg,
+        editor_bg: theme.editor_bg,
+        sidebar_bg: theme.sidebar_bg,
+        popup_bg: theme.popup_bg,
+        statusbar_bg: theme.statusbar_bg,
     }
 }

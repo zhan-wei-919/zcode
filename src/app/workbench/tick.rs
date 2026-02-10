@@ -740,6 +740,10 @@ impl Workbench {
             palette_selected_fg: color_to_hex(t.palette_selected_fg),
             palette_muted_fg: color_to_hex(t.palette_muted_fg),
             indent_guide_fg: color_to_hex(t.indent_guide_fg),
+            editor_bg: color_to_hex(t.editor_bg),
+            sidebar_bg: color_to_hex(t.sidebar_bg),
+            popup_bg: color_to_hex(t.popup_bg),
+            statusbar_bg: color_to_hex(t.statusbar_bg),
         }
     }
 }

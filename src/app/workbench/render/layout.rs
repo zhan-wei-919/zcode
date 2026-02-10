@@ -55,21 +55,9 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
 
     workbench.layout_cache.bottom_panel_area = bottom_panel_area;
 
-    if workbench.store.state().ui.theme_editor.visible {
-        let mut painter = Painter::new();
-        let areas = paint_theme_editor(
-            &mut painter,
-            main_area,
-            &workbench.store.state().ui.theme_editor,
-            &workbench.ui_theme,
-            workbench.terminal_color_support,
-            workbench.theme_editor_layout.ansi_cursor,
-        );
-        workbench.theme_editor_layout.token_list_area = areas.token_list;
-        workbench.theme_editor_layout.hue_bar_area = areas.hue_bar;
-        workbench.theme_editor_layout.sv_palette_area = areas.sv_palette;
-        backend.draw(main_area, painter.cmds());
-    } else if workbench.store.state().ui.sidebar_visible && main_area.w > 0 {
+    let (_sidebar_area, editor_area) = if workbench.store.state().ui.sidebar_visible
+        && main_area.w > 0
+    {
         workbench.layout_cache.sidebar_container_area = Some(main_area);
 
         let available = main_area.w;
@@ -92,16 +80,39 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
             workbench.layout_cache.sidebar_content_area = None;
         }
 
-        let _scope = perf::scope("render.editors");
-        workbench.render_editor_panes(backend, editor_area);
+        (sidebar_area, editor_area)
     } else {
         workbench.layout_cache.sidebar_area = None;
         workbench.layout_cache.sidebar_tabs_area = None;
         workbench.layout_cache.sidebar_content_area = None;
         workbench.layout_cache.sidebar_container_area = None;
         workbench.sidebar_split_dragging = false;
+        (Rect::default(), main_area)
+    };
+
+    if workbench.store.state().ui.theme_editor.visible {
+        // Fill editor area with editor_bg so theme changes are visible behind the controls.
+        let bg_style = UiStyle::default().bg(workbench.ui_theme.editor_bg);
+        let mut bg_painter = Painter::new();
+        bg_painter.fill_rect(editor_area, bg_style);
+        backend.draw(editor_area, bg_painter.cmds());
+
+        let mut painter = Painter::new();
+        let areas = paint_theme_editor(
+            &mut painter,
+            editor_area,
+            &workbench.store.state().ui.theme_editor,
+            &workbench.ui_theme,
+            workbench.terminal_color_support,
+            workbench.theme_editor_layout.ansi_cursor,
+        );
+        workbench.theme_editor_layout.token_list_area = areas.token_list;
+        workbench.theme_editor_layout.hue_bar_area = areas.hue_bar;
+        workbench.theme_editor_layout.sv_palette_area = areas.sv_palette;
+        backend.draw(editor_area, painter.cmds());
+    } else {
         let _scope = perf::scope("render.editors");
-        workbench.render_editor_panes(backend, main_area);
+        workbench.render_editor_panes(backend, editor_area);
     }
 
     if let Some(panel_area) = bottom_panel_area {

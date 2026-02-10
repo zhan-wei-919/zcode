@@ -115,12 +115,12 @@ impl ExplorerView {
             return;
         }
 
-        let bg_style = Style::default().bg(theme.palette_bg);
+        let bg_style = Style::default().bg(theme.sidebar_bg);
         painter.fill_rect(area, bg_style);
 
         if rows.is_empty() {
             let style = Style::default()
-                .bg(theme.palette_bg)
+                .bg(theme.sidebar_bg)
                 .fg(theme.palette_muted_fg);
             painter.text_clipped(Pos::new(area.x, area.y), "Empty folder", style, area);
             return;

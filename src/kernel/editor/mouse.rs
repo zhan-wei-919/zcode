@@ -74,9 +74,34 @@ impl EditorTabState {
         true
     }
 
-    pub fn mouse_drag(&mut self, x: u16, y: u16, tab_size: u8) -> bool {
+    pub fn mouse_drag(
+        &mut self,
+        x: u16,
+        y: u16,
+        tab_size: u8,
+        overflow_y: i16,
+        past_right: bool,
+    ) -> bool {
         if !self.mouse.dragging {
             return false;
+        }
+
+        if overflow_y != 0 {
+            self.viewport.follow_cursor = true;
+            let max_offset = self
+                .buffer
+                .len_lines()
+                .max(1)
+                .saturating_sub(self.viewport.height.max(1));
+            if overflow_y < 0 {
+                self.viewport.line_offset = self
+                    .viewport
+                    .line_offset
+                    .saturating_sub((-overflow_y) as usize);
+            } else {
+                self.viewport.line_offset =
+                    (self.viewport.line_offset + overflow_y as usize).min(max_offset);
+            }
         }
 
         let visible_lines =
@@ -85,12 +110,17 @@ impl EditorTabState {
             return false;
         };
 
-        let Some(col) = viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
-        else {
-            return false;
+        let col = if past_right {
+            self.buffer.line_grapheme_len(row)
+        } else {
+            let Some(col) = viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
+            else {
+                return false;
+            };
+            col
         };
-        let pos = (row, col);
 
+        let pos = (row, col);
         self.buffer.update_selection_cursor(pos);
         self.buffer.set_cursor(pos.0, pos.1);
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
@@ -105,3 +135,7 @@ impl EditorTabState {
         true
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/kernel/editor/mouse.rs"]
+mod tests;

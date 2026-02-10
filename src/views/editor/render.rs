@@ -120,7 +120,7 @@ fn paint_tabs(
     }
 
     // Clear tab bar background to avoid leaking old content on partial redraws.
-    let base = Style::default().bg(theme.palette_bg).fg(theme.palette_fg);
+    let base = Style::default().bg(theme.editor_bg).fg(theme.palette_fg);
     painter.fill_rect(area, base);
 
     if pane.tabs.is_empty() {
@@ -203,7 +203,7 @@ fn paint_search_bar(painter: &mut Painter, area: Rect, state: &SearchBarState, t
         return;
     }
 
-    let base = Style::default().bg(theme.palette_bg).fg(theme.palette_fg);
+    let base = Style::default().bg(theme.editor_bg).fg(theme.palette_fg);
     painter.fill_rect(area, base);
 
     let match_info = search_bar_match_info(state);
@@ -395,12 +395,12 @@ fn paint_editor_body(
         return;
     }
 
-    let base_style = Style::default().bg(theme.palette_bg).fg(theme.palette_fg);
+    let base_style = Style::default().bg(theme.editor_bg).fg(theme.palette_fg);
     painter.fill_rect(layout.editor_area, base_style);
 
     let Some(tab) = pane.active_tab() else {
         let style = Style::default()
-            .bg(theme.palette_bg)
+            .bg(theme.editor_bg)
             .fg(theme.palette_muted_fg);
         let msg = if workspace_empty {
             "Folder is empty"
@@ -497,7 +497,7 @@ fn paint_gutter(
     }
 
     let base_style = Style::default()
-        .bg(theme.palette_bg)
+        .bg(theme.editor_bg)
         .fg(theme.palette_muted_fg);
     painter.fill_rect(area, base_style);
 
@@ -507,7 +507,7 @@ fn paint_gutter(
     }
 
     let highlight_style = Style::default()
-        .bg(theme.palette_bg)
+        .bg(theme.editor_bg)
         .fg(theme.header_fg)
         .add_mod(Mod::BOLD);
 
@@ -629,7 +629,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         return;
     }
 
-    let base_style = Style::default().bg(theme.palette_bg).fg(theme.palette_fg);
+    let base_style = Style::default().bg(theme.editor_bg).fg(theme.palette_fg);
     painter.fill_rect(area, base_style);
 
     let selection_style = Style::default()
@@ -851,7 +851,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                     let style = if selected {
                         indent_guide_style.bg(theme.palette_selected_bg)
                     } else {
-                        indent_guide_style.bg(theme.palette_bg)
+                        indent_guide_style.bg(theme.editor_bg)
                     };
 
                     painter.text_clipped(

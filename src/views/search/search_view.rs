@@ -88,7 +88,7 @@ impl SearchView {
         self.search_area = (!search_area.is_empty()).then_some(search_area);
         self.results_area = (!results_area.is_empty()).then_some(results_area);
 
-        let bg = Style::default().bg(theme.palette_bg);
+        let bg = Style::default().bg(theme.sidebar_bg);
         painter.fill_rect(area, bg);
 
         let indicators = Indicators::new(state.case_sensitive, state.use_regex);
@@ -207,7 +207,7 @@ impl SearchView {
             let bg = if is_selected {
                 theme.palette_selected_bg
             } else {
-                theme.palette_bg
+                theme.sidebar_bg
             };
             let row_bg = Style::default().bg(bg);
             let clip = Rect::new(results_area.x, y, results_area.w, 1);

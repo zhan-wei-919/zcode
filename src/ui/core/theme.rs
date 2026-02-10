@@ -35,6 +35,10 @@ pub enum Token {
     SyntaxVariableFg,
     SyntaxConstantFg,
     SyntaxRegexFg,
+    EditorBg,
+    SidebarBg,
+    PopupBg,
+    StatusbarBg,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +74,10 @@ pub struct Theme {
     pub palette_selected_fg: Color,
     pub palette_muted_fg: Color,
     pub indent_guide_fg: Color,
+    pub editor_bg: Color,
+    pub sidebar_bg: Color,
+    pub popup_bg: Color,
+    pub statusbar_bg: Color,
 }
 
 impl Theme {
@@ -105,6 +113,10 @@ impl Theme {
             Token::SyntaxVariableFg => self.syntax_variable_fg,
             Token::SyntaxConstantFg => self.syntax_constant_fg,
             Token::SyntaxRegexFg => self.syntax_regex_fg,
+            Token::EditorBg => self.editor_bg,
+            Token::SidebarBg => self.sidebar_bg,
+            Token::PopupBg => self.popup_bg,
+            Token::StatusbarBg => self.statusbar_bg,
         }
     }
 }
@@ -143,6 +155,10 @@ impl Default for Theme {
             palette_selected_fg: Color::Indexed(15), // White
             palette_muted_fg: Color::Indexed(8),     // DarkGray
             indent_guide_fg: Color::Indexed(8),      // DarkGray
+            editor_bg: Color::Reset,
+            sidebar_bg: Color::Reset,
+            popup_bg: Color::Reset,
+            statusbar_bg: Color::Reset,
         }
     }
 }

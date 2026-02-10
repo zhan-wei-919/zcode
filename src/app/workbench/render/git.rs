@@ -23,12 +23,12 @@ impl Workbench {
         let ui_area = area;
 
         let base_style = UiStyle::default()
-            .bg(self.ui_theme.palette_bg)
+            .bg(self.ui_theme.sidebar_bg)
             .fg(self.ui_theme.palette_fg);
         painter.fill_rect(ui_area, base_style);
 
         let sep_style = UiStyle::default()
-            .bg(self.ui_theme.palette_bg)
+            .bg(self.ui_theme.sidebar_bg)
             .fg(self.ui_theme.separator);
         let sep_row = UiRect::new(area.x, area.y, area.w, 1.min(area.h));
         if sep_row.w > 0 {

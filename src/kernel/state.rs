@@ -27,6 +27,7 @@ pub enum FocusTarget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeEditorToken {
+    // Syntax foreground colors
     Comment,
     Keyword,
     String,
@@ -37,10 +38,16 @@ pub enum ThemeEditorToken {
     Variable,
     Constant,
     Regex,
+    // Background colors
+    EditorBg,
+    SidebarBg,
+    ActivityBg,
+    PopupBg,
+    StatusbarBg,
 }
 
 impl ThemeEditorToken {
-    pub const ALL: [ThemeEditorToken; 10] = [
+    pub const ALL: [ThemeEditorToken; 15] = [
         ThemeEditorToken::Comment,
         ThemeEditorToken::Keyword,
         ThemeEditorToken::String,
@@ -51,6 +58,11 @@ impl ThemeEditorToken {
         ThemeEditorToken::Variable,
         ThemeEditorToken::Constant,
         ThemeEditorToken::Regex,
+        ThemeEditorToken::EditorBg,
+        ThemeEditorToken::SidebarBg,
+        ThemeEditorToken::ActivityBg,
+        ThemeEditorToken::PopupBg,
+        ThemeEditorToken::StatusbarBg,
     ];
 
     pub fn label(self) -> &'static str {
@@ -65,6 +77,11 @@ impl ThemeEditorToken {
             Self::Variable => "Variable",
             Self::Constant => "Constant",
             Self::Regex => "Regex",
+            Self::EditorBg => "Editor BG",
+            Self::SidebarBg => "Sidebar BG",
+            Self::ActivityBg => "Activity BG",
+            Self::PopupBg => "Popup BG",
+            Self::StatusbarBg => "Statusbar BG",
         }
     }
 
@@ -80,6 +97,11 @@ impl ThemeEditorToken {
             Self::Variable => 7,
             Self::Constant => 8,
             Self::Regex => 9,
+            Self::EditorBg => 10,
+            Self::SidebarBg => 11,
+            Self::ActivityBg => 12,
+            Self::PopupBg => 13,
+            Self::StatusbarBg => 14,
         }
     }
 

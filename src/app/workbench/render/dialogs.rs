@@ -26,7 +26,7 @@ pub(super) fn render_confirm_dialog(workbench: &Workbench, painter: &mut Painter
     let dialog_area = UiRect::new(x, y, width, height);
 
     let base_style = UiStyle::default()
-        .bg(workbench.ui_theme.palette_bg)
+        .bg(workbench.ui_theme.popup_bg)
         .fg(workbench.ui_theme.palette_fg);
     painter.fill_rect(dialog_area, base_style);
 
@@ -93,11 +93,11 @@ pub(super) fn render_context_menu(workbench: &mut Workbench, painter: &mut Paint
 
     let styles = MenuStyles {
         base: UiStyle::default()
-            .bg(workbench.ui_theme.palette_bg)
+            .bg(workbench.ui_theme.popup_bg)
             .fg(workbench.ui_theme.palette_fg),
         border: UiStyle::default()
             .fg(workbench.ui_theme.focus_border)
-            .bg(workbench.ui_theme.palette_bg),
+            .bg(workbench.ui_theme.popup_bg),
         selected: UiStyle::default()
             .bg(workbench.ui_theme.palette_selected_bg)
             .fg(workbench.ui_theme.palette_selected_fg),
@@ -132,7 +132,7 @@ pub(super) fn render_input_dialog(workbench: &Workbench, painter: &mut Painter, 
     }
 
     let base_style = UiStyle::default()
-        .bg(workbench.ui_theme.palette_bg)
+        .bg(workbench.ui_theme.popup_bg)
         .fg(workbench.ui_theme.palette_fg);
     let muted_style = UiStyle::default().fg(workbench.ui_theme.palette_muted_fg);
     let title_style = UiStyle::default()

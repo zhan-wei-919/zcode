@@ -35,9 +35,6 @@ pub fn paint_theme_editor(
         return areas;
     }
 
-    let bg = Style::default().bg(Color::Reset).fg(Color::Reset);
-    painter.fill_rect(area, bg);
-
     // Title bar
     let (title_area, body) = area.split_top(1);
     paint_title_bar(painter, title_area, theme);
@@ -225,6 +222,11 @@ fn token_color(token: ThemeEditorToken, theme: &Theme) -> Color {
         ThemeEditorToken::Variable => theme.syntax_variable_fg,
         ThemeEditorToken::Constant => theme.syntax_constant_fg,
         ThemeEditorToken::Regex => theme.syntax_regex_fg,
+        ThemeEditorToken::EditorBg => theme.editor_bg,
+        ThemeEditorToken::SidebarBg => theme.sidebar_bg,
+        ThemeEditorToken::ActivityBg => theme.activity_bg,
+        ThemeEditorToken::PopupBg => theme.popup_bg,
+        ThemeEditorToken::StatusbarBg => theme.statusbar_bg,
     }
 }
 
@@ -269,6 +271,59 @@ fn paint_color_picker(
     color_support: TerminalColorSupport,
     ansi_cursor: Option<(u16, u16)>,
 ) {
+    // Black border around the picker for visual separation from the editor background.
+    if area.w < 4 || area.h < 4 {
+        return;
+    }
+    let border_style = Style::default().fg(Color::Rgb(60, 60, 60));
+    painter.hline(Pos::new(area.x, area.y), area.w, '\u{2500}', border_style);
+    painter.hline(
+        Pos::new(area.x, area.bottom().saturating_sub(1)),
+        area.w,
+        '\u{2500}',
+        border_style,
+    );
+    painter.vline(Pos::new(area.x, area.y), area.h, '\u{2502}', border_style);
+    painter.vline(
+        Pos::new(area.right().saturating_sub(1), area.y),
+        area.h,
+        '\u{2502}',
+        border_style,
+    );
+    // Corners
+    painter.text_clipped(Pos::new(area.x, area.y), "\u{256D}", border_style, area);
+    painter.text_clipped(
+        Pos::new(area.right().saturating_sub(1), area.y),
+        "\u{256E}",
+        border_style,
+        area,
+    );
+    painter.text_clipped(
+        Pos::new(area.x, area.bottom().saturating_sub(1)),
+        "\u{2570}",
+        border_style,
+        area,
+    );
+    painter.text_clipped(
+        Pos::new(
+            area.right().saturating_sub(1),
+            area.bottom().saturating_sub(1),
+        ),
+        "\u{256F}",
+        border_style,
+        area,
+    );
+
+    let inner = Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        area.w.saturating_sub(2),
+        area.h.saturating_sub(2),
+    );
+    if inner.is_empty() {
+        return;
+    }
+
     match color_support {
         TerminalColorSupport::TrueColor => {
             // Layout: [Hue Bar (2 cols)] [1 col gap] [SV Palette (rest)]
@@ -276,16 +331,16 @@ fn paint_color_picker(
             let gap: u16 = 1;
             let min_sv_w: u16 = 3;
 
-            if area.w < hue_bar_w + gap + min_sv_w {
+            if inner.w < hue_bar_w + gap + min_sv_w {
                 return;
             }
 
-            let hue_bar_area = Rect::new(area.x, area.y, hue_bar_w, area.h);
+            let hue_bar_area = Rect::new(inner.x, inner.y, hue_bar_w, inner.h);
             let sv_area = Rect::new(
-                area.x + hue_bar_w + gap,
-                area.y,
-                area.w - hue_bar_w - gap,
-                area.h,
+                inner.x + hue_bar_w + gap,
+                inner.y,
+                inner.w - hue_bar_w - gap,
+                inner.h,
             );
 
             areas.hue_bar = Some(hue_bar_area);
@@ -295,8 +350,8 @@ fn paint_color_picker(
             paint_sv_palette(painter, sv_area, state, theme, color_support);
         }
         TerminalColorSupport::Ansi256 | TerminalColorSupport::Ansi16 => {
-            areas.sv_palette = Some(area);
-            paint_ansi_palette(painter, area, state, color_support, ansi_cursor);
+            areas.sv_palette = Some(inner);
+            paint_ansi_palette(painter, inner, state, color_support, ansi_cursor);
         }
     }
 }

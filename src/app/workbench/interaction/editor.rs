@@ -9,8 +9,8 @@ use crate::ui::core::input::{DragPayload, UiEvent};
 use crate::ui::core::runtime::UiRuntimeOutput;
 use crate::ui::core::tree::NodeKind;
 use crate::views::{
-    compute_editor_pane_layout, hit_test_editor_mouse, hit_test_editor_tab, hit_test_tab_hover,
-    tab_insertion_index, TabHitResult,
+    compute_editor_pane_layout, hit_test_editor_mouse, hit_test_editor_mouse_drag,
+    hit_test_editor_tab, hit_test_tab_hover, tab_insertion_index, TabHitResult,
 };
 use std::time::Instant;
 
@@ -136,11 +136,13 @@ impl Workbench {
                     return EventResult::Consumed;
                 }
 
-                if let Some((x, y)) = hit_test_editor_mouse(&layout, event.column, event.row) {
+                if let Some(hit) = hit_test_editor_mouse_drag(&layout, event.column, event.row) {
                     let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::MouseDrag {
                         pane,
-                        x,
-                        y,
+                        x: hit.x,
+                        y: hit.y,
+                        overflow_y: hit.overflow_y,
+                        past_right: hit.past_right,
                     }));
                     return EventResult::Consumed;
                 }

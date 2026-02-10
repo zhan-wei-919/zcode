@@ -166,7 +166,7 @@ impl Workbench {
         self.hover_popup.last_area = Some(popup_area);
 
         let base_style = UiStyle::default()
-            .bg(self.ui_theme.palette_bg)
+            .bg(self.ui_theme.popup_bg)
             .fg(self.ui_theme.palette_fg);
         painter.fill_rect(popup_area, base_style);
 
@@ -261,7 +261,7 @@ impl Workbench {
 
         let popup_area = UiRect::new(x, y, width, height);
         let base_style = UiStyle::default()
-            .bg(self.ui_theme.palette_bg)
+            .bg(self.ui_theme.popup_bg)
             .fg(self.ui_theme.palette_fg);
         painter.fill_rect(popup_area, base_style);
 
@@ -380,13 +380,13 @@ impl Workbench {
 
         let popup_area = UiRect::new(x, y, width, height);
         let base_style = UiStyle::default()
-            .bg(self.ui_theme.palette_bg)
+            .bg(self.ui_theme.popup_bg)
             .fg(self.ui_theme.palette_fg);
         painter.fill_rect(popup_area, base_style);
 
         let border_style = UiStyle::default()
             .fg(self.ui_theme.focus_border)
-            .bg(self.ui_theme.palette_bg);
+            .bg(self.ui_theme.popup_bg);
         painter.border(popup_area, border_style, BorderKind::Plain);
 
         let inner = popup_area.inset(Insets::all(1));
@@ -647,7 +647,7 @@ impl Workbench {
                             let mut painter = Painter::new();
                             let style = UiStyle::default()
                                 .fg(self.ui_theme.separator)
-                                .bg(self.ui_theme.palette_bg);
+                                .bg(self.ui_theme.editor_bg);
                             for dx in 0..sep_area.w {
                                 painter.vline(
                                     Pos::new(sep_area.x.saturating_add(dx), sep_area.y),
@@ -776,7 +776,7 @@ impl Workbench {
                             let mut painter = Painter::new();
                             let style = UiStyle::default()
                                 .fg(self.ui_theme.separator)
-                                .bg(self.ui_theme.palette_bg);
+                                .bg(self.ui_theme.editor_bg);
                             for dy in 0..sep_area.h {
                                 painter.hline(
                                     Pos::new(sep_area.x, sep_area.y.saturating_add(dy)),

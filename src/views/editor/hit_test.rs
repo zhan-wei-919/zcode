@@ -300,6 +300,47 @@ pub fn hit_test_editor_mouse(
     ))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DragHitResult {
+    pub x: u16,
+    pub y: u16,
+    pub overflow_y: i16,
+    pub past_right: bool,
+}
+
+pub fn hit_test_editor_mouse_drag(
+    layout: &EditorPaneLayout,
+    column: u16,
+    row: u16,
+) -> Option<DragHitResult> {
+    let ca = layout.content_area;
+    if ca.is_empty() {
+        return None;
+    }
+
+    let past_right = column >= ca.right();
+    let clamped_col = column.clamp(ca.x, ca.right().saturating_sub(1));
+    let x = clamped_col.saturating_sub(ca.x);
+
+    let clamped_row = row.clamp(ca.y, ca.bottom().saturating_sub(1));
+    let y = clamped_row.saturating_sub(ca.y);
+
+    let overflow_y = if row < ca.y {
+        -(ca.y.saturating_sub(row) as i16)
+    } else if row >= ca.bottom() {
+        row.saturating_sub(ca.bottom().saturating_sub(1)) as i16
+    } else {
+        0
+    };
+
+    Some(DragHitResult {
+        x,
+        y,
+        overflow_y,
+        past_right,
+    })
+}
+
 #[cfg(test)]
 #[path = "../../../tests/unit/views/editor/hit_test.rs"]
 mod tests;

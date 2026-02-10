@@ -13,7 +13,7 @@ impl Workbench {
         }
 
         let base_style = UiStyle::default()
-            .bg(self.ui_theme.palette_bg)
+            .bg(self.ui_theme.sidebar_bg)
             .fg(self.ui_theme.palette_fg);
         painter.fill_rect(area, base_style);
 

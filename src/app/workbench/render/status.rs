@@ -61,7 +61,7 @@ impl Workbench {
 
         let text = format!("{} | {} | {}", mode, cursor_info, active);
         let style = UiStyle::default()
-            .bg(self.ui_theme.palette_bg)
+            .bg(self.ui_theme.statusbar_bg)
             .fg(self.ui_theme.palette_fg);
         painter.fill_rect(area, style);
         painter.text_clipped(Pos::new(area.x, area.y), text, style, area);

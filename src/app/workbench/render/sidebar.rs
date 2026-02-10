@@ -137,7 +137,7 @@ impl Workbench {
             } else {
                 self.ui_theme.separator
             };
-            let style = UiStyle::default().bg(self.ui_theme.palette_bg).fg(fg);
+            let style = UiStyle::default().bg(self.ui_theme.sidebar_bg).fg(fg);
             for dx in 0..sep.w {
                 painter.vline(Pos::new(sep.x.saturating_add(dx), sep.y), sep.h, '│', style);
             }
@@ -151,7 +151,7 @@ impl Workbench {
         }
 
         // Clear the sidebar background so old content doesn't leak through on partial redraws.
-        painter.fill_rect(inner, UiStyle::default().bg(self.ui_theme.palette_bg));
+        painter.fill_rect(inner, UiStyle::default().bg(self.ui_theme.sidebar_bg));
 
         let tab_height = 1u16;
         if inner.h <= tab_height {
@@ -185,7 +185,7 @@ impl Workbench {
 
         let ui_tabs = tabs_area;
         if !ui_tabs.is_empty() {
-            painter.fill_rect(ui_tabs, UiStyle::default().bg(self.ui_theme.palette_bg));
+            painter.fill_rect(ui_tabs, UiStyle::default().bg(self.ui_theme.sidebar_bg));
 
             const EXPLORER_LABEL: &str = " EXPLORER ";
             const SEARCH_LABEL: &str = " SEARCH ";

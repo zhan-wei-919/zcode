@@ -52,6 +52,8 @@ pub enum EditorAction {
         pane: usize,
         x: u16,
         y: u16,
+        overflow_y: i16,
+        past_right: bool,
     },
     MouseUp {
         pane: usize,

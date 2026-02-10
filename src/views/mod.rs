@@ -11,9 +11,9 @@ pub mod search;
 pub mod theme_editor;
 
 pub use editor::{
-    compute_editor_pane_layout, cursor_position_editor, hit_test_editor_mouse, hit_test_editor_tab,
-    hit_test_tab_hover, paint_editor_pane, tab_insertion_index, tab_insertion_x, EditorPaneLayout,
-    TabHitResult,
+    compute_editor_pane_layout, cursor_position_editor, hit_test_editor_mouse,
+    hit_test_editor_mouse_drag, hit_test_editor_tab, hit_test_tab_hover, paint_editor_pane,
+    tab_insertion_index, tab_insertion_x, DragHitResult, EditorPaneLayout, TabHitResult,
 };
 pub use explorer::{ExplorerPaintCtx, ExplorerView};
 pub use search::SearchView;

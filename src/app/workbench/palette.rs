@@ -15,7 +15,7 @@ pub(super) fn render(workbench: &Workbench, painter: &mut Painter, area: UiRect)
     }
 
     let base_style = UiStyle::default()
-        .bg(workbench.ui_theme.palette_bg)
+        .bg(workbench.ui_theme.popup_bg)
         .fg(workbench.ui_theme.palette_fg);
     let muted_style = UiStyle::default().fg(workbench.ui_theme.palette_muted_fg);
     let selected_style = UiStyle::default()

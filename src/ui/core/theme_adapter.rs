@@ -39,6 +39,10 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
         palette_selected_fg: map_color_for_support(theme.palette_selected_fg, support),
         palette_muted_fg: map_color_for_support(theme.palette_muted_fg, support),
         indent_guide_fg: map_color_for_support(theme.indent_guide_fg, support),
+        editor_bg: map_color_for_support(theme.editor_bg, support),
+        sidebar_bg: map_color_for_support(theme.sidebar_bg, support),
+        popup_bg: map_color_for_support(theme.popup_bg, support),
+        statusbar_bg: map_color_for_support(theme.statusbar_bg, support),
     };
 
     apply_non_truecolor_syntax_palette(&mut adapted, theme, support);

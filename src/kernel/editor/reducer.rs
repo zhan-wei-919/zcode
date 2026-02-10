@@ -40,7 +40,13 @@ impl EditorState {
                 text,
             } => self.apply_text_edit_to_tab(pane, tab_index, start_byte, end_byte, &text),
             EditorAction::MouseDown { pane, x, y, now } => self.mouse_down(pane, x, y, now),
-            EditorAction::MouseDrag { pane, x, y } => self.mouse_drag(pane, x, y),
+            EditorAction::MouseDrag {
+                pane,
+                x,
+                y,
+                overflow_y,
+                past_right,
+            } => self.mouse_drag(pane, x, y, overflow_y, past_right),
             EditorAction::MouseUp { pane } => self.mouse_up(pane),
             EditorAction::Scroll { pane, delta_lines } => self.scroll(pane, delta_lines),
             EditorAction::SearchBarAppend { pane, ch } => self.search_bar_append(pane, ch),
@@ -716,7 +722,14 @@ impl EditorState {
         (changed, Vec::new())
     }
 
-    fn mouse_drag(&mut self, pane: usize, x: u16, y: u16) -> (bool, Vec<Effect>) {
+    fn mouse_drag(
+        &mut self,
+        pane: usize,
+        x: u16,
+        y: u16,
+        overflow_y: i16,
+        past_right: bool,
+    ) -> (bool, Vec<Effect>) {
         let tab_size = self.config.tab_size;
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
@@ -724,7 +737,7 @@ impl EditorState {
         let Some(tab) = pane_state.active_tab_mut() else {
             return (false, Vec::new());
         };
-        let changed = tab.mouse_drag(x, y, tab_size);
+        let changed = tab.mouse_drag(x, y, tab_size, overflow_y, past_right);
         (changed, Vec::new())
     }
 
