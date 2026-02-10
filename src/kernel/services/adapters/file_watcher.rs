@@ -20,6 +20,15 @@ pub struct FileWatcherService {
 }
 
 impl FileWatcherService {
+    fn suppress_path_for_duration(&mut self, path: &Path, duration: Duration) {
+        let until = Instant::now() + duration;
+        self.suppress_until.insert(path.to_path_buf(), until);
+
+        if let Ok(canonical_path) = path.canonicalize() {
+            self.suppress_until.insert(canonical_path, until);
+        }
+    }
+
     pub fn new() -> Result<Self, notify::Error> {
         let (tx, rx) = mpsc::channel();
         let watcher = RecommendedWatcher::new(
@@ -59,6 +68,10 @@ impl FileWatcherService {
             .is_ok()
         {
             self.watched_paths.insert(path.to_path_buf());
+            // On macOS FSEvents, registering a watch immediately after creating/loading a file can
+            // replay recent create/modify events. Warm up the watch briefly so these startup events
+            // don't get treated as real external edits.
+            self.suppress_path_for_duration(path, SUPPRESS_DURATION);
         }
     }
 
@@ -69,8 +82,7 @@ impl FileWatcherService {
     }
 
     pub fn suppress_next(&mut self, path: &Path) {
-        self.suppress_until
-            .insert(path.to_path_buf(), Instant::now() + SUPPRESS_DURATION);
+        self.suppress_path_for_duration(path, SUPPRESS_DURATION);
     }
 
     pub fn watched_paths(&self) -> &FxHashSet<PathBuf> {
@@ -146,6 +158,53 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, FileWatchEvent::Removed(p) if p == &path)),
             "removed event should not be dropped when modified and removed are in same drain cycle"
+        );
+    }
+
+    #[test]
+    fn watch_should_suppress_startup_modified_events() {
+        let (mut service, tx) = create_service_with_channel();
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let path = dir.path().join("a.rs");
+        std::fs::write(&path, "fn main() {}\n").expect("write seed file");
+
+        service.watch(&path);
+        assert!(service.watched_paths().contains(&path));
+
+        tx.send(FileWatchEvent::Modified(path.clone()))
+            .expect("send modified");
+
+        let canonical = path.canonicalize().expect("canonicalize path");
+        if canonical != path {
+            tx.send(FileWatchEvent::Modified(canonical))
+                .expect("send canonical modified");
+        }
+
+        let events = service.drain_events();
+        assert!(
+            events.is_empty(),
+            "startup modified events should be suppressed right after watch registration"
+        );
+    }
+
+    #[test]
+    fn expired_suppression_should_allow_modified_events() {
+        let (mut service, tx) = create_service_with_channel();
+        let path = PathBuf::from("/tmp/zcode-file-watcher-expire-test");
+
+        service
+            .suppress_until
+            .insert(path.clone(), Instant::now() - Duration::from_millis(1));
+
+        tx.send(FileWatchEvent::Modified(path.clone()))
+            .expect("send modified");
+
+        let events = service.drain_events();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, FileWatchEvent::Modified(p) if p == &path)),
+            "modified events should pass once suppression expires"
         );
     }
 }
