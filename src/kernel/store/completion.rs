@@ -445,11 +445,13 @@ pub(super) fn apply_completion_insertion_cursor(
             .set_selection(Some(Selection::new(sel_start, Granularity::Char)));
         tab.buffer.update_selection_cursor(sel_end);
         tab.buffer.set_cursor(sel_end.0, sel_end.1);
+        tab.reset_cursor_goal_col();
     } else if let Some(cursor_rel) = insertion.cursor {
         let cursor_char = start_char.saturating_add(cursor_rel);
         let cursor = tab.buffer.cursor_pos_from_char_offset(cursor_char);
         tab.buffer.clear_selection();
         tab.buffer.set_cursor(cursor.0, cursor.1);
+        tab.reset_cursor_goal_col();
     }
 
     crate::kernel::editor::clamp_and_follow(&mut tab.viewport, &tab.buffer, tab_size);

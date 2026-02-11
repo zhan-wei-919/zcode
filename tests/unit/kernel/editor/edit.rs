@@ -1,6 +1,7 @@
 use super::*;
 use crate::kernel::editor::{HighlightKind, HighlightSpan, TabId};
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[test]
 fn test_rust_brace_pair_and_electric_enter() {
@@ -94,6 +95,179 @@ fn test_paste_over_selection_single_undo() {
     let (changed, _) = tab.apply_command(Command::Undo, 0, &config);
     assert!(changed);
     assert_eq!(tab.buffer.text(), "abc");
+}
+
+#[test]
+fn test_cursor_left_does_not_extend_empty_char_selection() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "out = out.bg(to_ratatui_color(bg));",
+        &config,
+    );
+
+    let end = tab.buffer.line_grapheme_len(0);
+    let now = Instant::now();
+    assert!(tab.mouse_down(
+        end as u16,
+        0,
+        now,
+        config.tab_size,
+        config.click_slop,
+        config.triple_click_ms,
+    ));
+    assert!(tab.mouse_up());
+    assert!(
+        tab.buffer.selection().is_none(),
+        "single click should not keep empty char selection"
+    );
+
+    let (changed, _) = tab.apply_command(Command::CursorLeft, 0, &config);
+    assert!(changed);
+    assert_eq!(tab.buffer.cursor(), (0, end - 1));
+    assert!(
+        tab.buffer.selection().is_none(),
+        "plain cursor move should clear empty char selection"
+    );
+}
+
+#[test]
+fn test_cursor_left_clears_empty_selection_created_by_shift_right_at_line_end() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "println!(\"{}\", self.payload);",
+        &config,
+    );
+
+    let end = tab.buffer.line_grapheme_len(0);
+    tab.buffer.set_cursor(0, end);
+
+    let (changed, _) = tab.apply_command(Command::ExtendSelectionRight, 0, &config);
+    assert!(!changed, "at line end, shift+right should not move cursor");
+    assert!(
+        tab.buffer
+            .selection()
+            .is_some_and(|selection| selection.is_empty()),
+        "boundary shift selection currently leaves an empty selection marker"
+    );
+
+    let (changed, _) = tab.apply_command(Command::CursorLeft, 0, &config);
+    assert!(changed);
+    assert_eq!(tab.buffer.cursor(), (0, end - 1));
+    assert!(
+        tab.buffer.selection().is_none(),
+        "plain left should clear residual empty selection instead of extending it"
+    );
+}
+
+#[test]
+fn test_cursor_down_clears_empty_selection_created_by_shift_up_at_file_start() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "first\nsecond",
+        &config,
+    );
+
+    tab.buffer.set_cursor(0, 0);
+
+    let (changed, _) = tab.apply_command(Command::ExtendSelectionUp, 0, &config);
+    assert!(!changed, "at file start, shift+up should not move cursor");
+    assert!(
+        tab.buffer
+            .selection()
+            .is_some_and(|selection| selection.is_empty()),
+        "boundary shift selection currently leaves an empty selection marker"
+    );
+
+    let (changed, _) = tab.apply_command(Command::CursorDown, 0, &config);
+    assert!(changed);
+    assert_eq!(tab.buffer.cursor(), (1, 0));
+    assert!(
+        tab.buffer.selection().is_none(),
+        "plain down should clear residual empty selection instead of extending it"
+    );
+}
+
+#[test]
+fn test_cursor_up_restores_original_column_after_visiting_shorter_line() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "pub fn take_log_rx(&mut self) -> Option<Receiver<String>> {\nself.log_rx.take()",
+        &config,
+    );
+
+    let first_line_end = tab.buffer.line_grapheme_len(0);
+    let second_line_end = tab.buffer.line_grapheme_len(1);
+    assert!(first_line_end > second_line_end);
+
+    tab.buffer.set_cursor(0, first_line_end);
+
+    let (changed, _) = tab.apply_command(Command::CursorDown, 0, &config);
+    assert!(changed);
+    assert_eq!(tab.buffer.cursor(), (1, second_line_end));
+
+    let (changed, _) = tab.apply_command(Command::CursorUp, 0, &config);
+    assert!(changed);
+    assert_eq!(
+        tab.buffer.cursor(),
+        (0, first_line_end),
+        "cursor should return to original long-line column"
+    );
+}
+
+#[test]
+fn test_cursor_up_restores_original_column_after_multiple_short_lines() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "very very very long first line\nshort\ns",
+        &config,
+    );
+
+    let long_col = tab.buffer.line_grapheme_len(0);
+    tab.buffer.set_cursor(0, long_col);
+
+    let _ = tab.apply_command(Command::CursorDown, 0, &config);
+    let _ = tab.apply_command(Command::CursorDown, 0, &config);
+    assert_eq!(tab.buffer.cursor(), (2, 1));
+
+    let _ = tab.apply_command(Command::CursorUp, 0, &config);
+    assert_eq!(tab.buffer.cursor(), (1, 5));
+    let _ = tab.apply_command(Command::CursorUp, 0, &config);
+    assert_eq!(tab.buffer.cursor(), (0, long_col));
+}
+
+#[test]
+fn test_horizontal_move_resets_vertical_goal_column() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "abcdefghij\nxy",
+        &config,
+    );
+
+    tab.buffer.set_cursor(0, 10);
+    let _ = tab.apply_command(Command::CursorDown, 0, &config);
+    assert_eq!(tab.buffer.cursor(), (1, 2));
+
+    let _ = tab.apply_command(Command::CursorLeft, 0, &config);
+    assert_eq!(tab.buffer.cursor(), (1, 1));
+
+    let _ = tab.apply_command(Command::CursorUp, 0, &config);
+    assert_eq!(
+        tab.buffer.cursor(),
+        (0, 1),
+        "after horizontal move, up should use current column instead of stale goal"
+    );
 }
 
 #[test]

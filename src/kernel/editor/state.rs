@@ -161,6 +161,7 @@ pub struct EditorTabState {
     pub dirty: bool,
     pub edit_version: u64,
     pub last_edit_op: Option<EditOp>,
+    pub(super) cursor_goal_col: Option<usize>,
     pub mouse: EditorMouseState,
     pub disk_state: DiskState,
     pub saved_snapshot: Option<DiskSnapshot>,
@@ -203,6 +204,7 @@ impl EditorTabState {
             dirty: false,
             edit_version: 0,
             last_edit_op: None,
+            cursor_goal_col: None,
             mouse: EditorMouseState::new(),
             disk_state: DiskState::InSync,
             saved_snapshot: None,
@@ -239,6 +241,7 @@ impl EditorTabState {
             dirty: false,
             edit_version: 0,
             last_edit_op: None,
+            cursor_goal_col: None,
             mouse: EditorMouseState::new(),
             disk_state: DiskState::InSync,
             saved_snapshot: None,
@@ -263,6 +266,18 @@ impl EditorTabState {
         self.git_gutter = None;
         self.inlay_hints = None;
         self.clear_folding();
+    }
+
+    pub(crate) fn reset_cursor_goal_col(&mut self) {
+        self.cursor_goal_col = None;
+    }
+
+    pub(crate) fn cursor_goal_col_or_current(&self) -> usize {
+        self.cursor_goal_col.unwrap_or(self.buffer.cursor().1)
+    }
+
+    pub(crate) fn set_cursor_goal_col(&mut self, col: usize) {
+        self.cursor_goal_col = Some(col);
     }
 
     pub fn next_reload_request_id(&mut self) -> u64 {
@@ -746,6 +761,7 @@ impl EditorTabState {
             let target_row = start_line as usize;
             let len = self.buffer.line_grapheme_len(target_row);
             self.buffer.set_cursor(target_row, col.min(len));
+            self.set_cursor_goal_col(col);
             self.buffer.update_selection_cursor(self.buffer.cursor());
         }
 
@@ -773,6 +789,7 @@ impl EditorTabState {
             let target_row = start_line as usize;
             let len = self.buffer.line_grapheme_len(target_row);
             self.buffer.set_cursor(target_row, col.min(len));
+            self.set_cursor_goal_col(col);
             self.buffer.update_selection_cursor(self.buffer.cursor());
         }
 

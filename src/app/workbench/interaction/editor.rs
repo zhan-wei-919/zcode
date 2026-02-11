@@ -336,7 +336,7 @@ impl Workbench {
                         NodeKind::EditorArea { pane } => {
                             if let Some((x, y)) = hit_test_editor_mouse(&layout, pos.x, pos.y) {
                                 let _ = self.dispatch_kernel(KernelAction::Editor(
-                                    EditorAction::MouseSelectWord { pane, x, y },
+                                    EditorAction::MouseContextMenu { pane, x, y },
                                 ));
                             }
 

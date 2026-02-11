@@ -63,6 +63,7 @@ impl EditorTabState {
         let pos = (row, col);
 
         self.buffer.set_cursor(pos.0, pos.1);
+        self.reset_cursor_goal_col();
 
         let selection = Selection::from_pos(pos, granularity, self.buffer.rope());
         self.buffer.set_selection(Some(selection));
@@ -87,6 +88,7 @@ impl EditorTabState {
 
         let pos = (row, col);
         self.buffer.set_cursor(pos.0, pos.1);
+        self.reset_cursor_goal_col();
         let selection = Selection::from_pos(pos, Granularity::Word, self.buffer.rope());
         self.buffer.set_selection(Some(selection));
 
@@ -95,6 +97,35 @@ impl EditorTabState {
 
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         true
+    }
+
+    pub fn mouse_context_menu(&mut self, x: u16, y: u16, tab_size: u8) -> bool {
+        self.viewport.follow_cursor = true;
+
+        let visible_lines =
+            self.visible_lines_in_viewport(self.viewport.line_offset, self.viewport.height.max(1));
+        let Some(row) = visible_lines.get(y as usize).copied() else {
+            return false;
+        };
+
+        let Some(col) = viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
+        else {
+            return false;
+        };
+
+        let pos = (row, col);
+        if self
+            .buffer
+            .selection()
+            .is_some_and(|selection| !selection.is_empty() && selection.contains(pos))
+        {
+            self.buffer.set_cursor(pos.0, pos.1);
+            self.reset_cursor_goal_col();
+            viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
+            return true;
+        }
+
+        self.mouse_select_word(x, y, tab_size)
     }
 
     pub fn mouse_drag(
@@ -146,6 +177,7 @@ impl EditorTabState {
         let pos = (row, col);
         self.buffer.update_selection_cursor(pos);
         self.buffer.set_cursor(pos.0, pos.1);
+        self.set_cursor_goal_col(pos.1);
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         true
     }
@@ -154,7 +186,15 @@ impl EditorTabState {
         if !self.mouse.dragging {
             return false;
         }
+
         self.mouse.dragging = false;
+
+        if self.buffer.selection().is_some_and(|selection| {
+            selection.granularity() == Granularity::Char && selection.is_empty()
+        }) {
+            self.buffer.clear_selection();
+        }
+
         true
     }
 }

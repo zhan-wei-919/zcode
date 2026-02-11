@@ -41,6 +41,7 @@ impl EditorState {
             } => self.apply_text_edit_to_tab(pane, tab_index, start_byte, end_byte, &text),
             EditorAction::MouseDown { pane, x, y, now } => self.mouse_down(pane, x, y, now),
             EditorAction::MouseSelectWord { pane, x, y } => self.mouse_select_word(pane, x, y),
+            EditorAction::MouseContextMenu { pane, x, y } => self.mouse_context_menu(pane, x, y),
             EditorAction::MouseDrag {
                 pane,
                 x,
@@ -787,6 +788,18 @@ impl EditorState {
         (changed, Vec::new())
     }
 
+    fn mouse_context_menu(&mut self, pane: usize, x: u16, y: u16) -> (bool, Vec<Effect>) {
+        let tab_size = self.config.tab_size;
+        let Some(pane_state) = self.panes.get_mut(pane) else {
+            return (false, Vec::new());
+        };
+        let Some(tab) = pane_state.active_tab_mut() else {
+            return (false, Vec::new());
+        };
+        let changed = tab.mouse_context_menu(x, y, tab_size);
+        (changed, Vec::new())
+    }
+
     fn mouse_up(&mut self, pane: usize) -> (bool, Vec<Effect>) {
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
@@ -1243,6 +1256,7 @@ fn goto_match(
     }
 
     tab.buffer.set_cursor(row, col_graphemes);
+    tab.reset_cursor_goal_col();
     tab.buffer.clear_selection();
     viewport::clamp_and_follow(&mut tab.viewport, &tab.buffer, tab_size);
 }
@@ -1251,6 +1265,7 @@ fn goto_byte_offset(tab: &mut super::state::EditorTabState, byte_offset: usize, 
     let rope = tab.buffer.rope();
     if rope.len_bytes() == 0 {
         tab.buffer.set_cursor(0, 0);
+        tab.reset_cursor_goal_col();
         tab.buffer.clear_selection();
         viewport::clamp_and_follow(&mut tab.viewport, &tab.buffer, tab_size);
         return;
@@ -1277,6 +1292,7 @@ fn goto_byte_offset(tab: &mut super::state::EditorTabState, byte_offset: usize, 
     }
 
     tab.buffer.set_cursor(row, col_graphemes);
+    tab.reset_cursor_goal_col();
     tab.buffer.clear_selection();
     viewport::clamp_and_follow(&mut tab.viewport, &tab.buffer, tab_size);
 }

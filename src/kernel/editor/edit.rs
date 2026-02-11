@@ -115,14 +115,26 @@ impl EditorTabState {
                 let changed = self.execute(command, config);
                 (changed, Vec::new())
             }
-            cmd if cmd.is_cursor_command()
-                || cmd.is_selection_command()
-                || cmd.is_edit_command() =>
-            {
+            cmd if cmd.is_cursor_command() => {
+                self.clear_empty_selection();
+                let changed = self.execute(cmd, config);
+                (changed, Vec::new())
+            }
+            cmd if cmd.is_selection_command() || cmd.is_edit_command() => {
                 let changed = self.execute(cmd, config);
                 (changed, Vec::new())
             }
             _ => (false, Vec::new()),
+        }
+    }
+
+    fn clear_empty_selection(&mut self) {
+        if self
+            .buffer
+            .selection()
+            .is_some_and(|selection| selection.is_empty())
+        {
+            self.buffer.clear_selection();
         }
     }
 
@@ -139,6 +151,7 @@ impl EditorTabState {
             Command::CursorLineStart => {
                 let (row, _) = self.buffer.cursor();
                 self.buffer.set_cursor(row, 0);
+                self.reset_cursor_goal_col();
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
                 true
             }
@@ -146,11 +159,13 @@ impl EditorTabState {
                 let (row, _) = self.buffer.cursor();
                 let len = self.buffer.line_grapheme_len(row);
                 self.buffer.set_cursor(row, len);
+                self.reset_cursor_goal_col();
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
                 true
             }
             Command::CursorFileStart => {
                 self.buffer.set_cursor(0, 0);
+                self.reset_cursor_goal_col();
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
                 true
             }
@@ -159,6 +174,7 @@ impl EditorTabState {
                 let row = self.prev_visible_row_at_or_before(last).unwrap_or(last);
                 let len = self.buffer.line_grapheme_len(row);
                 self.buffer.set_cursor(row, len);
+                self.reset_cursor_goal_col();
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
                 true
             }
@@ -173,6 +189,7 @@ impl EditorTabState {
                 let target = row.saturating_sub(height);
                 let target = self.prev_visible_row_at_or_before(target).unwrap_or(target);
                 self.buffer.set_cursor(target, col);
+                self.set_cursor_goal_col(col);
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
                 true
             }
@@ -188,6 +205,7 @@ impl EditorTabState {
                     .next_visible_row_at_or_after(new_row)
                     .unwrap_or(new_row);
                 self.buffer.set_cursor(new_row, col);
+                self.set_cursor_goal_col(col);
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
                 true
             }
@@ -284,6 +302,7 @@ impl EditorTabState {
         }
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.reset_cursor_goal_col();
             self.buffer.update_selection_cursor(self.buffer.cursor());
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
@@ -301,6 +320,7 @@ impl EditorTabState {
         }
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.reset_cursor_goal_col();
             self.buffer.update_selection_cursor(self.buffer.cursor());
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
@@ -309,14 +329,16 @@ impl EditorTabState {
 
     fn cursor_up(&mut self, tab_size: u8) -> bool {
         let (row, col) = self.buffer.cursor();
+        let goal_col = self.cursor_goal_col_or_current();
         let Some(prev_row) = self.prev_visible_row_before(row) else {
             return false;
         };
         let prev = (row, col);
         let new_len = self.buffer.line_grapheme_len(prev_row);
-        self.buffer.set_cursor(prev_row, col.min(new_len));
+        self.buffer.set_cursor(prev_row, goal_col.min(new_len));
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.set_cursor_goal_col(goal_col);
             self.buffer.update_selection_cursor(self.buffer.cursor());
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
@@ -325,14 +347,16 @@ impl EditorTabState {
 
     fn cursor_down(&mut self, tab_size: u8) -> bool {
         let (row, col) = self.buffer.cursor();
+        let goal_col = self.cursor_goal_col_or_current();
         let Some(next_row) = self.next_visible_row_after(row) else {
             return false;
         };
         let prev = (row, col);
         let new_len = self.buffer.line_grapheme_len(next_row);
-        self.buffer.set_cursor(next_row, col.min(new_len));
+        self.buffer.set_cursor(next_row, goal_col.min(new_len));
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.set_cursor_goal_col(goal_col);
             self.buffer.update_selection_cursor(self.buffer.cursor());
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
@@ -350,6 +374,7 @@ impl EditorTabState {
             }
             let changed = self.buffer.cursor() != prev;
             if changed {
+                self.reset_cursor_goal_col();
                 self.buffer.update_selection_cursor(self.buffer.cursor());
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
             }
@@ -380,6 +405,7 @@ impl EditorTabState {
         self.buffer.set_cursor(row, pos);
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.reset_cursor_goal_col();
             self.buffer.update_selection_cursor(self.buffer.cursor());
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
@@ -397,6 +423,7 @@ impl EditorTabState {
             }
             let changed = self.buffer.cursor() != prev;
             if changed {
+                self.reset_cursor_goal_col();
                 self.buffer.update_selection_cursor(self.buffer.cursor());
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
             }
@@ -432,6 +459,7 @@ impl EditorTabState {
         self.buffer.set_cursor(row, pos.min(line_len));
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.reset_cursor_goal_col();
             self.buffer.update_selection_cursor(self.buffer.cursor());
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
@@ -477,6 +505,7 @@ impl EditorTabState {
         self.buffer.set_cursor(new_pos.0, new_pos.1);
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.reset_cursor_goal_col();
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
         changed
@@ -498,6 +527,7 @@ impl EditorTabState {
         self.buffer.set_cursor(new_pos.0, new_pos.1);
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.reset_cursor_goal_col();
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
         changed
@@ -506,16 +536,18 @@ impl EditorTabState {
     fn extend_selection_up(&mut self, tab_size: u8) -> bool {
         self.ensure_selection();
         let (row, col) = self.buffer.cursor();
+        let goal_col = self.cursor_goal_col_or_current();
         let Some(prev_row) = self.prev_visible_row_before(row) else {
             return false;
         };
         let prev = (row, col);
         let new_len = self.buffer.line_grapheme_len(prev_row);
-        let new_pos = (prev_row, col.min(new_len));
+        let new_pos = (prev_row, goal_col.min(new_len));
         self.buffer.update_selection_cursor(new_pos);
         self.buffer.set_cursor(new_pos.0, new_pos.1);
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.set_cursor_goal_col(goal_col);
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
         changed
@@ -524,16 +556,18 @@ impl EditorTabState {
     fn extend_selection_down(&mut self, tab_size: u8) -> bool {
         self.ensure_selection();
         let (row, col) = self.buffer.cursor();
+        let goal_col = self.cursor_goal_col_or_current();
         let Some(next_row) = self.next_visible_row_after(row) else {
             return false;
         };
         let prev = (row, col);
         let new_len = self.buffer.line_grapheme_len(next_row);
-        let new_pos = (next_row, col.min(new_len));
+        let new_pos = (next_row, goal_col.min(new_len));
         self.buffer.update_selection_cursor(new_pos);
         self.buffer.set_cursor(new_pos.0, new_pos.1);
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.set_cursor_goal_col(goal_col);
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
         changed
@@ -548,6 +582,7 @@ impl EditorTabState {
         self.buffer.set_cursor(new_pos.0, new_pos.1);
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.reset_cursor_goal_col();
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
         changed
@@ -563,6 +598,7 @@ impl EditorTabState {
         self.buffer.set_cursor(new_pos.0, new_pos.1);
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.reset_cursor_goal_col();
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
         changed
@@ -582,6 +618,7 @@ impl EditorTabState {
             }
             let changed = self.buffer.cursor() != prev;
             if changed {
+                self.reset_cursor_goal_col();
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
             }
             return changed;
@@ -613,6 +650,7 @@ impl EditorTabState {
         self.buffer.set_cursor(new_pos.0, new_pos.1);
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.reset_cursor_goal_col();
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
         changed
@@ -632,6 +670,7 @@ impl EditorTabState {
             }
             let changed = self.buffer.cursor() != prev;
             if changed {
+                self.reset_cursor_goal_col();
                 viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
             }
             return changed;
@@ -668,6 +707,7 @@ impl EditorTabState {
         self.buffer.set_cursor(new_pos.0, new_pos.1);
         let changed = self.buffer.cursor() != prev;
         if changed {
+            self.reset_cursor_goal_col();
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         }
         changed
@@ -677,6 +717,7 @@ impl EditorTabState {
         self.apply_syntax_edit(&op);
         self.invalidate_semantic_highlight_on_edit(&op);
         self.last_edit_op = Some(op.clone());
+        self.reset_cursor_goal_col();
         self.history.push(op, self.buffer.rope());
         self.dirty = true;
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
@@ -925,6 +966,7 @@ impl EditorTabState {
         if let Some((rope, cursor)) = self.history.undo(self.buffer.rope()) {
             self.buffer.set_rope(rope);
             self.buffer.set_cursor(cursor.0, cursor.1);
+            self.reset_cursor_goal_col();
             self.reparse_syntax();
             self.dirty = self.history.is_dirty();
             self.last_edit_op = None;
@@ -939,6 +981,7 @@ impl EditorTabState {
         if let Some((rope, cursor)) = self.history.redo(self.buffer.rope()) {
             self.buffer.set_rope(rope);
             self.buffer.set_cursor(cursor.0, cursor.1);
+            self.reset_cursor_goal_col();
             self.reparse_syntax();
             self.dirty = self.history.is_dirty();
             self.last_edit_op = None;

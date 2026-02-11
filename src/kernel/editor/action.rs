@@ -53,6 +53,11 @@ pub enum EditorAction {
         x: u16,
         y: u16,
     },
+    MouseContextMenu {
+        pane: usize,
+        x: u16,
+        y: u16,
+    },
     MouseDrag {
         pane: usize,
         x: u16,

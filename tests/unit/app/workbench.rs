@@ -2250,3 +2250,102 @@ fn test_editor_right_click_selects_word_under_cursor_for_context_actions() {
     assert_eq!((end_row, end_col), (0, 11));
     assert!(workbench.store.state().ui.context_menu.visible);
 }
+
+#[test]
+fn test_editor_right_click_inside_selection_keeps_existing_selection() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let path = dir.path().join("main.rs");
+    let line = "fn to_ratatui_style(s: Style) -> RStyle {\n";
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: line.to_string(),
+    }));
+
+    render_once(&mut workbench, 120, 40);
+
+    let (drag_start_x, drag_end_x, right_click_x, click_y) = {
+        let state = workbench.store.state();
+        let area = *workbench
+            .layout_cache
+            .editor_inner_areas
+            .first()
+            .expect("editor area");
+        let pane = state.editor.pane(0).expect("pane");
+        let layout = crate::views::compute_editor_pane_layout(area, pane, &state.editor.config);
+
+        let start_col = line.find("to_ratatui_style").expect("start token") as u16;
+        let end_col = line.find('{').expect("line end token") as u16;
+        let right_click_col = line.find("Style").expect("style token") as u16 + 1;
+
+        (
+            layout.content_area.x.saturating_add(start_col),
+            layout.content_area.x.saturating_add(end_col),
+            layout.content_area.x.saturating_add(right_click_col),
+            layout.content_area.y,
+        )
+    };
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        drag_start_x,
+        click_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        drag_end_x,
+        click_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        drag_end_x,
+        click_y,
+    ));
+
+    let before_range = {
+        let tab = workbench
+            .store
+            .state()
+            .editor
+            .pane(0)
+            .and_then(|pane| pane.active_tab())
+            .expect("active tab");
+        let selection = tab.buffer.selection().expect("selection after drag");
+        assert!(
+            !selection.is_empty(),
+            "drag should create non-empty selection"
+        );
+        selection.range()
+    };
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Right),
+        right_click_x,
+        click_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Right),
+        right_click_x,
+        click_y,
+    ));
+
+    let after_range = {
+        let tab = workbench
+            .store
+            .state()
+            .editor
+            .pane(0)
+            .and_then(|pane| pane.active_tab())
+            .expect("active tab");
+        tab.buffer
+            .selection()
+            .expect("selection should remain")
+            .range()
+    };
+
+    assert_eq!(after_range, before_range);
+    assert!(workbench.store.state().ui.context_menu.visible);
+}
