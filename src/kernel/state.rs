@@ -1,7 +1,8 @@
 use rustc_hash::FxHashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::core::Command;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::LspClientKey;
@@ -326,11 +327,20 @@ pub enum PendingAction {
         pane: usize,
         index: usize,
     },
+    CloseTabsBatch {
+        pane: usize,
+        tab_ids: Vec<u64>,
+    },
     DeletePath {
         path: PathBuf,
         is_dir: bool,
     },
     RenamePath {
+        from: PathBuf,
+        to: PathBuf,
+        overwrite: bool,
+    },
+    CopyPath {
         from: PathBuf,
         to: PathBuf,
         overwrite: bool,
@@ -418,35 +428,91 @@ pub struct SignatureHelpPopupState {
 pub enum ContextMenuRequest {
     Explorer { tree_row: Option<usize> },
     Tab { pane: usize, index: usize },
+    TabBar { pane: usize },
     EditorArea { pane: usize },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContextMenuItem {
-    ExplorerNewFile,
-    ExplorerNewFolder,
-    ExplorerRename,
-    ExplorerDelete,
-    ExplorerCopyPath,
-    ExplorerCopyRelativePath,
-    TabClose,
-    EditorCopy,
-    EditorPaste,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TabMenuAction {
+    Close,
+    CloseOthers,
+    CloseToRight,
+    CloseAll,
+    SplitRight,
+    SplitDown,
 }
 
-impl ContextMenuItem {
-    pub fn label(self) -> &'static str {
-        match self {
-            ContextMenuItem::ExplorerNewFile => "New File",
-            ContextMenuItem::ExplorerNewFolder => "New Folder",
-            ContextMenuItem::ExplorerRename => "Rename",
-            ContextMenuItem::ExplorerDelete => "Delete",
-            ContextMenuItem::ExplorerCopyPath => "Copy Path",
-            ContextMenuItem::ExplorerCopyRelativePath => "Copy Relative Path",
-            ContextMenuItem::TabClose => "Close",
-            ContextMenuItem::EditorCopy => "Copy",
-            ContextMenuItem::EditorPaste => "Paste",
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExplorerMenuAction {
+    NewFile,
+    NewFolder,
+    Rename,
+    Delete,
+    CopyPath,
+    CopyRelativePath,
+    Cut,
+    Copy,
+    Paste,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextMenuAction {
+    RunCommand(Command),
+    Tab(TabMenuAction),
+    Explorer(ExplorerMenuAction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextMenuEntryKind {
+    Action(ContextMenuAction),
+    Separator,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMenuEntry {
+    pub label: &'static str,
+    pub kind: ContextMenuEntryKind,
+    pub enabled: bool,
+}
+
+impl ContextMenuEntry {
+    pub fn action(label: &'static str, action: ContextMenuAction) -> Self {
+        Self {
+            label,
+            kind: ContextMenuEntryKind::Action(action),
+            enabled: true,
         }
+    }
+
+    pub fn disabled_action(label: &'static str, action: ContextMenuAction) -> Self {
+        Self {
+            label,
+            kind: ContextMenuEntryKind::Action(action),
+            enabled: false,
+        }
+    }
+
+    pub fn separator() -> Self {
+        Self {
+            label: "",
+            kind: ContextMenuEntryKind::Separator,
+            enabled: false,
+        }
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.enabled && matches!(self.kind, ContextMenuEntryKind::Action(_))
+    }
+
+    pub fn enabled_action(&self) -> Option<&ContextMenuAction> {
+        match (&self.kind, self.enabled) {
+            (ContextMenuEntryKind::Action(action), true) => Some(action),
+            _ => None,
+        }
+    }
+
+    pub fn is_separator(&self) -> bool {
+        matches!(self.kind, ContextMenuEntryKind::Separator)
     }
 }
 
@@ -455,7 +521,7 @@ pub struct ContextMenuState {
     pub visible: bool,
     pub anchor: (u16, u16),
     pub selected: usize,
-    pub items: Vec<ContextMenuItem>,
+    pub items: Vec<ContextMenuEntry>,
     pub request: Option<ContextMenuRequest>,
 }
 
@@ -556,6 +622,19 @@ pub struct LspState {
     pub pending_format_on_save: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplorerClipboardMode {
+    Cut,
+    Copy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplorerClipboardPayload {
+    pub path: PathBuf,
+    pub is_dir: bool,
+    pub mode: ExplorerClipboardMode,
+}
+
 pub struct ExplorerState {
     tree: FileTree,
     pub view_height: usize,
@@ -564,6 +643,7 @@ pub struct ExplorerState {
     pub git_status_by_id: FxHashMap<NodeId, GitFileStatus>,
     index_by_id: FxHashMap<NodeId, usize>,
     last_click: Option<(Instant, NodeId)>,
+    clipboard: Option<ExplorerClipboardPayload>,
 }
 
 impl std::fmt::Debug for ExplorerState {
@@ -572,6 +652,7 @@ impl std::fmt::Debug for ExplorerState {
             .field("scroll_offset", &self.scroll_offset)
             .field("rows_len", &self.rows.len())
             .field("selected", &self.tree.selected())
+            .field("clipboard", &self.clipboard)
             .finish()
     }
 }
@@ -588,9 +669,53 @@ impl ExplorerState {
             git_status_by_id: FxHashMap::default(),
             index_by_id: FxHashMap::default(),
             last_click: None,
+            clipboard: None,
         };
         state.refresh_rows();
         state
+    }
+
+    pub fn clipboard(&self) -> Option<&ExplorerClipboardPayload> {
+        self.clipboard.as_ref()
+    }
+
+    pub fn set_clipboard(
+        &mut self,
+        path: PathBuf,
+        is_dir: bool,
+        mode: ExplorerClipboardMode,
+    ) -> bool {
+        let next = Some(ExplorerClipboardPayload { path, is_dir, mode });
+        if self.clipboard == next {
+            return false;
+        }
+        self.clipboard = next;
+        true
+    }
+
+    pub fn clear_clipboard(&mut self) -> bool {
+        self.clipboard.take().is_some()
+    }
+
+    pub fn clear_clipboard_if_deleted_path(&mut self, path: &Path) -> bool {
+        let should_clear = self.clipboard.as_ref().is_some_and(|payload| {
+            payload.path.as_path() == path || payload.path.starts_with(path)
+        });
+        if should_clear {
+            self.clipboard = None;
+        }
+        should_clear
+    }
+
+    pub fn clear_clipboard_if_cut_source_renamed(&mut self, from: &Path) -> bool {
+        let should_clear = self.clipboard.as_ref().is_some_and(|payload| {
+            payload.mode == ExplorerClipboardMode::Cut
+                && (payload.path.as_path() == from || payload.path.starts_with(from))
+        });
+        if should_clear {
+            self.clipboard = None;
+        }
+        should_clear
     }
 
     pub fn set_git_statuses(&mut self, statuses: &FxHashMap<PathBuf, GitFileStatus>) -> bool {

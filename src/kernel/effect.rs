@@ -20,6 +20,11 @@ pub enum Effect {
         to: PathBuf,
         overwrite: bool,
     },
+    CopyPath {
+        from: PathBuf,
+        to: PathBuf,
+        overwrite: bool,
+    },
     DeletePath {
         path: PathBuf,
         is_dir: bool,

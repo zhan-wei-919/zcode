@@ -6,7 +6,7 @@ use crate::ui::core::id::IdPath;
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::{Mod, Style as UiStyle};
 use crate::ui::core::widget::{Ui, Widget};
-use crate::ui::widgets::menu::{Menu, MenuStyles};
+use crate::ui::widgets::menu::{Menu, MenuItem, MenuStyles};
 use unicode_width::UnicodeWidthStr;
 
 pub(super) fn render_confirm_dialog(workbench: &Workbench, painter: &mut Painter, area: UiRect) {
@@ -89,18 +89,34 @@ pub(super) fn render_context_menu(workbench: &mut Workbench, painter: &mut Paint
         return;
     }
 
-    let labels = menu.items.iter().map(|i| i.label()).collect::<Vec<_>>();
+    let items = menu
+        .items
+        .iter()
+        .map(|entry| {
+            if entry.is_separator() {
+                MenuItem::separator()
+            } else if entry.is_selectable() {
+                MenuItem::action(entry.label)
+            } else {
+                MenuItem::disabled_action(entry.label)
+            }
+        })
+        .collect::<Vec<_>>();
 
     let styles = MenuStyles {
         base: UiStyle::default()
             .bg(workbench.ui_theme.popup_bg)
             .fg(workbench.ui_theme.palette_fg),
-        border: UiStyle::default()
-            .fg(workbench.ui_theme.focus_border)
-            .bg(workbench.ui_theme.popup_bg),
+        border: None,
         selected: UiStyle::default()
             .bg(workbench.ui_theme.palette_selected_bg)
             .fg(workbench.ui_theme.palette_selected_fg),
+        disabled: UiStyle::default()
+            .bg(workbench.ui_theme.popup_bg)
+            .fg(workbench.ui_theme.palette_muted_fg),
+        separator: UiStyle::default()
+            .bg(workbench.ui_theme.popup_bg)
+            .fg(workbench.ui_theme.separator),
     };
 
     let mut ui = Ui::new(area, painter, &mut workbench.ui_tree);
@@ -109,7 +125,7 @@ pub(super) fn render_context_menu(workbench: &mut Workbench, painter: &mut Paint
         menu_id: 0,
         layer: 10,
         anchor: Pos::new(menu.anchor.0, menu.anchor.1),
-        items: &labels,
+        items: &items,
         selected: menu.selected,
         styles,
     };

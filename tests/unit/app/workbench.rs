@@ -2185,3 +2185,68 @@ fn test_context_menu_visible_mouse_events_do_not_steal_focus() {
 
     assert_eq!(workbench.store.state().ui.focus, focus_with_menu);
 }
+
+#[test]
+fn test_editor_right_click_selects_word_under_cursor_for_context_actions() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let path = dir.path().join("main.rs");
+    let line = "let content = content + 1;\n";
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: line.to_string(),
+    }));
+
+    render_once(&mut workbench, 120, 40);
+
+    let (click_x, click_y) = {
+        let state = workbench.store.state();
+        let area = *workbench
+            .layout_cache
+            .editor_inner_areas
+            .first()
+            .expect("editor area");
+        let pane = state.editor.pane(0).expect("pane");
+        let layout = crate::views::compute_editor_pane_layout(area, pane, &state.editor.config);
+        let token_col = line.find("content").expect("content token") as u16;
+        (
+            layout
+                .content_area
+                .x
+                .saturating_add(token_col)
+                .saturating_add(1),
+            layout.content_area.y,
+        )
+    };
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Right),
+        click_x,
+        click_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Right),
+        click_x,
+        click_y,
+    ));
+
+    let tab = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    let selection = tab
+        .buffer
+        .selection()
+        .expect("right click should select token under cursor");
+    let ((start_row, start_col), (end_row, end_col)) = selection.range();
+
+    assert_eq!((start_row, start_col), (0, 4));
+    assert_eq!((end_row, end_col), (0, 11));
+    assert!(workbench.store.state().ui.context_menu.visible);
+}

@@ -40,6 +40,7 @@ impl EditorState {
                 text,
             } => self.apply_text_edit_to_tab(pane, tab_index, start_byte, end_byte, &text),
             EditorAction::MouseDown { pane, x, y, now } => self.mouse_down(pane, x, y, now),
+            EditorAction::MouseSelectWord { pane, x, y } => self.mouse_select_word(pane, x, y),
             EditorAction::MouseDrag {
                 pane,
                 x,
@@ -75,6 +76,7 @@ impl EditorState {
                 version,
             } => self.saved(pane, path, success, version),
             EditorAction::CloseTabAt { pane, index } => self.close_tab_at(pane, index),
+            EditorAction::CloseTabsById { pane, tab_ids } => self.close_tabs_by_id(pane, &tab_ids),
             EditorAction::MoveTab {
                 tab_id,
                 from_pane,
@@ -366,6 +368,38 @@ impl EditorState {
             }
         }
         (true, effects)
+    }
+
+    fn close_tabs_by_id(&mut self, pane: usize, tab_ids: &[u64]) -> (bool, Vec<Effect>) {
+        if tab_ids.is_empty() {
+            return (false, Vec::new());
+        }
+
+        let Some(pane_state) = self.panes.get(pane) else {
+            return (false, Vec::new());
+        };
+
+        let mut indices = pane_state
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| tab_ids.contains(&tab.id.raw()).then_some(index))
+            .collect::<Vec<_>>();
+        if indices.is_empty() {
+            return (false, Vec::new());
+        }
+
+        indices.sort_unstable();
+
+        let mut changed = false;
+        let mut effects = Vec::new();
+        for index in indices.into_iter().rev() {
+            let (closed, mut close_effects) = self.close_tab_at(pane, index);
+            changed |= closed;
+            effects.append(&mut close_effects);
+        }
+
+        (changed, effects)
     }
 
     fn move_tab(
@@ -738,6 +772,18 @@ impl EditorState {
             return (false, Vec::new());
         };
         let changed = tab.mouse_drag(x, y, tab_size, overflow_y, past_right);
+        (changed, Vec::new())
+    }
+
+    fn mouse_select_word(&mut self, pane: usize, x: u16, y: u16) -> (bool, Vec<Effect>) {
+        let tab_size = self.config.tab_size;
+        let Some(pane_state) = self.panes.get_mut(pane) else {
+            return (false, Vec::new());
+        };
+        let Some(tab) = pane_state.active_tab_mut() else {
+            return (false, Vec::new());
+        };
+        let changed = tab.mouse_select_word(x, y, tab_size);
         (changed, Vec::new())
     }
 

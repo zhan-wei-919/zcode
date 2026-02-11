@@ -48,6 +48,11 @@ pub enum EditorAction {
         y: u16,
         now: Instant,
     },
+    MouseSelectWord {
+        pane: usize,
+        x: u16,
+        y: u16,
+    },
     MouseDrag {
         pane: usize,
         x: u16,
@@ -119,6 +124,10 @@ pub enum EditorAction {
     CloseTabAt {
         pane: usize,
         index: usize,
+    },
+    CloseTabsById {
+        pane: usize,
+        tab_ids: Vec<u64>,
     },
     MoveTab {
         tab_id: TabId,

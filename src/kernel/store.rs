@@ -232,6 +232,7 @@ impl Store {
                     matches!(
                         req,
                         super::state::ContextMenuRequest::Tab { pane, .. }
+                            | super::state::ContextMenuRequest::TabBar { pane }
                             | super::state::ContextMenuRequest::EditorArea { pane }
                             if *pane >= 1
                     )
@@ -246,7 +247,14 @@ impl Store {
             .confirm_dialog
             .on_confirm
             .as_ref()
-            .is_some_and(|pending| matches!(pending, super::state::PendingAction::CloseTab { pane, .. } if *pane >= 1));
+            .is_some_and(|pending| {
+                matches!(
+                    pending,
+                    super::state::PendingAction::CloseTab { pane, .. }
+                        | super::state::PendingAction::CloseTabsBatch { pane, .. }
+                        if *pane >= 1
+                )
+            });
         if should_close_confirm {
             self.state.ui.confirm_dialog = super::state::ConfirmDialogState::default();
         }
@@ -319,7 +327,9 @@ impl Store {
 
                 let should_auto_close_editor_split = matches!(
                     &editor_action,
-                    EditorAction::CloseTabAt { .. } | EditorAction::MoveTab { .. }
+                    EditorAction::CloseTabAt { .. }
+                        | EditorAction::CloseTabsById { .. }
+                        | EditorAction::MoveTab { .. }
                 );
 
                 let mut result = match editor_action {
@@ -525,6 +535,19 @@ impl Store {
                             .state
                             .editor
                             .dispatch_action(EditorAction::CloseTabAt { pane, index });
+
+                        self.push_git_refresh_for_pane(pane, &mut effects);
+
+                        DispatchResult {
+                            effects,
+                            state_changed,
+                        }
+                    }
+                    EditorAction::CloseTabsById { pane, tab_ids } => {
+                        let (state_changed, mut effects) = self
+                            .state
+                            .editor
+                            .dispatch_action(EditorAction::CloseTabsById { pane, tab_ids });
 
                         self.push_git_refresh_for_pane(pane, &mut effects);
 
@@ -1096,11 +1119,19 @@ impl Store {
                 if let Some(action) = pending {
                     match action {
                         super::PendingAction::CloseTab { pane, index } => {
-                            let (_changed, effects) = self.state.editor.close_tab_at(pane, index);
-                            return DispatchResult {
-                                effects,
-                                state_changed: true,
-                            };
+                            let mut result = self
+                                .dispatch(Action::Editor(EditorAction::CloseTabAt { pane, index }));
+                            result.state_changed = true;
+                            return result;
+                        }
+                        super::PendingAction::CloseTabsBatch { pane, tab_ids } => {
+                            let mut result =
+                                self.dispatch(Action::Editor(EditorAction::CloseTabsById {
+                                    pane,
+                                    tab_ids,
+                                }));
+                            result.state_changed = true;
+                            return result;
                         }
                         super::PendingAction::DeletePath { path, is_dir } => {
                             let root = self.state.workspace_root.as_path();
@@ -1134,6 +1165,32 @@ impl Store {
 
                             return DispatchResult {
                                 effects: vec![Effect::RenamePath {
+                                    from,
+                                    to,
+                                    overwrite,
+                                }],
+                                state_changed: true,
+                            };
+                        }
+                        super::PendingAction::CopyPath {
+                            from,
+                            to,
+                            overwrite,
+                        } => {
+                            let root = self.state.workspace_root.as_path();
+                            if from.as_path() == root
+                                || to.as_path() == root
+                                || !from.starts_with(root)
+                                || !to.starts_with(root)
+                            {
+                                return DispatchResult {
+                                    effects: Vec::new(),
+                                    state_changed: true,
+                                };
+                            }
+
+                            return DispatchResult {
+                                effects: vec![Effect::CopyPath {
                                     from,
                                     to,
                                     overwrite,
@@ -1998,6 +2055,28 @@ impl Store {
                 self.state.ui.confirm_dialog.on_confirm =
                     Some(super::PendingAction::DeletePath { path, is_dir });
                 state_changed = true;
+            }
+            Command::ExplorerCut => {
+                state_changed = self.set_explorer_clipboard_from_selection(
+                    super::state::ExplorerClipboardMode::Cut,
+                );
+            }
+            Command::ExplorerCopy => {
+                state_changed = self.set_explorer_clipboard_from_selection(
+                    super::state::ExplorerClipboardMode::Copy,
+                );
+            }
+            Command::ExplorerPaste => {
+                let Some(effect) = self.explorer_paste_effect() else {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                };
+                return DispatchResult {
+                    effects: vec![effect],
+                    state_changed: false,
+                };
             }
             Command::GlobalSearchStart => {
                 if self.state.ui.focus == FocusTarget::Explorer

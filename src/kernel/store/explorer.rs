@@ -145,6 +145,10 @@ impl super::Store {
                     .map(|repo_root| vec![Effect::GitRefreshStatus { repo_root }])
                     .unwrap_or_default(),
                 state_changed: {
+                    let clipboard_changed = self
+                        .state
+                        .explorer
+                        .clear_clipboard_if_deleted_path(path.as_path());
                     let changed = self.state.explorer.apply_path_deleted(path);
                     let git_changed = if changed {
                         self.state
@@ -153,11 +157,15 @@ impl super::Store {
                     } else {
                         false
                     };
-                    changed || git_changed
+                    changed || git_changed || clipboard_changed
                 },
             },
             Action::ExplorerPathRenamed { from, to } => {
                 let mut state_changed = self
+                    .state
+                    .explorer
+                    .clear_clipboard_if_cut_source_renamed(from.as_path());
+                state_changed |= self
                     .state
                     .explorer
                     .apply_path_renamed(from.clone(), to.clone());

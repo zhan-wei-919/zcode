@@ -556,6 +556,46 @@ impl AsyncRuntime {
         });
     }
 
+    pub fn copy_path(&self, from: PathBuf, to: PathBuf, overwrite: bool) {
+        let tx = self.tx.clone();
+        self.runtime.spawn(async move {
+            let tx_for_error = tx.clone();
+            let from_for_error = from.clone();
+            let to_for_error = to.clone();
+            let from_for_work = from.clone();
+            let to_for_work = to.clone();
+
+            let result = tokio::task::spawn_blocking(move || {
+                let meta = std::fs::symlink_metadata(&from_for_work)?;
+                copy_path(from_for_work.as_path(), to_for_work.as_path(), overwrite)?;
+                Ok::<bool, io::Error>(meta.is_dir())
+            })
+            .await;
+
+            match result {
+                Ok(Ok(is_dir)) => {
+                    let _ = tx.send(AppMessage::PathCreated { path: to, is_dir });
+                }
+                Ok(Err(e)) => {
+                    let _ = tx_for_error.send(AppMessage::FsOpError {
+                        op: "copy_path",
+                        path: from_for_error,
+                        to: Some(to_for_error),
+                        error: e.to_string(),
+                    });
+                }
+                Err(e) => {
+                    let _ = tx_for_error.send(AppMessage::FsOpError {
+                        op: "copy_path",
+                        path: from_for_error,
+                        to: Some(to_for_error),
+                        error: e.to_string(),
+                    });
+                }
+            }
+        });
+    }
+
     pub fn delete_path(&self, path: PathBuf, is_dir: bool) {
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
@@ -977,6 +1017,55 @@ async fn git_output(
     cmd.env("GIT_TERMINAL_PROMPT", "0");
     configure(&mut cmd);
     cmd.output().await
+}
+
+fn copy_path(from: &std::path::Path, to: &std::path::Path, overwrite: bool) -> io::Result<()> {
+    if from == to {
+        return Ok(());
+    }
+
+    let from_meta = std::fs::symlink_metadata(from)?;
+    if from_meta.is_dir() && to.starts_with(from) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot copy a directory into itself",
+        ));
+    }
+
+    let Some(parent) = to.parent() else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destination has no parent directory",
+        ));
+    };
+    if !std::fs::metadata(parent).is_ok_and(|m| m.is_dir()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "destination parent is not a directory",
+        ));
+    }
+
+    if !overwrite && std::fs::symlink_metadata(to).is_ok() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "destination exists",
+        ));
+    }
+
+    if overwrite {
+        remove_existing_path(to)?;
+    }
+
+    if from_meta.file_type().is_symlink() {
+        return copy_symlink(from, to);
+    }
+
+    if from_meta.is_dir() {
+        return copy_dir_recursive(from, to);
+    }
+
+    std::fs::copy(from, to)?;
+    Ok(())
 }
 
 fn move_path(from: &std::path::Path, to: &std::path::Path, overwrite: bool) -> io::Result<()> {

@@ -6,8 +6,8 @@ use crate::kernel::services::ports::{
     LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{
-    CompletionRequestContext, ContextMenuItem, ContextMenuRequest, PendingAction,
-    PendingEditorNavigation, PendingEditorNavigationTarget,
+    CompletionRequestContext, ContextMenuRequest, PendingAction, PendingEditorNavigation,
+    PendingEditorNavigationTarget,
 };
 use crate::models::{FileTree, Granularity, Selection};
 use std::ffi::OsString;
@@ -466,7 +466,7 @@ fn auto_closes_split_when_last_tab_in_second_pane_is_closed() {
 }
 
 #[test]
-fn explorer_context_menu_root_only_shows_create_items() {
+fn explorer_context_menu_root_items_include_disabled_actions() {
     let mut store = new_store();
 
     let result = store.dispatch(Action::ContextMenuOpen {
@@ -478,13 +478,20 @@ fn explorer_context_menu_root_only_shows_create_items() {
     assert!(result.effects.is_empty());
     assert!(result.state_changed);
     assert!(store.state.ui.context_menu.visible);
-    assert_eq!(
-        store.state.ui.context_menu.items,
-        vec![
-            ContextMenuItem::ExplorerNewFile,
-            ContextMenuItem::ExplorerNewFolder
-        ]
-    );
+
+    let items = &store.state.ui.context_menu.items;
+    assert!(matches!(
+        items.first(),
+        Some(item) if item.label == "New File" && item.is_selectable()
+    ));
+    assert!(matches!(
+        items.get(1),
+        Some(item) if item.label == "New Folder" && item.is_selectable()
+    ));
+    assert!(items.iter().any(|item| item.is_separator()));
+    assert!(items
+        .iter()
+        .any(|item| item.label == "Rename" && !item.is_selectable()));
 }
 
 #[test]
@@ -516,19 +523,18 @@ fn explorer_context_menu_confirm_rename_opens_rename_dialog() {
         y: 5,
     });
 
-    assert_eq!(
-        store.state.ui.context_menu.items,
-        vec![
-            ContextMenuItem::ExplorerNewFile,
-            ContextMenuItem::ExplorerNewFolder,
-            ContextMenuItem::ExplorerRename,
-            ContextMenuItem::ExplorerDelete,
-            ContextMenuItem::ExplorerCopyPath,
-            ContextMenuItem::ExplorerCopyRelativePath,
-        ]
-    );
+    let rename_index = store
+        .state
+        .ui
+        .context_menu
+        .items
+        .iter()
+        .position(|item| item.label == "Rename")
+        .expect("rename item exists");
 
-    let _ = store.dispatch(Action::ContextMenuSetSelected { index: 2 });
+    let _ = store.dispatch(Action::ContextMenuSetSelected {
+        index: rename_index,
+    });
     let result = store.dispatch(Action::ContextMenuConfirm);
     assert!(result.effects.is_empty());
     assert!(store.state.ui.input_dialog.visible);
@@ -581,7 +587,18 @@ fn explorer_context_menu_confirm_copy_path_sets_clipboard_text() {
         y: 5,
     });
 
-    let _ = store.dispatch(Action::ContextMenuSetSelected { index: 4 });
+    let copy_path_index = store
+        .state
+        .ui
+        .context_menu
+        .items
+        .iter()
+        .position(|item| item.label == "Copy Path")
+        .expect("copy path item exists");
+
+    let _ = store.dispatch(Action::ContextMenuSetSelected {
+        index: copy_path_index,
+    });
     let result = store.dispatch(Action::ContextMenuConfirm);
 
     assert!(result.state_changed);
@@ -621,7 +638,18 @@ fn explorer_context_menu_confirm_copy_relative_path_sets_clipboard_text() {
         y: 5,
     });
 
-    let _ = store.dispatch(Action::ContextMenuSetSelected { index: 5 });
+    let copy_rel_index = store
+        .state
+        .ui
+        .context_menu
+        .items
+        .iter()
+        .position(|item| item.label == "Copy Relative Path")
+        .expect("copy relative path item exists");
+
+    let _ = store.dispatch(Action::ContextMenuSetSelected {
+        index: copy_rel_index,
+    });
     let result = store.dispatch(Action::ContextMenuConfirm);
 
     assert!(result.state_changed);
@@ -652,10 +680,13 @@ fn tab_context_menu_open_sets_state() {
     assert!(result.effects.is_empty());
     assert!(result.state_changed);
     assert!(store.state.ui.context_menu.visible);
-    assert_eq!(
-        store.state.ui.context_menu.items,
-        vec![ContextMenuItem::TabClose]
-    );
+    assert!(store
+        .state
+        .ui
+        .context_menu
+        .items
+        .iter()
+        .any(|item| item.label == "Close" && item.is_selectable()));
     assert_eq!(
         store.state.ui.context_menu.request,
         Some(ContextMenuRequest::Tab { pane: 0, index: 0 })
@@ -676,10 +707,17 @@ fn editor_area_context_menu_open_sets_items() {
     assert!(result.effects.is_empty());
     assert!(result.state_changed);
     assert!(store.state.ui.context_menu.visible);
-    assert_eq!(
-        store.state.ui.context_menu.items,
-        vec![ContextMenuItem::EditorCopy, ContextMenuItem::EditorPaste]
-    );
+    let labels = store
+        .state
+        .ui
+        .context_menu
+        .items
+        .iter()
+        .map(|item| item.label)
+        .collect::<Vec<_>>();
+    assert!(labels.contains(&"Copy"));
+    assert!(labels.contains(&"Paste"));
+    assert!(labels.contains(&"Go to Definition"));
     assert_eq!(
         store.state.ui.context_menu.request,
         Some(ContextMenuRequest::EditorArea { pane: 0 })
@@ -704,6 +742,16 @@ fn tab_context_menu_confirm_close_closes_tab_when_clean() {
         x: 10,
         y: 5,
     });
+
+    let close_index = store
+        .state
+        .ui
+        .context_menu
+        .items
+        .iter()
+        .position(|item| item.label == "Close")
+        .expect("close item exists");
+    let _ = store.dispatch(Action::ContextMenuSetSelected { index: close_index });
     let result = store.dispatch(Action::ContextMenuConfirm);
 
     assert!(result.effects.is_empty());
@@ -734,6 +782,16 @@ fn tab_context_menu_confirm_close_shows_confirm_dialog_when_dirty() {
         x: 10,
         y: 5,
     });
+
+    let close_index = store
+        .state
+        .ui
+        .context_menu
+        .items
+        .iter()
+        .position(|item| item.label == "Close")
+        .expect("close item exists");
+    let _ = store.dispatch(Action::ContextMenuSetSelected { index: close_index });
     let result = store.dispatch(Action::ContextMenuConfirm);
 
     assert!(result.effects.is_empty());
@@ -741,7 +799,7 @@ fn tab_context_menu_confirm_close_shows_confirm_dialog_when_dirty() {
     assert!(store.state.ui.confirm_dialog.visible);
     assert!(matches!(
         store.state.ui.confirm_dialog.on_confirm,
-        Some(PendingAction::CloseTab { pane: 0, index: 0 })
+        Some(PendingAction::CloseTabsBatch { pane: 0, ref tab_ids }) if tab_ids.len() == 1
     ));
     assert_eq!(store.state.editor.pane(0).unwrap().tabs.len(), 1);
 }
@@ -1962,4 +2020,103 @@ fn reload_from_disk_emits_reload_request_from_active_tab() {
     );
     assert_eq!(request.request_id, 1);
     assert!(!result.state_changed);
+}
+
+#[test]
+fn explorer_context_menu_paste_emits_copy_effect() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let mut tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
+    let source_id = tree
+        .insert_child(
+            tree.root(),
+            OsString::from("a.txt"),
+            crate::models::NodeKind::File,
+        )
+        .unwrap();
+    let target_dir_id = tree
+        .insert_child(
+            tree.root(),
+            OsString::from("dir"),
+            crate::models::NodeKind::Dir,
+        )
+        .unwrap();
+
+    let mut store = Store::new(AppState::new(root.clone(), tree, EditorConfig::default()));
+    let source_path = root.join("a.txt");
+    assert!(store.state.explorer.set_clipboard(
+        source_path.clone(),
+        false,
+        crate::kernel::state::ExplorerClipboardMode::Copy
+    ));
+
+    let tree_row = store
+        .state
+        .explorer
+        .rows
+        .iter()
+        .position(|row| row.id == target_dir_id)
+        .unwrap();
+
+    let _ = store.dispatch(Action::ContextMenuOpen {
+        request: ContextMenuRequest::Explorer {
+            tree_row: Some(tree_row),
+        },
+        x: 10,
+        y: 5,
+    });
+
+    let paste_index = store
+        .state
+        .ui
+        .context_menu
+        .items
+        .iter()
+        .position(|item| item.label == "Paste")
+        .expect("paste item exists");
+    assert!(store.state.ui.context_menu.items[paste_index].is_selectable());
+
+    let _ = store.dispatch(Action::ContextMenuSetSelected { index: paste_index });
+    let result = store.dispatch(Action::ContextMenuConfirm);
+
+    assert!(result.state_changed);
+    assert!(matches!(
+        result.effects.as_slice(),
+        [Effect::CopyPath {
+            from,
+            to,
+            overwrite: false
+        }] if from == &source_path && to == &root.join("dir").join("a.txt")
+    ));
+
+    // Keep source node alive in tree setup to avoid accidental dead-code warnings.
+    assert!(store
+        .state
+        .explorer
+        .rows
+        .iter()
+        .any(|row| row.id == source_id));
+}
+
+#[test]
+fn context_menu_move_selection_skips_disabled_entries() {
+    let mut store = new_store();
+
+    let _ = store.dispatch(Action::ContextMenuOpen {
+        request: ContextMenuRequest::Explorer { tree_row: None },
+        x: 10,
+        y: 5,
+    });
+
+    assert_eq!(store.state.ui.context_menu.selected, 0);
+    let _ = store.dispatch(Action::ContextMenuMoveSelection { delta: 1 });
+    assert_eq!(store.state.ui.context_menu.selected, 1);
+
+    let _ = store.dispatch(Action::ContextMenuMoveSelection { delta: 1 });
+    let selected = store.state.ui.context_menu.selected;
+    assert!(store.state.ui.context_menu.items[selected].is_selectable());
+    assert!(
+        selected > 2,
+        "selection should skip separator/disabled rows"
+    );
 }

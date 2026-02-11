@@ -197,6 +197,36 @@ fn move_dir_cross_device_falls_back_to_copy_remove() {
     assert_eq!(std::fs::read_to_string(to.join("a.txt")).unwrap(), "hello");
 }
 
+#[test]
+fn copy_path_rejects_overwrite_by_default() {
+    let dir = tempdir().unwrap();
+    let from = dir.path().join("from.txt");
+    let to = dir.path().join("to.txt");
+    std::fs::write(&from, "FROM").unwrap();
+    std::fs::write(&to, "TO").unwrap();
+
+    let err = copy_path(&from, &to, false).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+
+    assert!(from.exists());
+    assert_eq!(std::fs::read_to_string(&to).unwrap(), "TO");
+}
+
+#[test]
+fn copy_path_overwrite_replaces_destination_and_keeps_source() {
+    let dir = tempdir().unwrap();
+    let from = dir.path().join("from.txt");
+    let to = dir.path().join("to.txt");
+    std::fs::write(&from, "FROM").unwrap();
+    std::fs::write(&to, "TO").unwrap();
+
+    copy_path(&from, &to, true).unwrap();
+
+    assert!(from.exists());
+    assert_eq!(std::fs::read_to_string(&from).unwrap(), "FROM");
+    assert_eq!(std::fs::read_to_string(&to).unwrap(), "FROM");
+}
+
 #[cfg(feature = "terminal")]
 #[test]
 fn terminal_ops_do_not_panic_when_terminals_lock_is_poisoned() {

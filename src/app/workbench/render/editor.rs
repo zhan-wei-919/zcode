@@ -1077,7 +1077,7 @@ fn push_editor_tab_nodes(
         rect: area,
         layer: 0,
         z: 0,
-        sense: Sense::DROP_TARGET,
+        sense: Sense::DROP_TARGET | Sense::CONTEXT_MENU,
         kind: NodeKind::TabBar { pane },
     });
 

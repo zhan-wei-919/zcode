@@ -402,3 +402,45 @@ fn test_file_externally_modified_emits_reload_for_clean_and_marks_dirty_conflict
         .expect("pane1 tab");
     assert!(matches!(pane1_tab.disk_state, DiskState::InSync));
 }
+
+#[test]
+fn test_close_tabs_by_id_removes_requested_tabs() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+
+    let path_a = PathBuf::from("a.txt");
+    let path_b = PathBuf::from("b.txt");
+    let path_c = PathBuf::from("c.txt");
+
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path: path_a,
+        content: "a".to_string(),
+    });
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path: path_b,
+        content: "b".to_string(),
+    });
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path: path_c,
+        content: "c".to_string(),
+    });
+
+    let pane = editor.pane(0).expect("pane exists");
+    assert_eq!(pane.tabs.len(), 3);
+    let close_ids = vec![pane.tabs[0].id.raw(), pane.tabs[2].id.raw()];
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::CloseTabsById {
+        pane: 0,
+        tab_ids: close_ids,
+    });
+
+    assert!(changed);
+    assert!(effects.is_empty());
+
+    let pane = editor.pane(0).expect("pane exists");
+    assert_eq!(pane.tabs.len(), 1);
+    assert_eq!(pane.tabs[0].title, "b.txt");
+}

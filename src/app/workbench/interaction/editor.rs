@@ -325,7 +325,21 @@ impl Workbench {
                             });
                             handled = true;
                         }
+                        NodeKind::TabBar { pane } => {
+                            let _ = self.dispatch_kernel(KernelAction::ContextMenuOpen {
+                                request: crate::kernel::state::ContextMenuRequest::TabBar { pane },
+                                x: pos.x,
+                                y: pos.y,
+                            });
+                            handled = true;
+                        }
                         NodeKind::EditorArea { pane } => {
+                            if let Some((x, y)) = hit_test_editor_mouse(&layout, pos.x, pos.y) {
+                                let _ = self.dispatch_kernel(KernelAction::Editor(
+                                    EditorAction::MouseSelectWord { pane, x, y },
+                                ));
+                            }
+
                             let _ = self.dispatch_kernel(KernelAction::ContextMenuOpen {
                                 request: crate::kernel::state::ContextMenuRequest::EditorArea {
                                     pane,

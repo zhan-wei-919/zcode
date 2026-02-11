@@ -120,6 +120,55 @@ impl Workbench {
 
                 self.runtime.rename_path(from, to, overwrite)
             }
+            KernelEffect::CopyPath {
+                from,
+                to,
+                overwrite,
+            } => {
+                let _scope = perf::scope("effect.copy_path");
+                let root = self.store.state().workspace_root.clone();
+                let root = root.as_path();
+                if from.as_path() == root
+                    || to.as_path() == root
+                    || !from.starts_with(root)
+                    || !to.starts_with(root)
+                {
+                    self.push_log_line(format!(
+                        "[fs:copy_path] rejected out-of-workspace path: {} -> {}",
+                        from.display(),
+                        to.display()
+                    ));
+                    return;
+                }
+
+                if !overwrite {
+                    if let Ok(meta) = std::fs::symlink_metadata(&to) {
+                        let rel = to
+                            .strip_prefix(root)
+                            .ok()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|| to.to_string_lossy().to_string());
+
+                        let message = if meta.is_dir() {
+                            format!("Overwrite folder \"{}\" and all contents?", rel)
+                        } else {
+                            format!("Overwrite file \"{}\"?", rel)
+                        };
+
+                        let _ = self.dispatch_kernel(KernelAction::ShowConfirmDialog {
+                            message,
+                            on_confirm: PendingAction::CopyPath {
+                                from,
+                                to,
+                                overwrite: true,
+                            },
+                        });
+                        return;
+                    }
+                }
+
+                self.runtime.copy_path(from, to, overwrite)
+            }
             KernelEffect::DeletePath { path, is_dir } => {
                 let _scope = perf::scope("effect.delete_path");
                 let root = self.store.state().workspace_root.clone();

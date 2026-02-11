@@ -71,6 +71,32 @@ impl EditorTabState {
         true
     }
 
+    pub fn mouse_select_word(&mut self, x: u16, y: u16, tab_size: u8) -> bool {
+        self.viewport.follow_cursor = true;
+
+        let visible_lines =
+            self.visible_lines_in_viewport(self.viewport.line_offset, self.viewport.height.max(1));
+        let Some(row) = visible_lines.get(y as usize).copied() else {
+            return false;
+        };
+
+        let Some(col) = viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
+        else {
+            return false;
+        };
+
+        let pos = (row, col);
+        self.buffer.set_cursor(pos.0, pos.1);
+        let selection = Selection::from_pos(pos, Granularity::Word, self.buffer.rope());
+        self.buffer.set_selection(Some(selection));
+
+        self.mouse.dragging = false;
+        self.mouse.granularity = Granularity::Word;
+
+        viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
+        true
+    }
+
     pub fn mouse_drag(
         &mut self,
         x: u16,

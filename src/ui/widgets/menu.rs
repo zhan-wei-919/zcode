@@ -11,8 +11,53 @@ use unicode_width::UnicodeWidthStr;
 #[derive(Clone, Copy, Debug)]
 pub struct MenuStyles {
     pub base: Style,
-    pub border: Style,
+    pub border: Option<Style>,
     pub selected: Style,
+    pub disabled: Style,
+    pub separator: Style,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuItemKind {
+    Action { enabled: bool },
+    Separator,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MenuItem<'a> {
+    pub label: &'a str,
+    pub kind: MenuItemKind,
+}
+
+impl<'a> MenuItem<'a> {
+    pub fn action(label: &'a str) -> Self {
+        Self {
+            label,
+            kind: MenuItemKind::Action { enabled: true },
+        }
+    }
+
+    pub fn disabled_action(label: &'a str) -> Self {
+        Self {
+            label,
+            kind: MenuItemKind::Action { enabled: false },
+        }
+    }
+
+    pub fn separator() -> Self {
+        Self {
+            label: "",
+            kind: MenuItemKind::Separator,
+        }
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        matches!(self.kind, MenuItemKind::Action { enabled: true })
+    }
+
+    pub fn is_separator(&self) -> bool {
+        matches!(self.kind, MenuItemKind::Separator)
+    }
 }
 
 pub struct Menu<'a> {
@@ -20,7 +65,7 @@ pub struct Menu<'a> {
     pub menu_id: u32,
     pub layer: u8,
     pub anchor: Pos,
-    pub items: &'a [&'a str],
+    pub items: &'a [MenuItem<'a>],
     pub selected: usize,
     pub styles: MenuStyles,
 }
@@ -32,19 +77,27 @@ impl Widget for Menu<'_> {
             return;
         }
 
-        if screen.w < 3 || screen.h < 3 {
-            return;
-        }
-
         let mut max_label_w = 0usize;
         for item in self.items {
-            max_label_w = max_label_w.max(item.width());
+            let width = if item.is_separator() {
+                1
+            } else {
+                item.label.width().saturating_add(2)
+            };
+            max_label_w = max_label_w.max(width);
         }
 
-        let desired_inner_width = (max_label_w.saturating_add(4)).min(u16::MAX as usize) as u16;
+        let desired_inner_width = (max_label_w.saturating_add(2)).min(u16::MAX as usize) as u16;
         let desired_inner_height = (self.items.len().min(u16::MAX as usize)) as u16;
-        let width = desired_inner_width.saturating_add(2).min(screen.w).max(3);
-        let height = desired_inner_height.saturating_add(2).min(screen.h).max(3);
+        let border_padding = if self.styles.border.is_some() { 2 } else { 0 };
+        let width = desired_inner_width
+            .saturating_add(border_padding)
+            .min(screen.w)
+            .max(1);
+        let height = desired_inner_height
+            .saturating_add(border_padding)
+            .min(screen.h)
+            .max(1);
 
         let right = screen.right();
         let bottom = screen.bottom();
@@ -60,7 +113,6 @@ impl Widget for Menu<'_> {
 
         let popup = Rect::new(x, y, width, height);
 
-        // Overlay nodes (hit-test priority over base UI).
         let overlay_id = self.id_base.push_str("overlay").finish();
         ui.tree.push(Node {
             id: overlay_id,
@@ -82,10 +134,15 @@ impl Widget for Menu<'_> {
         });
 
         ui.painter.fill_rect(popup, self.styles.base);
-        ui.painter
-            .border(popup, self.styles.border, BorderKind::Plain);
+        if let Some(border_style) = self.styles.border {
+            ui.painter.border(popup, border_style, BorderKind::Plain);
+        }
 
-        let inner = popup.inset(Insets::all(1));
+        let inner = if self.styles.border.is_some() {
+            popup.inset(Insets::all(1))
+        } else {
+            popup
+        };
         if inner.is_empty() {
             return;
         }
@@ -94,7 +151,8 @@ impl Widget for Menu<'_> {
         for (idx, item) in self.items.iter().enumerate().take(inner.h as usize) {
             let row_y = inner.y.saturating_add(idx as u16);
             let row_rect = Rect::new(inner.x, row_y, inner.w, 1);
-            if !row_rect.is_empty() {
+
+            if item.is_selectable() && !row_rect.is_empty() {
                 let id = self.id_base.push_str("item").push_u64(idx as u64).finish();
                 ui.tree.push(Node {
                     id,
@@ -109,15 +167,23 @@ impl Widget for Menu<'_> {
                 });
             }
 
-            let is_selected = idx == selected;
-            let row_style = if is_selected {
+            let is_selected = idx == selected && item.is_selectable();
+            let row_style = if item.is_separator() {
+                self.styles.separator
+            } else if is_selected {
                 self.styles.selected
-            } else {
+            } else if item.is_selectable() {
                 self.styles.base
+            } else {
+                self.styles.disabled
             };
 
-            let prefix = if is_selected { "▸ " } else { "  " };
-            let mut text = format!("{prefix}{item}");
+            let mut text = if item.is_separator() {
+                "─".repeat(inner.w as usize)
+            } else {
+                let prefix = if is_selected { "▸ " } else { "  " };
+                format!("{prefix}{}", item.label)
+            };
             let pad_to = inner.w as usize;
 
             if text.width() > pad_to {

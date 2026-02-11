@@ -39,6 +39,21 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::ExplorerDelete,
     },
     PaletteItem {
+        label: "Explorer: Cut",
+        label_lc: "explorer: cut",
+        command: Command::ExplorerCut,
+    },
+    PaletteItem {
+        label: "Explorer: Copy",
+        label_lc: "explorer: copy",
+        command: Command::ExplorerCopy,
+    },
+    PaletteItem {
+        label: "Explorer: Paste",
+        label_lc: "explorer: paste",
+        command: Command::ExplorerPaste,
+    },
+    PaletteItem {
         label: "View: Focus Search",
         label_lc: "view: focus search",
         command: Command::FocusSearch,
