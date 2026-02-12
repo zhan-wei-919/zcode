@@ -157,6 +157,20 @@ zcode
 * Linux: `~/.cache/.zcode/setting.json`
 * macOS: `~/Library/Caches/.zcode/setting.json`
 
+### 编辑器配置
+
+你可以在 `setting.json` 里控制是否显示缩进引导线：
+
+```json
+{
+  "editor": {
+    "show_indent_guides": true
+  }
+}
+```
+
+设置为 `false` 即可关闭。也兼容 `showIndentGuides` 写法。
+
 ### LSP 配置
 
 你可以在 `setting.json` 中按语言配置 LSP server 的 command/args，以及可选的 initialize options：

@@ -157,6 +157,20 @@ Settings are stored in:
 * Linux: `~/.cache/.zcode/setting.json`
 * macOS: `~/Library/Caches/.zcode/setting.json`
 
+### Editor configuration
+
+You can toggle indent guides in `setting.json`:
+
+```json
+{
+  "editor": {
+    "show_indent_guides": true
+  }
+}
+```
+
+Set it to `false` to disable indent guides. `showIndentGuides` is also accepted.
+
 ### LSP configuration
 
 You can override per-language LSP server command/args and optional initialize options in `setting.json`:

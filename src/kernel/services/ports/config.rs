@@ -14,7 +14,7 @@ pub struct EditorConfig {
     pub auto_indent: bool,
     #[serde(default, alias = "formatOnSave")]
     pub format_on_save: bool,
-    #[serde(default = "default_show_indent_guides")]
+    #[serde(default = "default_show_indent_guides", alias = "showIndentGuides")]
     pub show_indent_guides: bool,
     #[serde(default, alias = "lspInputTiming")]
     pub lsp_input_timing: LspInputTimingConfig,

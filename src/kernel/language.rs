@@ -14,6 +14,13 @@ pub enum LanguageId {
     C,
     Cpp,
     Java,
+    Json,
+    Yaml,
+    Html,
+    Xml,
+    Css,
+    Toml,
+    Bash,
 }
 
 impl LanguageId {
@@ -29,20 +36,34 @@ impl LanguageId {
             "c" => Some(Self::C),
             "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "h++" | "h" => Some(Self::Cpp),
             "java" => Some(Self::Java),
+            "json" => Some(Self::Json),
+            "yaml" | "yml" => Some(Self::Yaml),
+            "html" | "htm" => Some(Self::Html),
+            "xml" | "xsl" | "xslt" | "svg" => Some(Self::Xml),
+            "css" => Some(Self::Css),
+            "toml" => Some(Self::Toml),
+            "sh" | "bash" | "zsh" => Some(Self::Bash),
             _ => None,
         }
     }
 
-    pub fn server_kind(self) -> LspServerKind {
+    pub fn server_kind(self) -> Option<LspServerKind> {
         match self {
-            Self::Rust => LspServerKind::RustAnalyzer,
-            Self::Go => LspServerKind::Gopls,
-            Self::Python => LspServerKind::Pyright,
+            Self::Rust => Some(LspServerKind::RustAnalyzer),
+            Self::Go => Some(LspServerKind::Gopls),
+            Self::Python => Some(LspServerKind::Pyright),
             Self::JavaScript | Self::TypeScript | Self::Jsx | Self::Tsx => {
-                LspServerKind::TypeScriptLanguageServer
+                Some(LspServerKind::TypeScriptLanguageServer)
             }
-            Self::C | Self::Cpp => LspServerKind::Clangd,
-            Self::Java => LspServerKind::Jdtls,
+            Self::C | Self::Cpp => Some(LspServerKind::Clangd),
+            Self::Java => Some(LspServerKind::Jdtls),
+            Self::Json
+            | Self::Yaml
+            | Self::Html
+            | Self::Xml
+            | Self::Css
+            | Self::Toml
+            | Self::Bash => None,
         }
     }
 
@@ -58,6 +79,13 @@ impl LanguageId {
             Self::C => "c",
             Self::Cpp => "cpp",
             Self::Java => "java",
+            Self::Json => "json",
+            Self::Yaml => "yaml",
+            Self::Html => "html",
+            Self::Xml => "xml",
+            Self::Css => "css",
+            Self::Toml => "toml",
+            Self::Bash => "shellscript",
         }
     }
 
@@ -91,6 +119,13 @@ impl LanguageId {
                 "gradlew",
                 ".project",
             ],
+            Self::Json
+            | Self::Yaml
+            | Self::Html
+            | Self::Xml
+            | Self::Css
+            | Self::Toml
+            | Self::Bash => &[],
         }
     }
 
@@ -106,6 +141,13 @@ impl LanguageId {
             Self::C => "C",
             Self::Cpp => "C++",
             Self::Java => "Java",
+            Self::Json => "JSON",
+            Self::Yaml => "YAML",
+            Self::Html => "HTML",
+            Self::Xml => "XML",
+            Self::Css => "CSS",
+            Self::Toml => "TOML",
+            Self::Bash => "Bash",
         }
     }
 }

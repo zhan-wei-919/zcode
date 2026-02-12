@@ -4,7 +4,9 @@ use crate::kernel::language::LanguageId;
 use crate::kernel::services::ports::LspClientKey;
 
 pub fn is_lsp_source_path(path: &Path) -> bool {
-    LanguageId::from_path(path).is_some()
+    LanguageId::from_path(path)
+        .and_then(|l| l.server_kind())
+        .is_some()
 }
 
 pub fn client_key_for_path(
@@ -12,7 +14,7 @@ pub fn client_key_for_path(
     path: &Path,
 ) -> Option<(LanguageId, LspClientKey)> {
     let language = LanguageId::from_path(path)?;
-    let server = language.server_kind();
+    let server = language.server_kind()?;
     let root = language_root_for_file(workspace_root, language, path);
     Some((language, LspClientKey { server, root }))
 }

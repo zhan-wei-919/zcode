@@ -152,7 +152,7 @@ impl LspService {
     fn client_key_for_path(&self, path: &Path) -> Option<(LanguageId, ClientKey)> {
         let language = LanguageId::from_path(path)?;
         let root = language_root_for_file(&self.workspace_root, language, path);
-        let server = language.server_kind();
+        let server = language.server_kind()?;
         Some((language, ClientKey { server, root }))
     }
 

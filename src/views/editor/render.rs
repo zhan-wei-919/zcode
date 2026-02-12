@@ -15,8 +15,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::layout::EditorPaneLayout;
 
-// U+258F "LEFT ONE EIGHTH BLOCK" draws as a thin vertical guide in most fonts.
-const INDENT_GUIDE_SYMBOL: &str = "\u{258F}";
+// U+250A "BOX DRAWINGS LIGHT QUADRUPLE DASH VERTICAL" keeps guides subtle.
+const INDENT_GUIDE_SYMBOL: &str = "\u{250A}";
 
 pub fn paint_editor_pane(
     painter: &mut Painter,

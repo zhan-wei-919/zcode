@@ -92,6 +92,13 @@ impl SyntaxDocument {
             LanguageId::Tsx => parser
                 .set_language(tree_sitter_typescript::language_tsx())
                 .ok()?,
+            LanguageId::Json => parser.set_language(tree_sitter_json::language()).ok()?,
+            LanguageId::Yaml => parser.set_language(tree_sitter_yaml::language()).ok()?,
+            LanguageId::Html => parser.set_language(tree_sitter_html::language()).ok()?,
+            LanguageId::Xml => parser.set_language(tree_sitter_xml::language_xml()).ok()?,
+            LanguageId::Css => parser.set_language(tree_sitter_css::language()).ok()?,
+            LanguageId::Toml => parser.set_language(tree_sitter_toml::language()).ok()?,
+            LanguageId::Bash => parser.set_language(tree_sitter_bash::language()).ok()?,
         }
 
         let tree = parse_rope(&mut parser, rope, None)?;
@@ -246,6 +253,13 @@ pub fn highlight_snippet(language: LanguageId, text: &str) -> Vec<Vec<HighlightS
         LanguageId::Tsx => parser
             .set_language(tree_sitter_typescript::language_tsx())
             .is_ok(),
+        LanguageId::Json => parser.set_language(tree_sitter_json::language()).is_ok(),
+        LanguageId::Yaml => parser.set_language(tree_sitter_yaml::language()).is_ok(),
+        LanguageId::Html => parser.set_language(tree_sitter_html::language()).is_ok(),
+        LanguageId::Xml => parser.set_language(tree_sitter_xml::language_xml()).is_ok(),
+        LanguageId::Css => parser.set_language(tree_sitter_css::language()).is_ok(),
+        LanguageId::Toml => parser.set_language(tree_sitter_toml::language()).is_ok(),
+        LanguageId::Bash => parser.set_language(tree_sitter_bash::language()).is_ok(),
     };
     if !language_set {
         return vec![Vec::new(); total_lines];
@@ -703,6 +717,22 @@ fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<Hi
                 return Some(kind);
             }
         }
+        LanguageId::Json | LanguageId::Yaml | LanguageId::Toml => {}
+        LanguageId::Html | LanguageId::Xml => {
+            if let Some(kind) = classify_markup_node(node) {
+                return Some(kind);
+            }
+        }
+        LanguageId::Css => {
+            if let Some(kind) = classify_css_node(node) {
+                return Some(kind);
+            }
+        }
+        LanguageId::Bash => {
+            if let Some(kind) = classify_bash_node(node) {
+                return Some(kind);
+            }
+        }
     }
     if is_keyword(language, kind) {
         return Some(HighlightKind::Keyword);
@@ -1134,6 +1164,12 @@ fn is_keyword(language: LanguageId, kind: &str) -> bool {
         LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Jsx | LanguageId::Tsx => {
             is_js_ts_keyword(kind)
         }
+        LanguageId::Json => is_json_keyword(kind),
+        LanguageId::Yaml => is_yaml_keyword(kind),
+        LanguageId::Toml => is_toml_keyword(kind),
+        LanguageId::Html | LanguageId::Xml => false,
+        LanguageId::Css => false,
+        LanguageId::Bash => is_bash_keyword(kind),
     }
 }
 
@@ -1474,6 +1510,77 @@ fn is_js_ts_keyword(kind: &str) -> bool {
             | "true"
             | "false"
     )
+}
+
+fn is_json_keyword(kind: &str) -> bool {
+    matches!(kind, "true" | "false" | "null")
+}
+
+fn is_yaml_keyword(kind: &str) -> bool {
+    matches!(kind, "true" | "false" | "null")
+}
+
+fn is_toml_keyword(kind: &str) -> bool {
+    matches!(kind, "true" | "false")
+}
+
+fn is_bash_keyword(kind: &str) -> bool {
+    matches!(
+        kind,
+        "if" | "then"
+            | "else"
+            | "elif"
+            | "fi"
+            | "case"
+            | "esac"
+            | "for"
+            | "while"
+            | "until"
+            | "do"
+            | "done"
+            | "in"
+            | "function"
+            | "select"
+            | "return"
+            | "exit"
+            | "local"
+            | "declare"
+            | "export"
+            | "readonly"
+            | "unset"
+    )
+}
+
+fn classify_markup_node(node: Node<'_>) -> Option<HighlightKind> {
+    match node.kind() {
+        "tag_name" | "element" => Some(HighlightKind::Keyword),
+        "attribute_name" => Some(HighlightKind::Attribute),
+        "attribute_value" | "quoted_attribute_value" => Some(HighlightKind::String),
+        _ => None,
+    }
+}
+
+fn classify_css_node(node: Node<'_>) -> Option<HighlightKind> {
+    match node.kind() {
+        "tag_name"
+        | "class_name"
+        | "id_name"
+        | "pseudo_class_selector"
+        | "pseudo_element_selector" => Some(HighlightKind::Type),
+        "property_name" | "feature_name" => Some(HighlightKind::Variable),
+        "color_value" | "integer_value" | "float_value" => Some(HighlightKind::Number),
+        "at_keyword" | "important" => Some(HighlightKind::Keyword),
+        "function_name" => Some(HighlightKind::Function),
+        _ => None,
+    }
+}
+
+fn classify_bash_node(node: Node<'_>) -> Option<HighlightKind> {
+    match node.kind() {
+        "command_name" => Some(HighlightKind::Function),
+        "variable_name" => Some(HighlightKind::Variable),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

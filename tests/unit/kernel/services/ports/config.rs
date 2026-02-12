@@ -71,6 +71,30 @@ fn test_default_config() {
 }
 
 #[test]
+fn test_show_indent_guides_can_be_configured_from_settings_json() {
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        editor: EditorConfig,
+    }
+
+    let snake_case = r#"{
+      "editor": {
+        "show_indent_guides": false
+      }
+    }"#;
+    let parsed: Wrapper = serde_json::from_str(snake_case).expect("parse settings snake_case");
+    assert!(!parsed.editor.show_indent_guides);
+
+    let camel_case = r#"{
+      "editor": {
+        "showIndentGuides": false
+      }
+    }"#;
+    let parsed: Wrapper = serde_json::from_str(camel_case).expect("parse settings camelCase");
+    assert!(!parsed.editor.show_indent_guides);
+}
+
+#[test]
 fn test_scroll_step() {
     let config = EditorConfig::default();
     assert_eq!(config.scroll_step(), 1);

@@ -26,6 +26,19 @@ fn from_path_maps_all_supported_extensions() {
         ("a.hxx", Some(LanguageId::Cpp)),
         ("a.h", Some(LanguageId::Cpp)),
         ("a.java", Some(LanguageId::Java)),
+        ("a.json", Some(LanguageId::Json)),
+        ("a.yaml", Some(LanguageId::Yaml)),
+        ("a.yml", Some(LanguageId::Yaml)),
+        ("a.html", Some(LanguageId::Html)),
+        ("a.htm", Some(LanguageId::Html)),
+        ("a.xml", Some(LanguageId::Xml)),
+        ("a.xsl", Some(LanguageId::Xml)),
+        ("a.svg", Some(LanguageId::Xml)),
+        ("a.css", Some(LanguageId::Css)),
+        ("a.toml", Some(LanguageId::Toml)),
+        ("a.sh", Some(LanguageId::Bash)),
+        ("a.bash", Some(LanguageId::Bash)),
+        ("a.zsh", Some(LanguageId::Bash)),
         ("a.txt", None),
     ];
 
@@ -57,26 +70,59 @@ fn lsp_language_id_mapping_is_correct() {
 #[test]
 fn server_kind_mapping_is_correct() {
     let cases = [
-        (LanguageId::Rust, LspServerKind::RustAnalyzer),
-        (LanguageId::Go, LspServerKind::Gopls),
-        (LanguageId::Python, LspServerKind::Pyright),
+        (LanguageId::Rust, Some(LspServerKind::RustAnalyzer)),
+        (LanguageId::Go, Some(LspServerKind::Gopls)),
+        (LanguageId::Python, Some(LspServerKind::Pyright)),
         (
             LanguageId::JavaScript,
-            LspServerKind::TypeScriptLanguageServer,
+            Some(LspServerKind::TypeScriptLanguageServer),
         ),
         (
             LanguageId::TypeScript,
-            LspServerKind::TypeScriptLanguageServer,
+            Some(LspServerKind::TypeScriptLanguageServer),
         ),
-        (LanguageId::Jsx, LspServerKind::TypeScriptLanguageServer),
-        (LanguageId::Tsx, LspServerKind::TypeScriptLanguageServer),
-        (LanguageId::C, LspServerKind::Clangd),
-        (LanguageId::Cpp, LspServerKind::Clangd),
-        (LanguageId::Java, LspServerKind::Jdtls),
+        (
+            LanguageId::Jsx,
+            Some(LspServerKind::TypeScriptLanguageServer),
+        ),
+        (
+            LanguageId::Tsx,
+            Some(LspServerKind::TypeScriptLanguageServer),
+        ),
+        (LanguageId::C, Some(LspServerKind::Clangd)),
+        (LanguageId::Cpp, Some(LspServerKind::Clangd)),
+        (LanguageId::Java, Some(LspServerKind::Jdtls)),
     ];
 
     for (language, expected) in cases {
         assert_eq!(language.server_kind(), expected);
+    }
+}
+
+#[test]
+fn highlight_only_languages_have_no_server_kind() {
+    let highlight_only = [
+        LanguageId::Json,
+        LanguageId::Yaml,
+        LanguageId::Html,
+        LanguageId::Xml,
+        LanguageId::Css,
+        LanguageId::Toml,
+        LanguageId::Bash,
+    ];
+
+    for language in highlight_only {
+        assert_eq!(
+            language.server_kind(),
+            None,
+            "{:?} should not have a server kind",
+            language
+        );
+        assert!(
+            language.markers().is_empty(),
+            "{:?} should have empty markers",
+            language
+        );
     }
 }
 

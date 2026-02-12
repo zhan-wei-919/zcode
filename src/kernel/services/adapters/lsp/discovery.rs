@@ -44,6 +44,7 @@ pub(super) fn resolve_default_server_command(
         }
         LanguageId::C | LanguageId::Cpp => resolve_clangd_command().map(|cmd| (cmd, Vec::new())),
         LanguageId::Java => resolve_jdtls_command().map(|cmd| (cmd, Vec::new())),
+        _ => None,
     }
 }
 

@@ -751,3 +751,137 @@ fn experiment_highlight_lines_scale_baseline() {
 
     assert!(total_spans > 0);
 }
+
+#[test]
+fn test_highlight_json_string_number_keyword() {
+    let src = r#"{"name": "zcode", "version": 1, "active": true, "data": null}"#;
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.json"), &rope).expect("json syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, 1);
+    assert!(!spans[0].is_empty());
+
+    let idx_name_key = src.find("\"name\"").unwrap();
+    assert!(spans[0].iter().any(|s| s.kind == HighlightKind::String
+        && s.start <= idx_name_key
+        && idx_name_key < s.end));
+
+    let idx_true = src.find("true").unwrap();
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_true && idx_true < s.end));
+
+    let idx_null = src.find("null").unwrap();
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_null && idx_null < s.end));
+}
+
+#[test]
+fn test_highlight_yaml_string_keyword() {
+    let src = "name: zcode\nactive: true\ncount: 42\n# comment\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.yaml"), &rope).expect("yaml syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, rope.len_lines());
+    let all_spans: usize = spans.iter().map(Vec::len).sum();
+    assert!(all_spans > 0);
+
+    let comment_line = 3;
+    let idx_comment = 0;
+    assert!(spans[comment_line]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Comment
+            && s.start <= idx_comment
+            && idx_comment < s.end));
+}
+
+#[test]
+fn test_highlight_html_tags_and_attributes() {
+    let src = r#"<div class="main"><p>Hello</p></div>"#;
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.html"), &rope).expect("html syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, 1);
+    assert!(!spans[0].is_empty());
+
+    let idx_div = src.find("div").unwrap();
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_div && idx_div < s.end));
+
+    let idx_class = src.find("class").unwrap();
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Attribute && s.start <= idx_class && idx_class < s.end));
+
+    let idx_attr_val = src.find("\"main\"").unwrap();
+    assert!(spans[0].iter().any(|s| s.kind == HighlightKind::String
+        && s.start <= idx_attr_val
+        && idx_attr_val < s.end));
+}
+
+#[test]
+fn test_highlight_xml_tags_and_attributes() {
+    let src = r#"<root attr="val"><child/></root>"#;
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.xml"), &rope).expect("xml syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, 1);
+    assert!(!spans[0].is_empty());
+}
+
+#[test]
+fn test_highlight_css_selectors_and_properties() {
+    let src = ".main { color: red; font-size: 14px; }\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.css"), &rope).expect("css syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, 1);
+    assert!(!spans[0].is_empty());
+
+    let idx_class = src.find(".main").unwrap() + 1;
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Type && s.start <= idx_class && idx_class < s.end));
+
+    let idx_color = src.find("color").unwrap();
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Variable && s.start <= idx_color && idx_color < s.end));
+}
+
+#[test]
+fn test_highlight_toml_string_and_number() {
+    let src = "[package]\nname = \"zcode\"\nversion = 1\nenabled = true\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.toml"), &rope).expect("toml syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, rope.len_lines());
+    let all_spans: usize = spans.iter().map(Vec::len).sum();
+    assert!(all_spans > 0);
+
+    let line1_spans = &spans[1];
+    let line = "name = \"zcode\"";
+    let idx_str = line.find("\"zcode\"").unwrap();
+    assert!(line1_spans
+        .iter()
+        .any(|s| s.kind == HighlightKind::String && s.start <= idx_str && idx_str < s.end));
+}
+
+#[test]
+fn test_highlight_bash_commands_and_keywords() {
+    let src = "#!/bin/bash\nif [ -f file ]; then\n  echo \"hello\"\nfi\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.sh"), &rope).expect("bash syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, rope.len_lines());
+    let all_spans: usize = spans.iter().map(Vec::len).sum();
+    assert!(all_spans > 0);
+
+    let line2 = "  echo \"hello\"";
+    let idx_str = line2.find("\"hello\"").unwrap();
+    assert!(spans[2]
+        .iter()
+        .any(|s| s.kind == HighlightKind::String && s.start <= idx_str && idx_str < s.end));
+}
