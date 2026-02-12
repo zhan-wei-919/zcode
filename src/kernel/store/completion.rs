@@ -90,6 +90,43 @@ fn collect_matching_indices(
     matched
 }
 
+fn selected_visible_index(
+    completion: &CompletionPopupState,
+    visible_indices: &[usize],
+    selected_id: Option<u64>,
+) -> usize {
+    let Some(id) = selected_id else {
+        return 0;
+    };
+
+    let Some(item_idx) = completion.index_by_id.get(&id).copied() else {
+        return 0;
+    };
+
+    if completion
+        .all_items
+        .get(item_idx)
+        .is_none_or(|item| item.id != id)
+    {
+        return 0;
+    }
+
+    match visible_indices.binary_search(&item_idx) {
+        Ok(visible_idx) => visible_idx,
+        Err(_) => visible_indices
+            .iter()
+            .position(|idx| *idx == item_idx)
+            .unwrap_or(0),
+    }
+}
+
+fn debug_assert_monotonic_indices(indices: &[usize]) {
+    debug_assert!(
+        indices.windows(2).all(|pair| pair[0] <= pair[1]),
+        "completion visible indices must be monotonic"
+    );
+}
+
 pub(super) fn sync_completion_items_from_cache(
     completion: &mut CompletionPopupState,
     tab: &EditorTabState,
@@ -102,6 +139,9 @@ pub(super) fn sync_completion_items_from_cache(
     completion.reset_filter_cache_if_source_changed();
     let source_len = completion.all_items.len();
     let source_changed = !completion.filter_cache_valid;
+    if source_changed || completion.index_by_id.len() != source_len {
+        completion.rebuild_index_by_id();
+    }
 
     let selected_id = completion.selected_item().map(|item| item.id);
 
@@ -111,18 +151,18 @@ pub(super) fn sync_completion_items_from_cache(
         && prefix == completion.filter_cache_prefix
     {
         let cached_indices = completion.filter_cache_indices.as_slice();
-        let items_changed = source_changed || completion.visible_indices != cached_indices;
-        if items_changed {
+        let mut items_changed = source_changed;
+        if source_changed || completion.visible_indices.len() != cached_indices.len() {
             completion.visible_indices = cached_indices.to_vec();
+            items_changed = true;
+        } else {
+            debug_assert_eq!(
+                completion.visible_indices, cached_indices,
+                "cached completion indices diverged from visible indices"
+            );
         }
 
-        completion.selected = selected_id
-            .and_then(|id| {
-                cached_indices
-                    .iter()
-                    .position(|idx| completion.all_items[*idx].id == id)
-            })
-            .unwrap_or(0)
+        completion.selected = selected_visible_index(completion, cached_indices, selected_id)
             .min(cached_indices.len().saturating_sub(1));
         completion.visible = true;
         return items_changed;
@@ -147,20 +187,16 @@ pub(super) fn sync_completion_items_from_cache(
     if new_indices.is_empty() {
         new_indices.extend(0..source_len);
     }
+    debug_assert_monotonic_indices(&new_indices);
 
     let items_changed = source_changed || completion.visible_indices != new_indices;
 
     if items_changed {
         completion.visible_indices = new_indices.clone();
+        debug_assert_monotonic_indices(&completion.visible_indices);
     }
 
-    completion.selected = selected_id
-        .and_then(|id| {
-            new_indices
-                .iter()
-                .position(|idx| completion.all_items[*idx].id == id)
-        })
-        .unwrap_or(0)
+    completion.selected = selected_visible_index(completion, &new_indices, selected_id)
         .min(new_indices.len().saturating_sub(1));
 
     completion.filter_cache_prefix = prefix;
@@ -802,6 +838,69 @@ mod tests {
             completion.selected_item().map(|item| item.id),
             Some(selected_id)
         );
+    }
+
+    #[test]
+    fn sync_completion_items_keeps_selected_id_stable_with_large_visible_indices() {
+        let mut tab = tab_with_cursor("pri", 1);
+        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let mut completion = CompletionPopupState {
+            all_items: (0..5_000u64)
+                .map(|id| completion_item(id + 1, &format!("print_{id:04}")))
+                .collect(),
+            visible: true,
+            ..Default::default()
+        };
+
+        let _ = sync_completion_items_from_cache(&mut completion, &tab, strategy);
+        completion.selected = 3_200;
+        let selected_id = completion
+            .selected_item()
+            .map(|item| item.id)
+            .expect("selected item");
+
+        tab.buffer.set_cursor(0, 2);
+        let _ = sync_completion_items_from_cache(&mut completion, &tab, strategy);
+        assert_eq!(
+            completion.selected_item().map(|item| item.id),
+            Some(selected_id)
+        );
+
+        tab.buffer.set_cursor(0, 3);
+        let _ = sync_completion_items_from_cache(&mut completion, &tab, strategy);
+        assert_eq!(
+            completion.selected_item().map(|item| item.id),
+            Some(selected_id)
+        );
+    }
+
+    #[test]
+    fn sync_completion_items_selected_lookup_fallback_handles_unsorted_visible_indices() {
+        let tab = tab_with_cursor("", 0);
+        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let mut completion = CompletionPopupState {
+            all_items: vec![
+                completion_item(1, "alpha"),
+                completion_item(2, "beta"),
+                completion_item(3, "gamma"),
+            ],
+            visible: true,
+            visible_indices: vec![2, 0, 1],
+            selected: 1,
+            filter_cache_prefix: String::new(),
+            filter_cache_indices: vec![2, 0, 1],
+            filter_cache_source_len: 3,
+            filter_cache_valid: true,
+            ..Default::default()
+        };
+        completion.rebuild_index_by_id();
+
+        let selected_id = completion.selected_item().map(|item| item.id);
+        let changed = sync_completion_items_from_cache(&mut completion, &tab, strategy);
+
+        assert!(!changed);
+        assert_eq!(completion.selected, 1);
+        assert_eq!(completion.selected_item().map(|item| item.id), selected_id);
     }
 
     #[test]

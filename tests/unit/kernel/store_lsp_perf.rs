@@ -312,6 +312,90 @@ fn experiment_inlay_hints_fanout_scale_baseline() {
 }
 
 #[test]
+fn experiment_inlay_hints_apply_scale_baseline() {
+    let mut store = new_store();
+
+    let panes = 4usize;
+    let line_count = 100usize;
+    let hints_per_line = 10usize;
+    let hint_count = line_count * hints_per_line;
+    let loops = 120usize;
+    let path = store.state.workspace_root.join("apply_inlay.rs");
+    let content = rust_content(line_count);
+    let version = open_shared_path_tabs(&mut store, panes, &path, &content);
+
+    let range = LspRange {
+        start: LspPosition {
+            line: 0,
+            character: 0,
+        },
+        end: LspPosition {
+            line: (line_count - 1) as u32,
+            character: 0,
+        },
+    };
+
+    let base_hints: Vec<LspInlayHint> = (0..line_count)
+        .flat_map(|line| {
+            (0..hints_per_line).map(move |slot| LspInlayHint {
+                position: LspPosition {
+                    line: line as u32,
+                    character: (slot * 3 + 2) as u32,
+                },
+                label: format!(": hint_{line}_{slot}"),
+                padding_left: true,
+                padding_right: false,
+            })
+        })
+        .collect();
+
+    let _ = store.dispatch(Action::LspInlayHints {
+        path: path.clone(),
+        version,
+        range,
+        hints: base_hints.clone(),
+    });
+
+    let payloads: Vec<Vec<LspInlayHint>> = (0..loops)
+        .map(|i| {
+            let mut hints = base_hints.clone();
+            let idx = i % hint_count;
+            hints[idx].label.push_str(&format!("_update_{i}"));
+            hints
+        })
+        .collect();
+
+    let mut changed_count = 0usize;
+    let start = Instant::now();
+    for hints in payloads {
+        let result = store.dispatch(Action::LspInlayHints {
+            path: path.clone(),
+            version,
+            range,
+            hints,
+        });
+        if result.state_changed {
+            changed_count += 1;
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let avg_us = elapsed.as_secs_f64() * 1_000_000.0 / loops as f64;
+
+    eprintln!(
+        "[experiment] inlay_hints_apply loops={} tabs={} hints={} elapsed_ms={} avg_us={:.2} changed_count={}",
+        loops,
+        panes,
+        hint_count,
+        elapsed.as_millis(),
+        avg_us,
+        changed_count
+    );
+
+    assert!(changed_count > 0);
+}
+
+#[test]
 fn lsp_semantic_tokens_identical_payload_second_dispatch_is_noop() {
     let mut store = new_store();
     install_rust_lsp_caps(&mut store);
@@ -390,6 +474,78 @@ fn lsp_inlay_hints_identical_payload_second_dispatch_is_noop() {
         hints,
     });
     assert!(!second.state_changed);
+}
+
+#[test]
+fn lsp_inlay_hints_unsorted_payload_still_orders_by_column_then_label() {
+    let mut store = new_store();
+
+    let path = store.state.workspace_root.join("inlay_unsorted_payload.rs");
+    let content = rust_content(4);
+    let version = open_shared_path_tabs(&mut store, 1, &path, &content);
+
+    let range = LspRange {
+        start: LspPosition {
+            line: 0,
+            character: 0,
+        },
+        end: LspPosition {
+            line: 1,
+            character: 0,
+        },
+    };
+    let hints = vec![
+        LspInlayHint {
+            position: LspPosition {
+                line: 0,
+                character: 12,
+            },
+            label: "z12".to_string(),
+            padding_left: false,
+            padding_right: false,
+        },
+        LspInlayHint {
+            position: LspPosition {
+                line: 0,
+                character: 4,
+            },
+            label: "b4".to_string(),
+            padding_left: false,
+            padding_right: false,
+        },
+        LspInlayHint {
+            position: LspPosition {
+                line: 0,
+                character: 4,
+            },
+            label: "a4".to_string(),
+            padding_left: false,
+            padding_right: false,
+        },
+    ];
+
+    let result = store.dispatch(Action::LspInlayHints {
+        path,
+        version,
+        range,
+        hints,
+    });
+    assert!(result.state_changed);
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    let line = tab
+        .inlay_hint_lines(0, 1)
+        .and_then(|rows| rows.first())
+        .expect("inlay hint line");
+    assert_eq!(
+        line,
+        &vec!["a4".to_string(), "b4".to_string(), "z12".to_string()]
+    );
 }
 
 #[test]

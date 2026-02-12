@@ -179,6 +179,68 @@ fn hash_inlay_hints_payload(hints: &[crate::kernel::services::ports::LspInlayHin
     hasher.finish()
 }
 
+fn build_inlay_hint_lines_snapshot(
+    hints: &[crate::kernel::services::ports::LspInlayHint],
+    start_line: usize,
+    end_line_exclusive: usize,
+) -> Vec<Vec<String>> {
+    let line_count = end_line_exclusive.saturating_sub(start_line);
+    if line_count == 0 {
+        return Vec::new();
+    }
+
+    let mut counts = vec![0usize; line_count];
+    for hint in hints {
+        let line = hint.position.line as usize;
+        if line < start_line || line >= end_line_exclusive {
+            continue;
+        }
+        counts[line - start_line] = counts[line - start_line].saturating_add(1);
+    }
+
+    let mut per_line = counts
+        .into_iter()
+        .map(Vec::<(u32, String)>::with_capacity)
+        .collect::<Vec<_>>();
+    let mut needs_sort = vec![false; line_count];
+
+    for hint in hints {
+        let line = hint.position.line as usize;
+        if line < start_line || line >= end_line_exclusive {
+            continue;
+        }
+
+        let mut text = String::new();
+        if hint.padding_left {
+            text.push(' ');
+        }
+        text.push_str(hint.label.as_str());
+        if hint.padding_right {
+            text.push(' ');
+        }
+
+        let line_idx = line - start_line;
+        let row = &mut per_line[line_idx];
+        if let Some((prev_col, prev_text)) = row.last() {
+            let out_of_order = *prev_col > hint.position.character
+                || (*prev_col == hint.position.character && prev_text.as_str() > text.as_str());
+            if out_of_order {
+                needs_sort[line_idx] = true;
+            }
+        }
+        row.push((hint.position.character, text));
+    }
+
+    let mut lines = Vec::with_capacity(line_count);
+    for (line_idx, mut row) in per_line.into_iter().enumerate() {
+        if needs_sort[line_idx] && row.len() > 1 {
+            row.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        }
+        lines.push(row.into_iter().map(|(_, text)| text).collect());
+    }
+    lines
+}
+
 fn hash_folding_ranges_payload(ranges: &[crate::kernel::services::ports::LspFoldingRange]) -> u64 {
     let mut hasher = FxHasher::default();
     for range in ranges {
@@ -988,34 +1050,11 @@ impl super::Store {
                         }
 
                         if snapshot.is_none() {
-                            let mut per_line =
-                                vec![Vec::<(u32, String)>::new(); end_line_exclusive - start_line];
-
-                            for hint in &hints {
-                                let line = hint.position.line as usize;
-                                if line < start_line || line >= end_line_exclusive {
-                                    continue;
-                                }
-
-                                let mut text = String::new();
-                                if hint.padding_left {
-                                    text.push(' ');
-                                }
-                                text.push_str(hint.label.as_str());
-                                if hint.padding_right {
-                                    text.push(' ');
-                                }
-
-                                per_line[line - start_line].push((hint.position.character, text));
-                            }
-
-                            let mut lines = Vec::with_capacity(per_line.len());
-                            for mut row in per_line {
-                                row.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-                                lines.push(row.into_iter().map(|(_, s)| s).collect());
-                            }
-
-                            snapshot = Some(lines);
+                            snapshot = Some(build_inlay_hint_lines_snapshot(
+                                &hints,
+                                start_line,
+                                end_line_exclusive,
+                            ));
                         }
 
                         if let Some(lines) = snapshot.as_ref() {
