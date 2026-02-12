@@ -1,7 +1,60 @@
 use crate::models::{Granularity, Selection};
 
+use super::markdown::MarkdownDocument;
 use super::state::{EditorMouseState, EditorTabState};
 use super::viewport;
+
+/// For a markdown WYSIWYG line, convert a screen x position to a source column.
+fn screen_to_col_markdown(
+    md: &MarkdownDocument,
+    tab: &EditorTabState,
+    row: usize,
+    x: u16,
+    horiz_offset: u32,
+    viewport_width: usize,
+) -> Option<usize> {
+    let rendered = md.render_line(row, tab.buffer.rope(), viewport_width);
+
+    // Walk the display text graphemes to find which display byte offset corresponds to screen x
+    let target_x = horiz_offset + x as u32;
+    let mut display_col: u32 = 0;
+    let mut display_byte: usize = 0;
+
+    for g in rendered.text.graphemes(true) {
+        let w = g.width() as u32;
+        if display_col + w / 2 >= target_x {
+            break;
+        }
+        display_col += w;
+        display_byte += g.len();
+    }
+
+    // Map display byte to source byte
+    let src_byte_in_line =
+        super::markdown::display_to_source_byte(&rendered.offset_map, display_byte);
+
+    // Convert source byte to column (grapheme index within the line)
+    let rope = tab.buffer.rope();
+    let line_start_byte = rope.line_to_byte(row);
+    let line_end_byte = if row + 1 < rope.len_lines() {
+        rope.line_to_byte(row + 1)
+    } else {
+        rope.len_bytes()
+    };
+    let line_len_bytes = line_end_byte.saturating_sub(line_start_byte);
+    let clamped_src_byte_in_line = src_byte_in_line.min(line_len_bytes);
+    let abs_src_byte = line_start_byte + clamped_src_byte_in_line;
+
+    if abs_src_byte >= rope.len_bytes() {
+        return Some(tab.buffer.line_grapheme_len(row));
+    }
+    let src_char = rope.byte_to_char(abs_src_byte);
+    let line_start_char = rope.line_to_char(row);
+    Some(src_char.saturating_sub(line_start_char))
+}
+
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 fn click_granularity(
     mouse: &mut EditorMouseState,
@@ -56,8 +109,25 @@ impl EditorTabState {
             return false;
         };
 
-        let Some(col) = viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
-        else {
+        let cursor_row = self.buffer.cursor().0;
+        let col = if self.is_markdown() && row != cursor_row {
+            if let Some(md) = self.markdown() {
+                screen_to_col_markdown(
+                    md,
+                    self,
+                    row,
+                    x,
+                    self.viewport.horiz_offset,
+                    self.viewport.width,
+                )
+            } else {
+                viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
+            }
+        } else {
+            viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
+        };
+
+        let Some(col) = col else {
             return false;
         };
         let pos = (row, col);
@@ -81,8 +151,25 @@ impl EditorTabState {
             return false;
         };
 
-        let Some(col) = viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
-        else {
+        let cursor_row = self.buffer.cursor().0;
+        let col = if self.is_markdown() && row != cursor_row {
+            if let Some(md) = self.markdown() {
+                screen_to_col_markdown(
+                    md,
+                    self,
+                    row,
+                    x,
+                    self.viewport.horiz_offset,
+                    self.viewport.width,
+                )
+            } else {
+                viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
+            }
+        } else {
+            viewport::screen_to_col(&self.viewport, &self.buffer, tab_size, row, x)
+        };
+
+        let Some(col) = col else {
             return false;
         };
 

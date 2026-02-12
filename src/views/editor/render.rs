@@ -1,4 +1,5 @@
 use crate::core::text_window;
+use crate::kernel::editor::markdown::{MdRenderedLine, MdSpanKind};
 use crate::kernel::editor::{
     cursor_display_x_abs, EditorPaneState, EditorTabState, HighlightKind, HighlightSpan,
     SearchBarField, SearchBarMode, SearchBarState,
@@ -641,6 +642,9 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
     let tab_size = tab_size.max(1) as u32;
 
+    let is_markdown = tab.is_markdown();
+    let cursor_row = tab.buffer.cursor().0;
+
     let bottom = area.bottom();
     for y in area.y..bottom {
         let screen_row = (y - area.y) as usize;
@@ -648,13 +652,55 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             continue;
         };
 
+        // For markdown non-cursor lines, use WYSIWYG rendering
+        if is_markdown && row != cursor_row {
+            if let Some(md) = tab.markdown() {
+                let rendered = md.render_line(row, tab.buffer.rope(), area.w as usize);
+                paint_markdown_line(
+                    painter,
+                    &rendered,
+                    tab,
+                    row,
+                    y,
+                    area,
+                    horiz_offset,
+                    base_style,
+                    selection_style,
+                    theme,
+                );
+                continue;
+            }
+        }
+
         let selection_range =
             selection_range_for_row(tab.buffer.selection(), row).unwrap_or((0, 0));
         let has_selection = tab.buffer.selection().is_some_and(|s| !s.is_empty());
 
-        let highlight_spans = highlight_lines
-            .and_then(|lines| lines.get(screen_row))
-            .map(|spans| spans.as_slice());
+        // For markdown cursor lines, use markdown source highlighting if no tree-sitter
+        let highlight_spans = if is_markdown {
+            None // We'll use md_source_spans below
+        } else {
+            highlight_lines
+                .and_then(|lines| lines.get(screen_row))
+                .map(|spans| spans.as_slice())
+        };
+
+        let md_source_spans: Vec<HighlightSpan>;
+        let highlight_spans = if is_markdown && highlight_spans.is_none() {
+            if let Some(md) = tab.markdown() {
+                md_source_spans = md.highlight_source_line(row, tab.buffer.rope());
+                if md_source_spans.is_empty() {
+                    None
+                } else {
+                    Some(md_source_spans.as_slice())
+                }
+            } else {
+                highlight_spans
+            }
+        } else {
+            highlight_spans
+        };
+
         let semantic_spans = tab.semantic_highlight_line(row);
         let inlay_hints = tab.inlay_hint_line(row);
 
@@ -791,9 +837,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             let indent_len = line.len().saturating_sub(line.trim_start().len());
             if indent_len > 0 {
                 let indent_prefix = &line[..indent_len];
-                // Collect expanded display ranges for each leading whitespace char so we can
-                // compute selection background for the cell we overlay.
-                let mut spans: Vec<(u32, u32, usize)> = Vec::new();
+                let mut spans_vec: Vec<(u32, u32, usize)> = Vec::new();
 
                 let mut col: u32 = 0;
                 for (g_idx, ch) in indent_prefix.chars().enumerate() {
@@ -814,12 +858,9 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                     }
 
                     col = col.saturating_add(w);
-                    spans.push((start, col, g_idx));
+                    spans_vec.push((start, col, g_idx));
                 }
 
-                // Place one guide per full indent level at the *start* of the level (0, 4, 8..).
-                // This avoids drawing a bar immediately before code (which looks too heavy in a
-                // cell-based TUI).
                 let indent_width = col;
                 let mut level_start_col: u32 = 0;
                 while level_start_col.saturating_add(tab_size) <= indent_width {
@@ -838,7 +879,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                         continue;
                     }
 
-                    let guide_g_idx = spans
+                    let guide_g_idx = spans_vec
                         .iter()
                         .find(|(start, end, _)| *start <= guide_col && guide_col < *end)
                         .map(|(_, _, g_idx)| *g_idx);
@@ -891,6 +932,131 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                 }
             }
         }
+    }
+}
+
+/// Paint a single WYSIWYG-rendered markdown line.
+#[allow(clippy::too_many_arguments)]
+fn paint_markdown_line(
+    painter: &mut Painter,
+    rendered: &MdRenderedLine,
+    tab: &EditorTabState,
+    row: usize,
+    y: u16,
+    area: Rect,
+    horiz_offset: u32,
+    base_style: Style,
+    selection_style: Style,
+    theme: &Theme,
+) {
+    let right = area.right();
+    let row_clip = Rect::new(area.x, y, area.w, 1);
+    let text = rendered.text.as_str();
+
+    if text.is_empty() {
+        return;
+    }
+
+    // Check for selection on this row (map through offset_map)
+    let selection = tab.buffer.selection();
+    let sel_range = selection_range_for_row(selection, row).unwrap_or((0, 0));
+    let has_selection = selection.is_some_and(|s| !s.is_empty()) && sel_range.0 != sel_range.1;
+
+    // Paint grapheme by grapheme with style spans
+    let mut x = area.x;
+    let mut byte_offset: usize = 0;
+    let mut span_idx: usize = 0;
+    let mut display_col: u32 = 0;
+
+    for g in text.graphemes(true) {
+        let g_start = byte_offset;
+        byte_offset += g.len();
+        let g_width = g.width() as u32;
+
+        if g_width == 0 {
+            continue;
+        }
+
+        if display_col + g_width <= horiz_offset {
+            display_col += g_width;
+            continue;
+        }
+
+        if x >= right {
+            break;
+        }
+
+        // Determine style from MdStyleSpan list
+        let mut style = base_style;
+
+        // Check if this display byte falls within a selection (map to source coords)
+        if has_selection && !rendered.offset_map.is_empty() {
+            let src_byte = crate::kernel::editor::markdown::display_to_source_byte(
+                &rendered.offset_map,
+                g_start,
+            );
+            // Convert source byte to grapheme index for selection comparison
+            let rope = tab.buffer.rope();
+            if src_byte < rope.len_bytes() {
+                let src_char = rope.byte_to_char(src_byte);
+                let src_line_start_char = rope.line_to_char(row);
+                let col = src_char.saturating_sub(src_line_start_char);
+                if col >= sel_range.0 && col < sel_range.1 {
+                    style = selection_style;
+                }
+            }
+        }
+
+        // Apply markdown style spans (if not overridden by selection)
+        if style == base_style {
+            while span_idx < rendered.spans.len() && rendered.spans[span_idx].end <= g_start {
+                span_idx += 1;
+            }
+            let mut probe = span_idx;
+            while let Some(span) = rendered.spans.get(probe) {
+                if span.start > g_start {
+                    break;
+                }
+                if g_start >= span.start && g_start < span.end {
+                    style = style.patch(style_for_md_span(span.kind, theme));
+                }
+                probe += 1;
+            }
+        }
+
+        let w = g_width.min(u16::MAX as u32) as u16;
+        if x.saturating_add(w) > right {
+            break;
+        }
+
+        painter.text_clipped(Pos::new(x, y), g, style, row_clip);
+        x = x.saturating_add(w);
+        display_col += g_width;
+    }
+}
+
+fn style_for_md_span(kind: MdSpanKind, theme: &Theme) -> Style {
+    match kind {
+        MdSpanKind::Heading(level) => {
+            let fg = match level {
+                1 => theme.md_heading1_fg,
+                2 => theme.md_heading2_fg,
+                3 => theme.md_heading3_fg,
+                4 => theme.md_heading4_fg,
+                5 => theme.md_heading5_fg,
+                _ => theme.md_heading6_fg,
+            };
+            Style::default().fg(fg).add_mod(Mod::BOLD)
+        }
+        MdSpanKind::Link => Style::default().fg(theme.md_link_fg),
+        MdSpanKind::Code => Style::default().fg(theme.md_code_fg).add_mod(Mod::BOLD),
+        MdSpanKind::Bold => Style::default().add_mod(Mod::BOLD),
+        MdSpanKind::Italic => Style::default().add_mod(Mod::ITALIC),
+        MdSpanKind::Strike => Style::default().add_mod(Mod::DIM),
+        MdSpanKind::Marker => Style::default().fg(theme.md_marker_fg).add_mod(Mod::DIM),
+        MdSpanKind::BlockquoteText => Style::default().fg(theme.md_blockquote_fg),
+        MdSpanKind::BlockquoteBar => Style::default().fg(theme.md_blockquote_bar),
+        MdSpanKind::HorizontalRule => Style::default().fg(theme.md_hr_fg),
     }
 }
 

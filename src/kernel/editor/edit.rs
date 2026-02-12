@@ -716,6 +716,9 @@ impl EditorTabState {
     fn commit_op(&mut self, op: EditOp, tab_size: u8) {
         self.apply_syntax_edit(&op);
         self.invalidate_semantic_highlight_on_edit(&op);
+        if let Some(md) = self.markdown.as_mut() {
+            md.apply_edit(&op, self.buffer.rope(), self.edit_version.saturating_add(1));
+        }
         self.last_edit_op = Some(op.clone());
         self.reset_cursor_goal_col();
         self.history.push(op, self.buffer.rope());

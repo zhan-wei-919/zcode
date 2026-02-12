@@ -99,6 +99,7 @@ impl SyntaxDocument {
             LanguageId::Css => parser.set_language(tree_sitter_css::language()).ok()?,
             LanguageId::Toml => parser.set_language(tree_sitter_toml::language()).ok()?,
             LanguageId::Bash => parser.set_language(tree_sitter_bash::language()).ok()?,
+            LanguageId::Markdown => return None,
         }
 
         let tree = parse_rope(&mut parser, rope, None)?;
@@ -260,6 +261,7 @@ pub fn highlight_snippet(language: LanguageId, text: &str) -> Vec<Vec<HighlightS
         LanguageId::Css => parser.set_language(tree_sitter_css::language()).is_ok(),
         LanguageId::Toml => parser.set_language(tree_sitter_toml::language()).is_ok(),
         LanguageId::Bash => parser.set_language(tree_sitter_bash::language()).is_ok(),
+        LanguageId::Markdown => false,
     };
     if !language_set {
         return vec![Vec::new(); total_lines];
@@ -717,7 +719,7 @@ fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<Hi
                 return Some(kind);
             }
         }
-        LanguageId::Json | LanguageId::Yaml | LanguageId::Toml => {}
+        LanguageId::Json | LanguageId::Yaml | LanguageId::Toml | LanguageId::Markdown => {}
         LanguageId::Html | LanguageId::Xml => {
             if let Some(kind) = classify_markup_node(node) {
                 return Some(kind);
@@ -1170,6 +1172,7 @@ fn is_keyword(language: LanguageId, kind: &str) -> bool {
         LanguageId::Html | LanguageId::Xml => false,
         LanguageId::Css => false,
         LanguageId::Bash => is_bash_keyword(kind),
+        LanguageId::Markdown => false,
     }
 }
 

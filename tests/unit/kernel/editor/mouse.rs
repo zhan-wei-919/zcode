@@ -1,5 +1,6 @@
 use crate::kernel::editor::{EditorTabState, TabId};
 use crate::kernel::services::ports::EditorConfig;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -15,6 +16,14 @@ fn tab_with_content(text: &str, viewport_height: usize) -> EditorTabState {
 fn start_drag(tab: &mut EditorTabState) {
     let tab_size = EditorConfig::default().tab_size;
     tab.mouse_down(0, 0, Instant::now(), tab_size, 2, 500);
+}
+
+fn markdown_tab_with_content(text: &str, viewport_height: usize) -> EditorTabState {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(TabId::new(2), PathBuf::from("doc.md"), text, &config);
+    tab.viewport.height = viewport_height;
+    tab.viewport.width = 80;
+    tab
 }
 
 #[test]
@@ -162,4 +171,17 @@ fn double_click_right_half_selects_full_word() {
     double_click_selects_word_at_column(&mut tab, x, now);
 
     assert_eq!(tab.buffer.get_selection_text().as_deref(), Some("adapters"));
+}
+
+#[test]
+fn markdown_mouse_down_at_visual_line_end_maps_to_source_line_end() {
+    let mut tab = markdown_tab_with_content("cursor line\n- `abc`\n", 10);
+    let config = EditorConfig::default();
+    let now = Instant::now();
+
+    assert!(tab.mouse_down(60, 1, now, config.tab_size, config.click_slop, 500));
+    let (row, col) = tab.buffer.cursor();
+
+    assert_eq!(row, 1);
+    assert_eq!(col, tab.buffer.line_grapheme_len(1));
 }

@@ -43,6 +43,19 @@ pub struct UiTheme {
     pub sidebar_bg: Color,
     pub popup_bg: Color,
     pub statusbar_bg: Color,
+    pub md_heading1_fg: Color,
+    pub md_heading2_fg: Color,
+    pub md_heading3_fg: Color,
+    pub md_heading4_fg: Color,
+    pub md_heading5_fg: Color,
+    pub md_heading6_fg: Color,
+    pub md_link_fg: Color,
+    pub md_code_fg: Color,
+    pub md_code_bg: Color,
+    pub md_blockquote_fg: Color,
+    pub md_blockquote_bar: Color,
+    pub md_hr_fg: Color,
+    pub md_marker_fg: Color,
 }
 
 impl Default for UiTheme {
@@ -85,6 +98,19 @@ impl Default for UiTheme {
             sidebar_bg: Color::Reset,
             popup_bg: Color::Reset,
             statusbar_bg: Color::Reset,
+            md_heading1_fg: Color::Rgb(0x56, 0x9C, 0xD6),
+            md_heading2_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
+            md_heading3_fg: Color::Rgb(0xDC, 0xDC, 0xAA),
+            md_heading4_fg: Color::Rgb(0xCE, 0x91, 0x78),
+            md_heading5_fg: Color::Rgb(0xC5, 0x86, 0xC0),
+            md_heading6_fg: Color::Rgb(0x6A, 0x99, 0x55),
+            md_link_fg: Color::Rgb(0x56, 0x9C, 0xD6),
+            md_code_fg: Color::Rgb(0xCE, 0x91, 0x78),
+            md_code_bg: Color::Rgb(0x30, 0x30, 0x30),
+            md_blockquote_fg: Color::Indexed(8),
+            md_blockquote_bar: Color::Indexed(8),
+            md_hr_fg: Color::Indexed(8),
+            md_marker_fg: Color::Indexed(8),
         }
     }
 }
@@ -360,5 +386,18 @@ pub(crate) fn to_core_theme(theme: &UiTheme) -> CoreTheme {
         sidebar_bg: theme.sidebar_bg,
         popup_bg: theme.popup_bg,
         statusbar_bg: theme.statusbar_bg,
+        md_heading1_fg: theme.md_heading1_fg,
+        md_heading2_fg: theme.md_heading2_fg,
+        md_heading3_fg: theme.md_heading3_fg,
+        md_heading4_fg: theme.md_heading4_fg,
+        md_heading5_fg: theme.md_heading5_fg,
+        md_heading6_fg: theme.md_heading6_fg,
+        md_link_fg: theme.md_link_fg,
+        md_code_fg: theme.md_code_fg,
+        md_code_bg: theme.md_code_bg,
+        md_blockquote_fg: theme.md_blockquote_fg,
+        md_blockquote_bar: theme.md_blockquote_bar,
+        md_hr_fg: theme.md_hr_fg,
+        md_marker_fg: theme.md_marker_fg,
     }
 }

@@ -341,6 +341,13 @@ fn language_id_for_fence(lang: &str) -> Option<LanguageId> {
         "jsx" | "javascriptreact" => Some(LanguageId::Jsx),
         "typescript" | "ts" => Some(LanguageId::TypeScript),
         "tsx" | "typescriptreact" => Some(LanguageId::Tsx),
+        "json" => Some(LanguageId::Json),
+        "yaml" | "yml" => Some(LanguageId::Yaml),
+        "html" | "htm" => Some(LanguageId::Html),
+        "xml" => Some(LanguageId::Xml),
+        "css" => Some(LanguageId::Css),
+        "toml" => Some(LanguageId::Toml),
+        "bash" | "sh" | "shell" | "zsh" => Some(LanguageId::Bash),
         _ => None,
     }
 }

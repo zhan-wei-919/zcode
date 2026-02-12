@@ -41,6 +41,19 @@ pub enum Token {
     SidebarBg,
     PopupBg,
     StatusbarBg,
+    MdHeading1Fg,
+    MdHeading2Fg,
+    MdHeading3Fg,
+    MdHeading4Fg,
+    MdHeading5Fg,
+    MdHeading6Fg,
+    MdLinkFg,
+    MdCodeFg,
+    MdCodeBg,
+    MdBlockquoteFg,
+    MdBlockquoteBar,
+    MdHrFg,
+    MdMarkerFg,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +95,19 @@ pub struct Theme {
     pub sidebar_bg: Color,
     pub popup_bg: Color,
     pub statusbar_bg: Color,
+    pub md_heading1_fg: Color,
+    pub md_heading2_fg: Color,
+    pub md_heading3_fg: Color,
+    pub md_heading4_fg: Color,
+    pub md_heading5_fg: Color,
+    pub md_heading6_fg: Color,
+    pub md_link_fg: Color,
+    pub md_code_fg: Color,
+    pub md_code_bg: Color,
+    pub md_blockquote_fg: Color,
+    pub md_blockquote_bar: Color,
+    pub md_hr_fg: Color,
+    pub md_marker_fg: Color,
 }
 
 impl Theme {
@@ -123,6 +149,19 @@ impl Theme {
             Token::SidebarBg => self.sidebar_bg,
             Token::PopupBg => self.popup_bg,
             Token::StatusbarBg => self.statusbar_bg,
+            Token::MdHeading1Fg => self.md_heading1_fg,
+            Token::MdHeading2Fg => self.md_heading2_fg,
+            Token::MdHeading3Fg => self.md_heading3_fg,
+            Token::MdHeading4Fg => self.md_heading4_fg,
+            Token::MdHeading5Fg => self.md_heading5_fg,
+            Token::MdHeading6Fg => self.md_heading6_fg,
+            Token::MdLinkFg => self.md_link_fg,
+            Token::MdCodeFg => self.md_code_fg,
+            Token::MdCodeBg => self.md_code_bg,
+            Token::MdBlockquoteFg => self.md_blockquote_fg,
+            Token::MdBlockquoteBar => self.md_blockquote_bar,
+            Token::MdHrFg => self.md_hr_fg,
+            Token::MdMarkerFg => self.md_marker_fg,
         }
     }
 }
@@ -167,6 +206,19 @@ impl Default for Theme {
             sidebar_bg: Color::Reset,
             popup_bg: Color::Reset,
             statusbar_bg: Color::Reset,
+            md_heading1_fg: Color::Rgb(0x56, 0x9C, 0xD6), // Blue
+            md_heading2_fg: Color::Rgb(0x4E, 0xC9, 0xB0), // Teal
+            md_heading3_fg: Color::Rgb(0xDC, 0xDC, 0xAA), // Yellow
+            md_heading4_fg: Color::Rgb(0xCE, 0x91, 0x78), // Orange
+            md_heading5_fg: Color::Rgb(0xC5, 0x86, 0xC0), // Purple
+            md_heading6_fg: Color::Rgb(0x6A, 0x99, 0x55), // Green
+            md_link_fg: Color::Rgb(0x56, 0x9C, 0xD6),     // Blue
+            md_code_fg: Color::Rgb(0xCE, 0x91, 0x78),     // Orange
+            md_code_bg: Color::Rgb(0x30, 0x30, 0x30),     // Dark gray
+            md_blockquote_fg: Color::Indexed(8),          // DarkGray
+            md_blockquote_bar: Color::Indexed(8),         // DarkGray
+            md_hr_fg: Color::Indexed(8),                  // DarkGray
+            md_marker_fg: Color::Indexed(8),              // DarkGray
         }
     }
 }

@@ -2,6 +2,7 @@
 
 mod action;
 mod edit;
+pub mod markdown;
 mod mouse;
 mod reducer;
 mod search;

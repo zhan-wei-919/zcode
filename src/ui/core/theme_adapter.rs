@@ -45,6 +45,19 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
         sidebar_bg: map_color_for_support(theme.sidebar_bg, support),
         popup_bg: map_color_for_support(theme.popup_bg, support),
         statusbar_bg: map_color_for_support(theme.statusbar_bg, support),
+        md_heading1_fg: map_color_for_support(theme.md_heading1_fg, support),
+        md_heading2_fg: map_color_for_support(theme.md_heading2_fg, support),
+        md_heading3_fg: map_color_for_support(theme.md_heading3_fg, support),
+        md_heading4_fg: map_color_for_support(theme.md_heading4_fg, support),
+        md_heading5_fg: map_color_for_support(theme.md_heading5_fg, support),
+        md_heading6_fg: map_color_for_support(theme.md_heading6_fg, support),
+        md_link_fg: map_color_for_support(theme.md_link_fg, support),
+        md_code_fg: map_color_for_support(theme.md_code_fg, support),
+        md_code_bg: map_color_for_support(theme.md_code_bg, support),
+        md_blockquote_fg: map_color_for_support(theme.md_blockquote_fg, support),
+        md_blockquote_bar: map_color_for_support(theme.md_blockquote_bar, support),
+        md_hr_fg: map_color_for_support(theme.md_hr_fg, support),
+        md_marker_fg: map_color_for_support(theme.md_marker_fg, support),
     };
 
     apply_non_truecolor_syntax_palette(&mut adapted, theme, support);
