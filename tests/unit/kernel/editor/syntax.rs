@@ -1,4 +1,5 @@
 use super::*;
+use crate::models::{EditOp, OpId};
 use ropey::Rope;
 use std::path::Path;
 use std::time::Instant;
@@ -636,6 +637,78 @@ fn test_highlight_line_spans_are_sorted_and_non_overlapping() {
             let right = pair[1];
             assert!(left.start <= right.start);
             assert!(left.end <= right.start);
+        }
+    }
+}
+
+#[test]
+fn test_highlight_lines_cache_hit_returns_same_spans() {
+    let src = "fn alpha() { let x = 1; }\nfn beta() { let y = 2; }\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("cache_hit.rs"), &rope).expect("rust syntax");
+
+    let first = doc.highlight_lines(&rope, 0, 2);
+    let second = doc.highlight_lines(&rope, 0, 2);
+    assert_eq!(first, second);
+}
+
+#[test]
+fn test_apply_edit_invalidates_highlight_cache_and_updates_result() {
+    let src = "fn main() { let value = 1; }\n";
+    let mut rope = Rope::from_str(src);
+    let mut doc = SyntaxDocument::for_path(Path::new("cache_edit.rs"), &rope).expect("rust syntax");
+
+    let before = doc.highlight_lines(&rope, 0, 1);
+    assert!(!before[0]
+        .iter()
+        .any(|span| span.kind == HighlightKind::Comment));
+
+    let insert_at = src.find("let").expect("insert position");
+    let op = EditOp::insert(
+        OpId::root(),
+        insert_at,
+        "// note ".to_string(),
+        (0, 0),
+        (0, 0),
+    );
+    op.apply(&mut rope);
+    doc.apply_edit(&rope, &op);
+
+    let after = doc.highlight_lines(&rope, 0, 1);
+    assert!(after[0]
+        .iter()
+        .any(|span| span.kind == HighlightKind::Comment));
+}
+
+#[test]
+fn test_large_file_range_highlight_preserves_sorted_non_overlapping_spans() {
+    let lines = 21_000usize;
+    let mut src = String::new();
+    for i in 0..lines {
+        src.push_str(&format!(
+            "fn item_{i:05}() {{ let value_{i} = {i}; if value_{i} > 0 {{ println!(\"{}\", value_{i}); }} }}\n",
+            i
+        ));
+    }
+
+    let rope = Rope::from_str(&src);
+    let doc = SyntaxDocument::for_path(Path::new("large_range.rs"), &rope).expect("rust syntax");
+    let start = 10_000usize;
+    let end = start + 220usize;
+
+    let first = doc.highlight_lines(&rope, start, end);
+    let second = doc.highlight_lines(&rope, start, end);
+    assert_eq!(first, second);
+
+    for (line_index, line) in first.iter().enumerate() {
+        let line_len = rope.line(start + line_index).len_bytes();
+        for span in line {
+            assert!(span.start < span.end);
+            assert!(span.end <= line_len);
+        }
+        for pair in line.windows(2) {
+            assert!(pair[0].start <= pair[1].start);
+            assert!(pair[0].end <= pair[1].start);
         }
     }
 }

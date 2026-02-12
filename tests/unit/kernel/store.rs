@@ -1277,6 +1277,100 @@ fn completion_selected_id_stays_stable_when_visible_indices_change() {
 }
 
 #[test]
+fn completion_index_map_matches_visible_indices_after_lsp_completion() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "pr\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::RunCommand(Command::CursorLineEnd));
+    let _ = store.dispatch(Action::RunCommand(Command::LspCompletion));
+
+    let items = vec![
+        test_completion_item(11, "println!"),
+        test_completion_item(12, "print"),
+        test_completion_item(13, "probe"),
+    ];
+    let _ = store.dispatch(Action::LspCompletion {
+        items,
+        is_incomplete: false,
+    });
+
+    let completion = &store.state.ui.completion;
+    assert_eq!(completion.index_by_id.len(), completion.all_items.len());
+    for idx in &completion.visible_indices {
+        let item = completion
+            .all_items
+            .get(*idx)
+            .expect("visible index must point to item");
+        assert_eq!(completion.index_by_id.get(&item.id).copied(), Some(*idx));
+    }
+}
+
+#[test]
+fn lsp_completion_resolved_repairs_stale_index_map_via_fallback() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "pr\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::RunCommand(Command::CursorLineEnd));
+    let _ = store.dispatch(Action::RunCommand(Command::LspCompletion));
+
+    let _ = store.dispatch(Action::LspCompletion {
+        items: vec![
+            test_completion_item(101, "print"),
+            test_completion_item(102, "probe"),
+        ],
+        is_incomplete: false,
+    });
+
+    // Force a stale mapping: id 102 points to an invalid index.
+    store
+        .state
+        .ui
+        .completion
+        .index_by_id
+        .insert(102, usize::MAX);
+
+    let result = store.dispatch(Action::LspCompletionResolved {
+        id: 102,
+        detail: Some("resolved".to_string()),
+        documentation: None,
+        insert_text: None,
+        insert_text_format: None,
+        insert_range: None,
+        replace_range: None,
+        additional_text_edits: Vec::new(),
+        command: None,
+    });
+    assert!(result.state_changed);
+
+    let idx = store
+        .state
+        .ui
+        .completion
+        .all_items
+        .iter()
+        .position(|item| item.id == 102)
+        .expect("resolved item index");
+    assert_eq!(
+        store.state.ui.completion.index_by_id.get(&102).copied(),
+        Some(idx)
+    );
+    assert_eq!(
+        store.state.ui.completion.all_items[idx].detail.as_deref(),
+        Some("resolved")
+    );
+}
+
+#[test]
 fn lsp_completion_resolve_updates_insert_payload_fields() {
     let mut store = new_store();
     store.state.ui.focus = FocusTarget::Editor;

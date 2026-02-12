@@ -470,6 +470,40 @@ fn lsp_semantic_tokens_legend_change_misses_fast_path() {
 }
 
 #[test]
+fn lsp_completion_resolve_updates_large_list_item_with_index_map() {
+    let mut store = new_store();
+    let items_count = 20_000usize;
+    let target_id = (items_count.saturating_sub(1)) as u64;
+    store.state.ui.completion.visible = true;
+    store.state.ui.completion.all_items =
+        (0..items_count as u64).map(test_completion_item).collect();
+    store.state.ui.completion.visible_indices = (0..items_count).collect();
+    store.state.ui.completion.rebuild_index_by_id();
+    store.state.ui.completion.resolve_inflight = Some(target_id);
+
+    let result = store.dispatch(Action::LspCompletionResolved {
+        id: target_id,
+        detail: Some("resolved".to_string()),
+        documentation: Some("doc".to_string()),
+        insert_text: None,
+        insert_text_format: None,
+        insert_range: None,
+        replace_range: None,
+        additional_text_edits: Vec::new(),
+        command: None,
+    });
+
+    assert!(result.state_changed);
+    assert!(store
+        .state
+        .ui
+        .completion
+        .all_items
+        .iter()
+        .any(|item| item.id == target_id && item.detail.as_deref() == Some("resolved")));
+}
+
+#[test]
 fn experiment_folding_ranges_fanout_scale_baseline() {
     let mut store = new_store();
 
@@ -545,6 +579,7 @@ fn experiment_completion_resolve_apply_scale_baseline() {
     store.state.ui.completion.visible = true;
     store.state.ui.completion.all_items = all_items;
     store.state.ui.completion.visible_indices = (0..visible_items.len()).collect();
+    store.state.ui.completion.rebuild_index_by_id();
     store.state.ui.completion.resolve_inflight = Some(1);
 
     let insert_range = LspRange {

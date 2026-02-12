@@ -3,6 +3,7 @@
 use crate::kernel::language::LanguageId;
 use crate::models::EditOp;
 use ropey::Rope;
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -40,10 +41,31 @@ struct AbsHighlightSpan {
     depth: usize,
 }
 
+const FULL_CACHE_MAX_LINES: usize = 20_000;
+const FULL_CACHE_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Debug, Clone)]
+struct FullDocHighlightCache {
+    line_count: usize,
+    byte_len: usize,
+    lines: Vec<Vec<HighlightSpan>>,
+}
+
+#[derive(Debug, Clone)]
+struct RangeHighlightCache {
+    start_line: usize,
+    end_line_exclusive: usize,
+    line_count: usize,
+    byte_len: usize,
+    lines: Vec<Vec<HighlightSpan>>,
+}
+
 pub struct SyntaxDocument {
     language: LanguageId,
     parser: Parser,
     tree: Tree,
+    full_doc_cache: RefCell<Option<FullDocHighlightCache>>,
+    range_cache: RefCell<Option<RangeHighlightCache>>,
 }
 
 impl SyntaxDocument {
@@ -77,6 +99,8 @@ impl SyntaxDocument {
             language,
             parser,
             tree,
+            full_doc_cache: RefCell::new(None),
+            range_cache: RefCell::new(None),
         })
     }
 
@@ -84,10 +108,16 @@ impl SyntaxDocument {
         self.language
     }
 
+    fn clear_highlight_cache(&self) {
+        *self.full_doc_cache.borrow_mut() = None;
+        *self.range_cache.borrow_mut() = None;
+    }
+
     pub fn reparse(&mut self, rope: &Rope) {
         if let Some(tree) = parse_rope(&mut self.parser, rope, None) {
             self.tree = tree;
         }
+        self.clear_highlight_cache();
     }
 
     pub fn apply_edit(&mut self, rope: &Rope, op: &EditOp) {
@@ -101,7 +131,9 @@ impl SyntaxDocument {
             self.tree = tree;
         } else {
             self.reparse(rope);
+            return;
         }
+        self.clear_highlight_cache();
     }
 
     pub fn is_in_string_or_comment(&self, byte_offset: usize) -> bool {
@@ -139,49 +171,54 @@ impl SyntaxDocument {
             return Vec::new();
         }
 
+        let byte_len = rope.len_bytes();
+        if total_lines <= FULL_CACHE_MAX_LINES && byte_len <= FULL_CACHE_MAX_BYTES {
+            if let Some(cache) = self.full_doc_cache.borrow().as_ref() {
+                if cache.line_count == total_lines && cache.byte_len == byte_len {
+                    return cache.lines[start_line..end_line_exclusive].to_vec();
+                }
+            }
+
+            let range_start = rope.line_to_byte(0);
+            let range_end = rope.line_to_byte(total_lines);
+            let spans = collect_highlights(self.language, &self.tree, rope, range_start, range_end);
+            let lines = project_abs_spans_to_lines(rope, 0, total_lines, &spans);
+            *self.full_doc_cache.borrow_mut() = Some(FullDocHighlightCache {
+                line_count: total_lines,
+                byte_len,
+                lines,
+            });
+
+            return self
+                .full_doc_cache
+                .borrow()
+                .as_ref()
+                .map(|cache| cache.lines[start_line..end_line_exclusive].to_vec())
+                .unwrap_or_default();
+        }
+
+        if let Some(cache) = self.range_cache.borrow().as_ref() {
+            if cache.start_line == start_line
+                && cache.end_line_exclusive == end_line_exclusive
+                && cache.line_count == total_lines
+                && cache.byte_len == byte_len
+            {
+                return cache.lines.clone();
+            }
+        }
+
         let range_start = rope.line_to_byte(start_line);
         let range_end = rope.line_to_byte(end_line_exclusive);
-
         let spans = collect_highlights(self.language, &self.tree, rope, range_start, range_end);
-
-        let mut per_line = vec![Vec::new(); end_line_exclusive - start_line];
-
-        for span in spans {
-            let span_start = span.start.max(range_start);
-            let span_end = span.end.min(range_end);
-            if span_start >= span_end {
-                continue;
-            }
-
-            let first_line = rope.byte_to_line(span_start);
-            let last_line = rope.byte_to_line(span_end.saturating_sub(1));
-
-            let line_lo = first_line.max(start_line);
-            let line_hi = last_line.min(end_line_exclusive.saturating_sub(1));
-
-            for line in line_lo..=line_hi {
-                let line_start = rope.line_to_byte(line);
-                let line_end = rope.line_to_byte((line + 1).min(total_lines));
-
-                let s = span_start.max(line_start);
-                let e = span_end.min(line_end);
-                if s >= e {
-                    continue;
-                }
-
-                per_line[line - start_line].push(HighlightSpan {
-                    start: s - line_start,
-                    end: e - line_start,
-                    kind: span.kind,
-                });
-            }
-        }
-
-        for line_spans in &mut per_line {
-            merge_adjacent_spans(line_spans);
-        }
-
-        per_line
+        let lines = project_abs_spans_to_lines(rope, start_line, end_line_exclusive, &spans);
+        *self.range_cache.borrow_mut() = Some(RangeHighlightCache {
+            start_line,
+            end_line_exclusive,
+            line_count: total_lines,
+            byte_len,
+            lines: lines.clone(),
+        });
+        lines
     }
 }
 
@@ -221,48 +258,7 @@ pub fn highlight_snippet(language: LanguageId, text: &str) -> Vec<Vec<HighlightS
     let start_byte = 0;
     let end_byte = rope.len_bytes();
     let spans = collect_highlights(language, &tree, &rope, start_byte, end_byte);
-
-    let mut per_line = vec![Vec::new(); total_lines];
-
-    for span in spans {
-        let span_start = span.start.min(end_byte);
-        let span_end = span.end.min(end_byte);
-        if span_start >= span_end {
-            continue;
-        }
-
-        let first_line = rope.byte_to_line(span_start);
-        let last_line = rope.byte_to_line(span_end.saturating_sub(1));
-
-        let last_line = last_line.min(total_lines.saturating_sub(1));
-        for (line, line_spans) in per_line
-            .iter_mut()
-            .enumerate()
-            .take(last_line.saturating_add(1))
-            .skip(first_line)
-        {
-            let line_start = rope.line_to_byte(line);
-            let line_end = rope.line_to_byte((line + 1).min(total_lines));
-
-            let s = span_start.max(line_start);
-            let e = span_end.min(line_end);
-            if s >= e {
-                continue;
-            }
-
-            line_spans.push(HighlightSpan {
-                start: s - line_start,
-                end: e - line_start,
-                kind: span.kind,
-            });
-        }
-    }
-
-    for line_spans in &mut per_line {
-        merge_adjacent_spans(line_spans);
-    }
-
-    per_line
+    project_abs_spans_to_lines(&rope, 0, total_lines, &spans)
 }
 
 fn parse_rope(parser: &mut Parser, rope: &Rope, old_tree: Option<&Tree>) -> Option<Tree> {
@@ -388,6 +384,64 @@ fn merge_adjacent_spans(spans: &mut Vec<HighlightSpan>) {
         out.push(span);
     }
     *spans = out;
+}
+
+fn project_abs_spans_to_lines(
+    rope: &Rope,
+    start_line: usize,
+    end_line_exclusive: usize,
+    spans: &[AbsHighlightSpan],
+) -> Vec<Vec<HighlightSpan>> {
+    if start_line >= end_line_exclusive {
+        return Vec::new();
+    }
+
+    let total_lines = rope.len_lines().max(1);
+    let start_line = start_line.min(total_lines);
+    let end_line_exclusive = end_line_exclusive.min(total_lines);
+    if start_line >= end_line_exclusive {
+        return Vec::new();
+    }
+
+    let range_start = rope.line_to_byte(start_line);
+    let range_end = rope.line_to_byte(end_line_exclusive);
+    let mut per_line = vec![Vec::new(); end_line_exclusive - start_line];
+
+    for span in spans {
+        let span_start = span.start.max(range_start).min(range_end);
+        let span_end = span.end.max(range_start).min(range_end);
+        if span_start >= span_end {
+            continue;
+        }
+
+        let first_line = rope.byte_to_line(span_start);
+        let last_line = rope.byte_to_line(span_end.saturating_sub(1));
+        let line_lo = first_line.max(start_line);
+        let line_hi = last_line.min(end_line_exclusive.saturating_sub(1));
+
+        for line in line_lo..=line_hi {
+            let line_start = rope.line_to_byte(line);
+            let line_end = rope.line_to_byte((line + 1).min(total_lines));
+
+            let s = span_start.max(line_start);
+            let e = span_end.min(line_end);
+            if s >= e {
+                continue;
+            }
+
+            per_line[line - start_line].push(HighlightSpan {
+                start: s - line_start,
+                end: e - line_start,
+                kind: span.kind,
+            });
+        }
+    }
+
+    for line_spans in &mut per_line {
+        merge_adjacent_spans(line_spans);
+    }
+
+    per_line
 }
 
 fn collect_highlights(

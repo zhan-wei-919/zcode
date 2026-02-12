@@ -365,6 +365,7 @@ pub struct CompletionRequestContext {
 pub struct CompletionPopupState {
     pub visible: bool,
     pub all_items: Vec<LspCompletionItem>,
+    pub index_by_id: FxHashMap<u64, usize>,
     pub visible_indices: Vec<usize>,
     pub selected: usize,
     pub filter_cache_prefix: String,
@@ -381,6 +382,25 @@ pub struct CompletionPopupState {
 impl CompletionPopupState {
     pub fn visible_len(&self) -> usize {
         self.visible_indices.len()
+    }
+
+    pub fn rebuild_index_by_id(&mut self) {
+        self.index_by_id.clear();
+        for (idx, item) in self.all_items.iter().enumerate() {
+            self.index_by_id.insert(item.id, idx);
+        }
+    }
+
+    pub fn index_of_id(&mut self, id: u64) -> Option<usize> {
+        if let Some(idx) = self.index_by_id.get(&id).copied() {
+            if self.all_items.get(idx).is_some_and(|item| item.id == id) {
+                return Some(idx);
+            }
+        }
+
+        let found = self.all_items.iter().position(|item| item.id == id)?;
+        self.rebuild_index_by_id();
+        Some(found)
     }
 
     pub fn visible_item(&self, visible_idx: usize) -> Option<&LspCompletionItem> {
@@ -639,12 +659,14 @@ pub struct LspState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PayloadStamp {
     pub version: u64,
+    pub item_count: usize,
     pub digest: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RangePayloadStamp {
     pub version: u64,
+    pub item_count: usize,
     pub start_line: usize,
     pub end_line_exclusive: usize,
     pub digest: u64,
