@@ -48,48 +48,32 @@ pub(super) fn sort_completion_items(
     });
 }
 
-pub(super) fn filtered_completion_items(
+pub(super) fn filtered_completion_indices(
     tab: &EditorTabState,
     items: &[LspCompletionItem],
     strategy: &dyn CompletionStrategy,
-) -> Vec<LspCompletionItem> {
+) -> Vec<usize> {
     if items.is_empty() {
         return Vec::new();
     }
 
     let prefix = completion_prefix_at_cursor(tab, strategy);
     if prefix.is_empty() {
-        return items.to_vec();
+        return (0..items.len()).collect();
     }
 
     let mut filtered = Vec::with_capacity(items.len());
-    for item in items {
+    for (idx, item) in items.iter().enumerate() {
         if completion_item_matches_prefix(item, &prefix) {
-            filtered.push(item.clone());
+            filtered.push(idx);
         }
     }
 
     if filtered.is_empty() {
-        items.to_vec()
+        (0..items.len()).collect()
     } else {
         filtered
     }
-}
-
-fn same_completion_item_ids_with_indices(
-    items: &[LspCompletionItem],
-    all_items: &[LspCompletionItem],
-    indices: &[usize],
-) -> bool {
-    if items.len() != indices.len() {
-        return false;
-    }
-    for (item, idx) in items.iter().zip(indices.iter().copied()) {
-        if item.id != all_items[idx].id {
-            return false;
-        }
-    }
-    true
 }
 
 fn collect_matching_indices(
@@ -119,12 +103,31 @@ pub(super) fn sync_completion_items_from_cache(
     let source_len = completion.all_items.len();
     let source_changed = !completion.filter_cache_valid;
 
-    let selected_id = completion
-        .items
-        .get(completion.selected)
-        .map(|item| item.id);
+    let selected_id = completion.selected_item().map(|item| item.id);
 
     let prefix = completion_prefix_at_cursor(tab, strategy);
+    if completion.filter_cache_valid
+        && completion.filter_cache_source_len == source_len
+        && prefix == completion.filter_cache_prefix
+    {
+        let cached_indices = completion.filter_cache_indices.as_slice();
+        let items_changed = source_changed || completion.visible_indices != cached_indices;
+        if items_changed {
+            completion.visible_indices = cached_indices.to_vec();
+        }
+
+        completion.selected = selected_id
+            .and_then(|id| {
+                cached_indices
+                    .iter()
+                    .position(|idx| completion.all_items[*idx].id == id)
+            })
+            .unwrap_or(0)
+            .min(cached_indices.len().saturating_sub(1));
+        completion.visible = true;
+        return items_changed;
+    }
+
     let can_use_cached_base = completion.filter_cache_valid
         && completion.filter_cache_source_len == source_len
         && prefix.starts_with(&completion.filter_cache_prefix);
@@ -145,19 +148,10 @@ pub(super) fn sync_completion_items_from_cache(
         new_indices.extend(0..source_len);
     }
 
-    let items_changed = source_changed
-        || !same_completion_item_ids_with_indices(
-            &completion.items,
-            &completion.all_items,
-            &new_indices,
-        );
+    let items_changed = source_changed || completion.visible_indices != new_indices;
 
     if items_changed {
-        let mut items = Vec::with_capacity(new_indices.len());
-        for idx in new_indices.iter().copied() {
-            items.push(completion.all_items[idx].clone());
-        }
-        completion.items = items;
+        completion.visible_indices = new_indices.clone();
     }
 
     completion.selected = selected_id
@@ -646,9 +640,8 @@ mod tests {
     }
 
     fn completion_labels(completion: &CompletionPopupState) -> Vec<String> {
-        completion
-            .items
-            .iter()
+        (0..completion.visible_len())
+            .filter_map(|i| completion.visible_item(i))
             .map(|item| item.label.clone())
             .collect()
     }
@@ -783,7 +776,10 @@ mod tests {
             strategy
         ));
         completion.selected = 2;
-        let selected_id = completion.items[completion.selected].id;
+        let selected_id = completion
+            .selected_item()
+            .map(|item| item.id)
+            .expect("selected item");
 
         tab.buffer.set_cursor(0, 2);
         assert!(sync_completion_items_from_cache(
@@ -791,7 +787,10 @@ mod tests {
             &tab,
             strategy
         ));
-        assert_eq!(completion.items[completion.selected].id, selected_id);
+        assert_eq!(
+            completion.selected_item().map(|item| item.id),
+            Some(selected_id)
+        );
 
         tab.buffer.set_cursor(0, 3);
         assert!(sync_completion_items_from_cache(
@@ -799,7 +798,10 @@ mod tests {
             &tab,
             strategy
         ));
-        assert_eq!(completion.items[completion.selected].id, selected_id);
+        assert_eq!(
+            completion.selected_item().map(|item| item.id),
+            Some(selected_id)
+        );
     }
 
     #[test]

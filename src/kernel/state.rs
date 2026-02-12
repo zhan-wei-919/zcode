@@ -365,7 +365,7 @@ pub struct CompletionRequestContext {
 pub struct CompletionPopupState {
     pub visible: bool,
     pub all_items: Vec<LspCompletionItem>,
-    pub items: Vec<LspCompletionItem>,
+    pub visible_indices: Vec<usize>,
     pub selected: usize,
     pub filter_cache_prefix: String,
     pub filter_cache_indices: Vec<usize>,
@@ -379,6 +379,19 @@ pub struct CompletionPopupState {
 }
 
 impl CompletionPopupState {
+    pub fn visible_len(&self) -> usize {
+        self.visible_indices.len()
+    }
+
+    pub fn visible_item(&self, visible_idx: usize) -> Option<&LspCompletionItem> {
+        let item_idx = *self.visible_indices.get(visible_idx)?;
+        self.all_items.get(item_idx)
+    }
+
+    pub fn selected_item(&self) -> Option<&LspCompletionItem> {
+        self.visible_item(self.selected.min(self.visible_len().saturating_sub(1)))
+    }
+
     pub fn invalidate_filter_cache(&mut self) {
         self.filter_cache_prefix.clear();
         self.filter_cache_indices.clear();
@@ -397,7 +410,7 @@ impl CompletionPopupState {
             || self.request.is_some()
             || self.pending_request.is_some()
             || !self.all_items.is_empty()
-            || !self.items.is_empty()
+            || !self.visible_indices.is_empty()
     }
 
     pub fn close(&mut self) -> bool {
@@ -619,7 +632,30 @@ impl AppState {
 #[derive(Debug, Clone, Default)]
 pub struct LspState {
     pub server_capabilities: FxHashMap<LspClientKey, LspServerCapabilities>,
+    pub payload_fingerprints: LspPayloadFingerprints,
     pub pending_format_on_save: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PayloadStamp {
+    pub version: u64,
+    pub digest: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RangePayloadStamp {
+    pub version: u64,
+    pub start_line: usize,
+    pub end_line_exclusive: usize,
+    pub digest: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LspPayloadFingerprints {
+    pub semantic_full_by_path: FxHashMap<PathBuf, PayloadStamp>,
+    pub semantic_range_by_path: FxHashMap<PathBuf, RangePayloadStamp>,
+    pub inlay_range_by_path: FxHashMap<PathBuf, RangePayloadStamp>,
+    pub folding_by_path: FxHashMap<PathBuf, PayloadStamp>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

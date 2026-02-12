@@ -777,20 +777,21 @@ impl Store {
                 }
             }
             Action::CompletionMoveSelection { delta } => {
-                if !self.state.ui.completion.visible || self.state.ui.completion.items.is_empty() {
+                if !self.state.ui.completion.visible || self.state.ui.completion.visible_len() == 0
+                {
                     return DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
                 }
-                let len = self.state.ui.completion.items.len();
+                let len = self.state.ui.completion.visible_len();
                 let prev = self.state.ui.completion.selected;
                 let next = (prev as isize).wrapping_add(delta).rem_euclid(len as isize) as usize;
                 self.state.ui.completion.selected = next;
 
                 let mut effects = Vec::new();
                 if next != prev {
-                    if let Some(item) = self.state.ui.completion.items.get(next) {
+                    if let Some(item) = self.state.ui.completion.visible_item(next).cloned() {
                         let supports_resolve = self
                             .state
                             .ui
@@ -811,7 +812,7 @@ impl Store {
                         {
                             self.state.ui.completion.resolve_inflight = Some(item.id);
                             effects.push(Effect::LspCompletionResolveRequest {
-                                item: Box::new(item.clone()),
+                                item: Box::new(item),
                             });
                         }
                     }
@@ -822,7 +823,8 @@ impl Store {
                 }
             }
             Action::CompletionConfirm => {
-                if !self.state.ui.completion.visible || self.state.ui.completion.items.is_empty() {
+                if !self.state.ui.completion.visible || self.state.ui.completion.visible_len() == 0
+                {
                     return DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
@@ -864,8 +866,13 @@ impl Store {
                     .ui
                     .completion
                     .selected
-                    .min(self.state.ui.completion.items.len().saturating_sub(1));
-                let item = self.state.ui.completion.items[selected].clone();
+                    .min(self.state.ui.completion.visible_len().saturating_sub(1));
+                let Some(item) = self.state.ui.completion.visible_item(selected).cloned() else {
+                    return DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                };
 
                 // Record completion usage for frequency ranking.
                 {
@@ -1505,8 +1512,10 @@ impl Store {
                                 .ui
                                 .completion
                                 .selected
-                                .min(self.state.ui.completion.items.len().saturating_sub(1));
-                            if let Some(item) = self.state.ui.completion.items.get(selected) {
+                                .min(self.state.ui.completion.visible_len().saturating_sub(1));
+                            if let Some(item) =
+                                self.state.ui.completion.visible_item(selected).cloned()
+                            {
                                 let supports_resolve = tab_supports_completion_resolve;
                                 if supports_resolve
                                     && item.data.is_some()
@@ -1518,7 +1527,7 @@ impl Store {
                                 {
                                     self.state.ui.completion.resolve_inflight = Some(item.id);
                                     effects.push(Effect::LspCompletionResolveRequest {
-                                        item: Box::new(item.clone()),
+                                        item: Box::new(item),
                                     });
                                     changed = true;
                                 }
@@ -2692,8 +2701,9 @@ impl Store {
                             .ui
                             .completion
                             .selected
-                            .min(self.state.ui.completion.items.len().saturating_sub(1));
-                        if let Some(item) = self.state.ui.completion.items.get(selected) {
+                            .min(self.state.ui.completion.visible_len().saturating_sub(1));
+                        if let Some(item) = self.state.ui.completion.visible_item(selected).cloned()
+                        {
                             let supports_resolve =
                                 lsp_server_capabilities_for_path(&self.state, &path)
                                     .is_none_or(|c| c.completion_resolve);
@@ -2707,7 +2717,7 @@ impl Store {
                             {
                                 self.state.ui.completion.resolve_inflight = Some(item.id);
                                 effects.push(Effect::LspCompletionResolveRequest {
-                                    item: Box::new(item.clone()),
+                                    item: Box::new(item),
                                 });
                                 changed = true;
                             }
@@ -2720,7 +2730,7 @@ impl Store {
                     }
 
                     let keep_open = self.state.ui.completion.visible
-                        && !self.state.ui.completion.items.is_empty();
+                        && self.state.ui.completion.visible_len() > 0;
                     if !keep_open {
                         self.state.ui.completion.close();
                     }
@@ -3345,8 +3355,9 @@ impl Store {
                             .ui
                             .completion
                             .selected
-                            .min(self.state.ui.completion.items.len().saturating_sub(1));
-                        if let Some(item) = self.state.ui.completion.items.get(selected) {
+                            .min(self.state.ui.completion.visible_len().saturating_sub(1));
+                        if let Some(item) = self.state.ui.completion.visible_item(selected).cloned()
+                        {
                             let supports_resolve = self
                                 .state
                                 .ui
@@ -3367,7 +3378,7 @@ impl Store {
                             {
                                 self.state.ui.completion.resolve_inflight = Some(item.id);
                                 effects.push(Effect::LspCompletionResolveRequest {
-                                    item: Box::new(item.clone()),
+                                    item: Box::new(item),
                                 });
                                 changed = true;
                             }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::editor::HighlightKind;
 use crate::kernel::services::ports::{
     EditorConfig, LspCommand, LspCompletionItem, LspFoldingRange, LspInlayHint,
     LspInsertTextFormat, LspPosition, LspRange, LspSemanticToken, LspSemanticTokensLegend,
@@ -311,6 +312,164 @@ fn experiment_inlay_hints_fanout_scale_baseline() {
 }
 
 #[test]
+fn lsp_semantic_tokens_identical_payload_second_dispatch_is_noop() {
+    let mut store = new_store();
+    install_rust_lsp_caps(&mut store);
+
+    let path = store.state.workspace_root.join("semantic_fast_path.rs");
+    let content = rust_content(64);
+    let version = open_shared_path_tabs(&mut store, 2, &path, &content);
+
+    let tokens: Vec<LspSemanticToken> = (0..64)
+        .map(|line| LspSemanticToken {
+            line: line as u32,
+            start: 3,
+            length: 8,
+            token_type: (line % 2) as u32,
+            modifiers: 0,
+        })
+        .collect();
+
+    let first = store.dispatch(Action::LspSemanticTokens {
+        path: path.clone(),
+        version,
+        tokens: tokens.clone(),
+    });
+    assert!(first.state_changed);
+
+    let second = store.dispatch(Action::LspSemanticTokens {
+        path,
+        version,
+        tokens,
+    });
+    assert!(!second.state_changed);
+}
+
+#[test]
+fn lsp_inlay_hints_identical_payload_second_dispatch_is_noop() {
+    let mut store = new_store();
+
+    let path = store.state.workspace_root.join("inlay_fast_path.rs");
+    let content = rust_content(64);
+    let version = open_shared_path_tabs(&mut store, 2, &path, &content);
+
+    let range = LspRange {
+        start: LspPosition {
+            line: 0,
+            character: 0,
+        },
+        end: LspPosition {
+            line: 64,
+            character: 0,
+        },
+    };
+    let hints: Vec<LspInlayHint> = (0..64)
+        .map(|line| LspInlayHint {
+            position: LspPosition {
+                line: line as u32,
+                character: 8,
+            },
+            label: format!(": i64 // {line}"),
+            padding_left: true,
+            padding_right: false,
+        })
+        .collect();
+
+    let first = store.dispatch(Action::LspInlayHints {
+        path: path.clone(),
+        version,
+        range,
+        hints: hints.clone(),
+    });
+    assert!(first.state_changed);
+
+    let second = store.dispatch(Action::LspInlayHints {
+        path,
+        version,
+        range,
+        hints,
+    });
+    assert!(!second.state_changed);
+}
+
+#[test]
+fn lsp_semantic_tokens_legend_change_misses_fast_path() {
+    let mut store = new_store();
+    install_rust_lsp_caps(&mut store);
+
+    let path = store.state.workspace_root.join("semantic_legend_change.rs");
+    let content = "let value = 1;\n";
+    let version = open_shared_path_tabs(&mut store, 1, &path, content);
+    let tokens = vec![LspSemanticToken {
+        line: 0,
+        start: 4,
+        length: 5,
+        token_type: 1,
+        modifiers: 0,
+    }];
+
+    let first = store.dispatch(Action::LspSemanticTokens {
+        path: path.clone(),
+        version,
+        tokens: tokens.clone(),
+    });
+    assert!(first.state_changed);
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|p| p.active_tab())
+        .expect("tab exists");
+    let first_kind = tab
+        .semantic_highlight_lines(0, 1)
+        .and_then(|rows| rows.first())
+        .and_then(|line| line.first())
+        .map(|span| span.kind);
+    assert_eq!(first_kind, Some(HighlightKind::Variable));
+
+    let _ = store.dispatch(Action::LspServerCapabilities {
+        server: LspServerKind::RustAnalyzer,
+        root: store.state.workspace_root.clone(),
+        capabilities: LspServerCapabilities {
+            semantic_tokens: true,
+            semantic_tokens_full: true,
+            semantic_tokens_range: true,
+            semantic_tokens_legend: Some(LspSemanticTokensLegend {
+                token_types: vec!["function".to_string(), "keyword".to_string()],
+                token_modifiers: vec![],
+            }),
+            completion: true,
+            completion_resolve: true,
+            signature_help: true,
+            inlay_hints: true,
+            folding_range: true,
+            ..Default::default()
+        },
+    });
+
+    let second = store.dispatch(Action::LspSemanticTokens {
+        path,
+        version,
+        tokens,
+    });
+    assert!(second.state_changed);
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|p| p.active_tab())
+        .expect("tab exists");
+    let second_kind = tab
+        .semantic_highlight_lines(0, 1)
+        .and_then(|rows| rows.first())
+        .and_then(|line| line.first())
+        .map(|span| span.kind);
+    assert_eq!(second_kind, Some(HighlightKind::Keyword));
+}
+
+#[test]
 fn experiment_folding_ranges_fanout_scale_baseline() {
     let mut store = new_store();
 
@@ -385,7 +544,7 @@ fn experiment_completion_resolve_apply_scale_baseline() {
 
     store.state.ui.completion.visible = true;
     store.state.ui.completion.all_items = all_items;
-    store.state.ui.completion.items = visible_items;
+    store.state.ui.completion.visible_indices = (0..visible_items.len()).collect();
     store.state.ui.completion.resolve_inflight = Some(1);
 
     let insert_range = LspRange {
@@ -443,7 +602,7 @@ fn experiment_completion_resolve_apply_scale_baseline() {
         "[experiment] completion_resolve_apply loops={} all_items={} visible_items={} elapsed_ms={} avg_us={:.2} changed_count={}",
         loops,
         items_count,
-        store.state.ui.completion.items.len(),
+        store.state.ui.completion.visible_len(),
         elapsed.as_millis(),
         avg_us,
         changed_count
@@ -499,7 +658,7 @@ fn experiment_lsp_completion_reuse_cache_burden() {
         let take = visible_items.min(all_items.len());
         store.state.ui.completion.visible = true;
         store.state.ui.completion.all_items = all_items;
-        store.state.ui.completion.items = store.state.ui.completion.all_items[..take].to_vec();
+        store.state.ui.completion.visible_indices = (0..take).collect();
         store.state.ui.completion.request = Some(crate::kernel::state::CompletionRequestContext {
             pane: 0,
             path,

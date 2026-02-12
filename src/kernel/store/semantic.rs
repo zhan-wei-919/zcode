@@ -12,47 +12,64 @@ pub(super) fn semantic_highlight_lines_from_tokens(
     encoding: LspPositionEncoding,
 ) -> Vec<Vec<HighlightSpan>> {
     let total_lines = rope.len_lines().max(1);
-    let mut lines = vec![Vec::new(); total_lines];
+    let mut lines: Vec<Vec<HighlightSpan>> = vec![Vec::new(); total_lines];
+    let mut needs_sort = vec![false; total_lines];
+    let lookup = LegendLookup::new(legend);
+    let rope_len_chars = rope.len_chars();
+    let mut cached_line_index = usize::MAX;
+    let mut cached_line_slice: Option<ropey::RopeSlice<'_>> = None;
+    let mut cached_line_start_char = 0usize;
+    let mut cached_line_start_byte = 0usize;
 
     for token in tokens {
-        let Some(token_type) = legend.token_types.get(token.token_type as usize) else {
-            continue;
-        };
-        let Some(kind) =
-            highlight_kind_for_semantic_token(token_type.as_str(), token.modifiers, legend)
-        else {
-            continue;
-        };
-
         let line_index = token.line as usize;
         if line_index >= total_lines {
             continue;
         }
 
-        let line_slice = rope.line(line_index);
+        let Some(kind) = lookup.kind_for(token) else {
+            continue;
+        };
+
+        if cached_line_index != line_index {
+            cached_line_index = line_index;
+            cached_line_slice = Some(rope.line(line_index));
+            cached_line_start_char = rope.line_to_char(line_index);
+            cached_line_start_byte = rope.line_to_byte(line_index);
+        }
+        let Some(line_slice) = cached_line_slice else {
+            continue;
+        };
+
         let start_chars = lsp_col_to_char_offset_in_line(line_slice, token.start, encoding);
         let end_units = token.start.saturating_add(token.length);
         let end_chars = lsp_col_to_char_offset_in_line(line_slice, end_units, encoding);
 
-        let line_start_char = rope.line_to_char(line_index);
-        let start_char = (line_start_char + start_chars).min(rope.len_chars());
-        let end_char = (line_start_char + end_chars).min(rope.len_chars());
+        let start_char = (cached_line_start_char + start_chars).min(rope_len_chars);
+        let end_char = (cached_line_start_char + end_chars).min(rope_len_chars);
 
-        let line_start_byte = rope.line_to_byte(line_index);
         let start_byte = rope.char_to_byte(start_char);
         let end_byte = rope.char_to_byte(end_char);
 
-        let start = start_byte.saturating_sub(line_start_byte);
-        let end = end_byte.saturating_sub(line_start_byte);
+        let start = start_byte.saturating_sub(cached_line_start_byte);
+        let end = end_byte.saturating_sub(cached_line_start_byte);
         if end <= start {
             continue;
         }
 
-        lines[line_index].push(HighlightSpan { start, end, kind });
+        let line = &mut lines[line_index];
+        if let Some(prev) = line.last() {
+            if start < prev.start || (start == prev.start && end < prev.end) {
+                needs_sort[line_index] = true;
+            }
+        }
+        line.push(HighlightSpan { start, end, kind });
     }
 
-    for line_spans in &mut lines {
-        line_spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+    for (idx, line_spans) in lines.iter_mut().enumerate() {
+        if needs_sort[idx] {
+            line_spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+        }
         merge_adjacent_highlight_spans(line_spans);
     }
 
@@ -78,15 +95,18 @@ pub(super) fn semantic_highlight_lines_from_tokens_range(
         return Vec::new();
     }
 
-    let mut lines = vec![Vec::new(); end_line_exclusive.saturating_sub(start_line)];
+    let mut lines: Vec<Vec<HighlightSpan>> =
+        vec![Vec::new(); end_line_exclusive.saturating_sub(start_line)];
+    let mut needs_sort = vec![false; lines.len()];
+    let lookup = LegendLookup::new(legend);
+    let rope_len_chars = rope.len_chars();
+    let mut cached_line_index = usize::MAX;
+    let mut cached_line_slice: Option<ropey::RopeSlice<'_>> = None;
+    let mut cached_line_start_char = 0usize;
+    let mut cached_line_start_byte = 0usize;
 
     for token in tokens {
-        let Some(token_type) = legend.token_types.get(token.token_type as usize) else {
-            continue;
-        };
-        let Some(kind) =
-            highlight_kind_for_semantic_token(token_type.as_str(), token.modifiers, legend)
-        else {
+        let Some(kind) = lookup.kind_for(token) else {
             continue;
         };
 
@@ -95,71 +115,139 @@ pub(super) fn semantic_highlight_lines_from_tokens_range(
             continue;
         }
 
-        let line_slice = rope.line(line_index);
+        if cached_line_index != line_index {
+            cached_line_index = line_index;
+            cached_line_slice = Some(rope.line(line_index));
+            cached_line_start_char = rope.line_to_char(line_index);
+            cached_line_start_byte = rope.line_to_byte(line_index);
+        }
+        let Some(line_slice) = cached_line_slice else {
+            continue;
+        };
+
         let start_chars = lsp_col_to_char_offset_in_line(line_slice, token.start, encoding);
         let end_units = token.start.saturating_add(token.length);
         let end_chars = lsp_col_to_char_offset_in_line(line_slice, end_units, encoding);
 
-        let line_start_char = rope.line_to_char(line_index);
-        let start_char = (line_start_char + start_chars).min(rope.len_chars());
-        let end_char = (line_start_char + end_chars).min(rope.len_chars());
+        let start_char = (cached_line_start_char + start_chars).min(rope_len_chars);
+        let end_char = (cached_line_start_char + end_chars).min(rope_len_chars);
 
-        let line_start_byte = rope.line_to_byte(line_index);
         let start_byte = rope.char_to_byte(start_char);
         let end_byte = rope.char_to_byte(end_char);
 
-        let start = start_byte.saturating_sub(line_start_byte);
-        let end = end_byte.saturating_sub(line_start_byte);
+        let start = start_byte.saturating_sub(cached_line_start_byte);
+        let end = end_byte.saturating_sub(cached_line_start_byte);
         if end <= start {
             continue;
         }
 
-        lines[line_index.saturating_sub(start_line)].push(HighlightSpan { start, end, kind });
+        let row_idx = line_index.saturating_sub(start_line);
+        let line = &mut lines[row_idx];
+        if let Some(prev) = line.last() {
+            if start < prev.start || (start == prev.start && end < prev.end) {
+                needs_sort[row_idx] = true;
+            }
+        }
+        line.push(HighlightSpan { start, end, kind });
     }
 
-    for line_spans in &mut lines {
-        line_spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+    for (idx, line_spans) in lines.iter_mut().enumerate() {
+        if needs_sort[idx] {
+            line_spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+        }
         merge_adjacent_highlight_spans(line_spans);
     }
 
     lines
 }
 
+fn map_semantic_token_type(token_type: &str) -> (Option<HighlightKind>, bool) {
+    match token_type {
+        "comment" => (Some(HighlightKind::Comment), false),
+        "string" => (Some(HighlightKind::String), false),
+        "regexp" => (Some(HighlightKind::Regex), false),
+        "keyword" | "modifier" | "operator" => (Some(HighlightKind::Keyword), false),
+        "number" => (Some(HighlightKind::Number), false),
+        "type" | "struct" | "enum" | "interface" | "trait" | "typeParameter" | "class" => {
+            (Some(HighlightKind::Type), false)
+        }
+        "function" | "method" | "member" => (Some(HighlightKind::Function), false),
+        "macro" => (Some(HighlightKind::Macro), false),
+        "enumMember" => (Some(HighlightKind::Constant), false),
+        "variable" | "parameter" | "property" | "event" => (Some(HighlightKind::Variable), true),
+        "namespace" | "module" => (Some(HighlightKind::Namespace), false),
+        "label" | "decorator" => (Some(HighlightKind::Attribute), false),
+        _ => (None, false),
+    }
+}
+
+#[derive(Debug)]
+struct LegendLookup {
+    kind_by_type_idx: Vec<Option<HighlightKind>>,
+    readonly_sensitive: Vec<bool>,
+    readonly_modifier_bit: Option<u32>,
+}
+
+impl LegendLookup {
+    fn new(legend: &LspSemanticTokensLegend) -> Self {
+        let mut kind_by_type_idx = Vec::with_capacity(legend.token_types.len());
+        let mut readonly_sensitive = Vec::with_capacity(legend.token_types.len());
+
+        for token_type in &legend.token_types {
+            let (kind, sensitive) = map_semantic_token_type(token_type.as_str());
+            kind_by_type_idx.push(kind);
+            readonly_sensitive.push(sensitive);
+        }
+
+        let readonly_modifier_bit = legend
+            .token_modifiers
+            .iter()
+            .position(|m| m == "readonly")
+            .and_then(|idx| (1u32).checked_shl(idx as u32));
+
+        Self {
+            kind_by_type_idx,
+            readonly_sensitive,
+            readonly_modifier_bit,
+        }
+    }
+
+    fn kind_for(&self, token: &LspSemanticToken) -> Option<HighlightKind> {
+        let idx = token.token_type as usize;
+        let mut kind = *self.kind_by_type_idx.get(idx)?;
+        if self.readonly_sensitive.get(idx).copied().unwrap_or(false)
+            && self
+                .readonly_modifier_bit
+                .is_some_and(|bit| token.modifiers & bit != 0)
+        {
+            kind = Some(HighlightKind::Constant);
+        }
+        kind
+    }
+}
+
+#[cfg(test)]
 fn highlight_kind_for_semantic_token(
     token_type: &str,
     modifiers: u32,
     legend: &LspSemanticTokensLegend,
 ) -> Option<HighlightKind> {
-    match token_type {
-        "comment" => Some(HighlightKind::Comment),
-        "string" => Some(HighlightKind::String),
-        "regexp" => Some(HighlightKind::Regex),
-        "keyword" | "modifier" | "operator" => Some(HighlightKind::Keyword),
-        "number" => Some(HighlightKind::Number),
-        "type" | "struct" | "enum" | "interface" | "trait" | "typeParameter" | "class" => {
-            Some(HighlightKind::Type)
-        }
-        "function" | "method" | "member" => Some(HighlightKind::Function),
-        "macro" => Some(HighlightKind::Macro),
-        "enumMember" => Some(HighlightKind::Constant),
-        "variable" | "parameter" | "property" | "event" => {
-            if has_semantic_modifier(modifiers, legend, "readonly") {
-                Some(HighlightKind::Constant)
-            } else {
-                Some(HighlightKind::Variable)
-            }
-        }
-        "namespace" | "module" => Some(HighlightKind::Namespace),
-        "label" | "decorator" => Some(HighlightKind::Attribute),
-        _ => None,
+    let (mut kind, readonly_sensitive) = map_semantic_token_type(token_type);
+    if readonly_sensitive && has_semantic_modifier(modifiers, legend, "readonly") {
+        kind = Some(HighlightKind::Constant);
     }
+    kind
 }
 
+#[cfg(test)]
 fn has_semantic_modifier(modifiers: u32, legend: &LspSemanticTokensLegend, name: &str) -> bool {
     let Some(index) = legend.token_modifiers.iter().position(|m| m == name) else {
         return false;
     };
-    modifiers & (1u32 << index) != 0
+    let Some(mask) = (1u32).checked_shl(index as u32) else {
+        return false;
+    };
+    modifiers & mask != 0
 }
 
 fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {

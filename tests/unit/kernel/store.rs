@@ -57,8 +57,8 @@ fn seed_visible_completion_for_active_tab(
 
     store.state.ui.completion.visible = true;
     store.state.ui.completion.selected = 0;
-    store.state.ui.completion.items = vec![item.clone()];
     store.state.ui.completion.all_items = vec![item];
+    store.state.ui.completion.visible_indices = vec![0];
     store.state.ui.completion.request = Some(CompletionRequestContext {
         pane,
         path,
@@ -1139,9 +1139,141 @@ fn lsp_completion_items_are_filtered_and_sorted() {
     });
 
     assert!(store.state.ui.completion.visible);
-    assert_eq!(store.state.ui.completion.items.len(), 2);
-    assert_eq!(store.state.ui.completion.items[0].label, "println!");
-    assert_eq!(store.state.ui.completion.items[1].label, "Print");
+    assert_eq!(store.state.ui.completion.visible_len(), 2);
+    assert_eq!(
+        store
+            .state
+            .ui
+            .completion
+            .visible_item(0)
+            .map(|item| item.label.as_str()),
+        Some("println!")
+    );
+    assert_eq!(
+        store
+            .state
+            .ui
+            .completion
+            .visible_item(1)
+            .map(|item| item.label.as_str()),
+        Some("Print")
+    );
+}
+
+#[test]
+fn completion_selected_id_stays_stable_when_visible_indices_change() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "pri\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::RunCommand(Command::CursorLineEnd));
+    let _ = store.dispatch(Action::RunCommand(Command::LspCompletion));
+
+    let items = vec![
+        LspCompletionItem {
+            id: 1,
+            label: "print".to_string(),
+            detail: None,
+            kind: None,
+            documentation: Some("doc".to_string()),
+            insert_text: "print".to_string(),
+            insert_text_format: crate::kernel::services::ports::LspInsertTextFormat::PlainText,
+            insert_range: None,
+            replace_range: None,
+            sort_text: Some("2".to_string()),
+            filter_text: None,
+            additional_text_edits: Vec::new(),
+            command: None,
+            data: None,
+        },
+        LspCompletionItem {
+            id: 2,
+            label: "println!".to_string(),
+            detail: None,
+            kind: None,
+            documentation: Some("doc".to_string()),
+            insert_text: "println!".to_string(),
+            insert_text_format: crate::kernel::services::ports::LspInsertTextFormat::PlainText,
+            insert_range: None,
+            replace_range: None,
+            sort_text: Some("1".to_string()),
+            filter_text: None,
+            additional_text_edits: Vec::new(),
+            command: None,
+            data: None,
+        },
+        LspCompletionItem {
+            id: 3,
+            label: "probe".to_string(),
+            detail: None,
+            kind: None,
+            documentation: Some("doc".to_string()),
+            insert_text: "probe".to_string(),
+            insert_text_format: crate::kernel::services::ports::LspInsertTextFormat::PlainText,
+            insert_range: None,
+            replace_range: None,
+            sort_text: Some("0".to_string()),
+            filter_text: None,
+            additional_text_edits: Vec::new(),
+            command: None,
+            data: None,
+        },
+        LspCompletionItem {
+            id: 4,
+            label: "prio".to_string(),
+            detail: None,
+            kind: None,
+            documentation: Some("doc".to_string()),
+            insert_text: "prio".to_string(),
+            insert_text_format: crate::kernel::services::ports::LspInsertTextFormat::PlainText,
+            insert_range: None,
+            replace_range: None,
+            sort_text: Some("3".to_string()),
+            filter_text: None,
+            additional_text_edits: Vec::new(),
+            command: None,
+            data: None,
+        },
+    ];
+
+    let _ = store.dispatch(Action::LspCompletion {
+        items,
+        is_incomplete: false,
+    });
+
+    let selected = store
+        .state
+        .ui
+        .completion
+        .visible_indices
+        .iter()
+        .position(|idx| store.state.ui.completion.all_items[*idx].id == 1)
+        .expect("print should be visible");
+    store.state.ui.completion.selected = selected;
+    let before_id = store
+        .state
+        .ui
+        .completion
+        .selected_item()
+        .map(|item| item.id);
+    assert_eq!(before_id, Some(1));
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('n')));
+
+    assert_eq!(
+        store
+            .state
+            .ui
+            .completion
+            .selected_item()
+            .map(|item| item.id),
+        Some(1)
+    );
+    assert_eq!(store.state.ui.completion.visible_len(), 2);
 }
 
 #[test]
@@ -1210,7 +1342,12 @@ fn lsp_completion_resolve_updates_insert_payload_fields() {
         command: None,
     });
 
-    let item = &store.state.ui.completion.items[0];
+    let item = store
+        .state
+        .ui
+        .completion
+        .visible_item(0)
+        .expect("completion item");
     assert_eq!(item.insert_text, "print(${1:value})$0");
     assert_eq!(
         item.insert_text_format,
@@ -1256,7 +1393,7 @@ fn completion_does_not_close_on_viewport_resize() {
     });
 
     assert!(store.state.ui.completion.visible);
-    assert!(!store.state.ui.completion.items.is_empty());
+    assert!(store.state.ui.completion.visible_len() > 0);
 
     let _ = store.dispatch(Action::Editor(EditorAction::SetViewportSize {
         pane: 0,
@@ -1265,7 +1402,7 @@ fn completion_does_not_close_on_viewport_resize() {
     }));
 
     assert!(store.state.ui.completion.visible);
-    assert!(!store.state.ui.completion.items.is_empty());
+    assert!(store.state.ui.completion.visible_len() > 0);
 }
 
 #[test]
@@ -1304,7 +1441,7 @@ fn completion_does_not_close_on_editor_search_messages() {
     });
 
     assert!(store.state.ui.completion.visible);
-    assert!(!store.state.ui.completion.items.is_empty());
+    assert!(store.state.ui.completion.visible_len() > 0);
 
     let search_id = 7u64;
     let _ = store.dispatch(Action::Editor(EditorAction::SearchStarted {
@@ -1320,7 +1457,7 @@ fn completion_does_not_close_on_editor_search_messages() {
     }));
 
     assert!(store.state.ui.completion.visible);
-    assert!(!store.state.ui.completion.items.is_empty());
+    assert!(store.state.ui.completion.visible_len() > 0);
 }
 
 #[test]
@@ -1439,7 +1576,7 @@ fn cpp_insert_slash_outside_include_closes_completion_popup() {
     let _ = store.dispatch(Action::RunCommand(Command::InsertChar('/')));
 
     assert!(!store.state.ui.completion.visible);
-    assert!(store.state.ui.completion.items.is_empty());
+    assert_eq!(store.state.ui.completion.visible_len(), 0);
     assert!(store.state.ui.completion.request.is_none());
 }
 
@@ -1562,7 +1699,7 @@ fn cpp_insert_gt_in_comparison_closes_and_does_not_trigger_by_default() {
 #[test]
 fn experiment_completion_filtering_scale_baseline() {
     use crate::kernel::store::completion::{
-        filtered_completion_items, sync_completion_items_from_cache,
+        filtered_completion_indices, sync_completion_items_from_cache,
     };
 
     let mut store = new_store();
@@ -1580,13 +1717,13 @@ fn experiment_completion_filtering_scale_baseline() {
         .map(|i| test_completion_item(i, &format!("item_{i:05}")))
         .collect();
 
-    let warm = filtered_completion_items(tab, &items, strategy);
+    let warm = filtered_completion_indices(tab, &items, strategy);
     assert!(!warm.is_empty());
 
     let start = Instant::now();
     let mut total = 0usize;
     for _ in 0..50 {
-        total = total.saturating_add(filtered_completion_items(tab, &items, strategy).len());
+        total = total.saturating_add(filtered_completion_indices(tab, &items, strategy).len());
     }
     let elapsed = start.elapsed();
 

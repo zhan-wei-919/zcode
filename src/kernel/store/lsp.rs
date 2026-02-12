@@ -2,17 +2,21 @@ use crate::kernel::services::ports::{
     LspClientKey, LspPosition, LspPositionEncoding, LspRange, LspResourceOp, LspServerCapabilities,
     LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
-use crate::kernel::state::{CompletionPopupState, SignatureHelpPopupState};
+use crate::kernel::state::{
+    CompletionPopupState, PayloadStamp, RangePayloadStamp, SignatureHelpPopupState,
+};
 use crate::kernel::EditorAction;
 use crate::kernel::{Action, BottomPanelTab, Effect, FocusTarget};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::Instant;
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::completion::{filtered_completion_items, sort_completion_items};
+use super::completion::{filtered_completion_indices, sort_completion_items};
 use super::semantic::{
     semantic_highlight_lines_from_tokens, semantic_highlight_lines_from_tokens_range,
 };
@@ -134,6 +138,54 @@ pub(super) fn lsp_position_encoding_for_path(
     lsp_server_capabilities_for_path(state, path)
         .map(|c| c.position_encoding)
         .unwrap_or(LspPositionEncoding::Utf16)
+}
+
+fn encoding_tag(encoding: LspPositionEncoding) -> u8 {
+    match encoding {
+        LspPositionEncoding::Utf8 => 8,
+        LspPositionEncoding::Utf16 => 16,
+        LspPositionEncoding::Utf32 => 32,
+    }
+}
+
+fn hash_semantic_tokens_payload(
+    tokens: &[crate::kernel::services::ports::LspSemanticToken],
+    encoding: LspPositionEncoding,
+    legend: &crate::kernel::services::ports::LspSemanticTokensLegend,
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    encoding_tag(encoding).hash(&mut hasher);
+    legend.token_types.hash(&mut hasher);
+    legend.token_modifiers.hash(&mut hasher);
+    for token in tokens {
+        token.line.hash(&mut hasher);
+        token.start.hash(&mut hasher);
+        token.length.hash(&mut hasher);
+        token.token_type.hash(&mut hasher);
+        token.modifiers.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn hash_inlay_hints_payload(hints: &[crate::kernel::services::ports::LspInlayHint]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for hint in hints {
+        hint.position.line.hash(&mut hasher);
+        hint.position.character.hash(&mut hasher);
+        hint.padding_left.hash(&mut hasher);
+        hint.padding_right.hash(&mut hasher);
+        hint.label.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn hash_folding_ranges_payload(ranges: &[crate::kernel::services::ports::LspFoldingRange]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for range in ranges {
+        range.start_line.hash(&mut hasher);
+        range.end_line.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 pub(super) fn lsp_position_encoding(state: &crate::kernel::AppState) -> LspPositionEncoding {
@@ -671,6 +723,39 @@ impl super::Store {
                 };
 
                 let encoding = lsp_position_encoding_for_path(&self.state, &path);
+                let matched_tabs = self
+                    .state
+                    .editor
+                    .panes
+                    .iter()
+                    .flat_map(|pane| pane.tabs.iter())
+                    .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
+                    .count();
+                if matched_tabs == 0 {
+                    return super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                let stamp = PayloadStamp {
+                    version,
+                    digest: hash_semantic_tokens_payload(&tokens, encoding, &legend),
+                };
+                if self
+                    .state
+                    .lsp
+                    .payload_fingerprints
+                    .semantic_full_by_path
+                    .get(&path)
+                    .copied()
+                    == Some(stamp)
+                {
+                    return super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
 
                 let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::HighlightSpan>>> =
                     None;
@@ -701,6 +786,11 @@ impl super::Store {
                         }
                     }
                 }
+                self.state
+                    .lsp
+                    .payload_fingerprints
+                    .semantic_full_by_path
+                    .insert(path, stamp);
 
                 super::DispatchResult {
                     effects: Vec::new(),
@@ -732,6 +822,41 @@ impl super::Store {
                 }
 
                 let encoding = lsp_position_encoding_for_path(&self.state, &path);
+                let matched_tabs = self
+                    .state
+                    .editor
+                    .panes
+                    .iter()
+                    .flat_map(|pane| pane.tabs.iter())
+                    .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
+                    .count();
+                if matched_tabs == 0 {
+                    return super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                let stamp = RangePayloadStamp {
+                    version,
+                    start_line,
+                    end_line_exclusive,
+                    digest: hash_semantic_tokens_payload(&tokens, encoding, &legend),
+                };
+                if self
+                    .state
+                    .lsp
+                    .payload_fingerprints
+                    .semantic_range_by_path
+                    .get(&path)
+                    .copied()
+                    == Some(stamp)
+                {
+                    return super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
 
                 let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::HighlightSpan>>> =
                     None;
@@ -761,6 +886,11 @@ impl super::Store {
                         }
                     }
                 }
+                self.state
+                    .lsp
+                    .payload_fingerprints
+                    .semantic_range_by_path
+                    .insert(path, stamp);
 
                 super::DispatchResult {
                     effects: Vec::new(),
@@ -783,16 +913,58 @@ impl super::Store {
                 }
 
                 let hint_count = hints.len();
+                let matched_tabs = self
+                    .state
+                    .editor
+                    .panes
+                    .iter()
+                    .flat_map(|pane| pane.tabs.iter())
+                    .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
+                    .count();
+                if matched_tabs == 0 {
+                    tracing::debug!(
+                        path = %path.display(),
+                        version,
+                        start_line,
+                        end_line_exclusive,
+                        hint_count,
+                        "drop inlay hints (no matching tab/version)"
+                    );
+                    return super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                let stamp = RangePayloadStamp {
+                    version,
+                    start_line,
+                    end_line_exclusive,
+                    digest: hash_inlay_hints_payload(&hints),
+                };
+                if self
+                    .state
+                    .lsp
+                    .payload_fingerprints
+                    .inlay_range_by_path
+                    .get(&path)
+                    .copied()
+                    == Some(stamp)
+                {
+                    return super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
                 let mut snapshot: Option<Vec<Vec<String>>> = None;
                 let mut changed = false;
-                let mut matched_tabs = 0usize;
 
                 for pane in &mut self.state.editor.panes {
                     for tab in &mut pane.tabs {
                         if tab.path.as_ref() != Some(&path) || tab.edit_version != version {
                             continue;
                         }
-                        matched_tabs += 1;
 
                         if snapshot.is_none() {
                             let mut per_line =
@@ -835,17 +1007,11 @@ impl super::Store {
                         }
                     }
                 }
-
-                if matched_tabs == 0 {
-                    tracing::debug!(
-                        path = %path.display(),
-                        version,
-                        start_line,
-                        end_line_exclusive,
-                        hint_count,
-                        "drop inlay hints (no matching tab/version)"
-                    );
-                }
+                self.state
+                    .lsp
+                    .payload_fingerprints
+                    .inlay_range_by_path
+                    .insert(path, stamp);
 
                 super::DispatchResult {
                     effects: Vec::new(),
@@ -857,6 +1023,40 @@ impl super::Store {
                 version,
                 ranges,
             } => {
+                let matched_tabs = self
+                    .state
+                    .editor
+                    .panes
+                    .iter()
+                    .flat_map(|pane| pane.tabs.iter())
+                    .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
+                    .count();
+                if matched_tabs == 0 {
+                    return super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                let stamp = PayloadStamp {
+                    version,
+                    digest: hash_folding_ranges_payload(&ranges),
+                };
+                if self
+                    .state
+                    .lsp
+                    .payload_fingerprints
+                    .folding_by_path
+                    .get(&path)
+                    .copied()
+                    == Some(stamp)
+                {
+                    return super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
                 let mut changed = false;
 
                 for pane in &mut self.state.editor.panes {
@@ -868,6 +1068,11 @@ impl super::Store {
                         changed |= tab.set_folding_ranges_from_slice(version, &ranges);
                     }
                 }
+                self.state
+                    .lsp
+                    .payload_fingerprints
+                    .folding_by_path
+                    .insert(path, stamp);
 
                 super::DispatchResult {
                     effects: Vec::new(),
@@ -891,11 +1096,7 @@ impl super::Store {
                     .pane(req.pane)
                     .and_then(|pane| pane.active_tab())
                 else {
-                    let had = self.state.ui.completion.visible
-                        || self.state.ui.completion.request.is_some()
-                        || self.state.ui.completion.pending_request.is_some()
-                        || !self.state.ui.completion.all_items.is_empty()
-                        || !self.state.ui.completion.items.is_empty();
+                    let had = self.state.ui.completion.is_active();
                     self.state.ui.completion = CompletionPopupState::default();
                     return super::DispatchResult {
                         effects: Vec::new(),
@@ -906,11 +1107,7 @@ impl super::Store {
                 let valid = tab.path.as_ref() == Some(&req.path) && tab.edit_version >= req.version;
 
                 if !valid || items.is_empty() {
-                    let had = self.state.ui.completion.visible
-                        || self.state.ui.completion.request.is_some()
-                        || self.state.ui.completion.pending_request.is_some()
-                        || !self.state.ui.completion.all_items.is_empty()
-                        || !self.state.ui.completion.items.is_empty();
+                    let had = self.state.ui.completion.is_active();
                     self.state.ui.completion = CompletionPopupState::default();
                     return super::DispatchResult {
                         effects: Vec::new(),
@@ -920,13 +1117,7 @@ impl super::Store {
 
                 self.state.ui.hover_message = None;
                 self.state.ui.completion.visible = true;
-                let prev_selected = self
-                    .state
-                    .ui
-                    .completion
-                    .items
-                    .get(self.state.ui.completion.selected)
-                    .map(|item| item.id);
+                let prev_selected = self.state.ui.completion.selected_item().map(|item| item.id);
 
                 let mut all_items = items;
                 let language = tab.language();
@@ -934,19 +1125,19 @@ impl super::Store {
                 self.state.ui.completion.all_items = all_items;
                 self.state.ui.completion.invalidate_filter_cache();
                 let strategy = super::completion_strategy::strategy_for_tab(tab);
-                self.state.ui.completion.items =
-                    filtered_completion_items(tab, &self.state.ui.completion.all_items, strategy);
+                self.state.ui.completion.visible_indices =
+                    filtered_completion_indices(tab, &self.state.ui.completion.all_items, strategy);
                 self.state.ui.completion.selected = prev_selected
                     .and_then(|id| {
                         self.state
                             .ui
                             .completion
-                            .items
+                            .visible_indices
                             .iter()
-                            .position(|item| item.id == id)
+                            .position(|idx| self.state.ui.completion.all_items[*idx].id == id)
                     })
                     .unwrap_or(0)
-                    .min(self.state.ui.completion.items.len().saturating_sub(1));
+                    .min(self.state.ui.completion.visible_len().saturating_sub(1));
                 self.state.ui.completion.request = Some(req.clone());
                 self.state.ui.completion.pending_request = None;
                 self.state.ui.completion.is_incomplete = is_incomplete;
@@ -954,13 +1145,7 @@ impl super::Store {
                 self.state.ui.completion.session_started_at = Some(Instant::now());
 
                 let mut effects = Vec::new();
-                if let Some(item) = self
-                    .state
-                    .ui
-                    .completion
-                    .items
-                    .get(self.state.ui.completion.selected)
-                {
+                if let Some(item) = self.state.ui.completion.selected_item().cloned() {
                     if lsp_server_capabilities_for_path(&self.state, &req.path)
                         .is_none_or(|c| c.completion_resolve)
                         && item.data.is_some()
@@ -971,7 +1156,7 @@ impl super::Store {
                     {
                         self.state.ui.completion.resolve_inflight = Some(item.id);
                         effects.push(Effect::LspCompletionResolveRequest {
-                            item: Box::new(item.clone()),
+                            item: Box::new(item),
                         });
                     }
                 }
@@ -998,39 +1183,39 @@ impl super::Store {
                     changed = true;
                 }
 
-                for item in self
+                let resolved_index = self
                     .state
                     .ui
                     .completion
                     .all_items
-                    .iter_mut()
-                    .chain(self.state.ui.completion.items.iter_mut())
-                {
-                    if item.id != id {
-                        continue;
-                    }
+                    .iter()
+                    .position(|item| item.id == id);
+                if let Some(idx) = resolved_index {
+                    let item = &mut self.state.ui.completion.all_items[idx];
+                    let mut item_changed = false;
+
                     if let Some(detail) = detail.as_ref() {
                         if item.detail.as_deref() != Some(detail) {
                             item.detail = Some(detail.clone());
-                            changed = true;
+                            item_changed = true;
                         }
                     }
                     if let Some(doc) = documentation.as_ref() {
                         if item.documentation.as_deref() != Some(doc) {
                             item.documentation = Some(doc.clone());
-                            changed = true;
+                            item_changed = true;
                         }
                     }
                     if let Some(text) = insert_text.as_ref() {
                         if item.insert_text != *text {
                             item.insert_text = text.clone();
-                            changed = true;
+                            item_changed = true;
                         }
                     }
                     if let Some(format) = insert_text_format {
                         if item.insert_text_format != format {
                             item.insert_text_format = format;
-                            changed = true;
+                            item_changed = true;
                         }
                     }
                     if let Some(range) = insert_range {
@@ -1042,7 +1227,7 @@ impl super::Store {
                         });
                         if needs_update {
                             item.insert_range = Some(range);
-                            changed = true;
+                            item_changed = true;
                         }
                     }
                     if let Some(range) = replace_range {
@@ -1054,18 +1239,25 @@ impl super::Store {
                         });
                         if needs_update {
                             item.replace_range = Some(range);
-                            changed = true;
+                            item_changed = true;
                         }
                     }
                     if !additional_text_edits.is_empty() && item.additional_text_edits.is_empty() {
                         item.additional_text_edits = additional_text_edits.clone();
-                        changed = true;
+                        item_changed = true;
                     }
                     if command.is_some() && item.command.is_none() {
                         item.command = command.clone();
+                        item_changed = true;
+                    }
+                    if item.data.is_some() {
+                        item.data = None;
+                        item_changed = true;
+                    }
+
+                    if item_changed && self.state.ui.completion.visible_indices.contains(&idx) {
                         changed = true;
                     }
-                    item.data = None;
                 }
 
                 super::DispatchResult {

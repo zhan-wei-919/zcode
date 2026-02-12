@@ -227,12 +227,10 @@ fn test_lsp_spawn_sync_requests_and_diagnostics_are_wired() {
     };
     let _ = workbench.handle_input(&InputEvent::Key(completion));
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().ui.completion.visible
-            && w.state()
-                .ui
-                .completion
-                .items
-                .iter()
+        let completion = &w.state().ui.completion;
+        completion.visible
+            && (0..completion.visible_len())
+                .filter_map(|idx| completion.visible_item(idx))
                 .any(|item| item.label == "stubItem")
     });
 
@@ -412,12 +410,10 @@ fn test_hover_and_completion_work_for_python_go_and_js_ts() {
 
         let _ = workbench.handle_input(&InputEvent::Key(completion));
         drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-            w.state().ui.completion.visible
-                && w.state()
-                    .ui
-                    .completion
-                    .items
-                    .iter()
+            let completion = &w.state().ui.completion;
+            completion.visible
+                && (0..completion.visible_len())
+                    .filter_map(|idx| completion.visible_item(idx))
                     .any(|item| item.label == "stubItem")
         });
 
@@ -538,12 +534,10 @@ fn test_completion_debounce_triggers_for_python() {
     }));
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().ui.completion.visible
-            && w.state()
-                .ui
-                .completion
-                .items
-                .iter()
+        let completion = &w.state().ui.completion;
+        completion.visible
+            && (0..completion.visible_len())
+                .filter_map(|idx| completion.visible_item(idx))
                 .any(|item| item.label == "stubItem")
     });
 }
@@ -662,7 +656,7 @@ fn test_real_pyright_hover_and_completion_smoke() {
     let _ = workbench.handle_input(&InputEvent::Key(completion));
     eprintln!("[e2e] waiting for completion...");
     drive_until(&mut workbench, &rx, Duration::from_secs(10), |w| {
-        w.state().ui.completion.visible && !w.state().ui.completion.items.is_empty()
+        w.state().ui.completion.visible && w.state().ui.completion.visible_len() > 0
     });
     eprintln!("[e2e] completion ready");
 }
@@ -1440,11 +1434,8 @@ fn test_lsp_completion_resolve_and_confirm_applies_snippet_and_auto_import() {
     let _ = workbench.handle_input(&InputEvent::Key(completion));
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state().ui.completion.visible
-            && w.state()
-                .ui
-                .completion
-                .items
-                .iter()
+            && (0..w.state().ui.completion.visible_len())
+                .filter_map(|i| w.state().ui.completion.visible_item(i))
                 .any(|item| item.label == "stubSnippet")
     });
 
@@ -1456,7 +1447,7 @@ fn test_lsp_completion_resolve_and_confirm_applies_snippet_and_auto_import() {
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         let completion = &w.state().ui.completion;
-        let Some(item) = completion.items.get(completion.selected) else {
+        let Some(item) = completion.selected_item() else {
             return false;
         };
         item.label == "stubSnippet"
@@ -1540,11 +1531,8 @@ fn test_lsp_completion_auto_import_uses_full_sync_after_multi_edit_apply() {
     let _ = workbench.handle_input(&InputEvent::Key(completion));
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state().ui.completion.visible
-            && w.state()
-                .ui
-                .completion
-                .items
-                .iter()
+            && (0..w.state().ui.completion.visible_len())
+                .filter_map(|i| w.state().ui.completion.visible_item(i))
                 .any(|item| item.label == "stubSnippet")
     });
 
@@ -1556,7 +1544,7 @@ fn test_lsp_completion_auto_import_uses_full_sync_after_multi_edit_apply() {
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         let completion = &w.state().ui.completion;
-        let Some(item) = completion.items.get(completion.selected) else {
+        let Some(item) = completion.selected_item() else {
             return false;
         };
         item.label == "stubSnippet" && item.detail.as_deref() == Some("resolved:2")
@@ -1725,12 +1713,10 @@ fn test_lsp_completion_session_reuse_skips_extra_requests() {
     let _ = workbench.handle_input(&InputEvent::Key(completion));
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().ui.completion.visible
-            && w.state()
-                .ui
-                .completion
-                .items
-                .first()
+        let completion = &w.state().ui.completion;
+        completion.visible
+            && completion
+                .visible_item(0)
                 .and_then(|item| item.detail.as_deref())
                 .is_some_and(|d| d == "resolved:1")
     });
@@ -1872,7 +1858,7 @@ fn test_completion_popup_does_not_close_on_background_lsp_requests() {
     let _ = workbench.handle_input(&InputEvent::Key(insert));
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().ui.completion.visible && !w.state().ui.completion.items.is_empty()
+        w.state().ui.completion.visible && w.state().ui.completion.visible_len() > 0
     });
 
     let started = Instant::now();
@@ -2073,11 +2059,8 @@ fn test_completion_closes_after_deleting_trigger() {
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state().ui.completion.visible
-            && w.state()
-                .ui
-                .completion
-                .items
-                .iter()
+            && (0..w.state().ui.completion.visible_len())
+                .filter_map(|i| w.state().ui.completion.visible_item(i))
                 .any(|item| item.label == "stubItem")
     });
 
@@ -2095,7 +2078,7 @@ fn test_completion_closes_after_deleting_trigger() {
     }
 
     assert!(!workbench.state().ui.completion.visible);
-    assert!(workbench.state().ui.completion.items.is_empty());
+    assert_eq!(workbench.state().ui.completion.visible_len(), 0);
     assert!(workbench.state().ui.completion.request.is_none());
     assert!(workbench.state().ui.completion.pending_request.is_none());
 }
@@ -2147,12 +2130,10 @@ fn test_completion_filters_items_while_typing() {
     let _ = workbench.handle_input(&InputEvent::Key(completion));
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().ui.completion.visible
-            && w.state()
-                .ui
-                .completion
-                .items
-                .iter()
+        let completion = &w.state().ui.completion;
+        completion.visible
+            && (0..completion.visible_len())
+                .filter_map(|idx| completion.visible_item(idx))
                 .any(|item| item.label == "stubSnippet")
     });
 
@@ -2168,9 +2149,17 @@ fn test_completion_filters_items_while_typing() {
         .state()
         .ui
         .completion
-        .items
+        .visible_indices
         .iter()
-        .map(|item| item.label.as_str())
+        .filter_map(|idx| {
+            workbench
+                .state()
+                .ui
+                .completion
+                .all_items
+                .get(*idx)
+                .map(|item| item.label.as_str())
+        })
         .collect::<Vec<_>>();
     assert_eq!(labels, vec!["stubItem", "stubItem2"]);
 }

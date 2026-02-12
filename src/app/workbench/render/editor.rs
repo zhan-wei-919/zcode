@@ -287,7 +287,7 @@ impl Workbench {
         self.completion_doc.total_lines = 0;
 
         let completion = &self.store.state().ui.completion;
-        if !completion.visible || completion.items.is_empty() {
+        if !completion.visible || completion.visible_len() == 0 {
             self.completion_doc.scroll = 0;
             self.completion_doc.key = None;
             return;
@@ -320,16 +320,19 @@ impl Workbench {
         let max_items = 8usize;
         let selected = completion
             .selected
-            .min(completion.items.len().saturating_sub(1));
+            .min(completion.visible_len().saturating_sub(1));
         let mut start = 0usize;
         if selected >= max_items {
             start = selected + 1 - max_items;
         }
-        let end = (start + max_items).min(completion.items.len());
+        let end = (start + max_items).min(completion.visible_len());
 
         let mut rows = Vec::with_capacity(end.saturating_sub(start));
         let mut max_inner_width = 1usize;
-        for (i, item) in completion.items.iter().enumerate().take(end).skip(start) {
+        for i in start..end {
+            let Some(item) = completion.visible_item(i) else {
+                continue;
+            };
             let is_selected = i == selected;
             let marker = if is_selected { ">" } else { " " };
 
@@ -442,7 +445,7 @@ impl Workbench {
         self.completion_doc.key = doc_key;
 
         // Documentation panel (Helix-like): show docs for the currently selected item.
-        let doc_text = completion.items.get(selected).and_then(|item| {
+        let doc_text = completion.visible_item(selected).and_then(|item| {
             item.documentation
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
