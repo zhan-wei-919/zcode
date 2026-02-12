@@ -54,6 +54,14 @@ pub struct MdRenderedLine {
     pub offset_map: Vec<(usize, usize)>,
 }
 
+type BlockClassification = (
+    Vec<MdBlockKind>,
+    Vec<Option<String>>,
+    Vec<bool>,
+    Vec<Option<TableLineInfo>>,
+    Vec<TableBlock>,
+);
+
 /// Per-file Markdown document state tracking block kinds.
 pub struct MarkdownDocument {
     block_kinds: Vec<MdBlockKind>,
@@ -247,15 +255,7 @@ impl MarkdownDocument {
 // Block-level classifier
 // ---------------------------------------------------------------------------
 
-fn classify_blocks(
-    rope: &ropey::Rope,
-) -> (
-    Vec<MdBlockKind>,
-    Vec<Option<String>>,
-    Vec<bool>,
-    Vec<Option<TableLineInfo>>,
-    Vec<TableBlock>,
-) {
+fn classify_blocks(rope: &ropey::Rope) -> BlockClassification {
     #[derive(Clone)]
     struct FenceState {
         marker: u8,
@@ -290,7 +290,6 @@ fn classify_blocks(
                 }
             } else {
                 let lang = rest
-                    .trim()
                     .split_whitespace()
                     .next()
                     .filter(|s| !s.is_empty())
@@ -428,13 +427,13 @@ fn detect_table_block(rope: &ropey::Rope, start_line: usize) -> Option<TableDete
         let Some(cells) = parse_table_cells(&src) else {
             continue;
         };
-        for col in 0..columns {
+        for (col, width) in col_widths.iter_mut().enumerate().take(columns) {
             let raw = cells
                 .get(col)
                 .map(|cell| cell.display_text.as_str())
                 .unwrap_or_default();
             let (rendered, _, _) = render_inline(raw, 0, 0);
-            col_widths[col] = col_widths[col].max(rendered.width());
+            *width = (*width).max(rendered.width());
         }
     }
 
@@ -881,7 +880,7 @@ fn render_table_row(
     let mut spans = Vec::new();
     let mut offset_map = Vec::new();
 
-    for col in 0..widths.len() {
+    for (col, target_width) in widths.iter().copied().enumerate() {
         let cell = cells.get(col);
         let source_start = cell.map_or(source_len, |c| c.source_start);
         let source_end = cell.map_or(source_len, |c| c.source_end);
@@ -910,7 +909,6 @@ fn render_table_row(
 
         let (inline_text_probe, _, _) = render_inline(raw, 0, 0);
         let inline_width = inline_text_probe.width();
-        let target_width = widths[col];
         let extra = target_width.saturating_sub(inline_width);
         let align = aligns.get(col).copied().unwrap_or(TableAlign::Left);
         let (left_pad, right_pad) = match align {
