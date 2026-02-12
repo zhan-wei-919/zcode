@@ -404,6 +404,45 @@ fn test_file_externally_modified_emits_reload_for_clean_and_marks_dirty_conflict
 }
 
 #[test]
+#[cfg(unix)]
+fn test_file_externally_modified_with_path_representation_mismatch_is_supported() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let real_path = dir.path().join("real.txt");
+    std::fs::write(&real_path, "seed").expect("write seed");
+    let symlink_path = dir.path().join("real-link.txt");
+    std::os::unix::fs::symlink(&real_path, &symlink_path).expect("create symlink");
+
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path: symlink_path,
+        content: "seed".to_string(),
+    });
+
+    let canonical_path = real_path.canonicalize().expect("canonicalize");
+    let (changed, effects) = editor.dispatch_action(EditorAction::FileExternallyModified {
+        path: canonical_path,
+    });
+
+    assert!(
+        changed,
+        "canonical and symlink forms should be treated as same file"
+    );
+    let request = match effects.as_slice() {
+        [Effect::ReloadFile(request)] => request,
+        other => panic!("expected one ReloadFile effect, got {other:?}"),
+    };
+    assert_eq!(request.pane, 0);
+
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert!(matches!(tab.disk_state, DiskState::InSync));
+}
+
+#[test]
 fn test_close_tabs_by_id_removes_requested_tabs() {
     let config = EditorConfig::default();
     let mut editor = EditorState::new(config);

@@ -1,120 +1,402 @@
+use crate::models::should_ignore;
+use notify::event::{CreateKind, ModifyKind, RenameMode};
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
-const SUPPRESS_DURATION: Duration = Duration::from_millis(500);
+const WATCHER_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileWatchEvent {
-    Modified(PathBuf),
-    Removed(PathBuf),
+    EditorModified(PathBuf),
+    EditorRemoved(PathBuf),
+    WorkspaceCreated { path: PathBuf, is_dir: bool },
+    WorkspaceDeleted { path: PathBuf },
+    WorkspaceRenamed { from: PathBuf, to: PathBuf },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FsDelta {
+    Created { path: PathBuf, is_dir: bool },
+    Deleted { path: PathBuf },
+    Renamed { from: PathBuf, to: PathBuf },
+    Modified { path: PathBuf },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileFingerprint {
+    len: u64,
+    modified: Option<SystemTime>,
 }
 
 pub struct FileWatcherService {
     watcher: RecommendedWatcher,
-    event_rx: mpsc::Receiver<FileWatchEvent>,
-    watched_paths: FxHashSet<PathBuf>,
-    suppress_until: FxHashMap<PathBuf, Instant>,
+    raw_event_rx: mpsc::Receiver<notify::Event>,
+    workspace_root: PathBuf,
+    open_files: FxHashSet<PathBuf>,
+    open_file_keys: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    open_file_fingerprints: FxHashMap<PathBuf, FileFingerprint>,
 }
 
 impl FileWatcherService {
-    fn suppress_path_for_duration(&mut self, path: &Path, duration: Duration) {
-        let until = Instant::now() + duration;
-        self.suppress_until.insert(path.to_path_buf(), until);
-
-        if let Ok(canonical_path) = path.canonicalize() {
-            self.suppress_until.insert(canonical_path, until);
-        }
-    }
-
-    pub fn new() -> Result<Self, notify::Error> {
+    pub fn new(workspace_root: &Path) -> Result<Self, notify::Error> {
+        let workspace_root = workspace_root
+            .canonicalize()
+            .unwrap_or_else(|_| workspace_root.to_path_buf());
         let (tx, rx) = mpsc::channel();
-        let watcher = RecommendedWatcher::new(
+        let mut watcher = RecommendedWatcher::new(
             move |res: Result<notify::Event, notify::Error>| {
                 let Ok(event) = res else { return };
-                let is_modify = matches!(
-                    event.kind,
-                    EventKind::Modify(notify::event::ModifyKind::Data(_)) | EventKind::Create(_)
-                );
-                let is_remove = matches!(event.kind, EventKind::Remove(_));
-                if is_modify {
-                    for path in event.paths {
-                        let _ = tx.send(FileWatchEvent::Modified(path));
-                    }
-                } else if is_remove {
-                    for path in event.paths {
-                        let _ = tx.send(FileWatchEvent::Removed(path));
-                    }
-                }
+                let _ = tx.send(event);
             },
-            Config::default().with_poll_interval(Duration::from_secs(2)),
+            Config::default().with_poll_interval(WATCHER_POLL_INTERVAL),
         )?;
+        watcher.watch(&workspace_root, RecursiveMode::Recursive)?;
         Ok(Self {
             watcher,
-            event_rx: rx,
-            watched_paths: FxHashSet::default(),
-            suppress_until: FxHashMap::default(),
+            raw_event_rx: rx,
+            workspace_root,
+            open_files: FxHashSet::default(),
+            open_file_keys: FxHashMap::default(),
+            open_file_fingerprints: FxHashMap::default(),
         })
     }
-    pub fn watch(&mut self, path: &Path) {
-        if self.watched_paths.contains(path) {
-            return;
+
+    pub fn sync_open_files<'a, I>(&mut self, paths: I)
+    where
+        I: IntoIterator<Item = &'a Path>,
+    {
+        let mut open_files = FxHashSet::default();
+        let mut open_file_keys: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
+        let mut open_file_fingerprints: FxHashMap<PathBuf, FileFingerprint> = FxHashMap::default();
+
+        for path in paths {
+            let path = path.to_path_buf();
+            if !open_files.insert(path.clone()) {
+                continue;
+            }
+
+            for key in path_identity_keys(path.as_path(), self.workspace_root.as_path()) {
+                open_file_keys.entry(key).or_default().insert(path.clone());
+            }
+
+            if let Some(existing) = self.open_file_fingerprints.get(&path).cloned() {
+                open_file_fingerprints.insert(path.clone(), existing);
+            } else if let Some(fingerprint) = file_fingerprint(path.as_path()) {
+                open_file_fingerprints.insert(path, fingerprint);
+            }
         }
-        if self
-            .watcher
-            .watch(path, RecursiveMode::NonRecursive)
-            .is_ok()
-        {
-            self.watched_paths.insert(path.to_path_buf());
-            // On macOS FSEvents, registering a watch immediately after creating/loading a file can
-            // replay recent create/modify events. Warm up the watch briefly so these startup events
-            // don't get treated as real external edits.
-            self.suppress_path_for_duration(path, SUPPRESS_DURATION);
-        }
+
+        self.open_files = open_files;
+        self.open_file_keys = open_file_keys;
+        self.open_file_fingerprints = open_file_fingerprints;
     }
 
-    pub fn unwatch(&mut self, path: &Path) {
-        if self.watched_paths.remove(path) {
-            let _ = self.watcher.unwatch(path);
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
+    }
+
+    pub fn open_files(&self) -> &FxHashSet<PathBuf> {
+        &self.open_files
+    }
+
+    pub fn acknowledge_write(&mut self, path: &Path) {
+        for tab_path in self.match_open_paths(path) {
+            if let Some(fingerprint) = file_fingerprint(tab_path.as_path()) {
+                self.open_file_fingerprints.insert(tab_path, fingerprint);
+            } else {
+                self.open_file_fingerprints.remove(&tab_path);
+            }
         }
-    }
-
-    pub fn suppress_next(&mut self, path: &Path) {
-        self.suppress_path_for_duration(path, SUPPRESS_DURATION);
-    }
-
-    pub fn watched_paths(&self) -> &FxHashSet<PathBuf> {
-        &self.watched_paths
     }
 
     pub fn drain_events(&mut self) -> Vec<FileWatchEvent> {
-        let now = Instant::now();
-        self.suppress_until.retain(|_, deadline| *deadline > now);
+        let _watcher_guard = &self.watcher;
+
+        let mut workspace_renamed = FxHashSet::<(PathBuf, PathBuf)>::default();
+        let mut workspace_deleted = FxHashSet::<PathBuf>::default();
+        let mut workspace_created = FxHashMap::<PathBuf, bool>::default();
+        let mut editor_removed = FxHashSet::<PathBuf>::default();
+        let mut editor_modified = FxHashSet::<PathBuf>::default();
+
+        while let Ok(event) = self.raw_event_rx.try_recv() {
+            for delta in normalize_notify_event(event) {
+                self.route_delta(
+                    delta,
+                    &mut workspace_renamed,
+                    &mut workspace_deleted,
+                    &mut workspace_created,
+                    &mut editor_removed,
+                    &mut editor_modified,
+                );
+            }
+        }
 
         let mut events = Vec::new();
-        let mut seen_modified = FxHashSet::default();
-        let mut seen_removed = FxHashSet::default();
 
-        while let Ok(event) = self.event_rx.try_recv() {
-            let path = match &event {
-                FileWatchEvent::Modified(p) | FileWatchEvent::Removed(p) => p,
-            };
-            if self.suppress_until.contains_key(path) {
-                continue;
-            }
-            let inserted = match &event {
-                FileWatchEvent::Modified(_) => seen_modified.insert(path.clone()),
-                FileWatchEvent::Removed(_) => seen_removed.insert(path.clone()),
-            };
-            if !inserted {
-                continue;
-            }
-            events.push(event);
+        let mut renamed = workspace_renamed.into_iter().collect::<Vec<_>>();
+        renamed.sort_unstable_by(|(a_from, a_to), (b_from, b_to)| {
+            a_from.cmp(b_from).then_with(|| a_to.cmp(b_to))
+        });
+        for (from, to) in renamed {
+            events.push(FileWatchEvent::WorkspaceRenamed { from, to });
+        }
+
+        let mut deleted = workspace_deleted.into_iter().collect::<Vec<_>>();
+        deleted.sort_unstable();
+        for path in deleted {
+            events.push(FileWatchEvent::WorkspaceDeleted { path });
+        }
+
+        let mut editor_removed_paths = editor_removed.into_iter().collect::<Vec<_>>();
+        editor_removed_paths.sort_unstable();
+        for path in editor_removed_paths {
+            events.push(FileWatchEvent::EditorRemoved(path));
+        }
+
+        let mut created = workspace_created.into_iter().collect::<Vec<_>>();
+        created.sort_unstable_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));
+        for (path, is_dir) in created {
+            events.push(FileWatchEvent::WorkspaceCreated { path, is_dir });
+        }
+
+        let mut editor_modified_paths = editor_modified.into_iter().collect::<Vec<_>>();
+        editor_modified_paths.sort_unstable();
+        for path in editor_modified_paths {
+            events.push(FileWatchEvent::EditorModified(path));
         }
 
         events
+    }
+
+    fn route_delta(
+        &mut self,
+        delta: FsDelta,
+        workspace_renamed: &mut FxHashSet<(PathBuf, PathBuf)>,
+        workspace_deleted: &mut FxHashSet<PathBuf>,
+        workspace_created: &mut FxHashMap<PathBuf, bool>,
+        editor_removed: &mut FxHashSet<PathBuf>,
+        editor_modified: &mut FxHashSet<PathBuf>,
+    ) {
+        match delta {
+            FsDelta::Modified { path } => {
+                for tab_path in self.match_open_paths(path.as_path()) {
+                    if self.refresh_open_file_fingerprint(tab_path.as_path()) {
+                        editor_modified.insert(tab_path);
+                    }
+                }
+            }
+            FsDelta::Deleted { path } => {
+                if let Some(path) = self.to_workspace_path(path.as_path()) {
+                    workspace_deleted.insert(path);
+                }
+                for tab_path in self.match_open_paths(path.as_path()) {
+                    self.open_file_fingerprints.remove(&tab_path);
+                    editor_removed.insert(tab_path);
+                }
+            }
+            FsDelta::Created { path, is_dir } => {
+                if path.exists() {
+                    if let Some(path) = self.to_workspace_path(path.as_path()) {
+                        merge_created(workspace_created, path, is_dir);
+                    }
+                }
+            }
+            FsDelta::Renamed { from, to } => {
+                for tab_path in self.match_open_paths(from.as_path()) {
+                    self.open_file_fingerprints.remove(&tab_path);
+                    editor_removed.insert(tab_path);
+                }
+                for tab_path in self.match_open_paths(to.as_path()) {
+                    let _ = self.refresh_open_file_fingerprint(tab_path.as_path());
+                    editor_modified.insert(tab_path);
+                }
+
+                let from_in_workspace = self.to_workspace_path(from.as_path());
+                let to_in_workspace = self.to_workspace_path(to.as_path());
+                let to_exists = to.exists();
+
+                match (from_in_workspace, to_in_workspace) {
+                    (Some(from), Some(to)) => {
+                        workspace_renamed.insert((from, to));
+                    }
+                    (Some(from), None) => {
+                        workspace_deleted.insert(from);
+                    }
+                    (None, Some(to)) => {
+                        if to_exists {
+                            let is_dir = infer_is_dir(to.as_path(), None);
+                            merge_created(workspace_created, to, is_dir);
+                        }
+                    }
+                    (None, None) => {}
+                }
+            }
+        }
+    }
+
+    fn refresh_open_file_fingerprint(&mut self, path: &Path) -> bool {
+        let new_fingerprint = file_fingerprint(path);
+        match new_fingerprint {
+            Some(new_fingerprint) => {
+                if let Some(previous) = self
+                    .open_file_fingerprints
+                    .insert(path.to_path_buf(), new_fingerprint.clone())
+                {
+                    previous != new_fingerprint
+                } else {
+                    true
+                }
+            }
+            None => self.open_file_fingerprints.remove(path).is_some(),
+        }
+    }
+
+    fn to_workspace_path(&self, path: &Path) -> Option<PathBuf> {
+        let raw = raw_absolute_path(path, self.workspace_root.as_path());
+        let workspace = self.workspace_root.as_path();
+
+        let resolved = if raw.starts_with(workspace) {
+            Some(raw)
+        } else {
+            raw.canonicalize()
+                .ok()
+                .filter(|canonical| canonical.starts_with(workspace))
+        }?;
+
+        if contains_ignored_component(resolved.as_path(), workspace) {
+            return None;
+        }
+        Some(resolved)
+    }
+
+    fn match_open_paths(&self, path: &Path) -> FxHashSet<PathBuf> {
+        let mut matched = FxHashSet::default();
+        for key in path_identity_keys(path, self.workspace_root.as_path()) {
+            if let Some(paths) = self.open_file_keys.get(&key) {
+                matched.extend(paths.iter().cloned());
+            }
+        }
+        matched
+    }
+}
+
+fn merge_created(target: &mut FxHashMap<PathBuf, bool>, path: PathBuf, is_dir: bool) {
+    if let Some(existing) = target.get_mut(&path) {
+        *existing |= is_dir;
+    } else {
+        target.insert(path, is_dir);
+    }
+}
+
+fn raw_absolute_path(path: &Path, workspace_root: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace_root.join(path)
+    }
+}
+
+fn path_identity_keys(path: &Path, workspace_root: &Path) -> Vec<PathBuf> {
+    let raw = raw_absolute_path(path, workspace_root);
+    let mut keys = vec![raw.clone()];
+    if let Ok(canonical) = raw.canonicalize() {
+        if canonical != raw {
+            keys.push(canonical);
+        }
+    }
+    keys
+}
+
+fn contains_ignored_component(path: &Path, workspace_root: &Path) -> bool {
+    let relative = path.strip_prefix(workspace_root).unwrap_or(path);
+    relative.components().any(|component| {
+        if let Component::Normal(name) = component {
+            should_ignore(&name.to_string_lossy())
+        } else {
+            false
+        }
+    })
+}
+
+fn infer_is_dir(path: &Path, create_kind: Option<CreateKind>) -> bool {
+    match create_kind {
+        Some(CreateKind::Folder) => true,
+        Some(CreateKind::File) => false,
+        _ => std::fs::metadata(path)
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false),
+    }
+}
+
+fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+
+    Some(FileFingerprint {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+fn normalize_notify_event(event: notify::Event) -> Vec<FsDelta> {
+    match event.kind {
+        EventKind::Create(create_kind) => event
+            .paths
+            .into_iter()
+            .map(|path| FsDelta::Created {
+                is_dir: infer_is_dir(path.as_path(), Some(create_kind)),
+                path,
+            })
+            .collect(),
+        EventKind::Remove(_) => event
+            .paths
+            .into_iter()
+            .map(|path| FsDelta::Deleted { path })
+            .collect(),
+        EventKind::Modify(kind) => normalize_modify_event(kind, event.paths),
+        _ => Vec::new(),
+    }
+}
+
+fn normalize_modify_event(kind: ModifyKind, paths: Vec<PathBuf>) -> Vec<FsDelta> {
+    match kind {
+        ModifyKind::Name(RenameMode::Both) => {
+            if paths.len() >= 2 {
+                vec![FsDelta::Renamed {
+                    from: paths[0].clone(),
+                    to: paths[1].clone(),
+                }]
+            } else {
+                paths
+                    .into_iter()
+                    .map(|path| FsDelta::Modified { path })
+                    .collect()
+            }
+        }
+        ModifyKind::Name(RenameMode::From) => paths
+            .into_iter()
+            .map(|path| FsDelta::Deleted { path })
+            .collect(),
+        ModifyKind::Name(RenameMode::To) => paths
+            .into_iter()
+            .map(|path| FsDelta::Created {
+                is_dir: infer_is_dir(path.as_path(), None),
+                path,
+            })
+            .collect(),
+        ModifyKind::Data(_)
+        | ModifyKind::Any
+        | ModifyKind::Other
+        | ModifyKind::Metadata(_)
+        | ModifyKind::Name(_) => paths
+            .into_iter()
+            .map(|path| FsDelta::Modified { path })
+            .collect(),
     }
 }
 
@@ -122,89 +404,189 @@ impl FileWatcherService {
 mod tests {
     use super::*;
 
-    fn create_service_with_channel() -> (FileWatcherService, std::sync::mpsc::Sender<FileWatchEvent>)
-    {
+    fn create_service_with_raw_channel(
+        workspace_root: &Path,
+    ) -> (FileWatcherService, std::sync::mpsc::Sender<notify::Event>) {
         let (tx, rx) = mpsc::channel();
         let watcher = RecommendedWatcher::new(
             |_| {},
-            Config::default().with_poll_interval(Duration::from_secs(2)),
+            Config::default().with_poll_interval(WATCHER_POLL_INTERVAL),
         )
         .expect("create watcher");
         (
             FileWatcherService {
                 watcher,
-                event_rx: rx,
-                watched_paths: FxHashSet::default(),
-                suppress_until: FxHashMap::default(),
+                raw_event_rx: rx,
+                workspace_root: workspace_root.to_path_buf(),
+                open_files: FxHashSet::default(),
+                open_file_keys: FxHashMap::default(),
+                open_file_fingerprints: FxHashMap::default(),
             },
             tx,
         )
     }
 
     #[test]
-    fn drain_events_should_preserve_removed_when_modified_and_removed_arrive_together() {
-        let (mut service, tx) = create_service_with_channel();
-        let path = PathBuf::from("/tmp/zcode-file-watcher-dedup-test");
+    fn modify_name_events_are_normalized_as_modified() {
+        let path = PathBuf::from("/tmp/zcode-file-watcher-name-modified.rs");
+        let event = notify::Event {
+            kind: EventKind::Modify(ModifyKind::Name(RenameMode::Any)),
+            paths: vec![path.clone()],
+            attrs: Default::default(),
+        };
 
-        tx.send(FileWatchEvent::Modified(path.clone()))
-            .expect("send modified");
-        tx.send(FileWatchEvent::Removed(path.clone()))
-            .expect("send removed");
-
-        let events = service.drain_events();
-
-        assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, FileWatchEvent::Removed(p) if p == &path)),
-            "removed event should not be dropped when modified and removed are in same drain cycle"
-        );
+        let deltas = normalize_notify_event(event);
+        assert_eq!(deltas, vec![FsDelta::Modified { path }]);
     }
 
     #[test]
-    fn watch_should_suppress_startup_modified_events() {
-        let (mut service, tx) = create_service_with_channel();
+    fn atomic_save_rename_like_event_routes_to_editor_modified_target() {
         let dir = tempfile::tempdir().expect("create tempdir");
-        let path = dir.path().join("a.rs");
-        std::fs::write(&path, "fn main() {}\n").expect("write seed file");
+        let workspace_root = dir.path().to_path_buf();
+        let target_path = workspace_root.join("a.rs");
+        std::fs::write(&target_path, "fn main() {}\n").expect("write target");
+        let tmp_path = workspace_root.join(".a.rs.tmp");
+        std::fs::write(&tmp_path, "fn main() { println!(\"x\"); }\n").expect("write tmp");
 
-        service.watch(&path);
-        assert!(service.watched_paths().contains(&path));
+        let (mut service, tx) = create_service_with_raw_channel(workspace_root.as_path());
+        service.sync_open_files([target_path.as_path()]);
 
-        tx.send(FileWatchEvent::Modified(path.clone()))
-            .expect("send modified");
-
-        let canonical = path.canonicalize().expect("canonicalize path");
-        if canonical != path {
-            tx.send(FileWatchEvent::Modified(canonical))
-                .expect("send canonical modified");
-        }
+        tx.send(notify::Event {
+            kind: EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+            paths: vec![tmp_path.clone(), target_path.clone()],
+            attrs: Default::default(),
+        })
+        .expect("send event");
 
         let events = service.drain_events();
         assert!(
-            events.is_empty(),
-            "startup modified events should be suppressed right after watch registration"
+            events.contains(&FileWatchEvent::EditorModified(target_path)),
+            "atomic-save rename target should trigger editor modified"
+        );
+        assert!(
+            events.contains(&FileWatchEvent::WorkspaceRenamed {
+                from: tmp_path,
+                to: workspace_root.join("a.rs"),
+            }),
+            "rename event should be routed for workspace tree"
         );
     }
 
     #[test]
-    fn expired_suppression_should_allow_modified_events() {
-        let (mut service, tx) = create_service_with_channel();
-        let path = PathBuf::from("/tmp/zcode-file-watcher-expire-test");
+    fn rename_from_to_incomplete_info_should_degrade_to_delete_and_create() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let workspace_root = dir.path().to_path_buf();
+        let from = workspace_root.join("old.rs");
+        let to = workspace_root.join("new.rs");
+        std::fs::write(&from, "old").expect("write old");
+        std::fs::write(&to, "new").expect("write new");
 
-        service
-            .suppress_until
-            .insert(path.clone(), Instant::now() - Duration::from_millis(1));
+        let (mut service, tx) = create_service_with_raw_channel(workspace_root.as_path());
 
-        tx.send(FileWatchEvent::Modified(path.clone()))
-            .expect("send modified");
+        tx.send(notify::Event {
+            kind: EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+            paths: vec![from.clone()],
+            attrs: Default::default(),
+        })
+        .expect("send from");
+        tx.send(notify::Event {
+            kind: EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+            paths: vec![to.clone()],
+            attrs: Default::default(),
+        })
+        .expect("send to");
+
+        let events = service.drain_events();
+        assert!(events.contains(&FileWatchEvent::WorkspaceDeleted { path: from }));
+        assert!(events.contains(&FileWatchEvent::WorkspaceCreated {
+            path: to,
+            is_dir: false,
+        }));
+    }
+
+    #[test]
+    fn raw_and_canonical_keys_should_both_match_open_file_identity() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let workspace_root = dir.path().to_path_buf();
+        let real_path = workspace_root.join("real.rs");
+        std::fs::write(&real_path, "fn main() {}\n").expect("write real");
+        let alias_path = workspace_root.join("real_alias.rs");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real_path, &alias_path).expect("create symlink");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&real_path, &alias_path).expect("create symlink");
+
+        let canonical = real_path.canonicalize().expect("canonicalize");
+        let (mut service, tx) = create_service_with_raw_channel(workspace_root.as_path());
+        service.sync_open_files([alias_path.as_path()]);
+        std::fs::write(&real_path, "fn main() { println!(\"changed\"); }\n").expect("rewrite real");
+
+        tx.send(notify::Event {
+            kind: EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content)),
+            paths: vec![canonical],
+            attrs: Default::default(),
+        })
+        .expect("send event");
+
+        let events = service.drain_events();
+        assert!(events.contains(&FileWatchEvent::EditorModified(alias_path)));
+    }
+
+    #[test]
+    fn watch_poll_interval_is_two_hundred_fifty_ms() {
+        assert_eq!(WATCHER_POLL_INTERVAL, Duration::from_millis(250));
+    }
+
+    #[test]
+    fn metadata_only_modified_event_with_unchanged_fingerprint_should_not_emit_editor_modified() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let workspace_root = dir.path().to_path_buf();
+        let path = workspace_root.join("a.rs");
+        std::fs::write(&path, "fn main() {}\n").expect("write file");
+
+        let (mut service, tx) = create_service_with_raw_channel(workspace_root.as_path());
+        service.sync_open_files([path.as_path()]);
+
+        tx.send(notify::Event {
+            kind: EventKind::Modify(ModifyKind::Metadata(
+                notify::event::MetadataKind::AccessTime,
+            )),
+            paths: vec![path.clone()],
+            attrs: Default::default(),
+        })
+        .expect("send metadata event");
 
         let events = service.drain_events();
         assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, FileWatchEvent::Modified(p) if p == &path)),
-            "modified events should pass once suppression expires"
+            !events.contains(&FileWatchEvent::EditorModified(path)),
+            "metadata-only noise should not trigger editor reload"
+        );
+    }
+
+    #[test]
+    fn acknowledged_internal_write_should_not_emit_followup_editor_modified() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let workspace_root = dir.path().to_path_buf();
+        let path = workspace_root.join("a.rs");
+        std::fs::write(&path, "fn main() {}\n").expect("write file");
+
+        let (mut service, tx) = create_service_with_raw_channel(workspace_root.as_path());
+        service.sync_open_files([path.as_path()]);
+
+        std::fs::write(&path, "fn main() { println!(\"saved\"); }\n").expect("rewrite file");
+        service.acknowledge_write(path.as_path());
+
+        tx.send(notify::Event {
+            kind: EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content)),
+            paths: vec![path.clone()],
+            attrs: Default::default(),
+        })
+        .expect("send content event");
+
+        let events = service.drain_events();
+        assert!(
+            !events.contains(&FileWatchEvent::EditorModified(path)),
+            "self-save followup event should not trigger external reload"
         );
     }
 }

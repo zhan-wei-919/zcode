@@ -425,6 +425,7 @@ impl Workbench {
 
         let completion_ranker =
             crate::kernel::services::adapters::settings::load_completion_ranker();
+        let watcher_root = absolute_root.clone();
         let store = Store::new_with_ranker(
             crate::kernel::AppState::new(absolute_root, file_tree, editor_config),
             completion_ranker,
@@ -481,7 +482,7 @@ impl Workbench {
             pending_restart: None,
             pending_theme_save_deadline: None,
             pending_completion_rank_save_deadline: None,
-            file_watcher: match FileWatcherService::new() {
+            file_watcher: match FileWatcherService::new(watcher_root.as_path()) {
                 Ok(w) => Some(w),
                 Err(e) => {
                     tracing::warn!(error = %e, "File watcher unavailable");
@@ -652,7 +653,7 @@ impl Workbench {
 
                 if success {
                     if let Some(watcher) = self.file_watcher.as_mut() {
-                        watcher.suppress_next(&path);
+                        watcher.acknowledge_write(path.as_path());
                     }
 
                     if let Some(service) = self.kernel_services.get_mut::<LspService>() {

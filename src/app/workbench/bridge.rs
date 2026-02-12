@@ -561,13 +561,7 @@ impl Workbench {
             }
         }
 
-        let watched = watcher.watched_paths().clone();
-        for path in watched.difference(&current_paths) {
-            watcher.unwatch(path);
-        }
-        for path in current_paths.difference(&watched) {
-            watcher.watch(path);
-        }
+        watcher.sync_open_files(current_paths.iter().map(|path| path.as_path()));
     }
 
     fn sync_lsp(&mut self) {

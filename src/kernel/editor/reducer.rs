@@ -1165,7 +1165,10 @@ impl EditorState {
         let mut effects = Vec::new();
         for (pane, pane_state) in self.panes.iter_mut().enumerate() {
             for tab in &mut pane_state.tabs {
-                if tab.path.as_ref() != Some(&path) {
+                let Some(tab_path) = tab.path.as_ref() else {
+                    continue;
+                };
+                if !paths_equivalent(tab_path.as_path(), path.as_path()) {
                     continue;
                 }
                 if !tab.dirty {
@@ -1186,7 +1189,11 @@ impl EditorState {
         let mut changed = false;
         for pane_state in &mut self.panes {
             for tab in &mut pane_state.tabs {
-                if tab.path.as_ref() == Some(&path) {
+                if tab
+                    .path
+                    .as_ref()
+                    .is_some_and(|tab_path| paths_equivalent(tab_path.as_path(), path.as_path()))
+                {
                     tab.disk_state = DiskState::MissingOnDisk;
                     changed = true;
                 }
@@ -1227,6 +1234,19 @@ impl EditorState {
         };
         tab.disk_state = DiskState::InSync;
         (true, Vec::new())
+    }
+}
+
+fn paths_equivalent(left: &std::path::Path, right: &std::path::Path) -> bool {
+    if left == right {
+        return true;
+    }
+
+    let left = left.canonicalize();
+    let right = right.canonicalize();
+    match (left, right) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
     }
 }
 

@@ -49,15 +49,25 @@ impl Workbench {
         let mut changed = false;
         for event in events {
             match event {
-                FileWatchEvent::Modified(path) => {
+                FileWatchEvent::EditorModified(path) => {
                     changed |= self.dispatch_kernel(KernelAction::Editor(
                         EditorAction::FileExternallyModified { path },
                     ));
                 }
-                FileWatchEvent::Removed(path) => {
+                FileWatchEvent::EditorRemoved(path) => {
                     changed |= self.dispatch_kernel(KernelAction::Editor(
                         EditorAction::FileExternallyDeleted { path },
                     ));
+                }
+                FileWatchEvent::WorkspaceCreated { path, is_dir } => {
+                    changed |=
+                        self.dispatch_kernel(KernelAction::ExplorerPathCreated { path, is_dir });
+                }
+                FileWatchEvent::WorkspaceDeleted { path } => {
+                    changed |= self.dispatch_kernel(KernelAction::ExplorerPathDeleted { path });
+                }
+                FileWatchEvent::WorkspaceRenamed { from, to } => {
+                    changed |= self.dispatch_kernel(KernelAction::ExplorerPathRenamed { from, to });
                 }
             }
         }
