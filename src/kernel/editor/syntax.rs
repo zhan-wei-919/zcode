@@ -3,6 +3,8 @@
 use crate::kernel::language::LanguageId;
 use crate::models::EditOp;
 use ropey::Rope;
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
 use std::path::Path;
 use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 
@@ -176,7 +178,6 @@ impl SyntaxDocument {
         }
 
         for line_spans in &mut per_line {
-            line_spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
             merge_adjacent_spans(line_spans);
         }
 
@@ -258,7 +259,6 @@ pub fn highlight_snippet(language: LanguageId, text: &str) -> Vec<Vec<HighlightS
     }
 
     for line_spans in &mut per_line {
-        line_spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
         merge_adjacent_spans(line_spans);
     }
 
@@ -436,76 +436,139 @@ fn collect_highlights(
         }
     }
 
-    normalize_overlapping_highlight_spans(spans)
+    normalize_overlapping_highlight_spans(spans, start_byte, end_byte)
 }
 
 fn normalize_overlapping_highlight_spans(
-    mut spans: Vec<AbsHighlightSpan>,
+    spans: Vec<AbsHighlightSpan>,
+    start_byte: usize,
+    end_byte: usize,
 ) -> Vec<AbsHighlightSpan> {
-    if spans.len() <= 1 {
-        return spans;
+    if spans.is_empty() || start_byte >= end_byte {
+        return Vec::new();
     }
 
-    spans.sort_by(|a, b| {
-        b.depth
-            .cmp(&a.depth)
-            .then_with(|| (a.end - a.start).cmp(&(b.end - b.start)))
-            .then(a.start.cmp(&b.start))
-            .then(a.end.cmp(&b.end))
+    let mut active_keys = Vec::with_capacity(spans.len());
+    let mut events = Vec::with_capacity(spans.len().saturating_mul(2));
+    for (seq, span) in spans.into_iter().enumerate() {
+        let clipped_start = span.start.max(start_byte);
+        let clipped_end = span.end.min(end_byte);
+        if clipped_start >= clipped_end {
+            continue;
+        }
+
+        let id = active_keys.len();
+        active_keys.push(ActiveSpanKey::from_span(span, seq));
+        events.push(SpanEvent {
+            pos: clipped_start,
+            kind: SpanEventKind::Start,
+            id,
+        });
+        events.push(SpanEvent {
+            pos: clipped_end,
+            kind: SpanEventKind::End,
+            id,
+        });
+    }
+
+    if events.is_empty() {
+        return Vec::new();
+    }
+
+    events.sort_by(|a, b| {
+        a.pos
+            .cmp(&b.pos)
+            .then_with(|| match (a.kind, b.kind) {
+                (SpanEventKind::End, SpanEventKind::Start) => Ordering::Less,
+                (SpanEventKind::Start, SpanEventKind::End) => Ordering::Greater,
+                _ => Ordering::Equal,
+            })
+            .then(a.id.cmp(&b.id))
     });
 
-    let mut flattened: Vec<AbsHighlightSpan> = Vec::with_capacity(spans.len());
-    for span in spans {
-        let mut fragments = vec![(span.start, span.end)];
+    let mut active: BTreeSet<ActiveSpanKey> = BTreeSet::new();
+    let mut flattened: Vec<AbsHighlightSpan> = Vec::with_capacity(events.len() / 2);
+    let mut prev_pos = events[0].pos;
 
-        for existing in &flattened {
-            fragments = subtract_interval_fragments(fragments, existing.start, existing.end);
-            if fragments.is_empty() {
-                break;
+    for event in events {
+        if prev_pos < event.pos {
+            if let Some(top) = active.iter().next_back() {
+                flattened.push(AbsHighlightSpan {
+                    start: prev_pos,
+                    end: event.pos,
+                    kind: top.kind,
+                    depth: top.depth,
+                });
             }
+            prev_pos = event.pos;
         }
 
-        for (start, end) in fragments {
-            if start < end {
-                flattened.push(AbsHighlightSpan {
-                    start,
-                    end,
-                    kind: span.kind,
-                    depth: span.depth,
-                });
+        let key = active_keys[event.id];
+        match event.kind {
+            SpanEventKind::Start => {
+                active.insert(key);
+            }
+            SpanEventKind::End => {
+                active.remove(&key);
             }
         }
     }
 
-    flattened.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
     merge_adjacent_abs_spans(&mut flattened);
     flattened
 }
 
-fn subtract_interval_fragments(
-    fragments: Vec<(usize, usize)>,
-    cut_start: usize,
-    cut_end: usize,
-) -> Vec<(usize, usize)> {
-    if cut_start >= cut_end {
-        return fragments;
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpanEventKind {
+    Start,
+    End,
+}
 
-    let mut out = Vec::with_capacity(fragments.len());
-    for (start, end) in fragments {
-        if cut_end <= start || cut_start >= end {
-            out.push((start, end));
-            continue;
-        }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SpanEvent {
+    pos: usize,
+    kind: SpanEventKind,
+    id: usize,
+}
 
-        if start < cut_start {
-            out.push((start, cut_start.min(end)));
-        }
-        if cut_end < end {
-            out.push((cut_end.max(start), end));
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ActiveSpanKey {
+    depth: usize,
+    len: usize,
+    start: usize,
+    end: usize,
+    seq: usize,
+    kind: HighlightKind,
+}
+
+impl ActiveSpanKey {
+    fn from_span(span: AbsHighlightSpan, seq: usize) -> Self {
+        Self {
+            depth: span.depth,
+            len: span.end.saturating_sub(span.start),
+            start: span.start,
+            end: span.end,
+            seq,
+            kind: span.kind,
         }
     }
-    out
+}
+
+impl Ord for ActiveSpanKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.depth
+            .cmp(&other.depth)
+            .then_with(|| other.len.cmp(&self.len))
+            .then_with(|| other.start.cmp(&self.start))
+            .then_with(|| other.end.cmp(&self.end))
+            .then_with(|| other.seq.cmp(&self.seq))
+    }
+}
+
+impl PartialOrd for ActiveSpanKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 fn merge_adjacent_abs_spans(spans: &mut Vec<AbsHighlightSpan>) {

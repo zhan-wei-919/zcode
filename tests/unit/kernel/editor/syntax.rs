@@ -1,6 +1,7 @@
 use super::*;
 use ropey::Rope;
 use std::path::Path;
+use std::time::Instant;
 
 #[test]
 fn test_highlight_comment_range_rust() {
@@ -520,4 +521,160 @@ fn test_highlight_java_comment_string_keyword_and_in_string_or_comment() {
     assert!(doc.is_in_string_or_comment(in_comment));
     let in_string = src.find("\"x\"").unwrap() + 1;
     assert!(doc.is_in_string_or_comment(in_string));
+}
+
+#[test]
+fn test_normalize_overlapping_highlight_spans_stable_tiebreak_by_seq() {
+    let first = normalize_overlapping_highlight_spans(
+        vec![
+            AbsHighlightSpan {
+                start: 3,
+                end: 11,
+                kind: HighlightKind::Keyword,
+                depth: 4,
+            },
+            AbsHighlightSpan {
+                start: 3,
+                end: 11,
+                kind: HighlightKind::String,
+                depth: 4,
+            },
+        ],
+        0,
+        20,
+    );
+    assert_eq!(
+        first,
+        vec![AbsHighlightSpan {
+            start: 3,
+            end: 11,
+            kind: HighlightKind::Keyword,
+            depth: 4,
+        }]
+    );
+
+    let second = normalize_overlapping_highlight_spans(
+        vec![
+            AbsHighlightSpan {
+                start: 3,
+                end: 11,
+                kind: HighlightKind::String,
+                depth: 4,
+            },
+            AbsHighlightSpan {
+                start: 3,
+                end: 11,
+                kind: HighlightKind::Keyword,
+                depth: 4,
+            },
+        ],
+        0,
+        20,
+    );
+    assert_eq!(
+        second,
+        vec![AbsHighlightSpan {
+            start: 3,
+            end: 11,
+            kind: HighlightKind::String,
+            depth: 4,
+        }]
+    );
+}
+
+#[test]
+fn test_normalize_overlapping_highlight_spans_priority_uses_original_bounds() {
+    let spans = normalize_overlapping_highlight_spans(
+        vec![
+            AbsHighlightSpan {
+                start: 0,
+                end: 3,
+                kind: HighlightKind::Keyword,
+                depth: 2,
+            },
+            AbsHighlightSpan {
+                start: 2,
+                end: 4,
+                kind: HighlightKind::String,
+                depth: 2,
+            },
+        ],
+        2,
+        3,
+    );
+
+    assert_eq!(
+        spans,
+        vec![AbsHighlightSpan {
+            start: 2,
+            end: 3,
+            kind: HighlightKind::String,
+            depth: 2,
+        }]
+    );
+}
+
+#[test]
+fn test_highlight_line_spans_are_sorted_and_non_overlapping() {
+    let src = r#"fn main() {
+    let v = format!("item-{}", 42);
+    tracing::info!("done {}", v);
+}
+"#;
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("ordered.rs"), &rope).expect("rust syntax");
+
+    let lines = doc.highlight_lines(&rope, 0, rope.len_lines());
+    for (line_index, line) in lines.iter().enumerate() {
+        let line_len = rope.line(line_index).len_bytes();
+        for span in line {
+            assert!(span.start < span.end);
+            assert!(span.end <= line_len);
+        }
+        for pair in line.windows(2) {
+            let left = pair[0];
+            let right = pair[1];
+            assert!(left.start <= right.start);
+            assert!(left.end <= right.start);
+        }
+    }
+}
+
+#[test]
+fn experiment_highlight_lines_scale_baseline() {
+    let lines = 1400usize;
+    let window = 220usize;
+    let loops = 100usize;
+    let mut src = String::new();
+    for i in 0..lines {
+        src.push_str(&format!(
+            "fn item_{i:04}(x: i32) -> i32 {{ let s = \"v{i}\"; if x > {i} {{ x + {i} }} else {{ x - {i} }} }}\n"
+        ));
+    }
+    let rope = Rope::from_str(&src);
+    let doc = SyntaxDocument::for_path(Path::new("baseline.rs"), &rope).expect("rust syntax");
+
+    let _ = doc.highlight_lines(&rope, 0, window);
+
+    let mut total_spans = 0usize;
+    let start = Instant::now();
+    for i in 0..loops {
+        let start_line = (i * 17) % (lines - window);
+        let spans = doc.highlight_lines(&rope, start_line, start_line + window);
+        total_spans += spans.iter().map(Vec::len).sum::<usize>();
+    }
+    let elapsed = start.elapsed();
+    let avg_us = elapsed.as_secs_f64() * 1_000_000.0 / loops as f64;
+
+    eprintln!(
+        "[experiment] syntax_highlight_lines loops={} lines={} window={} elapsed_ms={} avg_us={:.2} total_spans={}",
+        loops,
+        lines,
+        window,
+        elapsed.as_millis(),
+        avg_us,
+        total_spans
+    );
+
+    assert!(total_spans > 0);
 }
