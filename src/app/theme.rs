@@ -56,6 +56,8 @@ pub struct UiTheme {
     pub md_blockquote_bar: Color,
     pub md_hr_fg: Color,
     pub md_marker_fg: Color,
+    pub search_match_bg: Color,
+    pub search_current_match_bg: Color,
 }
 
 impl Default for UiTheme {
@@ -111,6 +113,8 @@ impl Default for UiTheme {
             md_blockquote_bar: Color::Indexed(8),
             md_hr_fg: Color::Indexed(8),
             md_marker_fg: Color::Indexed(8),
+            search_match_bg: Color::Rgb(0x5A, 0x4A, 0x1E),
+            search_current_match_bg: Color::Rgb(0x80, 0x60, 0x10),
         }
     }
 }
@@ -302,6 +306,16 @@ impl UiTheme {
                 self.statusbar_bg = c;
             }
         }
+        if let Some(v) = &settings.search_match_bg {
+            if let Some(c) = parse_color(v) {
+                self.search_match_bg = c;
+            }
+        }
+        if let Some(v) = &settings.search_current_match_bg {
+            if let Some(c) = parse_color(v) {
+                self.search_current_match_bg = c;
+            }
+        }
     }
 }
 
@@ -399,5 +413,7 @@ pub(crate) fn to_core_theme(theme: &UiTheme) -> CoreTheme {
         md_blockquote_bar: theme.md_blockquote_bar,
         md_hr_fg: theme.md_hr_fg,
         md_marker_fg: theme.md_marker_fg,
+        search_match_bg: theme.search_match_bg,
+        search_current_match_bg: theme.search_current_match_bg,
     }
 }

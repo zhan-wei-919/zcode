@@ -1,7 +1,9 @@
 use super::*;
-use crate::kernel::editor::{EditorPaneState, EditorTabState, TabId};
+use crate::kernel::editor::{EditorPaneState, EditorTabState, SearchBarMode, TabId};
 use crate::kernel::services::ports::EditorConfig;
 use crate::ui::core::geom::Rect;
+use crate::ui::core::painter::{PaintCmd, Painter};
+use crate::ui::core::theme::Theme;
 
 fn pane_with_tabs(config: &EditorConfig, tabs: &[(&str, bool)]) -> EditorPaneState {
     let mut pane = EditorPaneState::new(config);
@@ -28,6 +30,32 @@ fn layout_with_content_area(content_area: Rect) -> crate::views::EditorPaneLayou
         content_area,
         gutter_width: content_area.x,
     }
+}
+
+fn nav_buttons_origin(
+    pane: &EditorPaneState,
+    layout: &crate::views::EditorPaneLayout,
+    config: &EditorConfig,
+) -> (u16, u16) {
+    let mut painter = Painter::new();
+    crate::views::paint_editor_pane(
+        &mut painter,
+        layout,
+        pane,
+        config,
+        &Theme::default(),
+        None,
+        false,
+    );
+
+    painter
+        .cmds()
+        .iter()
+        .find_map(|cmd| match cmd {
+            PaintCmd::Text { pos, text, .. } if text == " ▲ ▼ ✕" => Some((pos.x, pos.y)),
+            _ => None,
+        })
+        .expect("search nav buttons")
 }
 
 #[test]
@@ -174,4 +202,80 @@ fn drag_hit_test_diagonal_clamps_both() {
 fn drag_hit_test_empty_content_area_returns_none() {
     let layout = layout_with_content_area(Rect::new(0, 0, 0, 0));
     assert!(hit_test_editor_mouse_drag(&layout, 5, 5).is_none());
+}
+
+#[test]
+fn search_bar_hit_test_detects_prev_next_and_close_buttons() {
+    let config = EditorConfig::default();
+    let mut pane = pane_with_tabs(&config, &[("a", false)]);
+    pane.search_bar.show(SearchBarMode::Search);
+    pane.search_bar.search_text = "hello".to_string();
+    pane.search_bar.cursor_pos = pane.search_bar.search_text.len();
+    pane.search_bar.current_match_index = Some(0);
+    pane.search_bar.matches = vec![
+        crate::kernel::services::ports::Match::new(0, 5, 0, 0),
+        crate::kernel::services::ports::Match::new(12, 17, 0, 12),
+    ];
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 80, 12), &pane, &config);
+    let (nav_x, nav_y) = nav_buttons_origin(&pane, &layout, &config);
+
+    assert_eq!(
+        hit_test_search_bar(&layout, &pane.search_bar, nav_x + 1, nav_y),
+        Some(SearchBarHitResult::PrevMatch)
+    );
+    assert_eq!(
+        hit_test_search_bar(&layout, &pane.search_bar, nav_x + 3, nav_y),
+        Some(SearchBarHitResult::NextMatch)
+    );
+    assert_eq!(
+        hit_test_search_bar(&layout, &pane.search_bar, nav_x + 5, nav_y),
+        Some(SearchBarHitResult::Close)
+    );
+}
+
+#[test]
+fn search_bar_hit_test_ignores_spaces_and_non_search_rows() {
+    let config = EditorConfig::default();
+    let mut pane = pane_with_tabs(&config, &[("a", false)]);
+    pane.search_bar.show(SearchBarMode::Search);
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 80, 12), &pane, &config);
+    let (nav_x, nav_y) = nav_buttons_origin(&pane, &layout, &config);
+
+    assert_eq!(
+        hit_test_search_bar(&layout, &pane.search_bar, nav_x, nav_y),
+        None
+    );
+    assert_eq!(
+        hit_test_search_bar(&layout, &pane.search_bar, nav_x + 2, nav_y),
+        None
+    );
+    assert_eq!(
+        hit_test_search_bar(&layout, &pane.search_bar, nav_x + 1, nav_y + 1),
+        None
+    );
+}
+
+#[test]
+fn search_bar_hit_test_works_in_replace_mode_top_row_buttons() {
+    let config = EditorConfig::default();
+    let mut pane = pane_with_tabs(&config, &[("a", false)]);
+    pane.search_bar.show(SearchBarMode::Replace);
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 80, 12), &pane, &config);
+    let (nav_x, nav_y) = nav_buttons_origin(&pane, &layout, &config);
+
+    assert_eq!(
+        hit_test_search_bar(&layout, &pane.search_bar, nav_x + 1, nav_y),
+        Some(SearchBarHitResult::PrevMatch)
+    );
+    assert_eq!(
+        hit_test_search_bar(&layout, &pane.search_bar, nav_x + 3, nav_y),
+        Some(SearchBarHitResult::NextMatch)
+    );
+    assert_eq!(
+        hit_test_search_bar(&layout, &pane.search_bar, nav_x + 5, nav_y),
+        Some(SearchBarHitResult::Close)
+    );
 }

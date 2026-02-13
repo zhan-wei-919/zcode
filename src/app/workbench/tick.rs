@@ -756,6 +756,8 @@ impl Workbench {
             sidebar_bg: color_to_hex(t.sidebar_bg),
             popup_bg: color_to_hex(t.popup_bg),
             statusbar_bg: color_to_hex(t.statusbar_bg),
+            search_match_bg: color_to_hex(t.search_match_bg),
+            search_current_match_bg: color_to_hex(t.search_current_match_bg),
         }
     }
 }

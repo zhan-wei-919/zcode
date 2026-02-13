@@ -4,11 +4,11 @@ use crate::kernel::editor::{
     cursor_display_x_abs, EditorPaneState, EditorTabState, HighlightKind, HighlightSpan,
     SearchBarField, SearchBarMode, SearchBarState,
 };
-use crate::kernel::services::ports::EditorConfig;
+use crate::kernel::services::ports::{EditorConfig, Match};
 use crate::models::slice_to_cow;
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::painter::Painter;
-use crate::ui::core::style::{Mod, Style};
+use crate::ui::core::style::{Color, Mod, Style};
 use crate::ui::core::theme::Theme;
 use memchr::memchr;
 use unicode_segmentation::UnicodeSegmentation;
@@ -18,6 +18,10 @@ use super::layout::EditorPaneLayout;
 
 // U+250A "BOX DRAWINGS LIGHT QUADRUPLE DASH VERTICAL" keeps guides subtle.
 const INDENT_GUIDE_SYMBOL: &str = "\u{250A}";
+
+/// Width of the search bar navigation buttons: " ▲ ▼ ✕"
+const SEARCH_NAV_BUTTONS: &str = " \u{25B2} \u{25BC} \u{2715}";
+const SEARCH_NAV_BUTTONS_WIDTH: u16 = 8;
 
 pub fn paint_editor_pane(
     painter: &mut Painter,
@@ -254,7 +258,10 @@ fn paint_search_bar(painter: &mut Painter, area: Rect, state: &SearchBarState, t
             painter.text_clipped(Pos::new(x, row.y), " ", Style::default(), row);
             x = x.saturating_add(1);
 
-            painter.text_clipped(Pos::new(x, row.y), match_info, label_style, row);
+            painter.text_clipped(Pos::new(x, row.y), &match_info, label_style, row);
+            x = x.saturating_add(match_info.width().min(u16::MAX as usize) as u16);
+
+            paint_search_bar_nav_buttons(painter, x, row.y, row, theme);
         }
         SearchBarMode::Replace => {
             if area.h == 0 {
@@ -296,7 +303,10 @@ fn paint_search_bar(painter: &mut Painter, area: Rect, state: &SearchBarState, t
             painter.text_clipped(Pos::new(x, top.y), " ", Style::default(), top);
             x = x.saturating_add(1);
 
-            painter.text_clipped(Pos::new(x, top.y), match_info, label_style, top);
+            painter.text_clipped(Pos::new(x, top.y), &match_info, label_style, top);
+            x = x.saturating_add(match_info.width().min(u16::MAX as usize) as u16);
+
+            paint_search_bar_nav_buttons(painter, x, top.y, top, theme);
 
             if area.h >= 2 {
                 let replace_area = Rect::new(area.x, area.y.saturating_add(1), area.w, 1);
@@ -348,6 +358,19 @@ fn search_bar_match_info(state: &SearchBarState) -> String {
     }
 }
 
+/// Paint ▲ ▼ ✕ navigation buttons after match info. Returns the x position after buttons.
+fn paint_search_bar_nav_buttons(
+    painter: &mut Painter,
+    x: u16,
+    y: u16,
+    row_clip: Rect,
+    theme: &Theme,
+) -> u16 {
+    let style = Style::default().fg(theme.palette_fg);
+    painter.text_clipped(Pos::new(x, y), SEARCH_NAV_BUTTONS, style, row_clip);
+    x.saturating_add(SEARCH_NAV_BUTTONS_WIDTH)
+}
+
 fn windowed_search_text<'a>(
     text: &'a str,
     cursor_pos: usize,
@@ -362,7 +385,8 @@ fn windowed_search_text<'a>(
         .saturating_add(case_indicator.width() as u16)
         .saturating_add(regex_indicator.width() as u16)
         .saturating_add(1)
-        .saturating_add(match_info.width() as u16);
+        .saturating_add(match_info.width() as u16)
+        .saturating_add(SEARCH_NAV_BUTTONS_WIDTH);
     let prefix_w = prefix.width() as u16;
     let available = area_width.saturating_sub(prefix_w).saturating_sub(suffix_w) as usize;
     let cursor = if focused { cursor_pos } else { text.len() }.min(text.len());
@@ -454,6 +478,8 @@ fn paint_editor_body(
             tab_size: config.tab_size,
             theme,
             show_indent_guides: config.show_indent_guides,
+            search_matches: &pane.search_bar.matches,
+            current_match_index: pane.search_bar.current_match_index,
         },
     );
 }
@@ -614,6 +640,8 @@ struct ContentPaintCtx<'a> {
     tab_size: u8,
     theme: &'a Theme,
     show_indent_guides: bool,
+    search_matches: &'a [Match],
+    current_match_index: Option<usize>,
 }
 
 fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintCtx<'_>) {
@@ -625,6 +653,8 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         tab_size,
         theme,
         show_indent_guides,
+        search_matches,
+        current_match_index,
     } = ctx;
     if area.is_empty() {
         return;
@@ -644,6 +674,10 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
     let is_markdown = tab.is_markdown();
     let cursor_row = tab.buffer.cursor().0;
+    let mut match_cursor = visible_lines
+        .first()
+        .map(|first_line| search_matches.partition_point(|m| m.line < *first_line))
+        .unwrap_or(0);
 
     let bottom = area.bottom();
     for y in area.y..bottom {
@@ -651,6 +685,15 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         let Some(&row) = visible_lines.get(screen_row) else {
             continue;
         };
+
+        while match_cursor < search_matches.len() && search_matches[match_cursor].line < row {
+            match_cursor = match_cursor.saturating_add(1);
+        }
+        let line_match_start = match_cursor;
+        while match_cursor < search_matches.len() && search_matches[match_cursor].line == row {
+            match_cursor = match_cursor.saturating_add(1);
+        }
+        let line_matches = &search_matches[line_match_start..match_cursor];
 
         // For markdown non-cursor lines, use WYSIWYG rendering
         if is_markdown && row != cursor_row {
@@ -774,12 +817,23 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                 && selection_range.0 != selection_range.1
             {
                 style = selection_style;
-            } else if let Some(hl) =
-                style_for_highlight(semantic_spans, &mut semantic_idx, g_start, theme).or_else(
-                    || style_for_highlight(highlight_spans, &mut highlight_idx, g_start, theme),
-                )
-            {
-                style = base_style.patch(hl);
+            } else {
+                if let Some(hl) =
+                    style_for_highlight(semantic_spans, &mut semantic_idx, g_start, theme).or_else(
+                        || style_for_highlight(highlight_spans, &mut highlight_idx, g_start, theme),
+                    )
+                {
+                    style = base_style.patch(hl);
+                }
+                if let Some(bg) = search_match_bg(
+                    line_matches,
+                    line_match_start,
+                    g_start,
+                    current_match_index,
+                    theme,
+                ) {
+                    style = style.bg(bg);
+                }
             }
 
             if g == "\t" {
@@ -1119,6 +1173,36 @@ fn style_for_highlight(
     Some(style)
 }
 
+fn search_match_bg(
+    line_matches: &[Match],
+    global_start_idx: usize,
+    byte_in_line: usize,
+    current_match_index: Option<usize>,
+    theme: &Theme,
+) -> Option<Color> {
+    for (offset, m) in line_matches.iter().enumerate() {
+        let len = m.end.saturating_sub(m.start);
+        if len == 0 {
+            continue;
+        }
+
+        let start = m.col;
+        let end = start.saturating_add(len);
+        if byte_in_line < start || byte_in_line >= end {
+            continue;
+        }
+
+        let idx = global_start_idx.saturating_add(offset);
+        return Some(if current_match_index == Some(idx) {
+            theme.search_current_match_bg
+        } else {
+            theme.search_match_bg
+        });
+    }
+
+    None
+}
+
 fn cursor_position_search_bar(area: Rect, state: &SearchBarState) -> Option<(u16, u16)> {
     if area.is_empty() {
         return None;
@@ -1148,7 +1232,8 @@ fn cursor_position_search_bar(area: Rect, state: &SearchBarState) -> Option<(u16
                 .saturating_add(case_indicator.width() as u16)
                 .saturating_add(regex_indicator.width() as u16)
                 .saturating_add(1)
-                .saturating_add(match_info.width() as u16);
+                .saturating_add(match_info.width() as u16)
+                .saturating_add(SEARCH_NAV_BUTTONS_WIDTH);
 
             let x = area
                 .x

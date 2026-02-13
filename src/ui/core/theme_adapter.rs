@@ -58,6 +58,8 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
         md_blockquote_bar: map_color_for_support(theme.md_blockquote_bar, support),
         md_hr_fg: map_color_for_support(theme.md_hr_fg, support),
         md_marker_fg: map_color_for_support(theme.md_marker_fg, support),
+        search_match_bg: map_color_for_support(theme.search_match_bg, support),
+        search_current_match_bg: map_color_for_support(theme.search_current_match_bg, support),
     };
 
     apply_non_truecolor_syntax_palette(&mut adapted, theme, support);

@@ -10,7 +10,8 @@ use crate::ui::core::runtime::UiRuntimeOutput;
 use crate::ui::core::tree::NodeKind;
 use crate::views::{
     compute_editor_pane_layout, hit_test_editor_mouse, hit_test_editor_mouse_drag,
-    hit_test_editor_tab, hit_test_tab_hover, tab_insertion_index, TabHitResult,
+    hit_test_editor_tab, hit_test_search_bar, hit_test_tab_hover, tab_insertion_index,
+    SearchBarHitResult, TabHitResult,
 };
 use std::time::Instant;
 
@@ -55,6 +56,18 @@ impl Workbench {
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(result) =
+                    hit_test_search_bar(&layout, &pane_state.search_bar, event.column, event.row)
+                {
+                    let cmd = match result {
+                        SearchBarHitResult::PrevMatch => Command::FindPrev,
+                        SearchBarHitResult::NextMatch => Command::FindNext,
+                        SearchBarHitResult::Close => Command::EditorSearchBarClose,
+                    };
+                    let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd));
+                    return EventResult::Consumed;
+                }
+
                 if let Some(result) =
                     hit_test_editor_tab(&layout, pane_state, event.column, event.row, hovered_idx)
                 {

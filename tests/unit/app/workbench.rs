@@ -8,6 +8,7 @@ use crate::ui::core::geom::Rect;
 use crate::ui::core::id::IdPath;
 use crate::ui::core::style::Color;
 use crate::ui::core::tree::{NodeKind, SplitDrop};
+use crate::views::{compute_editor_pane_layout, hit_test_search_bar, SearchBarHitResult};
 use std::ffi::{OsStr, OsString};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -60,6 +61,20 @@ fn mouse(kind: MouseEventKind, x: u16, y: u16) -> InputEvent {
         row: y,
         modifiers: KeyModifiers::NONE,
     })
+}
+
+fn search_bar_button_pos(workbench: &Workbench, button: SearchBarHitResult) -> Option<(u16, u16)> {
+    let state = workbench.store.state();
+    let area = *workbench.layout_cache.editor_inner_areas.first()?;
+    let pane = state.editor.pane(0)?;
+    let layout = compute_editor_pane_layout(area, pane, &state.editor.config);
+    let search = layout.search_area?;
+    for col in search.x..search.right() {
+        if hit_test_search_bar(&layout, &pane.search_bar, col, search.y) == Some(button) {
+            return Some((col, search.y));
+        }
+    }
+    None
 }
 
 #[test]
@@ -1826,6 +1841,116 @@ fn test_editor_search_runs_async_task_and_updates_matches() {
     let pane = workbench.store.state().editor.pane(0).unwrap();
     assert!(pane.search_bar.visible);
     assert!(!pane.search_bar.matches.is_empty());
+}
+
+#[test]
+fn test_editor_search_bar_nav_buttons_click_dispatches_commands() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("a.txt");
+    std::fs::write(&file_path, "hello world\nhello again\n").unwrap();
+
+    let (runtime, rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let _ = workbench.dispatch_kernel(KernelAction::OpenPath(file_path.clone()));
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
+        w.store
+            .state()
+            .editor
+            .pane(0)
+            .and_then(|p| p.active_tab())
+            .and_then(|t| t.path.as_ref())
+            .is_some_and(|p| p == &file_path)
+    });
+
+    let find = KeyEvent {
+        code: KeyCode::Char('f'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(find));
+    for ch in "hello".chars() {
+        let ev = KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        };
+        let _ = workbench.handle_input(&InputEvent::Key(ev));
+    }
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
+        w.store.state().editor.pane(0).is_some_and(|p| {
+            p.search_bar.visible && !p.search_bar.searching && p.search_bar.matches.len() >= 2
+        })
+    });
+
+    render_once(&mut workbench, 120, 40);
+
+    let (prev_x, row) = search_bar_button_pos(&workbench, SearchBarHitResult::PrevMatch)
+        .expect("prev button position");
+    let (next_x, _) =
+        search_bar_button_pos(&workbench, SearchBarHitResult::NextMatch).expect("next button");
+    let (close_x, _) =
+        search_bar_button_pos(&workbench, SearchBarHitResult::Close).expect("close button");
+
+    assert_eq!(
+        workbench
+            .store
+            .state()
+            .editor
+            .pane(0)
+            .unwrap()
+            .search_bar
+            .current_match_index,
+        Some(0)
+    );
+
+    let next_result =
+        workbench.handle_input(&mouse(MouseEventKind::Down(MouseButton::Left), next_x, row));
+    assert!(next_result.is_consumed());
+    assert_eq!(
+        workbench
+            .store
+            .state()
+            .editor
+            .pane(0)
+            .unwrap()
+            .search_bar
+            .current_match_index,
+        Some(1)
+    );
+
+    let prev_result =
+        workbench.handle_input(&mouse(MouseEventKind::Down(MouseButton::Left), prev_x, row));
+    assert!(prev_result.is_consumed());
+    assert_eq!(
+        workbench
+            .store
+            .state()
+            .editor
+            .pane(0)
+            .unwrap()
+            .search_bar
+            .current_match_index,
+        Some(0)
+    );
+
+    let close_result = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        close_x,
+        row,
+    ));
+    assert!(close_result.is_consumed());
+    assert!(
+        !workbench
+            .store
+            .state()
+            .editor
+            .pane(0)
+            .unwrap()
+            .search_bar
+            .visible
+    );
 }
 
 #[test]

@@ -147,6 +147,10 @@ pub struct ThemeSettings {
     pub popup_bg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub statusbar_bg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_match_bg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_current_match_bg: Option<String>,
 }
 
 impl Default for ThemeSettings {
@@ -189,6 +193,8 @@ impl Default for ThemeSettings {
             sidebar_bg: None,
             popup_bg: None,
             statusbar_bg: None,
+            search_match_bg: None,
+            search_current_match_bg: None,
         }
     }
 }

@@ -54,6 +54,8 @@ pub enum Token {
     MdBlockquoteBar,
     MdHrFg,
     MdMarkerFg,
+    SearchMatchBg,
+    SearchCurrentMatchBg,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +110,8 @@ pub struct Theme {
     pub md_blockquote_bar: Color,
     pub md_hr_fg: Color,
     pub md_marker_fg: Color,
+    pub search_match_bg: Color,
+    pub search_current_match_bg: Color,
 }
 
 impl Theme {
@@ -162,6 +166,8 @@ impl Theme {
             Token::MdBlockquoteBar => self.md_blockquote_bar,
             Token::MdHrFg => self.md_hr_fg,
             Token::MdMarkerFg => self.md_marker_fg,
+            Token::SearchMatchBg => self.search_match_bg,
+            Token::SearchCurrentMatchBg => self.search_current_match_bg,
         }
     }
 }
@@ -219,6 +225,8 @@ impl Default for Theme {
             md_blockquote_bar: Color::Indexed(8),         // DarkGray
             md_hr_fg: Color::Indexed(8),                  // DarkGray
             md_marker_fg: Color::Indexed(8),              // DarkGray
+            search_match_bg: Color::Rgb(0x5A, 0x4A, 0x1E), // Soft amber
+            search_current_match_bg: Color::Rgb(0x80, 0x60, 0x10), // Bright amber
         }
     }
 }
