@@ -185,3 +185,16 @@ fn markdown_mouse_down_at_visual_line_end_maps_to_source_line_end() {
     assert_eq!(row, 1);
     assert_eq!(col, tab.buffer.line_grapheme_len(1));
 }
+
+#[test]
+fn markdown_mouse_down_on_task_checkbox_toggles_completion() {
+    let mut tab = markdown_tab_with_content("cursor line\n- [ ] finish this\n", 10);
+    let config = EditorConfig::default();
+    let now = Instant::now();
+
+    // Click on the visual "[" region of "• [ ] ..."
+    assert!(tab.mouse_down(2, 1, now, config.tab_size, config.click_slop, 500));
+
+    let line = tab.buffer.line(1).expect("line 1 should exist");
+    assert_eq!(line.trim_end_matches('\n'), "- [x] finish this");
+}

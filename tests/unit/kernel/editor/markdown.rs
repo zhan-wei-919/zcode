@@ -129,6 +129,26 @@ fn render_unordered_list_bold_hides_markers() {
 }
 
 #[test]
+fn render_unordered_task_list_keeps_brackets() {
+    let rope = Rope::from_str("- [ ] pending task\n");
+    let md = MarkdownDocument::new(&rope);
+    let rendered = md.render_line(0, &rope, 80);
+
+    assert_eq!(rendered.text, "• [ ] pending task");
+    assert!(rendered.text.contains("[ ]"));
+}
+
+#[test]
+fn render_checked_task_list_keeps_brackets() {
+    let rope = Rope::from_str("- [x] done task\n");
+    let md = MarkdownDocument::new(&rope);
+    let rendered = md.render_line(0, &rope, 80);
+
+    assert_eq!(rendered.text, "• [x] done task");
+    assert!(rendered.text.contains("[x]"));
+}
+
+#[test]
 fn render_blockquote_replaces_marker() {
     let rope = Rope::from_str("> quoted\n");
     let md = MarkdownDocument::new(&rope);

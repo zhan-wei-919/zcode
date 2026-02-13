@@ -130,6 +130,12 @@ impl EditorTabState {
         let Some(col) = col else {
             return false;
         };
+
+        if granularity == Granularity::Char && self.toggle_markdown_task_if_hit(row, col, tab_size)
+        {
+            return true;
+        }
+
         let pos = (row, col);
 
         self.buffer.set_cursor(pos.0, pos.1);
@@ -139,6 +145,51 @@ impl EditorTabState {
         self.buffer.set_selection(Some(selection));
 
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
+        true
+    }
+
+    fn toggle_markdown_task_if_hit(&mut self, row: usize, col: usize, tab_size: u8) -> bool {
+        let Some(marker) = self
+            .markdown()
+            .and_then(|md| md.task_marker(row, self.buffer.rope()))
+        else {
+            return false;
+        };
+
+        if marker.source_end <= marker.source_start || marker.source_start + 1 >= marker.source_end
+        {
+            return false;
+        }
+
+        let (marker_start_col, marker_end_col, toggle_char_start) = {
+            let rope = self.buffer.rope();
+            let line_start_byte = rope.line_to_byte(row);
+            let line_start_char = rope.line_to_char(row);
+            let marker_start_char = rope.byte_to_char(line_start_byte + marker.source_start);
+            let marker_end_char = rope.byte_to_char(line_start_byte + marker.source_end);
+            let toggle_char_start = rope.byte_to_char(line_start_byte + marker.source_start + 1);
+            (
+                marker_start_char.saturating_sub(line_start_char),
+                marker_end_char.saturating_sub(line_start_char),
+                toggle_char_start,
+            )
+        };
+
+        if col < marker_start_col || col >= marker_end_col {
+            return false;
+        }
+
+        let replacement = if marker.checked { " " } else { "x" };
+        let parent = self.history.head();
+        let op = self.buffer.replace_range_op_adjust_cursor(
+            toggle_char_start,
+            toggle_char_start.saturating_add(1),
+            replacement,
+            parent,
+        );
+        self.apply_edit_op(op, tab_size);
+        self.buffer.clear_selection();
+        self.mouse.dragging = false;
         true
     }
 

@@ -54,6 +54,13 @@ pub struct MdRenderedLine {
     pub offset_map: Vec<(usize, usize)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MdTaskMarker {
+    pub checked: bool,
+    pub source_start: usize,
+    pub source_end: usize,
+}
+
 type BlockClassification = (
     Vec<MdBlockKind>,
     Vec<Option<String>>,
@@ -248,6 +255,21 @@ impl MarkdownDocument {
     /// Get the fence language for a code block line (looks up the enclosing fence).
     pub fn fence_language(&self, line: usize) -> Option<&str> {
         self.fence_lang.get(line).and_then(|l| l.as_deref())
+    }
+
+    pub fn task_marker(&self, line: usize, rope: &ropey::Rope) -> Option<MdTaskMarker> {
+        if self.block_kind(line) != MdBlockKind::UnorderedList {
+            return None;
+        }
+
+        let src = rope_line_without_newline(rope, line);
+        let (_, rest, source_content_start) = parse_unordered_list_parts(&src)?;
+        let marker = parse_task_marker_prefix(rest)?;
+        Some(MdTaskMarker {
+            checked: marker.checked,
+            source_start: source_content_start,
+            source_end: source_content_start + marker.marker_len,
+        })
     }
 }
 
@@ -489,7 +511,7 @@ fn classify_line(trimmed: &str, _full: &str) -> MdBlockKind {
     }
 
     // Unordered list: - item, * item, + item
-    if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
+    if is_unordered_list_marker(trimmed) {
         return MdBlockKind::UnorderedList;
     }
 
@@ -526,6 +548,53 @@ fn has_structural_markers_around(rope: &ropey::Rope, line_start: usize, line_end
 fn line_has_structural_marker(src: &str) -> bool {
     let trimmed = src.trim_start();
     parse_fence_marker(trimmed).is_some() || parse_table_cells(src).is_some()
+}
+
+fn is_unordered_list_marker(trimmed: &str) -> bool {
+    let bytes = trimmed.as_bytes();
+    matches!(bytes.first().copied(), Some(b'-' | b'*' | b'+')) && bytes.get(1) == Some(&b' ')
+}
+
+fn parse_unordered_list_parts(src: &str) -> Option<(&str, &str, usize)> {
+    let trimmed = src.trim_start();
+    if !is_unordered_list_marker(trimmed) {
+        return None;
+    }
+    let indent_len = src.len().saturating_sub(trimmed.len());
+    let rest = trimmed.get(2..)?;
+    Some((&src[..indent_len], rest, indent_len + 2))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TaskMarkerPrefix {
+    checked: bool,
+    marker_len: usize,
+    content_start: usize,
+}
+
+fn parse_task_marker_prefix(src: &str) -> Option<TaskMarkerPrefix> {
+    let bytes = src.as_bytes();
+    if bytes.len() < 3 || bytes[0] != b'[' || bytes[2] != b']' {
+        return None;
+    }
+
+    let checked = match bytes[1] {
+        b' ' => false,
+        b'x' | b'X' => true,
+        _ => return None,
+    };
+
+    let content_start = match bytes.get(3).copied() {
+        None => 3,
+        Some(b) if b.is_ascii_whitespace() => 4,
+        Some(_) => return None,
+    };
+
+    Some(TaskMarkerPrefix {
+        checked,
+        marker_len: 3,
+        content_start,
+    })
 }
 
 fn is_horizontal_rule(trimmed: &str) -> bool {
@@ -586,19 +655,18 @@ fn render_heading(src: &str, level: u8) -> MdRenderedLine {
 }
 
 fn render_unordered_list(src: &str) -> MdRenderedLine {
-    // Replace `- ` / `* ` / `+ ` with `• ` while preserving source mapping.
-    let trimmed = src.trim_start();
-    let indent = &src[..src.len() - trimmed.len()];
-    let rest = &trimmed[2..]; // skip `- ` etc.
+    // Replace list marker with `• ` and preserve task markers like `[ ]` / `[x]`.
+    let Some((indent, rest, source_content_start)) = parse_unordered_list_parts(src) else {
+        return render_paragraph(src);
+    };
 
     let mut text = String::with_capacity(src.len());
     text.push_str(indent);
     text.push_str("• ");
     let content_start = text.len();
-    let src_content_start = src.len() - rest.len();
 
     let (inline_text, inline_spans, inline_map) =
-        render_inline(rest, content_start, src_content_start);
+        render_inline(rest, content_start, source_content_start);
     text.push_str(&inline_text);
 
     let bullet_start = indent.len();
@@ -1386,12 +1454,15 @@ fn highlight_source(src: &str, kind: MdBlockKind) -> Vec<super::HighlightSpan> {
             }
         }
         MdBlockKind::UnorderedList => {
-            let trimmed = src.trim_start();
-            let indent = src.len() - trimmed.len();
-            if trimmed.len() >= 2 {
+            if let Some((indent, rest, source_content_start)) = parse_unordered_list_parts(src) {
+                let marker_end = if let Some(task) = parse_task_marker_prefix(rest) {
+                    source_content_start + task.content_start
+                } else {
+                    source_content_start
+                };
                 spans.push(super::HighlightSpan {
-                    start: indent,
-                    end: indent + 2,
+                    start: indent.len(),
+                    end: marker_end,
                     kind: super::HighlightKind::Comment,
                 });
             }
