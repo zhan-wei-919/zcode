@@ -10,7 +10,8 @@ use crate::ui::core::painter::{BorderKind, Painter};
 use crate::ui::core::style::Style as UiStyle;
 use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, SplitDrop};
 use crate::views::{
-    compute_editor_pane_layout, cursor_position_editor, paint_editor_pane, EditorPaneLayout,
+    compute_editor_pane_layout, compute_tab_row_layout, cursor_position_editor, paint_editor_pane,
+    EditorPaneLayout,
 };
 use std::hash::{Hash, Hasher};
 use unicode_width::UnicodeWidthStr;
@@ -1084,68 +1085,30 @@ fn push_editor_tab_nodes(
         kind: NodeKind::TabBar { pane },
     });
 
-    const PADDING_LEFT: u16 = 1;
-    const PADDING_RIGHT: u16 = 1;
-    const CLOSE_BUTTON_WIDTH: u16 = 2;
-    const DIVIDER: u16 = 1;
-
-    let right = area.right();
-    let mut x = area.x;
-
-    for (i, tab) in pane_state.tabs.iter().enumerate() {
-        if x >= right {
-            break;
-        }
-
-        let start = x;
-        x = x.saturating_add(PADDING_LEFT).min(right);
-
-        let mut title_width = UnicodeWidthStr::width(tab.title.as_str());
-        if tab.dirty {
-            title_width = title_width.saturating_add(2);
-        }
-        x = x
-            .saturating_add(title_width.min(u16::MAX as usize) as u16)
-            .min(right);
-
-        x = x.saturating_add(PADDING_RIGHT).min(right);
-
-        let close_start = x;
-        if hovered_tab == Some(i) {
-            x = x.saturating_add(CLOSE_BUTTON_WIDTH).min(right);
-        }
-        let end = x;
-
-        // Avoid making the close button draggable: if it is visible, exclude it from the tab's
-        // interactive rect.
-        let tab_end = if hovered_tab == Some(i) {
-            close_start
-        } else {
-            end
+    let row_layout = compute_tab_row_layout(area, pane_state, hovered_tab);
+    for slot in row_layout.slots {
+        let Some(tab) = pane_state.tabs.get(slot.index) else {
+            continue;
         };
-        if tab_end > start {
-            let node_id = IdPath::root("workbench")
-                .push_str("tab")
-                .push_u64(pane as u64)
-                .push_u64(tab.id.raw())
-                .finish();
-            ui_tree.push(Node {
-                id: node_id,
-                rect: UiRect::new(start, area.y, tab_end - start, area.h),
-                layer: 0,
-                z: 0,
-                sense: Sense::CLICK | Sense::DRAG_SOURCE | Sense::CONTEXT_MENU,
-                kind: NodeKind::Tab {
-                    pane,
-                    tab_id: tab.id.raw(),
-                },
-            });
+        if slot.hit_end <= slot.start {
+            continue;
         }
 
-        if i + 1 == pane_state.tabs.len() {
-            break;
-        }
-
-        x = x.saturating_add(DIVIDER).min(right);
+        let node_id = IdPath::root("workbench")
+            .push_str("tab")
+            .push_u64(pane as u64)
+            .push_u64(tab.id.raw())
+            .finish();
+        ui_tree.push(Node {
+            id: node_id,
+            rect: UiRect::new(slot.start, area.y, slot.hit_end - slot.start, area.h),
+            layer: 0,
+            z: 0,
+            sense: Sense::CLICK | Sense::DRAG_SOURCE | Sense::CONTEXT_MENU,
+            kind: NodeKind::Tab {
+                pane,
+                tab_id: tab.id.raw(),
+            },
+        });
     }
 }

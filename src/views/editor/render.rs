@@ -14,7 +14,8 @@ use memchr::memchr;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use super::layout::EditorPaneLayout;
+use super::layout::{vertical_scrollbar_metrics, EditorPaneLayout, VerticalScrollbarMetrics};
+use super::tab_row::{compute_tab_row_layout, ellipsize_title};
 
 // U+250A "BOX DRAWINGS LIGHT QUADRUPLE DASH VERTICAL" keeps guides subtle.
 const INDENT_GUIDE_SYMBOL: &str = "\u{250A}";
@@ -22,6 +23,8 @@ const INDENT_GUIDE_SYMBOL: &str = "\u{250A}";
 /// Width of the search bar navigation buttons: " ▲ ▼ ✕"
 const SEARCH_NAV_BUTTONS: &str = " \u{25B2} \u{25BC} \u{2715}";
 const SEARCH_NAV_BUTTONS_WIDTH: u16 = 8;
+const V_SCROLL_TRACK_SYMBOL: char = '│';
+const V_SCROLL_THUMB_SYMBOL: char = '█';
 
 pub fn paint_editor_pane(
     painter: &mut Painter,
@@ -131,75 +134,55 @@ fn paint_tabs(
     if pane.tabs.is_empty() {
         return;
     }
-
-    const PADDING_LEFT: u16 = 1;
-    const PADDING_RIGHT: u16 = 1;
-    const CLOSE_BUTTON_WIDTH: u16 = 2;
-    const DIVIDER: u16 = 1;
-
     let y = area.y;
-    let right = area.right();
     let row_clip = Rect::new(area.x, y, area.w, 1.min(area.h));
-    let mut x = area.x;
-    for (i, tab) in pane.tabs.iter().enumerate() {
-        if x >= right {
-            break;
+    let row_layout = compute_tab_row_layout(area, pane, hovered_tab);
+
+    for slot in row_layout.slots {
+        let tab = &pane.tabs[slot.index];
+        let active = slot.index == pane.active;
+        let is_hovered = hovered_tab == Some(slot.index);
+
+        if active && slot.end > slot.start {
+            let active_bg = Style::default()
+                .bg(theme.palette_selected_bg)
+                .fg(theme.palette_selected_fg);
+            painter.fill_rect(
+                Rect::new(slot.start, y, slot.end - slot.start, 1),
+                active_bg,
+            );
         }
 
-        // Left padding.
-        painter.text_clipped(Pos::new(x, y), " ", Style::default(), row_clip);
-        x = x.saturating_add(PADDING_LEFT).min(right);
-
-        let active = i == pane.active;
-        let is_hovered = hovered_tab == Some(i);
-        let fg = if active {
-            theme.header_fg
+        let text_style = if active {
+            Style::default()
+                .fg(theme.palette_selected_fg)
+                .bg(theme.palette_selected_bg)
+                .add_mod(Mod::BOLD)
         } else {
-            theme.palette_muted_fg
+            Style::default().fg(theme.palette_muted_fg)
         };
 
-        if tab.dirty && x < right {
-            let style = Style::default().fg(fg);
-            painter.text_clipped(Pos::new(x, y), "● ", style, row_clip);
-            x = x.saturating_add(2).min(right);
+        if let Some(dirty_x) = slot.dirty_x {
+            painter.text_clipped(Pos::new(dirty_x, y), "● ", text_style, row_clip);
         }
 
-        let mut style = Style::default().fg(fg);
-        if active {
-            style = style.add_mod(Mod::BOLD);
+        if slot.title_width > 0 {
+            let title = ellipsize_title(tab.title.as_str(), slot.title_width);
+            painter.text_clipped(Pos::new(slot.title_x, y), title, text_style, row_clip);
         }
-        painter.text_clipped(Pos::new(x, y), tab.title.as_str(), style, row_clip);
-        x = x.saturating_add(tab.title.width().min(u16::MAX as usize) as u16);
-        x = x.min(right);
-
-        // Right padding.
-        if x < right {
-            painter.text_clipped(Pos::new(x, y), " ", Style::default(), row_clip);
-        }
-        x = x.saturating_add(PADDING_RIGHT).min(right);
 
         if is_hovered {
-            if x < right {
-                let close_style = Style::default().fg(theme.accent_fg);
-                painter.text_clipped(Pos::new(x, y), "×", close_style, row_clip);
+            if let Some(close_x) = slot.close_start {
+                if close_x < slot.close_end {
+                    let close_style = if active {
+                        text_style
+                    } else {
+                        Style::default().fg(theme.accent_fg)
+                    };
+                    painter.text_clipped(Pos::new(close_x, y), "×", close_style, row_clip);
+                }
             }
-            x = x.saturating_add(1).min(right);
-            if x < right {
-                painter.text_clipped(Pos::new(x, y), " ", Style::default(), row_clip);
-            }
-            x = x
-                .saturating_add(CLOSE_BUTTON_WIDTH.saturating_sub(1))
-                .min(right);
         }
-
-        if i + 1 == pane.tabs.len() {
-            break;
-        }
-
-        if x < right {
-            painter.text_clipped(Pos::new(x, y), " ", Style::default(), row_clip);
-        }
-        x = x.saturating_add(DIVIDER).min(right);
     }
 }
 
@@ -448,6 +431,12 @@ fn paint_editor_body(
     };
 
     let (line_offset, horiz_offset) = effective_viewport(tab, layout, config);
+    let scrollbar_metrics = vertical_scrollbar_metrics(
+        layout,
+        tab.buffer.len_lines().max(1),
+        layout.editor_area.h as usize,
+        line_offset,
+    );
     let height = layout.editor_area.h as usize;
     let visible_lines = tab.visible_lines_in_viewport(line_offset, height.max(1));
     let syntax = build_syntax_highlights(tab, &visible_lines);
@@ -482,6 +471,10 @@ fn paint_editor_body(
             current_match_index: pane.search_bar.current_match_index,
         },
     );
+
+    if let Some(metrics) = scrollbar_metrics {
+        paint_vertical_scrollbar(painter, &metrics, theme);
+    }
 }
 
 fn build_syntax_highlights(
@@ -1087,6 +1080,34 @@ fn paint_markdown_line(
         x = x.saturating_add(w);
         display_col += g_width;
     }
+}
+
+fn paint_vertical_scrollbar(
+    painter: &mut Painter,
+    metrics: &VerticalScrollbarMetrics,
+    theme: &Theme,
+) {
+    if metrics.track_area.is_empty() || metrics.thumb_area.is_empty() {
+        return;
+    }
+
+    let track_style = Style::default()
+        .bg(theme.editor_bg)
+        .fg(theme.palette_muted_fg);
+    painter.vline(
+        Pos::new(metrics.track_area.x, metrics.track_area.y),
+        metrics.track_area.h,
+        V_SCROLL_TRACK_SYMBOL,
+        track_style,
+    );
+
+    let thumb_style = Style::default().bg(theme.editor_bg).fg(theme.header_fg);
+    painter.vline(
+        Pos::new(metrics.thumb_area.x, metrics.thumb_area.y),
+        metrics.thumb_area.h,
+        V_SCROLL_THUMB_SYMBOL,
+        thumb_style,
+    );
 }
 
 fn style_for_md_span(kind: MdSpanKind, theme: &Theme) -> Style {

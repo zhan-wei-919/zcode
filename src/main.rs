@@ -387,15 +387,34 @@ fn coalesce_scroll_events(events: Vec<Event>) -> Vec<Event> {
     let mut scroll_up_count: i32 = 0;
     let mut scroll_down_count: i32 = 0;
     let mut last_scroll_event: Option<MouseEvent> = None;
+    let mut scroll_modifiers: Option<crossterm::event::KeyModifiers> = None;
 
     for ev in events {
         match &ev {
             Event::Mouse(mouse_ev) => match mouse_ev.kind {
                 MouseEventKind::ScrollUp => {
+                    if scroll_modifiers.is_some_and(|mods| mods != mouse_ev.modifiers) {
+                        flush_scroll_events(
+                            &mut result,
+                            &mut scroll_up_count,
+                            &mut scroll_down_count,
+                            &last_scroll_event,
+                        );
+                    }
+                    scroll_modifiers = Some(mouse_ev.modifiers);
                     scroll_up_count += 1;
                     last_scroll_event = Some(*mouse_ev);
                 }
                 MouseEventKind::ScrollDown => {
+                    if scroll_modifiers.is_some_and(|mods| mods != mouse_ev.modifiers) {
+                        flush_scroll_events(
+                            &mut result,
+                            &mut scroll_up_count,
+                            &mut scroll_down_count,
+                            &last_scroll_event,
+                        );
+                    }
+                    scroll_modifiers = Some(mouse_ev.modifiers);
                     scroll_down_count += 1;
                     last_scroll_event = Some(*mouse_ev);
                 }
@@ -407,6 +426,7 @@ fn coalesce_scroll_events(events: Vec<Event>) -> Vec<Event> {
                         &mut scroll_down_count,
                         &last_scroll_event,
                     );
+                    scroll_modifiers = None;
                     result.push(ev);
                 }
             },
@@ -418,6 +438,7 @@ fn coalesce_scroll_events(events: Vec<Event>) -> Vec<Event> {
                     &mut scroll_down_count,
                     &last_scroll_event,
                 );
+                scroll_modifiers = None;
                 result.push(ev);
             }
         }

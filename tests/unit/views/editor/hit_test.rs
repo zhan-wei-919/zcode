@@ -28,6 +28,7 @@ fn layout_with_content_area(content_area: Rect) -> crate::views::EditorPaneLayou
         editor_area: Rect::new(0, 1, 80, 23),
         gutter_area: Rect::new(0, 1, content_area.x, content_area.h),
         content_area,
+        v_scrollbar_area: None,
         gutter_width: content_area.x,
     }
 }
@@ -121,6 +122,67 @@ fn tab_insertion_index_is_monotonic() {
         assert!(idx <= pane.tabs.len());
         assert!(idx >= prev);
         prev = idx;
+    }
+}
+
+#[test]
+fn compressed_tab_titles_still_hit_later_tabs() {
+    let config = EditorConfig::default();
+    let pane = pane_with_tabs(
+        &config,
+        &[
+            ("this-is-a-very-long-tab-name.rs", false),
+            ("another-very-long-tab-name.rs", false),
+            ("third-very-long-tab-name.rs", false),
+        ],
+    );
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 18, 8), &pane, &config);
+
+    let y = layout.tab_area.y;
+    let mut hit_second = None;
+    for x in layout.tab_area.x..layout.tab_area.right() {
+        if hit_test_editor_tab(&layout, &pane, x, y, None) == Some(TabHitResult::Title(1)) {
+            hit_second = Some(x);
+            break;
+        }
+    }
+
+    assert!(
+        hit_second.is_some(),
+        "second tab should remain clickable in compressed tab row"
+    );
+}
+
+#[test]
+fn compressed_tab_insertion_geometry_is_monotonic_and_bounded() {
+    let config = EditorConfig::default();
+    let pane = pane_with_tabs(
+        &config,
+        &[
+            ("this-is-a-very-long-tab-name.rs", false),
+            ("another-very-long-tab-name.rs", true),
+            ("third-very-long-tab-name.rs", false),
+            ("fourth-very-long-tab-name.rs", false),
+        ],
+    );
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 18, 8), &pane, &config);
+    let y = layout.tab_area.y;
+
+    let mut prev_index = 0usize;
+    for x in layout.tab_area.x..layout.tab_area.right() {
+        let idx = tab_insertion_index(&layout, &pane, x, y, Some(1)).unwrap();
+        assert!(idx >= prev_index);
+        assert!(idx <= pane.tabs.len());
+        prev_index = idx;
+    }
+
+    let mut prev_x = layout.tab_area.x;
+    for idx in 0..=pane.tabs.len() {
+        let x = tab_insertion_x(&layout, &pane, Some(1), idx).unwrap();
+        assert!(x >= prev_x);
+        assert!(x >= layout.tab_area.x);
+        assert!(x < layout.tab_area.right());
+        prev_x = x;
     }
 }
 
@@ -278,4 +340,50 @@ fn search_bar_hit_test_works_in_replace_mode_top_row_buttons() {
         hit_test_search_bar(&layout, &pane.search_bar, nav_x + 5, nav_y),
         Some(SearchBarHitResult::Close)
     );
+}
+
+#[test]
+fn editor_vertical_scrollbar_hit_test_distinguishes_thumb_and_track() {
+    let config = EditorConfig::default();
+    let text = (0..120)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut pane = EditorPaneState::new(&config);
+    pane.tabs.push(EditorTabState::from_file(
+        TabId::new(1),
+        std::path::PathBuf::from("long.rs"),
+        &text,
+        &config,
+    ));
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
+    let tab = pane.active_tab().expect("active tab");
+    let metrics = crate::views::vertical_scrollbar_metrics(
+        &layout,
+        tab.buffer.len_lines().max(1),
+        layout.editor_area.h as usize,
+        tab.viewport.line_offset,
+    )
+    .expect("scrollbar metrics");
+
+    let thumb_hit = hit_test_editor_vertical_scrollbar(
+        &layout,
+        &metrics,
+        metrics.thumb_area.x,
+        metrics.thumb_area.y,
+    );
+    assert!(matches!(
+        thumb_hit,
+        Some(EditorVerticalScrollbarHitResult::Thumb { .. })
+    ));
+
+    let track_y = metrics.track_area.bottom().saturating_sub(1);
+    let track_hit =
+        hit_test_editor_vertical_scrollbar(&layout, &metrics, metrics.track_area.x, track_y);
+    assert!(matches!(
+        track_hit,
+        Some(EditorVerticalScrollbarHitResult::Track { .. })
+    ));
 }

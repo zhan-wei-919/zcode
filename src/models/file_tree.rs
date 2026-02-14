@@ -536,6 +536,27 @@ impl FileTree {
         self.id_by_path.insert(path.to_path_buf(), current);
         Some(current)
     }
+
+    pub fn find_node_by_path_ro(&self, path: &Path) -> Option<NodeId> {
+        if path == self.absolute_root {
+            return Some(self.root);
+        }
+
+        if let Some(id) = self.id_by_path.get(path).copied() {
+            return Some(id);
+        }
+
+        let relative = path.strip_prefix(&self.absolute_root).ok()?;
+        let mut current = self.root;
+
+        for component in relative.components() {
+            let name = component.as_os_str();
+            let children = self.arena.get(current)?.children.as_ref()?;
+            current = *children.get(name)?;
+        }
+
+        Some(current)
+    }
 }
 
 pub fn should_ignore(name: &str) -> bool {

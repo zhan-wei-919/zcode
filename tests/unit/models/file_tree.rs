@@ -112,3 +112,43 @@ fn test_full_path_ro_builds_paths_without_cache_mutation() {
 
     assert_eq!(tree.full_path_ro(NodeId::null()), None);
 }
+
+#[test]
+fn test_find_node_by_path_ro_returns_matching_node_id() {
+    let mut tree = FileTree::new_with_root("root".into(), PathBuf::from("/root"));
+    let root = tree.root();
+    let src_id = tree
+        .insert_child(root, "src".into(), NodeKind::Dir)
+        .unwrap();
+    let main_id = tree
+        .insert_child(src_id, "main.rs".into(), NodeKind::File)
+        .unwrap();
+
+    assert_eq!(
+        tree.find_node_by_path_ro(&PathBuf::from("/root")),
+        Some(root)
+    );
+    assert_eq!(
+        tree.find_node_by_path_ro(&PathBuf::from("/root/src")),
+        Some(src_id)
+    );
+    assert_eq!(
+        tree.find_node_by_path_ro(&PathBuf::from("/root/src/main.rs")),
+        Some(main_id)
+    );
+}
+
+#[test]
+fn test_find_node_by_path_ro_returns_none_for_unknown_or_outside_paths() {
+    let mut tree = FileTree::new_with_root("root".into(), PathBuf::from("/root"));
+    let root = tree.root();
+    let _ = tree
+        .insert_child(root, "src".into(), NodeKind::Dir)
+        .unwrap();
+
+    assert_eq!(
+        tree.find_node_by_path_ro(&PathBuf::from("/root/missing.txt")),
+        None
+    );
+    assert_eq!(tree.find_node_by_path_ro(&PathBuf::from("/tmp")), None);
+}

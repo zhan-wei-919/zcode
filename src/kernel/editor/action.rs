@@ -72,6 +72,10 @@ pub enum EditorAction {
         pane: usize,
         delta_lines: isize,
     },
+    ScrollHorizontal {
+        pane: usize,
+        delta_columns: isize,
+    },
     SearchBarAppend {
         pane: usize,
         ch: char,

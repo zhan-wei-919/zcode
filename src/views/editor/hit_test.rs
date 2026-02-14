@@ -3,7 +3,8 @@ use crate::kernel::editor::{EditorPaneState, SearchBarField, SearchBarState};
 use crate::ui::core::geom::Pos;
 use unicode_width::UnicodeWidthStr;
 
-use super::layout::EditorPaneLayout;
+use super::layout::{EditorPaneLayout, VerticalScrollbarMetrics};
+use super::tab_row::compute_tab_row_layout;
 
 const SEARCH_NAV_BUTTONS_WIDTH: u16 = 8;
 
@@ -18,6 +19,12 @@ pub enum SearchBarHitResult {
     PrevMatch,
     NextMatch,
     Close,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorVerticalScrollbarHitResult {
+    Thumb { row: u16 },
+    Track { row: u16 },
 }
 
 pub fn hit_test_search_bar(
@@ -144,51 +151,19 @@ pub fn hit_test_editor_tab(
         return None;
     }
 
-    const PADDING_LEFT: u16 = 1;
-    const PADDING_RIGHT: u16 = 1;
-    const CLOSE_BUTTON_WIDTH: u16 = 2;
-    const DIVIDER: u16 = 1;
-
-    let right = area.right();
-    let mut x = area.x;
-
-    for (i, tab) in pane.tabs.iter().enumerate() {
-        if x >= right {
-            break;
+    let row_layout = compute_tab_row_layout(area, pane, hovered_tab);
+    for slot in row_layout.slots {
+        if column < slot.start || column >= slot.end {
+            continue;
         }
-
-        let start = x;
-        x = x.saturating_add(PADDING_LEFT).min(right);
-
-        let mut title_width = UnicodeWidthStr::width(tab.title.as_str());
-        if tab.dirty {
-            title_width = title_width.saturating_add(2);
-        }
-        x = x
-            .saturating_add(title_width.min(u16::MAX as usize) as u16)
-            .min(right);
-
-        x = x.saturating_add(PADDING_RIGHT).min(right);
-
-        let is_hovered = hovered_tab == Some(i);
-        let close_start = x;
-        if is_hovered {
-            x = x.saturating_add(CLOSE_BUTTON_WIDTH).min(right);
-        }
-        let end = x;
-
-        if column >= start && column < end {
-            if is_hovered && column >= close_start {
-                return Some(TabHitResult::CloseButton(i));
+        if let Some(close_start) = slot.close_start {
+            if column >= close_start && column < slot.close_end {
+                return Some(TabHitResult::CloseButton(slot.index));
             }
-            return Some(TabHitResult::Title(i));
         }
-
-        if i + 1 == pane.tabs.len() {
-            break;
+        if column < slot.hit_end {
+            return Some(TabHitResult::Title(slot.index));
         }
-
-        x = x.saturating_add(DIVIDER).min(right);
     }
 
     None
@@ -212,47 +187,11 @@ pub fn hit_test_tab_hover(
         return None;
     }
 
-    const PADDING_LEFT: u16 = 1;
-    const PADDING_RIGHT: u16 = 1;
-    const CLOSE_BUTTON_WIDTH: u16 = 2;
-    const DIVIDER: u16 = 1;
-
-    let right = area.right();
-    let mut x = area.x;
-
-    for (i, tab) in pane.tabs.iter().enumerate() {
-        if x >= right {
-            break;
+    let row_layout = compute_tab_row_layout(area, pane, current_hovered);
+    for slot in row_layout.slots {
+        if column >= slot.start && column < slot.end {
+            return Some(slot.index);
         }
-
-        let start = x;
-        x = x.saturating_add(PADDING_LEFT).min(right);
-
-        let mut title_width = UnicodeWidthStr::width(tab.title.as_str());
-        if tab.dirty {
-            title_width = title_width.saturating_add(2);
-        }
-        x = x
-            .saturating_add(title_width.min(u16::MAX as usize) as u16)
-            .min(right);
-
-        x = x.saturating_add(PADDING_RIGHT).min(right);
-
-        let is_currently_hovered = current_hovered == Some(i);
-        if is_currently_hovered {
-            x = x.saturating_add(CLOSE_BUTTON_WIDTH).min(right);
-        }
-        let end = x;
-
-        if column >= start && column < end {
-            return Some(i);
-        }
-
-        if i + 1 == pane.tabs.len() {
-            break;
-        }
-
-        x = x.saturating_add(DIVIDER).min(right);
     }
 
     None
@@ -284,48 +223,13 @@ pub fn tab_insertion_index(
         return Some(0);
     }
 
-    const PADDING_LEFT: u16 = 1;
-    const PADDING_RIGHT: u16 = 1;
-    const CLOSE_BUTTON_WIDTH: u16 = 2;
-    const DIVIDER: u16 = 1;
-
-    let right = area.right();
-    let mut x = area.x;
-
-    for (i, tab) in pane.tabs.iter().enumerate() {
-        if x >= right {
-            break;
-        }
-
-        let start = x;
-        x = x.saturating_add(PADDING_LEFT).min(right);
-
-        let mut title_width = UnicodeWidthStr::width(tab.title.as_str());
-        if tab.dirty {
-            title_width = title_width.saturating_add(2);
-        }
-        x = x
-            .saturating_add(title_width.min(u16::MAX as usize) as u16)
-            .min(right);
-
-        x = x.saturating_add(PADDING_RIGHT).min(right);
-
-        if hovered_tab == Some(i) {
-            x = x.saturating_add(CLOSE_BUTTON_WIDTH).min(right);
-        }
-        let end = x;
-
-        let width = end.saturating_sub(start);
-        let mid = start.saturating_add(width / 2);
+    let row_layout = compute_tab_row_layout(area, pane, hovered_tab);
+    for slot in row_layout.slots {
+        let width = slot.end.saturating_sub(slot.start);
+        let mid = slot.start.saturating_add(width / 2);
         if column < mid {
-            return Some(i);
+            return Some(slot.index);
         }
-
-        if i + 1 == pane.tabs.len() {
-            break;
-        }
-
-        x = x.saturating_add(DIVIDER).min(right);
     }
 
     Some(pane.tabs.len())
@@ -350,53 +254,22 @@ pub fn tab_insertion_x(
     if pane.tabs.is_empty() {
         return Some(area.x);
     }
-
-    const PADDING_LEFT: u16 = 1;
-    const PADDING_RIGHT: u16 = 1;
-    const CLOSE_BUTTON_WIDTH: u16 = 2;
-    const DIVIDER: u16 = 1;
-
     let right = area.right();
-    let mut x = area.x;
+    let row_layout = compute_tab_row_layout(area, pane, hovered_tab);
+    if row_layout.slots.is_empty() {
+        return Some(area.x);
+    }
+
     let mut last_end = area.x;
-
-    for (i, tab) in pane.tabs.iter().enumerate() {
-        if x >= right {
-            break;
+    for slot in row_layout.slots {
+        last_end = slot.end;
+        if insertion_index <= slot.index {
+            return Some(slot.start);
         }
-
-        let start = x;
-        x = x.saturating_add(PADDING_LEFT).min(right);
-
-        let mut title_width = UnicodeWidthStr::width(tab.title.as_str());
-        if tab.dirty {
-            title_width = title_width.saturating_add(2);
-        }
-        x = x
-            .saturating_add(title_width.min(u16::MAX as usize) as u16)
-            .min(right);
-
-        x = x.saturating_add(PADDING_RIGHT).min(right);
-
-        if hovered_tab == Some(i) {
-            x = x.saturating_add(CLOSE_BUTTON_WIDTH).min(right);
-        }
-        let end = x;
-        last_end = end;
-
-        if insertion_index <= i {
-            return Some(start);
-        }
-
-        if i + 1 == pane.tabs.len() {
-            break;
-        }
-
-        x = x.saturating_add(DIVIDER).min(right);
     }
 
     // Insert after the last tab (or after the last visible tab if truncated).
-    Some(last_end.min(right.saturating_sub(1)))
+    Some(last_end.min(right.saturating_sub(1)).max(area.x))
 }
 
 pub fn hit_test_editor_mouse(
@@ -414,6 +287,26 @@ pub fn hit_test_editor_mouse(
         column.saturating_sub(layout.content_area.x),
         row.saturating_sub(layout.content_area.y),
     ))
+}
+
+pub fn hit_test_editor_vertical_scrollbar(
+    layout: &EditorPaneLayout,
+    metrics: &VerticalScrollbarMetrics,
+    column: u16,
+    row: u16,
+) -> Option<EditorVerticalScrollbarHitResult> {
+    let area = layout.v_scrollbar_area?;
+    let pos = Pos::new(column, row);
+    if !area.contains(pos) {
+        return None;
+    }
+
+    let row = row.saturating_sub(area.y);
+    if metrics.thumb_area.contains(pos) {
+        Some(EditorVerticalScrollbarHitResult::Thumb { row })
+    } else {
+        Some(EditorVerticalScrollbarHitResult::Track { row })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

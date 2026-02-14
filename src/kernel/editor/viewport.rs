@@ -33,6 +33,30 @@ pub fn cursor_display_x_abs(buffer: &TextBuffer, tab_size: u8) -> u32 {
     display_col
 }
 
+pub fn line_display_width(buffer: &TextBuffer, row: usize, tab_size: u8) -> u32 {
+    let Some(slice) = buffer.line_slice(row) else {
+        return 0;
+    };
+    let line = slice_to_cow(slice);
+    let tab = tab_size.max(1) as u32;
+    let mut display_col = 0u32;
+
+    for g in line.graphemes(true) {
+        if g == "\n" || g == "\r" {
+            break;
+        }
+
+        if g == "\t" {
+            let rem = display_col % tab;
+            display_col += if rem == 0 { tab } else { tab - rem };
+        } else {
+            display_col = display_col.saturating_add(g.width() as u32);
+        }
+    }
+
+    display_col
+}
+
 fn cursor_display_x_abs_ascii(slice: &ropey::RopeSlice<'_>, col: usize, tab_size: u8) -> u32 {
     if col == 0 {
         return 0;

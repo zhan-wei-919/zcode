@@ -132,3 +132,78 @@ fn poll_events_propagates_poller_errors() {
         Err(err) => assert_eq!(err.raw_os_error(), Some(libc::EBADF)),
     }
 }
+
+#[test]
+fn coalesce_scroll_events_separates_different_modifiers() {
+    use crossterm::event::{Event, KeyModifiers, MouseEvent, MouseEventKind};
+
+    let events = vec![
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 3,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        }),
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 3,
+            row: 4,
+            modifiers: KeyModifiers::SHIFT,
+        }),
+    ];
+
+    let result = super::coalesce_scroll_events(events);
+
+    assert_eq!(result.len(), 2);
+    match result[0] {
+        Event::Mouse(mouse) => {
+            assert_eq!(mouse.kind, MouseEventKind::ScrollDown);
+            assert_eq!(mouse.modifiers, KeyModifiers::NONE);
+        }
+        _ => panic!("expected mouse event"),
+    }
+    match result[1] {
+        Event::Mouse(mouse) => {
+            assert_eq!(mouse.kind, MouseEventKind::ScrollUp);
+            assert_eq!(mouse.modifiers, KeyModifiers::SHIFT);
+        }
+        _ => panic!("expected mouse event"),
+    }
+}
+
+#[test]
+fn coalesce_scroll_events_keeps_net_scroll_with_same_modifiers() {
+    use crossterm::event::{Event, KeyModifiers, MouseEvent, MouseEventKind};
+
+    let events = vec![
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 5,
+            row: 6,
+            modifiers: KeyModifiers::SHIFT,
+        }),
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 5,
+            row: 6,
+            modifiers: KeyModifiers::SHIFT,
+        }),
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 5,
+            row: 6,
+            modifiers: KeyModifiers::SHIFT,
+        }),
+    ];
+
+    let result = super::coalesce_scroll_events(events);
+
+    assert_eq!(result.len(), 1);
+    match result[0] {
+        Event::Mouse(mouse) => {
+            assert_eq!(mouse.kind, MouseEventKind::ScrollDown);
+            assert_eq!(mouse.modifiers, KeyModifiers::SHIFT);
+        }
+        _ => panic!("expected mouse event"),
+    }
+}

@@ -5,7 +5,7 @@ use crate::kernel::{GitFileStatus, GitFileStatusKind};
 use crate::models::{FileTreeRow, NodeId};
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::painter::Painter;
-use crate::ui::core::style::Style;
+use crate::ui::core::style::{Mod, Style};
 use crate::ui::core::theme::Theme;
 use rustc_hash::FxHashMap;
 use unicode_width::UnicodeWidthStr;
@@ -18,6 +18,7 @@ pub struct ExplorerPaintCtx<'a> {
     pub area: Rect,
     pub rows: &'a [FileTreeRow],
     pub selected_id: Option<NodeId>,
+    pub active_open_file_id: Option<NodeId>,
     pub scroll_offset: usize,
     pub git_status_by_id: &'a FxHashMap<NodeId, GitFileStatus>,
     pub theme: &'a Theme,
@@ -41,6 +42,7 @@ impl ExplorerView {
         &self,
         row: &FileTreeRow,
         is_selected: bool,
+        is_active_open_file: bool,
         git_status: Option<GitFileStatus>,
         width: u16,
         theme: &Theme,
@@ -62,6 +64,8 @@ impl ExplorerView {
             Style::default()
                 .bg(theme.palette_selected_bg)
                 .fg(theme.palette_selected_fg)
+        } else if is_active_open_file {
+            Style::default().fg(theme.header_fg).add_mod(Mod::BOLD)
         } else if row.is_dir {
             Style::default().fg(theme.accent_fg)
         } else {
@@ -105,6 +109,7 @@ impl ExplorerView {
             area,
             rows,
             selected_id,
+            active_open_file_id,
             scroll_offset,
             git_status_by_id,
             theme,
@@ -136,9 +141,16 @@ impl ExplorerView {
             }
 
             let is_selected = selected_id == Some(row.id);
+            let is_active_open_file = active_open_file_id == Some(row.id);
             let git_status = git_status_by_id.get(&row.id).copied();
-            let (left_pad, marker, row_style, marker_style) =
-                self.render_row_parts(row, is_selected, git_status, area.w, theme);
+            let (left_pad, marker, row_style, marker_style) = self.render_row_parts(
+                row,
+                is_selected,
+                is_active_open_file,
+                git_status,
+                area.w,
+                theme,
+            );
 
             let row_clip = Rect::new(area.x, y, area.w, 1);
             painter.text_clipped(Pos::new(area.x, y), left_pad, row_style, row_clip);

@@ -8,7 +8,9 @@ use crate::ui::core::geom::Rect;
 use crate::ui::core::id::IdPath;
 use crate::ui::core::style::Color;
 use crate::ui::core::tree::{NodeKind, SplitDrop};
-use crate::views::{compute_editor_pane_layout, hit_test_search_bar, SearchBarHitResult};
+use crate::views::{
+    compute_editor_pane_layout, hit_test_search_bar, vertical_scrollbar_metrics, SearchBarHitResult,
+};
 use std::ffi::{OsStr, OsString};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -60,6 +62,20 @@ fn mouse(kind: MouseEventKind, x: u16, y: u16) -> InputEvent {
         column: x,
         row: y,
         modifiers: KeyModifiers::NONE,
+    })
+}
+
+fn mouse_with_modifiers(
+    kind: MouseEventKind,
+    x: u16,
+    y: u16,
+    modifiers: KeyModifiers,
+) -> InputEvent {
+    InputEvent::Mouse(MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers,
     })
 }
 
@@ -1462,6 +1478,85 @@ fn test_drag_explorer_file_renders_ghost_label_near_cursor() {
 }
 
 #[test]
+fn test_explorer_highlights_active_open_file_when_another_row_is_selected() {
+    let dir = tempdir().unwrap();
+    let root = dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| dir.path().to_path_buf());
+    let active_path = root.join("active.rs");
+    let selected_path = root.join("selected.rs");
+    std::fs::write(&active_path, "fn active() {}\n").unwrap();
+    std::fs::write(&selected_path, "fn selected() {}\n").unwrap();
+
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(&root, runtime, None, None).unwrap();
+
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: active_path.clone(),
+        content: "fn active() {}\n".to_string(),
+    }));
+
+    let selected_row = workbench
+        .store
+        .state()
+        .explorer
+        .rows
+        .iter()
+        .position(|row| !row.is_dir && row.name.as_os_str() == OsStr::new("selected.rs"))
+        .expect("selected file row");
+    let _ = workbench.dispatch_kernel(KernelAction::ExplorerClickRow {
+        row: selected_row,
+        now: Instant::now(),
+    });
+
+    render_once(&mut workbench, 120, 40);
+
+    let find_row_rect = |path: &std::path::Path| {
+        workbench
+            .ui_tree
+            .nodes()
+            .iter()
+            .find_map(|n| match n.kind {
+                NodeKind::ExplorerRow { node_id } => workbench
+                    .store
+                    .state()
+                    .explorer
+                    .path_and_kind_for(NodeId::from_raw(node_id))
+                    .filter(|(row_path, is_dir)| !*is_dir && row_path == path)
+                    .map(|_| n.rect),
+                _ => None,
+            })
+            .expect("explorer row rect")
+    };
+
+    let active_rect = find_row_rect(&active_path);
+    let selected_rect = find_row_rect(&selected_path);
+
+    let mut backend = TestBackend::new(120, 40);
+    workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
+    let buf = backend.buffer();
+
+    let active_cell = buf
+        .cell(active_rect.x, active_rect.y)
+        .expect("active row cell");
+    assert_eq!(active_cell.style.fg, Some(workbench.ui_theme.header_fg));
+    assert!(active_cell
+        .style
+        .mods
+        .contains(crate::ui::core::style::Mod::BOLD));
+
+    let selected_cell = buf
+        .cell(selected_rect.x, selected_rect.y)
+        .expect("selected row cell");
+    assert_eq!(
+        selected_cell.style.bg,
+        Some(workbench.ui_theme.palette_selected_bg)
+    );
+}
+
+#[test]
 fn test_focus_bottom_panel() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
@@ -2673,4 +2768,125 @@ fn test_editor_right_click_inside_selection_keeps_existing_selection() {
 
     assert_eq!(after_range, before_range);
     assert!(workbench.store.state().ui.context_menu.visible);
+}
+
+#[test]
+fn test_shift_scroll_down_moves_editor_horizontally() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let path = dir.path().join("wide.rs");
+    let content = format!("{}\n", "x".repeat(240));
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content,
+    }));
+
+    render_once(&mut workbench, 120, 40);
+
+    let (x, y, line_before) = {
+        let area = *workbench
+            .layout_cache
+            .editor_inner_areas
+            .first()
+            .expect("editor area");
+        let state = workbench.store.state();
+        let pane = state.editor.pane(0).expect("pane");
+        let layout = compute_editor_pane_layout(area, pane, &state.editor.config);
+        let line_before = pane.active_tab().expect("active tab").viewport.line_offset;
+        (
+            layout.content_area.x.saturating_add(1),
+            layout.content_area.y,
+            line_before,
+        )
+    };
+
+    let _ = workbench.handle_input(&mouse_with_modifiers(
+        MouseEventKind::ScrollDown,
+        x,
+        y,
+        KeyModifiers::SHIFT,
+    ));
+
+    let tab = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert!(tab.viewport.horiz_offset > 0);
+    assert_eq!(tab.viewport.line_offset, line_before);
+}
+
+#[test]
+fn test_editor_vertical_scrollbar_drag_updates_line_offset_without_selection() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let path = dir.path().join("long.rs");
+    let content = (0..200)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content,
+    }));
+
+    render_once(&mut workbench, 120, 40);
+
+    let (thumb_x, down_y, drag_y) = {
+        let area = *workbench
+            .layout_cache
+            .editor_inner_areas
+            .first()
+            .expect("editor area");
+        let state = workbench.store.state();
+        let pane = state.editor.pane(0).expect("pane");
+        let layout = compute_editor_pane_layout(area, pane, &state.editor.config);
+        let tab = pane.active_tab().expect("active tab");
+        let metrics = vertical_scrollbar_metrics(
+            &layout,
+            tab.buffer.len_lines().max(1),
+            layout.editor_area.h as usize,
+            tab.viewport.line_offset,
+        )
+        .expect("vertical scrollbar metrics");
+        (
+            metrics.thumb_area.x,
+            metrics.thumb_area.y,
+            metrics.track_area.bottom().saturating_sub(1),
+        )
+    };
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        thumb_x,
+        down_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        thumb_x,
+        drag_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        thumb_x,
+        drag_y,
+    ));
+
+    let tab = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert!(tab.viewport.line_offset > 0);
+    assert!(tab.buffer.selection().is_none());
 }

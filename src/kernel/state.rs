@@ -958,6 +958,10 @@ impl ExplorerState {
         Some((path, self.tree.is_dir(id)))
     }
 
+    pub fn node_id_for_path(&self, path: &Path) -> Option<NodeId> {
+        self.tree.find_node_by_path_ro(path)
+    }
+
     pub fn selected_create_parent_dir(&self) -> PathBuf {
         let root = self.tree.absolute_root().to_path_buf();
         let Some(id) = self.tree.selected() else {

@@ -195,6 +195,12 @@ impl TerminalSelection {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct EditorScrollbarDragState {
+    pane: usize,
+    grab_offset: u16,
+}
+
 #[derive(Debug, Default)]
 struct ViewportCache {
     editor_content_sizes: Vec<(u16, u16)>,
@@ -271,6 +277,7 @@ pub struct Workbench {
     editor_split_dragging: bool,
     sidebar_split_dragging: bool,
     bottom_panel_split_dragging: bool,
+    editor_scrollbar_drag: Option<EditorScrollbarDragState>,
     terminal_selection: Option<TerminalSelection>,
     terminal_selecting: bool,
     click_tracker: ClickTracker,
@@ -476,6 +483,7 @@ impl Workbench {
             editor_split_dragging: false,
             sidebar_split_dragging: false,
             bottom_panel_split_dragging: false,
+            editor_scrollbar_drag: None,
             terminal_selection: None,
             terminal_selecting: false,
             click_tracker: ClickTracker::default(),

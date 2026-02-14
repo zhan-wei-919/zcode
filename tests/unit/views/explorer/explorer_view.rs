@@ -23,7 +23,7 @@ fn test_explorer_view_renders_single_git_marker_at_row_end() {
 
     let render = |status: Option<GitFileStatus>| {
         let (_left_pad, marker, _row_style, _marker_style) =
-            view.render_row_parts(&row, false, status, 20, &theme);
+            view.render_row_parts(&row, false, false, status, 20, &theme);
         marker
     };
 
@@ -56,4 +56,44 @@ fn test_explorer_view_renders_single_git_marker_at_row_end() {
         'U'
     );
     assert_eq!(render(None), ' ');
+}
+
+#[test]
+fn test_explorer_active_open_file_uses_header_bold_style() {
+    let view = ExplorerView::new();
+    let theme = Theme::default();
+    let row = FileTreeRow {
+        id: NodeId::null(),
+        depth: 0,
+        name: "main.rs".into(),
+        is_dir: false,
+        is_expanded: false,
+        load_state: LoadState::Loaded,
+    };
+
+    let (_left_pad, _marker, row_style, _marker_style) =
+        view.render_row_parts(&row, false, true, None, 20, &theme);
+
+    assert_eq!(row_style.fg, Some(theme.header_fg));
+    assert!(row_style.mods.contains(crate::ui::core::style::Mod::BOLD));
+}
+
+#[test]
+fn test_explorer_selected_style_overrides_active_open_file_style() {
+    let view = ExplorerView::new();
+    let theme = Theme::default();
+    let row = FileTreeRow {
+        id: NodeId::null(),
+        depth: 0,
+        name: "main.rs".into(),
+        is_dir: false,
+        is_expanded: false,
+        load_state: LoadState::Loaded,
+    };
+
+    let (_left_pad, _marker, row_style, _marker_style) =
+        view.render_row_parts(&row, true, true, None, 20, &theme);
+
+    assert_eq!(row_style.bg, Some(theme.palette_selected_bg));
+    assert_eq!(row_style.fg, Some(theme.palette_selected_fg));
 }

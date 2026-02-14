@@ -51,6 +51,10 @@ impl EditorState {
             } => self.mouse_drag(pane, x, y, overflow_y, past_right),
             EditorAction::MouseUp { pane } => self.mouse_up(pane),
             EditorAction::Scroll { pane, delta_lines } => self.scroll(pane, delta_lines),
+            EditorAction::ScrollHorizontal {
+                pane,
+                delta_columns,
+            } => self.scroll_horizontal(pane, delta_columns),
             EditorAction::SearchBarAppend { pane, ch } => self.search_bar_append(pane, ch),
             EditorAction::SearchBarBackspace { pane } => self.search_bar_backspace(pane),
             EditorAction::SearchBarDeleteForward { pane } => self.search_bar_delete_forward(pane),
@@ -840,6 +844,43 @@ impl EditorState {
         }
 
         (tab.viewport.line_offset != prev, Vec::new())
+    }
+
+    fn scroll_horizontal(&mut self, pane: usize, delta_columns: isize) -> (bool, Vec<Effect>) {
+        let Some(pane_state) = self.panes.get_mut(pane) else {
+            return (false, Vec::new());
+        };
+        let Some(tab) = pane_state.active_tab_mut() else {
+            return (false, Vec::new());
+        };
+
+        if delta_columns == 0 {
+            return (false, Vec::new());
+        }
+
+        tab.viewport.follow_cursor = false;
+        let prev = tab.viewport.horiz_offset;
+        let visible_lines =
+            tab.visible_lines_in_viewport(tab.viewport.line_offset, tab.viewport.height.max(1));
+        let max_visible_width = visible_lines
+            .iter()
+            .map(|&row| viewport::line_display_width(&tab.buffer, row, self.config.tab_size))
+            .max()
+            .unwrap_or(0);
+        let width = tab.viewport.width.max(1) as u32;
+        let max_offset = max_visible_width.saturating_sub(width);
+
+        if delta_columns > 0 {
+            tab.viewport.horiz_offset =
+                (tab.viewport.horiz_offset + delta_columns as u32).min(max_offset);
+        } else {
+            tab.viewport.horiz_offset = tab
+                .viewport
+                .horiz_offset
+                .saturating_sub((-delta_columns) as u32);
+        }
+
+        (tab.viewport.horiz_offset != prev, Vec::new())
     }
 
     fn search_started(&mut self, pane: usize, search_id: u64) -> (bool, Vec<Effect>) {

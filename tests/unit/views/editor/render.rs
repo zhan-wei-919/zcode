@@ -242,3 +242,215 @@ fn paint_editor_pane_indent_guides_respect_selection_background() {
     assert_eq!(cell.style.fg, Some(theme.indent_guide_fg));
     assert!(cell.style.mods.contains(crate::ui::core::style::Mod::DIM));
 }
+
+#[test]
+fn paint_editor_pane_long_file_draws_vertical_scrollbar() {
+    let config = EditorConfig::default();
+    let mut pane = EditorPaneState::new(&config);
+    let text = (0..120)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    pane.tabs.push(EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("long.rs"),
+        &text,
+        &config,
+    ));
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
+    let scrollbar = layout
+        .v_scrollbar_area
+        .expect("vertical scrollbar should be visible");
+
+    let mut painter = Painter::new();
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &Theme::default(),
+        None,
+        false,
+    );
+
+    let mut backend = TestBackend::new(layout.area.w, layout.area.h);
+    backend.draw(layout.area, painter.cmds());
+    let buf = backend.buffer();
+
+    let mut thumb_cells = 0usize;
+    let mut track_cells = 0usize;
+    for y in scrollbar.y..scrollbar.bottom() {
+        let cell = buf.cell(scrollbar.x, y).expect("scrollbar cell");
+        if cell.symbol == "█" {
+            thumb_cells += 1;
+        } else if cell.symbol == "│" {
+            track_cells += 1;
+        }
+    }
+
+    assert!(thumb_cells > 0, "scrollbar thumb should be drawn");
+    assert!(track_cells > 0, "scrollbar track should be drawn");
+}
+
+#[test]
+fn paint_editor_pane_vertical_scrollbar_thumb_moves_with_line_offset() {
+    let config = EditorConfig::default();
+    let mut pane = EditorPaneState::new(&config);
+    let text = (0..160)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    pane.tabs.push(EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("long.rs"),
+        &text,
+        &config,
+    ));
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
+    let scrollbar = layout
+        .v_scrollbar_area
+        .expect("vertical scrollbar should be visible");
+
+    let thumb_top_at = |pane: &EditorPaneState| -> u16 {
+        let mut painter = Painter::new();
+        paint_editor_pane(
+            &mut painter,
+            &layout,
+            pane,
+            &config,
+            &Theme::default(),
+            None,
+            false,
+        );
+
+        let mut backend = TestBackend::new(layout.area.w, layout.area.h);
+        backend.draw(layout.area, painter.cmds());
+        let buf = backend.buffer();
+
+        (scrollbar.y..scrollbar.bottom())
+            .find(|&y| buf.cell(scrollbar.x, y).is_some_and(|c| c.symbol == "█"))
+            .expect("thumb top")
+    };
+
+    {
+        let tab = pane
+            .active_tab_mut()
+            .expect("tab should exist for scrollbar test");
+        tab.viewport.follow_cursor = false;
+    }
+    let top_before = thumb_top_at(&pane);
+
+    {
+        let tab = pane
+            .active_tab_mut()
+            .expect("tab should exist for scrollbar test");
+        tab.viewport.line_offset = 60;
+    }
+    let top_after = thumb_top_at(&pane);
+
+    assert!(top_after > top_before);
+}
+
+#[test]
+fn paint_editor_tabs_active_tab_uses_selected_palette() {
+    let config = EditorConfig::default();
+    let mut pane = EditorPaneState::new(&config);
+
+    let mut first = EditorTabState::untitled(TabId::new(1), &config);
+    first.title = "Alpha.rs".to_string();
+    let mut second = EditorTabState::untitled(TabId::new(2), &config);
+    second.title = "Beta.rs".to_string();
+
+    pane.tabs.push(first);
+    pane.tabs.push(second);
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 8), &pane, &config);
+    let theme = Theme::default();
+    let mut painter = Painter::new();
+    paint_editor_pane(&mut painter, &layout, &pane, &config, &theme, None, false);
+
+    let mut backend = TestBackend::new(layout.area.w, layout.area.h);
+    backend.draw(layout.area, painter.cmds());
+    let buf = backend.buffer();
+
+    let y = layout.tab_area.y;
+    let mut alpha_style = None;
+    let mut beta_style = None;
+    for x in layout.tab_area.x..layout.tab_area.right() {
+        let cell = buf.cell(x, y).expect("tab row cell");
+        if cell.symbol == "A" && alpha_style.is_none() {
+            alpha_style = Some(cell.style);
+        }
+        if cell.symbol == "B" && beta_style.is_none() {
+            beta_style = Some(cell.style);
+        }
+    }
+
+    let alpha_style = alpha_style.expect("active tab glyph style");
+    let beta_style = beta_style.expect("inactive tab glyph style");
+
+    assert_eq!(alpha_style.bg, Some(theme.palette_selected_bg));
+    assert_eq!(alpha_style.fg, Some(theme.palette_selected_fg));
+    assert!(alpha_style.mods.contains(crate::ui::core::style::Mod::BOLD));
+
+    assert_ne!(beta_style.bg, Some(theme.palette_selected_bg));
+}
+
+#[test]
+fn paint_editor_tabs_truncate_titles_with_ellipsis_in_narrow_width() {
+    let config = EditorConfig::default();
+    let mut pane = EditorPaneState::new(&config);
+
+    let mut first = EditorTabState::untitled(TabId::new(1), &config);
+    first.title = "this-is-a-very-long-file-name.rs".to_string();
+    let mut second = EditorTabState::untitled(TabId::new(2), &config);
+    second.title = "another-very-long-file-name.rs".to_string();
+
+    pane.tabs.push(first);
+    pane.tabs.push(second);
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 14, 6), &pane, &config);
+    let mut painter = Painter::new();
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &Theme::default(),
+        None,
+        false,
+    );
+
+    let tab_row_clip = Rect::new(
+        layout.tab_area.x,
+        layout.tab_area.y,
+        layout.tab_area.w,
+        1.min(layout.tab_area.h),
+    );
+    let mut has_ellipsis = false;
+    for cmd in painter.cmds() {
+        let PaintCmd::Text {
+            pos, text, clip, ..
+        } = cmd
+        else {
+            continue;
+        };
+        if pos.y != layout.tab_area.y {
+            continue;
+        }
+        has_ellipsis |= text.contains('…');
+        assert!(pos.x < layout.tab_area.right());
+        assert_eq!(*clip, Some(tab_row_clip));
+    }
+
+    assert!(
+        has_ellipsis,
+        "tab titles should use ellipsis when compressed"
+    );
+}

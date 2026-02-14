@@ -202,6 +202,16 @@ impl Workbench {
                 };
 
                 self.sync_explorer_view_height(tree_area.h);
+                let active_open_file_id = {
+                    let state = self.store.state();
+                    let active_pane = state.ui.editor_layout.active_pane;
+                    state
+                        .editor
+                        .pane(active_pane)
+                        .and_then(|pane| pane.active_tab())
+                        .and_then(|tab| tab.path.as_deref())
+                        .and_then(|path| state.explorer.node_id_for_path(path))
+                };
                 let state = self.store.state();
                 let explorer_state = &state.explorer;
                 let ui_area = tree_area;
@@ -211,6 +221,7 @@ impl Workbench {
                         area: ui_area,
                         rows: &explorer_state.rows,
                         selected_id: explorer_state.selected(),
+                        active_open_file_id,
                         scroll_offset: explorer_state.scroll_offset,
                         git_status_by_id: &explorer_state.git_status_by_id,
                         theme: &self.ui_theme,

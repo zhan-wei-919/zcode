@@ -483,3 +483,75 @@ fn test_close_tabs_by_id_removes_requested_tabs() {
     assert_eq!(pane.tabs.len(), 1);
     assert_eq!(pane.tabs[0].title, "b.txt");
 }
+
+#[test]
+fn test_scroll_horizontal_updates_offset_and_disables_follow_cursor() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("wide.txt");
+    let content = format!("{}\n", "x".repeat(200));
+
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content,
+    });
+    let _ = editor.dispatch_action(EditorAction::SetViewportSize {
+        pane: 0,
+        width: 20,
+        height: 5,
+    });
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::ScrollHorizontal {
+        pane: 0,
+        delta_columns: 12,
+    });
+    assert!(changed);
+    assert!(effects.is_empty());
+
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert_eq!(tab.viewport.horiz_offset, 12);
+    assert!(!tab.viewport.follow_cursor);
+}
+
+#[test]
+fn test_scroll_horizontal_clamps_to_zero_and_visible_max_width() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("wide.txt");
+    let content = format!("{}\n", "x".repeat(200));
+
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content,
+    });
+    let _ = editor.dispatch_action(EditorAction::SetViewportSize {
+        pane: 0,
+        width: 20,
+        height: 5,
+    });
+
+    let _ = editor.dispatch_action(EditorAction::ScrollHorizontal {
+        pane: 0,
+        delta_columns: 10_000,
+    });
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert_eq!(tab.viewport.horiz_offset, 180);
+
+    let _ = editor.dispatch_action(EditorAction::ScrollHorizontal {
+        pane: 0,
+        delta_columns: -10_000,
+    });
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert_eq!(tab.viewport.horiz_offset, 0);
+}
