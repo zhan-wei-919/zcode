@@ -10,7 +10,7 @@ use crate::kernel::state::{
     PendingEditorNavigationTarget,
 };
 use crate::models::{FileTree, Granularity, Selection};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::time::Instant;
 use tempfile::tempdir;
 
@@ -926,6 +926,85 @@ fn open_file_does_not_consume_pending_nav_for_other_path() {
             .cursor(),
         (0, 0)
     );
+}
+
+#[test]
+fn set_active_tab_syncs_explorer_selected_row_to_active_file() {
+    let dir = tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    let mut tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
+    let _a_id = tree
+        .insert_child(
+            tree.root(),
+            OsString::from("a.java"),
+            crate::models::NodeKind::File,
+        )
+        .unwrap();
+    let _b_id = tree
+        .insert_child(
+            tree.root(),
+            OsString::from("b.java"),
+            crate::models::NodeKind::File,
+        )
+        .unwrap();
+    let mut store = Store::new(AppState::new(root.clone(), tree, EditorConfig::default()));
+
+    let a_path = root.join("a.java");
+    let b_path = root.join("b.java");
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: a_path.clone(),
+        content: "class A {}".to_string(),
+    }));
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: b_path.clone(),
+        content: "class B {}".to_string(),
+    }));
+
+    let b_row = store
+        .state
+        .explorer
+        .rows
+        .iter()
+        .position(|row| !row.is_dir && row.name.as_os_str() == OsStr::new("b.java"))
+        .expect("b row");
+    let _ = store.dispatch(Action::ExplorerClickRow {
+        row: b_row,
+        now: Instant::now(),
+    });
+
+    let selected_before = store
+        .state
+        .explorer
+        .selected()
+        .and_then(|id| store.state.explorer.path_and_kind_for(id))
+        .map(|(path, _)| path);
+    assert_eq!(selected_before.as_ref(), Some(&b_path));
+
+    let a_index = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| {
+            pane.tabs
+                .iter()
+                .position(|tab| tab.path.as_ref() == Some(&a_path))
+        })
+        .expect("a tab index");
+    let _ = store.dispatch(Action::Editor(EditorAction::SetActiveTab {
+        pane: 0,
+        index: a_index,
+    }));
+
+    let selected_after = store
+        .state
+        .explorer
+        .selected()
+        .and_then(|id| store.state.explorer.path_and_kind_for(id))
+        .map(|(path, _)| path);
+    assert_eq!(selected_after.as_ref(), Some(&a_path));
 }
 
 #[test]

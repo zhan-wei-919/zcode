@@ -292,6 +292,36 @@ impl Store {
         }
     }
 
+    fn active_editor_file_path(&self) -> Option<std::path::PathBuf> {
+        let active_pane = self.state.ui.editor_layout.active_pane;
+        self.state
+            .editor
+            .pane(active_pane)
+            .and_then(|pane_state| pane_state.active_tab())
+            .and_then(|tab| tab.path.clone())
+    }
+
+    fn sync_explorer_selection_to_path(&mut self, path: &std::path::Path) -> bool {
+        let Some(target_id) = self.state.explorer.node_id_for_path(path) else {
+            return false;
+        };
+        if self.state.explorer.selected() == Some(target_id) {
+            return false;
+        }
+
+        let Some(row) = self
+            .state
+            .explorer
+            .rows
+            .iter()
+            .position(|row| row.id == target_id)
+        else {
+            return false;
+        };
+
+        self.state.explorer.select_row(row)
+    }
+
     pub fn dispatch(&mut self, action: Action) -> DispatchResult {
         let _action_scope =
             crate::kernel::services::adapters::perf::scope(perf_action_label(&action));
@@ -318,6 +348,7 @@ impl Store {
                 result
             }
             Action::Editor(editor_action) => {
+                let prev_active_file = self.active_editor_file_path();
                 let completion_changed = if should_close_completion_on_editor_action(&editor_action)
                 {
                     self.state.ui.completion.close()
@@ -570,6 +601,13 @@ impl Store {
                 if should_auto_close_editor_split && editor_changed {
                     let collapsed = self.maybe_close_empty_editor_split(&mut result.effects);
                     result.state_changed |= collapsed;
+                }
+
+                let next_active_file = self.active_editor_file_path();
+                if next_active_file != prev_active_file {
+                    if let Some(path) = next_active_file.as_deref() {
+                        result.state_changed |= self.sync_explorer_selection_to_path(path);
+                    }
                 }
                 result
             }
