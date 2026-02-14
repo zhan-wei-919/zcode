@@ -1,12 +1,22 @@
 use crate::core::text_window;
-use crate::kernel::editor::{highlight_snippet, HighlightKind, HighlightSpan, LanguageId};
+use crate::kernel::editor::markdown::{MdRenderedLine, MdSpanKind};
+use crate::kernel::editor::{highlight_snippet, HighlightKind, LanguageId};
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::Style;
 use crate::ui::core::theme::Theme;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-pub(super) const MAX_RENDER_LINES: usize = 2000;
+pub const MAX_RENDER_LINES: usize = 2000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderCacheKey {
+    pub text_hash: u64,
+    pub width: u16,
+}
 
 #[derive(Debug, Clone)]
 enum Block {
@@ -18,12 +28,82 @@ enum Block {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct DocLine {
-    pub(super) text: String,
-    pub(super) highlight: Option<Vec<HighlightSpan>>,
+pub struct DocLine {
+    pub text: String,
+    pub spans: Vec<DocSpan>,
+    pub offset_map: Option<Vec<(usize, usize)>>,
 }
 
-pub(super) fn natural_width(markdown: &str) -> usize {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocSpanKind {
+    Syntax(HighlightKind),
+    Markdown(MdSpanKind),
+    Selection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DocSpan {
+    pub start: usize,
+    pub end: usize,
+    pub kind: DocSpanKind,
+}
+
+#[derive(Debug, Clone)]
+pub struct RenderCache {
+    key: Option<RenderCacheKey>,
+    lines: Arc<Vec<DocLine>>,
+}
+
+impl Default for RenderCache {
+    fn default() -> Self {
+        Self {
+            key: None,
+            lines: Arc::new(Vec::new()),
+        }
+    }
+}
+
+impl RenderCache {
+    pub fn key(&self) -> Option<RenderCacheKey> {
+        self.key
+    }
+
+    pub fn lines(&self) -> &[DocLine] {
+        self.lines.as_slice()
+    }
+
+    pub fn clear(&mut self) {
+        self.key = None;
+        self.lines = Arc::new(Vec::new());
+    }
+
+    pub fn get_or_render(
+        &mut self,
+        text: &str,
+        width: u16,
+        max_lines: usize,
+    ) -> (RenderCacheKey, Arc<Vec<DocLine>>, bool) {
+        let key = RenderCacheKey {
+            text_hash: text_hash(text),
+            width,
+        };
+        if self.key == Some(key) {
+            return (key, Arc::clone(&self.lines), true);
+        }
+
+        self.lines = Arc::new(render_markdown(text, width, max_lines));
+        self.key = Some(key);
+        (key, Arc::clone(&self.lines), false)
+    }
+}
+
+pub fn text_hash(text: &str) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+pub fn natural_width(markdown: &str) -> usize {
     markdown
         .lines()
         .filter(|line| !line.trim_start().starts_with("```"))
@@ -32,7 +112,7 @@ pub(super) fn natural_width(markdown: &str) -> usize {
         .unwrap_or(0)
 }
 
-pub(super) fn clamp_scroll_offset(scroll: usize, total_lines: usize, view_height: usize) -> usize {
+pub fn clamp_scroll_offset(scroll: usize, total_lines: usize, view_height: usize) -> usize {
     if view_height == 0 {
         return 0;
     }
@@ -40,7 +120,7 @@ pub(super) fn clamp_scroll_offset(scroll: usize, total_lines: usize, view_height
     scroll.min(max_scroll)
 }
 
-pub(super) fn paint_doc_lines(
+pub fn paint_doc_lines(
     painter: &mut Painter,
     area: Rect,
     lines: &[DocLine],
@@ -66,70 +146,127 @@ pub(super) fn paint_doc_lines(
             painter,
             Pos::new(area.x, y),
             area.w,
-            line,
-            theme,
-            base_style,
-            row_clip,
+            DocPaintLineParams {
+                line,
+                theme,
+                base_style,
+                clip: row_clip,
+                horiz_offset: 0,
+            },
         );
     }
 }
 
-fn paint_doc_line(
-    painter: &mut Painter,
-    pos: Pos,
-    width: u16,
-    line: &DocLine,
-    theme: &Theme,
-    base_style: Style,
-    clip: Rect,
-) {
-    let max_w = width as usize;
-    if max_w == 0 {
+#[derive(Debug, Clone, Copy)]
+pub struct DocPaintLineParams<'a> {
+    pub line: &'a DocLine,
+    pub theme: &'a Theme,
+    pub base_style: Style,
+    pub clip: Rect,
+    pub horiz_offset: u32,
+}
+
+pub fn paint_doc_line(painter: &mut Painter, pos: Pos, width: u16, params: DocPaintLineParams<'_>) {
+    let DocPaintLineParams {
+        line,
+        theme,
+        base_style,
+        clip,
+        horiz_offset,
+    } = params;
+
+    if width == 0 || clip.is_empty() {
         return;
     }
 
-    let end = text_window::truncate_to_width(line.text.as_str(), max_w);
-    let visible = line.text.get(..end).unwrap_or_default();
-
-    let Some(spans) = line.highlight.as_deref() else {
-        painter.text_clipped(pos, visible, base_style, clip);
+    let right = pos.x.saturating_add(width).min(clip.right());
+    if pos.x >= right {
         return;
-    };
+    }
 
-    // Paint highlighted segments. Spans are byte offsets relative to `line.text`.
+    let spans = line.spans.as_slice();
+    let mut span_idx = 0usize;
     let mut x = pos.x;
-    let mut cur = 0usize;
-    for span in spans {
-        if span.start >= span.end || span.start >= visible.len() {
+    let mut byte_offset = 0usize;
+    let mut display_col = 0u32;
+
+    for g in line.text.graphemes(true) {
+        let g_start = byte_offset;
+        byte_offset = byte_offset.saturating_add(g.len());
+
+        let g_width = g.width() as u32;
+        if g_width == 0 {
             continue;
         }
-        let s = span.start.min(visible.len());
-        let e = span.end.min(visible.len());
 
-        if cur < s {
-            let seg = &visible[cur..s];
-            painter.text_clipped(Pos::new(x, pos.y), seg, base_style, clip);
-            x = x.saturating_add(seg.width().min(u16::MAX as usize) as u16);
+        if display_col + g_width <= horiz_offset {
+            display_col = display_col.saturating_add(g_width);
+            continue;
         }
 
-        let seg = &visible[s..e];
-        let style = base_style.patch(style_for_highlight(span.kind, theme));
-        painter.text_clipped(Pos::new(x, pos.y), seg, style, clip);
-        x = x.saturating_add(seg.width().min(u16::MAX as usize) as u16);
-        cur = e;
-
-        if x >= clip.right() {
-            return;
+        if x >= right {
+            break;
         }
-    }
 
-    if cur < visible.len() && x < clip.right() {
-        let seg = &visible[cur..];
-        painter.text_clipped(Pos::new(x, pos.y), seg, base_style, clip);
+        let style = style_for_doc_spans_at(spans, &mut span_idx, g_start, theme, base_style);
+
+        let w = g_width.min(u16::MAX as u32) as u16;
+        if x.saturating_add(w) > right {
+            break;
+        }
+
+        painter.text_clipped(Pos::new(x, pos.y), g, style, clip);
+        x = x.saturating_add(w);
+        display_col = display_col.saturating_add(g_width);
     }
 }
 
-fn style_for_highlight(kind: HighlightKind, theme: &Theme) -> Style {
+fn style_for_doc_spans_at(
+    spans: &[DocSpan],
+    span_idx: &mut usize,
+    offset: usize,
+    theme: &Theme,
+    base_style: Style,
+) -> Style {
+    while *span_idx < spans.len() && spans[*span_idx].end <= offset {
+        *span_idx += 1;
+    }
+
+    let mut style = base_style;
+    let mut selected = false;
+
+    let mut probe = *span_idx;
+    while let Some(span) = spans.get(probe) {
+        if span.start > offset {
+            break;
+        }
+        if offset >= span.start && offset < span.end {
+            match span.kind {
+                DocSpanKind::Selection => {
+                    selected = true;
+                    style = Style::default()
+                        .bg(theme.palette_selected_bg)
+                        .fg(theme.palette_selected_fg);
+                }
+                DocSpanKind::Syntax(kind) => {
+                    if !selected {
+                        style = style.patch(style_for_syntax_highlight(kind, theme));
+                    }
+                }
+                DocSpanKind::Markdown(kind) => {
+                    if !selected {
+                        style = style.patch(style_for_markdown_span(kind, theme));
+                    }
+                }
+            }
+        }
+        probe += 1;
+    }
+
+    style
+}
+
+fn style_for_syntax_highlight(kind: HighlightKind, theme: &Theme) -> Style {
     match kind {
         HighlightKind::Comment => Style::default().fg(theme.syntax_comment_fg),
         HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
@@ -147,7 +284,56 @@ fn style_for_highlight(kind: HighlightKind, theme: &Theme) -> Style {
     }
 }
 
-pub(super) fn render_markdown(markdown: &str, width: u16, max_lines: usize) -> Vec<DocLine> {
+fn style_for_markdown_span(kind: MdSpanKind, theme: &Theme) -> Style {
+    match kind {
+        MdSpanKind::Heading(level) => {
+            let fg = match level {
+                1 => theme.md_heading1_fg,
+                2 => theme.md_heading2_fg,
+                3 => theme.md_heading3_fg,
+                4 => theme.md_heading4_fg,
+                5 => theme.md_heading5_fg,
+                _ => theme.md_heading6_fg,
+            };
+            Style::default()
+                .fg(fg)
+                .add_mod(crate::ui::core::style::Mod::BOLD)
+        }
+        MdSpanKind::Link => Style::default().fg(theme.md_link_fg),
+        MdSpanKind::Code => Style::default()
+            .fg(theme.md_code_fg)
+            .add_mod(crate::ui::core::style::Mod::BOLD),
+        MdSpanKind::Bold => Style::default().add_mod(crate::ui::core::style::Mod::BOLD),
+        MdSpanKind::Italic => Style::default().add_mod(crate::ui::core::style::Mod::ITALIC),
+        MdSpanKind::Strike => Style::default().add_mod(crate::ui::core::style::Mod::DIM),
+        MdSpanKind::Marker => Style::default()
+            .fg(theme.md_marker_fg)
+            .add_mod(crate::ui::core::style::Mod::DIM),
+        MdSpanKind::BlockquoteText => Style::default().fg(theme.md_blockquote_fg),
+        MdSpanKind::BlockquoteBar => Style::default().fg(theme.md_blockquote_bar),
+        MdSpanKind::HorizontalRule => Style::default().fg(theme.md_hr_fg),
+    }
+}
+
+pub fn from_markdown_rendered(rendered: MdRenderedLine) -> DocLine {
+    let spans = rendered
+        .spans
+        .into_iter()
+        .map(|span| DocSpan {
+            start: span.start,
+            end: span.end,
+            kind: DocSpanKind::Markdown(span.kind),
+        })
+        .collect::<Vec<_>>();
+
+    DocLine {
+        text: rendered.text,
+        spans,
+        offset_map: Some(rendered.offset_map),
+    }
+}
+
+pub fn render_markdown(markdown: &str, width: u16, max_lines: usize) -> Vec<DocLine> {
     if width == 0 || max_lines == 0 {
         return Vec::new();
     }
@@ -186,9 +372,19 @@ pub(super) fn render_markdown(markdown: &str, width: u16, max_lines: usize) -> V
                         .and_then(|h| h.get(i))
                         .filter(|v| !v.is_empty())
                         .cloned();
+                    let spans = hl
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|span| DocSpan {
+                            start: span.start,
+                            end: span.end,
+                            kind: DocSpanKind::Syntax(span.kind),
+                        })
+                        .collect::<Vec<_>>();
                     out.push(DocLine {
                         text: line,
-                        highlight: hl,
+                        spans,
+                        offset_map: None,
                     });
                 }
             }
@@ -206,7 +402,8 @@ fn wrap_and_push_text_lines(out: &mut Vec<DocLine>, line: &str, width: u16, max_
     if line.is_empty() {
         out.push(DocLine {
             text: String::new(),
-            highlight: None,
+            spans: Vec::new(),
+            offset_map: None,
         });
         return;
     }
@@ -227,7 +424,8 @@ fn wrap_and_push_text_lines(out: &mut Vec<DocLine>, line: &str, width: u16, max_
         let end = text_window::truncate_to_width(indent, max_w);
         out.push(DocLine {
             text: indent.get(..end).unwrap_or_default().to_string(),
-            highlight: None,
+            spans: Vec::new(),
+            offset_map: None,
         });
         return;
     }
@@ -264,7 +462,8 @@ fn wrap_and_push_text_lines(out: &mut Vec<DocLine>, line: &str, width: u16, max_
 
         out.push(DocLine {
             text,
-            highlight: None,
+            spans: Vec::new(),
+            offset_map: None,
         });
 
         rest = next;
@@ -353,5 +552,5 @@ fn language_id_for_fence(lang: &str) -> Option<LanguageId> {
 }
 
 #[cfg(test)]
-#[path = "../../../../tests/unit/app/workbench/render/doc.rs"]
+#[path = "../../../tests/unit/views/doc.rs"]
 mod tests;

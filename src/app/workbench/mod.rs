@@ -21,6 +21,7 @@ use crate::tui::view::{EventResult, View};
 use crate::ui::backend::Backend;
 use crate::ui::core::color_support::{detect_terminal_color_support, TerminalColorSupport};
 use crate::ui::core::geom::Rect;
+use crate::views::doc::RenderCache as DocRenderCache;
 use crate::views::{ExplorerView, SearchView};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -130,8 +131,8 @@ struct HoverPopupState {
     target: Option<IdleHoverTarget>,
     scroll: usize,
     total_lines: usize,
-    hash: Option<u64>,
     last_area: Option<Rect>,
+    render_cache: DocRenderCache,
 }
 
 #[derive(Debug, Default)]
@@ -140,6 +141,7 @@ struct CompletionDocState {
     total_lines: usize,
     key: Option<CompletionDocKey>,
     last_area: Option<Rect>,
+    render_cache: DocRenderCache,
 }
 
 #[derive(Debug, Default)]

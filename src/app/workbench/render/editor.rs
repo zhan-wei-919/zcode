@@ -9,14 +9,14 @@ use crate::ui::core::layout::Insets;
 use crate::ui::core::painter::{BorderKind, Painter};
 use crate::ui::core::style::Style as UiStyle;
 use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, SplitDrop};
+use crate::views::doc;
 use crate::views::{
     compute_editor_pane_layout, compute_tab_row_layout, cursor_position_editor, paint_editor_pane,
     EditorPaneLayout, EditorPaneRenderOptions,
 };
-use std::hash::{Hash, Hasher};
 use unicode_width::UnicodeWidthStr;
 
-use super::doc;
+pub(super) const MAX_DOC_RENDER_LINES: usize = doc::MAX_RENDER_LINES;
 
 impl Workbench {
     fn register_editor_splitter_node(&mut self, sep_area: UiRect, direction: SplitDirection) {
@@ -53,7 +53,7 @@ impl Workbench {
             .is_some_and(|t| !t.trim().is_empty());
         if !has_text {
             self.hover_popup.scroll = 0;
-            self.hover_popup.hash = None;
+            self.hover_popup.render_cache.clear();
             return;
         }
 
@@ -84,7 +84,7 @@ impl Workbench {
             return;
         }
 
-        let (text_hash, inner_w, rendered) = {
+        let (cache_key, inner_w, rendered, cache_hit) = {
             let text = self
                 .store
                 .state()
@@ -93,24 +93,23 @@ impl Workbench {
                 .as_deref()
                 .unwrap_or_default();
 
-            let mut hasher = rustc_hash::FxHasher::default();
-            text.hash(&mut hasher);
-            let text_hash = hasher.finish();
-
             let natural_w = doc::natural_width(text);
             let max_inner_w = area.w.saturating_sub(2).max(1);
             let inner_w = (natural_w.min(u16::MAX as usize) as u16)
                 .clamp(1, 120)
                 .min(max_inner_w);
-            let rendered = doc::render_markdown(text, inner_w, doc::MAX_RENDER_LINES);
-            (text_hash, inner_w, rendered)
+            let (key, rendered, hit) =
+                self.hover_popup
+                    .render_cache
+                    .get_or_render(text, inner_w, MAX_DOC_RENDER_LINES);
+            (key, inner_w, rendered, hit)
         };
 
         let total_lines = rendered.len();
-        if self.hover_popup.hash != Some(text_hash) {
+        if !cache_hit {
             self.reset_hover_popup_scroll();
         }
-        self.hover_popup.hash = Some(text_hash);
+        debug_assert_eq!(cache_key.width, inner_w);
         self.hover_popup.total_lines = total_lines;
 
         let desired_width = inner_w.saturating_add(2).max(3);
@@ -182,7 +181,7 @@ impl Workbench {
         doc::paint_doc_lines(
             painter,
             inner,
-            &rendered,
+            rendered.as_slice(),
             &self.ui_theme,
             base_style,
             self.hover_popup.scroll,
@@ -291,6 +290,7 @@ impl Workbench {
         if !completion.visible || completion.visible_len() == 0 {
             self.completion_doc.scroll = 0;
             self.completion_doc.key = None;
+            self.completion_doc.render_cache.clear();
             return;
         }
 
@@ -442,6 +442,7 @@ impl Workbench {
         });
         if self.completion_doc.key.as_ref() != doc_key.as_ref() {
             self.completion_doc.scroll = 0;
+            self.completion_doc.render_cache.clear();
         }
         self.completion_doc.key = doc_key;
 
@@ -471,7 +472,10 @@ impl Workbench {
                 .clamp(1, 120)
                 .min(avail_inner_w);
 
-            let rendered = doc::render_markdown(doc_text, inner_w, doc::MAX_RENDER_LINES);
+            let (_cache_key, rendered, _cache_hit) = self
+                .completion_doc
+                .render_cache
+                .get_or_render(doc_text, inner_w, MAX_DOC_RENDER_LINES);
             let total_lines = rendered.len();
             self.completion_doc.total_lines = total_lines;
 
@@ -510,11 +514,13 @@ impl Workbench {
             doc::paint_doc_lines(
                 painter,
                 inner,
-                &rendered,
+                rendered.as_slice(),
                 &self.ui_theme,
                 base_style,
                 self.completion_doc.scroll,
             );
+        } else {
+            self.completion_doc.render_cache.clear();
         }
     }
 
@@ -1141,3 +1147,7 @@ fn push_editor_tab_nodes(
         });
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/app/workbench/render/editor.rs"]
+mod tests;

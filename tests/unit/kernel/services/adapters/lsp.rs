@@ -344,6 +344,51 @@ fn language_id_for_path_matches_expected() {
 }
 
 #[test]
+fn hover_text_language_string_is_normalized_to_markdown_fence() {
+    let hover = lsp_types::Hover {
+        contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::LanguageString(
+            lsp_types::LanguageString {
+                language: "java".to_string(),
+                value: "public class A {}".to_string(),
+            },
+        )),
+        range: None,
+    };
+
+    let text = super::convert::hover_text(&hover).expect("hover text");
+    assert_eq!(text, "```java\npublic class A {}\n```");
+}
+
+#[test]
+fn hover_text_array_separates_segments_with_blank_line() {
+    let hover = lsp_types::Hover {
+        contents: lsp_types::HoverContents::Array(vec![
+            lsp_types::MarkedString::String("signature".to_string()),
+            lsp_types::MarkedString::LanguageString(lsp_types::LanguageString {
+                language: "rust".to_string(),
+                value: "fn demo()".to_string(),
+            }),
+            lsp_types::MarkedString::String("docs".to_string()),
+        ]),
+        range: None,
+    };
+
+    let text = super::convert::hover_text(&hover).expect("hover text");
+    assert_eq!(text, "signature\n\n```rust\nfn demo()\n```\n\ndocs");
+}
+
+#[test]
+fn documentation_text_preserves_markup_content_payload() {
+    let doc = lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
+        kind: lsp_types::MarkupKind::Markdown,
+        value: "**bold**\n\n`code`".to_string(),
+    });
+
+    let text = super::convert::documentation_text(&doc).expect("documentation");
+    assert_eq!(text, "**bold**\n\n`code`");
+}
+
+#[test]
 fn lsp_server_kind_from_settings_key_includes_c_cpp_java() {
     assert_eq!(
         LspServerKind::from_settings_key("clangd"),

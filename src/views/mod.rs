@@ -5,6 +5,7 @@
 //! - Editor: 纯渲染/命中测试
 //! - SearchView: 全局搜索面板（纯渲染）
 
+pub mod doc;
 pub mod editor;
 pub mod explorer;
 pub mod search;

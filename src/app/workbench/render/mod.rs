@@ -7,7 +7,6 @@ use std::time::Instant;
 
 mod bottom_panel;
 mod dialogs;
-mod doc;
 mod editor;
 mod git;
 mod layout;

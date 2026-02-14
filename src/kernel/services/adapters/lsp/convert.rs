@@ -372,7 +372,7 @@ pub(super) fn hover_text(hover: &lsp_types::Hover) -> Option<String> {
         lsp_types::HoverContents::Markup(m) => parts.push(m.value.clone()),
     }
 
-    let text = parts.join("\n").trim().to_string();
+    let text = parts.join("\n\n").trim().to_string();
     if text.is_empty() {
         None
     } else {
@@ -471,8 +471,23 @@ pub(super) fn utf16_offset_to_byte(s: &str, offset: u32) -> usize {
 pub(super) fn push_marked_string(s: &lsp_types::MarkedString, out: &mut Vec<String>) {
     match s {
         lsp_types::MarkedString::String(s) => out.push(s.clone()),
-        lsp_types::MarkedString::LanguageString(ls) => out.push(ls.value.clone()),
+        lsp_types::MarkedString::LanguageString(ls) => {
+            out.push(fenced_code_block(ls.language.as_str(), ls.value.as_str()))
+        }
     }
+}
+
+fn fenced_code_block(language: &str, value: &str) -> String {
+    let mut out = String::with_capacity(language.len() + value.len() + 8);
+    out.push_str("```");
+    out.push_str(language.trim());
+    out.push('\n');
+    out.push_str(value);
+    if !value.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("```");
+    out
 }
 
 pub(super) fn definition_location(

@@ -152,6 +152,7 @@ impl Workbench {
                     self.completion_doc.total_lines = 0;
                     self.completion_doc.key = None;
                     self.completion_doc.last_area = None;
+                    self.completion_doc.render_cache.clear();
                     return EventResult::Consumed;
                 }
                 (KeyCode::Tab, _) => {
@@ -221,6 +222,7 @@ impl Workbench {
                         self.completion_doc.total_lines = 0;
                         self.completion_doc.key = None;
                         self.completion_doc.last_area = None;
+                        self.completion_doc.render_cache.clear();
                     }
                     return EventResult::Consumed;
                 }

@@ -1,5 +1,4 @@
 use crate::core::text_window;
-use crate::kernel::editor::markdown::{MdRenderedLine, MdSpanKind};
 use crate::kernel::editor::{
     cursor_display_x_abs, EditorPaneState, EditorTabState, HighlightKind, HighlightSpan,
     SearchBarField, SearchBarMode, SearchBarState,
@@ -10,6 +9,7 @@ use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::{Color, Mod, Style};
 use crate::ui::core::theme::Theme;
+use crate::views::doc::{self, DocLine, DocSpan, DocSpanKind};
 use memchr::memchr;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -709,17 +709,20 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         if is_markdown && row != cursor_row {
             if let Some(md) = tab.markdown() {
                 let rendered = md.render_line(row, tab.buffer.rope(), area.w as usize);
-                paint_markdown_line(
+                let mut doc_line = doc::from_markdown_rendered(rendered);
+                append_markdown_selection_spans(&mut doc_line, tab, row);
+                let row_clip = Rect::new(area.x, y, area.w, 1);
+                doc::paint_doc_line(
                     painter,
-                    &rendered,
-                    tab,
-                    row,
-                    y,
-                    area,
-                    horiz_offset,
-                    base_style,
-                    selection_style,
-                    theme,
+                    Pos::new(area.x, y),
+                    area.w,
+                    doc::DocPaintLineParams {
+                        line: &doc_line,
+                        theme,
+                        base_style,
+                        clip: row_clip,
+                        horiz_offset,
+                    },
                 );
                 continue;
             }
@@ -999,103 +1002,64 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
     }
 }
 
-/// Paint a single WYSIWYG-rendered markdown line.
-#[allow(clippy::too_many_arguments)]
-fn paint_markdown_line(
-    painter: &mut Painter,
-    rendered: &MdRenderedLine,
-    tab: &EditorTabState,
-    row: usize,
-    y: u16,
-    area: Rect,
-    horiz_offset: u32,
-    base_style: Style,
-    selection_style: Style,
-    theme: &Theme,
-) {
-    let right = area.right();
-    let row_clip = Rect::new(area.x, y, area.w, 1);
-    let text = rendered.text.as_str();
-
-    if text.is_empty() {
+fn append_markdown_selection_spans(line: &mut DocLine, tab: &EditorTabState, row: usize) {
+    let selection = tab.buffer.selection();
+    let Some((sel_start, sel_end)) = selection_range_for_row(selection, row) else {
+        return;
+    };
+    if sel_start == sel_end {
         return;
     }
 
-    // Check for selection on this row (map through offset_map)
-    let selection = tab.buffer.selection();
-    let sel_range = selection_range_for_row(selection, row).unwrap_or((0, 0));
-    let has_selection = selection.is_some_and(|s| !s.is_empty()) && sel_range.0 != sel_range.1;
+    let Some(offset_map) = line.offset_map.as_deref() else {
+        return;
+    };
+    if offset_map.is_empty() || line.text.is_empty() {
+        return;
+    }
 
-    // Paint grapheme by grapheme with style spans
-    let mut x = area.x;
-    let mut byte_offset: usize = 0;
-    let mut span_idx: usize = 0;
-    let mut display_col: u32 = 0;
+    let rope = tab.buffer.rope();
+    let src_line_start_char = rope.line_to_char(row);
+    let mut byte_offset = 0usize;
+    let mut current_start: Option<usize> = None;
 
-    for g in text.graphemes(true) {
+    for g in line.text.graphemes(true) {
         let g_start = byte_offset;
-        byte_offset += g.len();
-        let g_width = g.width() as u32;
+        byte_offset = byte_offset.saturating_add(g.len());
 
-        if g_width == 0 {
-            continue;
-        }
+        let src_byte = crate::kernel::editor::markdown::display_to_source_byte(offset_map, g_start);
+        let selected = if src_byte < rope.len_bytes() {
+            let src_char = rope.byte_to_char(src_byte);
+            let col = src_char.saturating_sub(src_line_start_char);
+            col >= sel_start && col < sel_end
+        } else {
+            false
+        };
 
-        if display_col + g_width <= horiz_offset {
-            display_col += g_width;
-            continue;
-        }
-
-        if x >= right {
-            break;
-        }
-
-        // Determine style from MdStyleSpan list
-        let mut style = base_style;
-
-        // Check if this display byte falls within a selection (map to source coords)
-        if has_selection && !rendered.offset_map.is_empty() {
-            let src_byte = crate::kernel::editor::markdown::display_to_source_byte(
-                &rendered.offset_map,
-                g_start,
-            );
-            // Convert source byte to grapheme index for selection comparison
-            let rope = tab.buffer.rope();
-            if src_byte < rope.len_bytes() {
-                let src_char = rope.byte_to_char(src_byte);
-                let src_line_start_char = rope.line_to_char(row);
-                let col = src_char.saturating_sub(src_line_start_char);
-                if col >= sel_range.0 && col < sel_range.1 {
-                    style = selection_style;
-                }
+        match (current_start, selected) {
+            (None, true) => current_start = Some(g_start),
+            (Some(start), false) => {
+                line.spans.push(DocSpan {
+                    start,
+                    end: g_start,
+                    kind: DocSpanKind::Selection,
+                });
+                current_start = None;
             }
+            _ => {}
         }
+    }
 
-        // Apply markdown style spans (if not overridden by selection)
-        if style == base_style {
-            while span_idx < rendered.spans.len() && rendered.spans[span_idx].end <= g_start {
-                span_idx += 1;
-            }
-            let mut probe = span_idx;
-            while let Some(span) = rendered.spans.get(probe) {
-                if span.start > g_start {
-                    break;
-                }
-                if g_start >= span.start && g_start < span.end {
-                    style = style.patch(style_for_md_span(span.kind, theme));
-                }
-                probe += 1;
-            }
-        }
+    if let Some(start) = current_start {
+        line.spans.push(DocSpan {
+            start,
+            end: line.text.len(),
+            kind: DocSpanKind::Selection,
+        });
+    }
 
-        let w = g_width.min(u16::MAX as u32) as u16;
-        if x.saturating_add(w) > right {
-            break;
-        }
-
-        painter.text_clipped(Pos::new(x, y), g, style, row_clip);
-        x = x.saturating_add(w);
-        display_col += g_width;
+    if !line.spans.is_empty() {
+        line.spans.sort_by_key(|span| (span.start, span.end));
     }
 }
 
@@ -1125,31 +1089,6 @@ fn paint_vertical_scrollbar(
         V_SCROLL_THUMB_SYMBOL,
         thumb_style,
     );
-}
-
-fn style_for_md_span(kind: MdSpanKind, theme: &Theme) -> Style {
-    match kind {
-        MdSpanKind::Heading(level) => {
-            let fg = match level {
-                1 => theme.md_heading1_fg,
-                2 => theme.md_heading2_fg,
-                3 => theme.md_heading3_fg,
-                4 => theme.md_heading4_fg,
-                5 => theme.md_heading5_fg,
-                _ => theme.md_heading6_fg,
-            };
-            Style::default().fg(fg).add_mod(Mod::BOLD)
-        }
-        MdSpanKind::Link => Style::default().fg(theme.md_link_fg),
-        MdSpanKind::Code => Style::default().fg(theme.md_code_fg).add_mod(Mod::BOLD),
-        MdSpanKind::Bold => Style::default().add_mod(Mod::BOLD),
-        MdSpanKind::Italic => Style::default().add_mod(Mod::ITALIC),
-        MdSpanKind::Strike => Style::default().add_mod(Mod::DIM),
-        MdSpanKind::Marker => Style::default().fg(theme.md_marker_fg).add_mod(Mod::DIM),
-        MdSpanKind::BlockquoteText => Style::default().fg(theme.md_blockquote_fg),
-        MdSpanKind::BlockquoteBar => Style::default().fg(theme.md_blockquote_bar),
-        MdSpanKind::HorizontalRule => Style::default().fg(theme.md_hr_fg),
-    }
 }
 
 fn selection_range_for_row(
