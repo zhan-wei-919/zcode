@@ -1,28 +1,17 @@
-use crate::kernel::BottomPanelTab;
 use crate::ui::core::geom::Rect;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ActivityItem {
     Explorer,
-    Search,
-    Problems,
-    Results,
-    Logs,
-    Find,
-    Replace,
+    Panel,
     Palette,
     Git,
     Settings,
 }
 
-const ACTIVITY_ITEMS: [ActivityItem; 10] = [
+const ACTIVITY_ITEMS: [ActivityItem; 5] = [
     ActivityItem::Explorer,
-    ActivityItem::Search,
-    ActivityItem::Problems,
-    ActivityItem::Results,
-    ActivityItem::Logs,
-    ActivityItem::Find,
-    ActivityItem::Replace,
+    ActivityItem::Panel,
     ActivityItem::Palette,
     ActivityItem::Git,
     ActivityItem::Settings,
@@ -32,24 +21,10 @@ impl ActivityItem {
     pub(super) fn icon(self) -> char {
         match self {
             ActivityItem::Explorer => '\u{f07b}',
-            ActivityItem::Search => '\u{f002}',
-            ActivityItem::Problems => '\u{f071}',
-            ActivityItem::Results => '\u{f0ca}',
-            ActivityItem::Logs => '\u{f0f6}',
-            ActivityItem::Find => '\u{f00e}',
-            ActivityItem::Replace => '\u{f0ec}',
+            ActivityItem::Panel => '\u{2630}',
             ActivityItem::Palette => '\u{f11c}',
             ActivityItem::Git => '\u{e0a0}',
             ActivityItem::Settings => '\u{f013}',
-        }
-    }
-
-    pub(super) fn bottom_panel_tab(self) -> Option<BottomPanelTab> {
-        match self {
-            ActivityItem::Problems => Some(BottomPanelTab::Problems),
-            ActivityItem::Results => Some(BottomPanelTab::SearchResults),
-            ActivityItem::Logs => Some(BottomPanelTab::Logs),
-            _ => None,
         }
     }
 }

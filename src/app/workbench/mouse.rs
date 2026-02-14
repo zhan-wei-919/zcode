@@ -47,77 +47,18 @@ impl Workbench {
                 };
                 self.dispatch_kernel(KernelAction::RunCommand(cmd))
             }
-            util::ActivityItem::Search => {
-                let active = self.store.state().ui.sidebar_visible
-                    && self.store.state().ui.sidebar_tab == SidebarTab::Search;
-                let cmd = if active {
-                    Command::ToggleSidebar
-                } else {
-                    Command::FocusSearch
-                };
-                self.dispatch_kernel(KernelAction::RunCommand(cmd))
-            }
-            util::ActivityItem::Problems
-            | util::ActivityItem::Results
-            | util::ActivityItem::Logs => {
-                let Some(tab) = item.bottom_panel_tab() else {
-                    return false;
-                };
-
-                let active = self.store.state().ui.bottom_panel.visible
-                    && self.store.state().ui.bottom_panel.active_tab == tab;
-                if active {
+            util::ActivityItem::Panel => {
+                if self.store.state().ui.bottom_panel.visible {
                     return self
                         .dispatch_kernel(KernelAction::RunCommand(Command::ToggleBottomPanel));
                 }
 
-                let mut changed =
-                    self.dispatch_kernel(KernelAction::BottomPanelSetActiveTab { tab });
+                let mut changed = self.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
+                    tab: crate::kernel::BottomPanelTab::Terminal,
+                });
                 changed |=
                     self.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
                 changed
-            }
-            util::ActivityItem::Find => {
-                let cmd = {
-                    let state = self.store.state();
-                    let pane = state.ui.editor_layout.active_pane;
-                    let search_bar = state.editor.pane(pane).map(|p| &p.search_bar);
-                    if let Some(sb) = search_bar {
-                        if sb.visible {
-                            if sb.mode == crate::kernel::editor::SearchBarMode::Replace {
-                                Some(Command::EditorSearchBarToggleReplaceMode)
-                            } else {
-                                Some(Command::EditorSearchBarClose)
-                            }
-                        } else {
-                            Some(Command::Find)
-                        }
-                    } else {
-                        Some(Command::Find)
-                    }
-                };
-                cmd.is_some_and(|cmd| self.dispatch_kernel(KernelAction::RunCommand(cmd)))
-            }
-            util::ActivityItem::Replace => {
-                let cmd = {
-                    let state = self.store.state();
-                    let pane = state.ui.editor_layout.active_pane;
-                    let search_bar = state.editor.pane(pane).map(|p| &p.search_bar);
-                    if let Some(sb) = search_bar {
-                        if sb.visible {
-                            if sb.mode == crate::kernel::editor::SearchBarMode::Search {
-                                Some(Command::EditorSearchBarToggleReplaceMode)
-                            } else {
-                                Some(Command::EditorSearchBarClose)
-                            }
-                        } else {
-                            Some(Command::Replace)
-                        }
-                    } else {
-                        Some(Command::Replace)
-                    }
-                };
-                cmd.is_some_and(|cmd| self.dispatch_kernel(KernelAction::RunCommand(cmd)))
             }
             util::ActivityItem::Palette => {
                 self.dispatch_kernel(KernelAction::RunCommand(Command::CommandPalette))

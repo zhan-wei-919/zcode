@@ -63,6 +63,27 @@ fn mouse(kind: MouseEventKind, x: u16, y: u16) -> InputEvent {
     })
 }
 
+fn activity_bar_slot_pos(workbench: &Workbench, index: u16) -> Option<(u16, u16)> {
+    let area = workbench.layout_cache.activity_bar_area?;
+    let slot_h = util::activity_slot_height(area.h).max(1);
+    let slot_top = area.y.saturating_add(index.saturating_mul(slot_h));
+    if slot_top >= area.bottom() {
+        return None;
+    }
+    let remaining = area.bottom().saturating_sub(slot_top);
+    let h = slot_h.min(remaining).max(1);
+    let x = area.x.saturating_add(area.w.saturating_sub(1) / 2);
+    let y = slot_top.saturating_add(h.saturating_sub(1) / 2);
+    Some((x, y))
+}
+
+fn bottom_panel_activity_pos(workbench: &Workbench) -> Option<(u16, u16)> {
+    let index = util::activity_items()
+        .iter()
+        .position(|item| *item == util::ActivityItem::Panel)?;
+    activity_bar_slot_pos(workbench, index as u16)
+}
+
 fn search_bar_button_pos(workbench: &Workbench, button: SearchBarHitResult) -> Option<(u16, u16)> {
     let state = workbench.store.state();
     let area = *workbench.layout_cache.editor_inner_areas.first()?;
@@ -191,6 +212,93 @@ fn test_toggle_bottom_panel() {
 
     assert!(result.is_consumed());
     assert!(workbench.bottom_panel_visible());
+}
+
+#[test]
+fn test_activity_bar_removes_search_find_replace_buttons() {
+    assert_eq!(
+        util::activity_items(),
+        &[
+            util::ActivityItem::Explorer,
+            util::ActivityItem::Panel,
+            util::ActivityItem::Palette,
+            util::ActivityItem::Git,
+            util::ActivityItem::Settings,
+        ]
+    );
+}
+
+#[test]
+fn test_bottom_panel_activity_click_opens_terminal_when_hidden() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    render_once(&mut workbench, 120, 40);
+    let (x, y) = bottom_panel_activity_pos(&workbench).expect("bottom panel activity item");
+    assert!(!workbench.bottom_panel_visible());
+
+    let result = workbench.handle_input(&mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+
+    assert!(result.is_consumed());
+    assert!(workbench.bottom_panel_visible());
+    assert_eq!(workbench.focus(), FocusTarget::BottomPanel);
+    assert_eq!(
+        workbench.store.state().ui.bottom_panel.active_tab,
+        BottomPanelTab::Terminal
+    );
+}
+
+#[test]
+fn test_bottom_panel_activity_click_closes_when_visible() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let _ = workbench.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
+        tab: BottomPanelTab::Logs,
+    });
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+
+    render_once(&mut workbench, 120, 40);
+    let (x, y) = bottom_panel_activity_pos(&workbench).expect("bottom panel activity item");
+    assert!(workbench.bottom_panel_visible());
+
+    let result = workbench.handle_input(&mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+
+    assert!(result.is_consumed());
+    assert!(!workbench.bottom_panel_visible());
+}
+
+#[test]
+fn test_bottom_panel_activity_highlight_follows_visibility() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    render_once(&mut workbench, 120, 40);
+    let (x, y) = bottom_panel_activity_pos(&workbench).expect("bottom panel activity item");
+    let mut backend = TestBackend::new(120, 40);
+    workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
+    let _ = workbench.flush_post_render_sync();
+    assert_eq!(
+        backend.buffer().cell(x, y).expect("activity cell").style.bg,
+        Some(workbench.ui_theme.activity_bg)
+    );
+
+    let _ = workbench.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
+        tab: BottomPanelTab::Logs,
+    });
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+
+    render_once(&mut workbench, 120, 40);
+    let mut backend = TestBackend::new(120, 40);
+    workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
+    let _ = workbench.flush_post_render_sync();
+    assert_eq!(
+        backend.buffer().cell(x, y).expect("activity cell").style.bg,
+        Some(workbench.ui_theme.activity_active_bg)
+    );
 }
 
 #[test]

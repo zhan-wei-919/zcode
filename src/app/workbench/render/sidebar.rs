@@ -1,5 +1,5 @@
 use super::super::Workbench;
-use crate::kernel::{BottomPanelTab, SearchViewport, SidebarTab};
+use crate::kernel::{SearchViewport, SidebarTab};
 use crate::models::{FileTreeRow, NodeId};
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::Pos;
@@ -27,7 +27,6 @@ impl Workbench {
         let state = self.store.state();
         let active_pane = state.ui.editor_layout.active_pane;
         let pane = state.editor.pane(active_pane);
-        let search_bar = pane.map(|p| &p.search_bar);
 
         let settings_active = self.settings_path.as_ref().is_some_and(|settings_path| {
             pane.and_then(|p| p.active_tab())
@@ -48,27 +47,7 @@ impl Workbench {
                 super::super::util::ActivityItem::Explorer => {
                     state.ui.sidebar_visible && state.ui.sidebar_tab == SidebarTab::Explorer
                 }
-                super::super::util::ActivityItem::Search => {
-                    state.ui.sidebar_visible && state.ui.sidebar_tab == SidebarTab::Search
-                }
-                super::super::util::ActivityItem::Problems => {
-                    state.ui.bottom_panel.visible
-                        && state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
-                }
-                super::super::util::ActivityItem::Results => {
-                    state.ui.bottom_panel.visible
-                        && state.ui.bottom_panel.active_tab == BottomPanelTab::SearchResults
-                }
-                super::super::util::ActivityItem::Logs => {
-                    state.ui.bottom_panel.visible
-                        && state.ui.bottom_panel.active_tab == BottomPanelTab::Logs
-                }
-                super::super::util::ActivityItem::Find => search_bar.is_some_and(|sb| {
-                    sb.visible && sb.mode == crate::kernel::editor::SearchBarMode::Search
-                }),
-                super::super::util::ActivityItem::Replace => search_bar.is_some_and(|sb| {
-                    sb.visible && sb.mode == crate::kernel::editor::SearchBarMode::Replace
-                }),
+                super::super::util::ActivityItem::Panel => state.ui.bottom_panel.visible,
                 super::super::util::ActivityItem::Palette => state.ui.command_palette.visible,
                 super::super::util::ActivityItem::Git => {
                     state.git.repo_root.is_some() && state.ui.git_panel_expanded
