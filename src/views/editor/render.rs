@@ -26,26 +26,40 @@ const SEARCH_NAV_BUTTONS_WIDTH: u16 = 8;
 const V_SCROLL_TRACK_SYMBOL: char = '│';
 const V_SCROLL_THUMB_SYMBOL: char = '█';
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EditorPaneRenderOptions {
+    pub hovered_tab: Option<usize>,
+    pub workspace_empty: bool,
+    pub show_vertical_scrollbar: bool,
+}
+
 pub fn paint_editor_pane(
     painter: &mut Painter,
     layout: &EditorPaneLayout,
     pane: &EditorPaneState,
     config: &EditorConfig,
     theme: &Theme,
-    hovered_tab: Option<usize>,
-    workspace_empty: bool,
+    options: EditorPaneRenderOptions,
 ) {
     if layout.area.is_empty() {
         return;
     }
 
-    paint_tabs(painter, layout.tab_area, pane, theme, hovered_tab);
+    paint_tabs(painter, layout.tab_area, pane, theme, options.hovered_tab);
 
     if let Some(search_area) = layout.search_area {
         paint_search_bar(painter, search_area, &pane.search_bar, theme);
     }
 
-    paint_editor_body(painter, layout, pane, config, theme, workspace_empty);
+    paint_editor_body(
+        painter,
+        layout,
+        pane,
+        config,
+        theme,
+        options.workspace_empty,
+        options.show_vertical_scrollbar,
+    );
 }
 
 pub fn cursor_position_editor(
@@ -398,6 +412,7 @@ fn paint_editor_body(
     config: &EditorConfig,
     theme: &Theme,
     workspace_empty: bool,
+    show_vertical_scrollbar: bool,
 ) {
     if layout.editor_area.is_empty() {
         return;
@@ -431,12 +446,14 @@ fn paint_editor_body(
     };
 
     let (line_offset, horiz_offset) = effective_viewport(tab, layout, config);
-    let scrollbar_metrics = vertical_scrollbar_metrics(
-        layout,
-        tab.buffer.len_lines().max(1),
-        layout.editor_area.h as usize,
-        line_offset,
-    );
+    let scrollbar_metrics = show_vertical_scrollbar.then(|| {
+        vertical_scrollbar_metrics(
+            layout,
+            tab.buffer.len_lines().max(1),
+            layout.editor_area.h as usize,
+            line_offset,
+        )
+    });
     let height = layout.editor_area.h as usize;
     let visible_lines = tab.visible_lines_in_viewport(line_offset, height.max(1));
     let syntax = build_syntax_highlights(tab, &visible_lines);
@@ -472,7 +489,7 @@ fn paint_editor_body(
         },
     );
 
-    if let Some(metrics) = scrollbar_metrics {
+    if let Some(metrics) = scrollbar_metrics.flatten() {
         paint_vertical_scrollbar(painter, &metrics, theme);
     }
 }

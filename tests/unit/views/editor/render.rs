@@ -9,6 +9,13 @@ use crate::ui::core::painter::{PaintCmd, Painter};
 use crate::ui::core::theme::Theme;
 use std::path::PathBuf;
 
+fn default_render_options(show_vertical_scrollbar: bool) -> crate::views::EditorPaneRenderOptions {
+    crate::views::EditorPaneRenderOptions {
+        show_vertical_scrollbar,
+        ..Default::default()
+    }
+}
+
 #[test]
 fn paint_editor_pane_no_tab_renders_empty_message() {
     let config = EditorConfig::default();
@@ -22,8 +29,7 @@ fn paint_editor_pane_no_tab_renders_empty_message() {
         &pane,
         &config,
         &Theme::default(),
-        None,
-        false,
+        default_render_options(true),
     );
 
     let has_message = painter
@@ -50,8 +56,7 @@ fn paint_editor_pane_search_bar_draws_find_label() {
         &pane,
         &config,
         &Theme::default(),
-        None,
-        false,
+        default_render_options(true),
     );
 
     let texts: Vec<&str> = painter
@@ -82,8 +87,7 @@ fn paint_editor_pane_search_bar_draws_nav_buttons() {
         &pane,
         &config,
         &Theme::default(),
-        None,
-        false,
+        default_render_options(true),
     );
 
     let texts: Vec<&str> = painter
@@ -119,7 +123,14 @@ fn paint_editor_pane_search_matches_use_match_and_current_match_backgrounds() {
     let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
     let theme = Theme::default();
     let mut painter = Painter::new();
-    paint_editor_pane(&mut painter, &layout, &pane, &config, &theme, None, false);
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &theme,
+        default_render_options(true),
+    );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
     backend.draw(layout.area, painter.cmds());
@@ -160,7 +171,14 @@ fn paint_editor_pane_selection_background_overrides_search_match_background() {
     let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
     let theme = Theme::default();
     let mut painter = Painter::new();
-    paint_editor_pane(&mut painter, &layout, &pane, &config, &theme, None, false);
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &theme,
+        default_render_options(true),
+    );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
     backend.draw(layout.area, painter.cmds());
@@ -192,8 +210,7 @@ fn paint_editor_pane_indent_guides_do_not_overwrite_code() {
         &pane,
         &config,
         &Theme::default(),
-        None,
-        false,
+        default_render_options(true),
     );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -228,7 +245,14 @@ fn paint_editor_pane_indent_guides_respect_selection_background() {
 
     let theme = Theme::default();
     let mut painter = Painter::new();
-    paint_editor_pane(&mut painter, &layout, &pane, &config, &theme, None, false);
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &theme,
+        default_render_options(true),
+    );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
     backend.draw(layout.area, painter.cmds());
@@ -271,8 +295,7 @@ fn paint_editor_pane_long_file_draws_vertical_scrollbar() {
         &pane,
         &config,
         &Theme::default(),
-        None,
-        false,
+        default_render_options(true),
     );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -292,6 +315,48 @@ fn paint_editor_pane_long_file_draws_vertical_scrollbar() {
 
     assert!(thumb_cells > 0, "scrollbar thumb should be drawn");
     assert!(track_cells > 0, "scrollbar track should be drawn");
+}
+
+#[test]
+fn paint_editor_pane_long_file_hides_vertical_scrollbar_when_not_hovered() {
+    let config = EditorConfig::default();
+    let mut pane = EditorPaneState::new(&config);
+    let text = (0..120)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    pane.tabs.push(EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("long.rs"),
+        &text,
+        &config,
+    ));
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
+    let scrollbar = layout
+        .v_scrollbar_area
+        .expect("vertical scrollbar should be visible");
+
+    let mut painter = Painter::new();
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &Theme::default(),
+        default_render_options(false),
+    );
+
+    let mut backend = TestBackend::new(layout.area.w, layout.area.h);
+    backend.draw(layout.area, painter.cmds());
+    let buf = backend.buffer();
+
+    for y in scrollbar.y..scrollbar.bottom() {
+        let cell = buf.cell(scrollbar.x, y).expect("scrollbar cell");
+        assert_ne!(cell.symbol, "█");
+        assert_ne!(cell.symbol, "│");
+    }
 }
 
 #[test]
@@ -323,8 +388,7 @@ fn paint_editor_pane_vertical_scrollbar_thumb_moves_with_line_offset() {
             pane,
             &config,
             &Theme::default(),
-            None,
-            false,
+            default_render_options(true),
         );
 
         let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -372,7 +436,14 @@ fn paint_editor_tabs_active_tab_uses_selected_palette() {
     let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 8), &pane, &config);
     let theme = Theme::default();
     let mut painter = Painter::new();
-    paint_editor_pane(&mut painter, &layout, &pane, &config, &theme, None, false);
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &theme,
+        default_render_options(true),
+    );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
     backend.draw(layout.area, painter.cmds());
@@ -423,8 +494,7 @@ fn paint_editor_tabs_truncate_titles_with_ellipsis_in_narrow_width() {
         &pane,
         &config,
         &Theme::default(),
-        None,
-        false,
+        default_render_options(true),
     );
 
     let tab_row_clip = Rect::new(

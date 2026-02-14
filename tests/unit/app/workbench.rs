@@ -2822,6 +2822,80 @@ fn test_shift_scroll_down_moves_editor_horizontally() {
 }
 
 #[test]
+fn test_editor_vertical_scrollbar_shows_only_on_right_edge_hover() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let path = dir.path().join("long.rs");
+    let content = (0..200)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content,
+    }));
+
+    render_once(&mut workbench, 120, 40);
+
+    let (scrollbar, hover_y) = {
+        let area = *workbench
+            .layout_cache
+            .editor_inner_areas
+            .first()
+            .expect("editor area");
+        let state = workbench.store.state();
+        let pane = state.editor.pane(0).expect("pane");
+        let layout = compute_editor_pane_layout(area, pane, &state.editor.config);
+        (
+            layout.v_scrollbar_area.expect("vertical scrollbar area"),
+            layout.editor_area.y,
+        )
+    };
+
+    let scrollbar_glyph_count = |workbench: &mut Workbench, scrollbar: Rect| -> usize {
+        let mut backend = TestBackend::new(120, 40);
+        workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
+        let buf = backend.buffer();
+
+        let mut count = 0usize;
+        for y in scrollbar.y..scrollbar.bottom() {
+            let symbol = &buf
+                .cell(scrollbar.x, y)
+                .expect("scrollbar cell should exist")
+                .symbol;
+            if symbol == "█" || symbol == "│" {
+                count += 1;
+            }
+        }
+        count
+    };
+
+    let hidden_count = scrollbar_glyph_count(&mut workbench, scrollbar);
+    assert_eq!(hidden_count, 0, "scrollbar should be hidden by default");
+
+    let _ = workbench.handle_input(&mouse(MouseEventKind::Moved, scrollbar.x, hover_y));
+    let shown_count = scrollbar_glyph_count(&mut workbench, scrollbar);
+    assert!(
+        shown_count > 0,
+        "scrollbar should appear on right-edge hover"
+    );
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Moved,
+        scrollbar.x.saturating_sub(1),
+        hover_y,
+    ));
+    let hidden_again_count = scrollbar_glyph_count(&mut workbench, scrollbar);
+    assert_eq!(
+        hidden_again_count, 0,
+        "scrollbar should hide after leaving right edge"
+    );
+}
+
+#[test]
 fn test_editor_vertical_scrollbar_drag_updates_line_offset_without_selection() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();

@@ -45,8 +45,10 @@ fn nav_buttons_origin(
         pane,
         config,
         &Theme::default(),
-        None,
-        false,
+        crate::views::EditorPaneRenderOptions {
+            show_vertical_scrollbar: true,
+            ..Default::default()
+        },
     );
 
     painter

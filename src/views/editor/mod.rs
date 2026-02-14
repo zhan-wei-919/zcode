@@ -15,5 +15,5 @@ pub use layout::{
     compute_editor_pane_layout, vertical_scrollbar_metrics, EditorPaneLayout,
     VerticalScrollbarMetrics,
 };
-pub use render::{cursor_position_editor, paint_editor_pane};
+pub use render::{cursor_position_editor, paint_editor_pane, EditorPaneRenderOptions};
 pub use tab_row::{compute_tab_row_layout, ellipsize_title, TabRowLayout, TabRowSlot};

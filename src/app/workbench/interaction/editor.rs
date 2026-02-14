@@ -5,6 +5,7 @@ use crate::kernel::editor::TabId;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::{Action as KernelAction, EditorAction, PendingAction};
 use crate::tui::view::EventResult;
+use crate::ui::core::geom::Pos;
 use crate::ui::core::input::{DragPayload, UiEvent};
 use crate::ui::core::runtime::UiRuntimeOutput;
 use crate::ui::core::tree::NodeKind;
@@ -64,6 +65,23 @@ impl Workbench {
             .hovered_tab
             .filter(|(hp, _)| *hp == pane)
             .map(|(_, i)| i);
+
+        if matches!(
+            event.kind,
+            MouseEventKind::Moved
+                | MouseEventKind::Down(_)
+                | MouseEventKind::Up(_)
+                | MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollDown
+                | MouseEventKind::ScrollLeft
+                | MouseEventKind::ScrollRight
+        ) {
+            let pointer = Pos::new(event.column, event.row);
+            self.editor_scrollbar_hover = layout
+                .v_scrollbar_area
+                .filter(|area| area.contains(pointer))
+                .map(|_| pane);
+        }
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {

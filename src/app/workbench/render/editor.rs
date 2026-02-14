@@ -11,7 +11,7 @@ use crate::ui::core::style::Style as UiStyle;
 use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, SplitDrop};
 use crate::views::{
     compute_editor_pane_layout, compute_tab_row_layout, cursor_position_editor, paint_editor_pane,
-    EditorPaneLayout,
+    EditorPaneLayout, EditorPaneRenderOptions,
 };
 use std::hash::{Hash, Hasher};
 use unicode_width::UnicodeWidthStr;
@@ -521,6 +521,7 @@ impl Workbench {
     fn draw_editor_pane(
         &self,
         backend: &mut dyn Backend,
+        pane: usize,
         layout: &EditorPaneLayout,
         pane_state: &EditorPaneState,
         hovered_tab: Option<usize>,
@@ -528,17 +529,37 @@ impl Workbench {
     ) {
         let mut painter = Painter::new();
         let config = &self.store.state().editor.config;
+        let options = EditorPaneRenderOptions {
+            hovered_tab,
+            workspace_empty,
+            show_vertical_scrollbar: self.show_editor_vertical_scrollbar(pane, layout),
+        };
         paint_editor_pane(
             &mut painter,
             layout,
             pane_state,
             config,
             &self.ui_theme,
-            hovered_tab,
-            workspace_empty,
+            options,
         );
 
         backend.draw(layout.area, painter.cmds());
+    }
+
+    fn show_editor_vertical_scrollbar(&self, pane: usize, layout: &EditorPaneLayout) -> bool {
+        if layout.v_scrollbar_area.is_none() {
+            return false;
+        }
+
+        if self
+            .editor_scrollbar_drag
+            .is_some_and(|drag| drag.pane == pane)
+        {
+            return true;
+        }
+
+        self.store.state().ui.focus == crate::kernel::FocusTarget::Editor
+            && self.editor_scrollbar_hover == Some(pane)
     }
 
     pub(super) fn render_editor_panes(&mut self, backend: &mut dyn Backend, area: UiRect) {
@@ -584,6 +605,7 @@ impl Workbench {
                     push_editor_split_drop_zones(&mut self.ui_tree, 0, &layout);
                     self.draw_editor_pane(
                         backend,
+                        0,
                         &layout,
                         pane_state,
                         hovered_for_pane(0),
@@ -622,6 +644,7 @@ impl Workbench {
                                 );
                                 self.draw_editor_pane(
                                     backend,
+                                    active,
                                     &layout,
                                     pane_state,
                                     hovered_for_pane(active),
@@ -685,6 +708,7 @@ impl Workbench {
                                 );
                                 self.draw_editor_pane(
                                     backend,
+                                    0,
                                     &layout,
                                     pane_state,
                                     hovered_for_pane(0),
@@ -715,6 +739,7 @@ impl Workbench {
                                 );
                                 self.draw_editor_pane(
                                     backend,
+                                    1,
                                     &layout,
                                     pane_state,
                                     hovered_for_pane(1),
@@ -751,6 +776,7 @@ impl Workbench {
                                 );
                                 self.draw_editor_pane(
                                     backend,
+                                    active,
                                     &layout,
                                     pane_state,
                                     hovered_for_pane(active),
@@ -814,6 +840,7 @@ impl Workbench {
                                 );
                                 self.draw_editor_pane(
                                     backend,
+                                    0,
                                     &layout,
                                     pane_state,
                                     hovered_for_pane(0),
@@ -844,6 +871,7 @@ impl Workbench {
                                 );
                                 self.draw_editor_pane(
                                     backend,
+                                    1,
                                     &layout,
                                     pane_state,
                                     hovered_for_pane(1),
@@ -885,6 +913,7 @@ impl Workbench {
                     );
                     self.draw_editor_pane(
                         backend,
+                        active,
                         &layout,
                         pane_state,
                         hovered_for_pane(active),
