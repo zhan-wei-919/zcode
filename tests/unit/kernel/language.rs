@@ -36,6 +36,7 @@ fn from_path_maps_all_supported_extensions() {
         ("a.svg", Some(LanguageId::Xml)),
         ("a.css", Some(LanguageId::Css)),
         ("a.toml", Some(LanguageId::Toml)),
+        ("a.sql", Some(LanguageId::Sql)),
         ("a.sh", Some(LanguageId::Bash)),
         ("a.bash", Some(LanguageId::Bash)),
         ("a.zsh", Some(LanguageId::Bash)),
@@ -108,6 +109,7 @@ fn highlight_only_languages_have_no_server_kind() {
         LanguageId::Xml,
         LanguageId::Css,
         LanguageId::Toml,
+        LanguageId::Sql,
         LanguageId::Bash,
     ];
 

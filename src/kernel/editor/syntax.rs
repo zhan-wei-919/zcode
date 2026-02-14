@@ -98,6 +98,7 @@ impl SyntaxDocument {
             LanguageId::Xml => parser.set_language(tree_sitter_xml::language_xml()).ok()?,
             LanguageId::Css => parser.set_language(tree_sitter_css::language()).ok()?,
             LanguageId::Toml => parser.set_language(tree_sitter_toml::language()).ok()?,
+            LanguageId::Sql => parser.set_language(db3_sqlparser::language()).ok()?,
             LanguageId::Bash => parser.set_language(tree_sitter_bash::language()).ok()?,
             LanguageId::Markdown => return None,
         }
@@ -260,6 +261,7 @@ pub fn highlight_snippet(language: LanguageId, text: &str) -> Vec<Vec<HighlightS
         LanguageId::Xml => parser.set_language(tree_sitter_xml::language_xml()).is_ok(),
         LanguageId::Css => parser.set_language(tree_sitter_css::language()).is_ok(),
         LanguageId::Toml => parser.set_language(tree_sitter_toml::language()).is_ok(),
+        LanguageId::Sql => parser.set_language(db3_sqlparser::language()).is_ok(),
         LanguageId::Bash => parser.set_language(tree_sitter_bash::language()).is_ok(),
         LanguageId::Markdown => false,
     };
@@ -713,7 +715,7 @@ fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<Hi
                 return Some(kind);
             }
         }
-        LanguageId::C | LanguageId::Cpp | LanguageId::Java => {}
+        LanguageId::C | LanguageId::Cpp | LanguageId::Java | LanguageId::Sql => {}
         LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Jsx | LanguageId::Tsx => {
             if let Some(kind) = classify_js_node(node) {
                 return Some(kind);
@@ -1169,6 +1171,7 @@ fn is_keyword(language: LanguageId, kind: &str) -> bool {
         LanguageId::Json => is_json_keyword(kind),
         LanguageId::Yaml => is_yaml_keyword(kind),
         LanguageId::Toml => is_toml_keyword(kind),
+        LanguageId::Sql => is_sql_keyword(kind),
         LanguageId::Html | LanguageId::Xml => false,
         LanguageId::Css => false,
         LanguageId::Bash => is_bash_keyword(kind),
@@ -1554,11 +1557,46 @@ fn is_bash_keyword(kind: &str) -> bool {
     )
 }
 
+fn is_sql_keyword(kind: &str) -> bool {
+    if kind.starts_with("keyword_") {
+        return true;
+    }
+
+    let mut has_alpha = false;
+    for b in kind.bytes() {
+        if b.is_ascii_alphabetic() {
+            has_alpha = true;
+            if !b.is_ascii_uppercase() {
+                return false;
+            }
+            continue;
+        }
+        if b != b'_' {
+            return false;
+        }
+    }
+    has_alpha
+}
+
 fn classify_markup_node(node: Node<'_>) -> Option<HighlightKind> {
     match node.kind() {
-        "tag_name" | "element" => Some(HighlightKind::Keyword),
+        "tag_name" => Some(HighlightKind::Keyword),
         "attribute_name" => Some(HighlightKind::Attribute),
-        "attribute_value" | "quoted_attribute_value" => Some(HighlightKind::String),
+        "attribute_value" | "quoted_attribute_value" | "AttValue" | "PseudoAttValue" => {
+            Some(HighlightKind::String)
+        }
+        "Name" => classify_xml_name_node(node),
+        _ => None,
+    }
+}
+
+fn classify_xml_name_node(node: Node<'_>) -> Option<HighlightKind> {
+    let parent = node.parent()?;
+    match parent.kind() {
+        // XML tag names inside start/end/empty tags.
+        "STag" | "ETag" | "EmptyElemTag" => Some(HighlightKind::Keyword),
+        // XML attribute names.
+        "Attribute" | "AttDef" | "PseudoAtt" => Some(HighlightKind::Attribute),
         _ => None,
     }
 }

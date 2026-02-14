@@ -20,6 +20,7 @@ pub enum LanguageId {
     Xml,
     Css,
     Toml,
+    Sql,
     Bash,
     Markdown,
 }
@@ -43,6 +44,7 @@ impl LanguageId {
             "xml" | "xsl" | "xslt" | "svg" => Some(Self::Xml),
             "css" => Some(Self::Css),
             "toml" => Some(Self::Toml),
+            "sql" => Some(Self::Sql),
             "sh" | "bash" | "zsh" => Some(Self::Bash),
             "md" | "markdown" | "mdx" => Some(Self::Markdown),
             _ => None,
@@ -65,6 +67,7 @@ impl LanguageId {
             | Self::Xml
             | Self::Css
             | Self::Toml
+            | Self::Sql
             | Self::Bash
             | Self::Markdown => None,
         }
@@ -88,6 +91,7 @@ impl LanguageId {
             Self::Xml => "xml",
             Self::Css => "css",
             Self::Toml => "toml",
+            Self::Sql => "sql",
             Self::Bash => "shellscript",
             Self::Markdown => "markdown",
         }
@@ -129,6 +133,7 @@ impl LanguageId {
             | Self::Xml
             | Self::Css
             | Self::Toml
+            | Self::Sql
             | Self::Bash
             | Self::Markdown => &[],
         }
@@ -152,6 +157,7 @@ impl LanguageId {
             Self::Xml => "XML",
             Self::Css => "CSS",
             Self::Toml => "TOML",
+            Self::Sql => "SQL",
             Self::Bash => "Bash",
             Self::Markdown => "Markdown",
         }

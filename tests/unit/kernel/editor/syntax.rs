@@ -832,6 +832,25 @@ fn test_highlight_xml_tags_and_attributes() {
 }
 
 #[test]
+fn test_highlight_xml_text_content_is_not_keyword() {
+    let src = "<root>hello</root>";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.xml"), &rope).expect("xml syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, 1);
+    let idx_text = src.find("hello").expect("text content");
+    assert!(!spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_text && idx_text < s.end));
+
+    let snippet_spans = highlight_snippet(LanguageId::Xml, src);
+    assert_eq!(snippet_spans.len(), 1);
+    assert!(!snippet_spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_text && idx_text < s.end));
+}
+
+#[test]
 fn test_highlight_css_selectors_and_properties() {
     let src = ".main { color: red; font-size: 14px; }\n";
     let rope = Rope::from_str(src);
@@ -867,6 +886,46 @@ fn test_highlight_toml_string_and_number() {
     assert!(line1_spans
         .iter()
         .any(|s| s.kind == HighlightKind::String && s.start <= idx_str && idx_str < s.end));
+}
+
+#[test]
+fn test_highlight_sql_comment_string_number_and_keyword() {
+    let src =
+        "-- list active users\nSELECT name, age FROM users WHERE id = 42 AND status = 'ok';\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.sql"), &rope).expect("sql syntax");
+
+    let spans = doc.highlight_lines(&rope, 0, rope.len_lines());
+    let all_spans: usize = spans.iter().map(Vec::len).sum();
+    assert!(all_spans > 0);
+
+    let idx_comment = 0;
+    assert!(spans[0].iter().any(|s| s.kind == HighlightKind::Comment
+        && s.start <= idx_comment
+        && idx_comment < s.end));
+
+    let line = "SELECT name, age FROM users WHERE id = 42 AND status = 'ok';";
+    let idx_keyword = line.find("SELECT").unwrap();
+    let idx_number = line.find("42").unwrap();
+    let idx_string = line.find("'ok'").unwrap() + 1;
+    assert!(spans[1].iter().any(|s| s.kind == HighlightKind::Keyword
+        && s.start <= idx_keyword
+        && idx_keyword < s.end));
+    assert!(spans[1]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Number && s.start <= idx_number && idx_number < s.end));
+    assert!(spans[1]
+        .iter()
+        .any(|s| s.kind == HighlightKind::String && s.start <= idx_string && idx_string < s.end));
+
+    let snippet_spans = highlight_snippet(LanguageId::Sql, "SELECT 1;");
+    assert_eq!(snippet_spans.len(), 1);
+    assert!(snippet_spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start == 0));
+    assert!(snippet_spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Number && s.start <= 7 && 7 < s.end));
 }
 
 #[test]
