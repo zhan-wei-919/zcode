@@ -929,6 +929,58 @@ fn test_highlight_sql_comment_string_number_and_keyword() {
 }
 
 #[test]
+fn test_highlight_sql_create_table_ddl_does_not_degrade_on_constraints() {
+    let src = "CREATE TABLE IF NOT EXISTS auth_account (\n  id UUID PRIMARY KEY,\n  user_id UUID NOT NULL UNIQUE,\n  login_name VARCHAR(64) NOT NULL UNIQUE,\n  email VARCHAR(128) NOT NULL UNIQUE,\n  password_hash VARCHAR(255) NOT NULL,\n  password_algo VARCHAR(32) NOT NULL,\n  status SMALLINT NOT NULL,\n  failed_login_count INT NOT NULL DEFAULT 0,\n  locked_until TIMESTAMPTZ NULL,\n  last_login_at TIMESTAMPTZ NULL,\n  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  CONSTRAINT chk_auth_account_status CHECK (status IN (1, 2, 3))\n);\n\nCREATE INDEX IF NOT EXISTS idx_auth_account_status\n  ON auth_account(status);\n\nCREATE TABLE IF NOT EXISTS auth_refresh_token (\n  id UUID PRIMARY KEY,\n  account_id UUID NOT NULL REFERENCES auth_account(id),\n  token_hash VARCHAR(128) NOT NULL UNIQUE,\n  client_id VARCHAR(64) NULL,\n  expires_at TIMESTAMPTZ NOT NULL,\n  revoked_at TIMESTAMPTZ NULL,\n  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP\n);\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("ddl.sql"), &rope).expect("sql syntax");
+    let lines: Vec<&str> = src.lines().collect();
+    let spans = doc.highlight_lines(&rope, 0, lines.len());
+
+    let assert_kind = |line_index: usize, token: &str, expected: HighlightKind| {
+        let line = lines[line_index];
+        let idx = line.find(token).expect("token exists in line");
+        assert!(
+            spans[line_index]
+                .iter()
+                .any(|s| s.kind == expected && s.start <= idx && idx < s.end),
+            "expected {:?} at token `{}` in line {}: `{}`; spans: {:?}",
+            expected,
+            token,
+            line_index,
+            line,
+            spans[line_index]
+        );
+    };
+
+    let assert_not_keyword = |line_index: usize, token: &str| {
+        let line = lines[line_index];
+        let idx = line.find(token).expect("token exists in line");
+        assert!(
+            !spans[line_index]
+                .iter()
+                .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx && idx < s.end),
+            "token `{}` in line {} should not be highlighted as keyword; line: `{}`; spans: {:?}",
+            token,
+            line_index,
+            line,
+            spans[line_index]
+        );
+    };
+
+    assert_kind(2, "UNIQUE", HighlightKind::Keyword);
+    assert_kind(3, "VARCHAR", HighlightKind::Type);
+    assert_kind(3, "64", HighlightKind::Number);
+    assert_kind(8, "0", HighlightKind::Number);
+    assert_kind(9, "TIMESTAMPTZ", HighlightKind::Type);
+    assert_kind(11, "TIMESTAMPTZ", HighlightKind::Type);
+    assert_kind(16, "IF", HighlightKind::Keyword);
+
+    assert_not_keyword(17, "auth_account");
+    assert_not_keyword(19, "auth_refresh_token");
+    assert_not_keyword(21, "auth_account");
+}
+
+#[test]
 fn test_highlight_bash_commands_and_keywords() {
     let src = "#!/bin/bash\nif [ -f file ]; then\n  echo \"hello\"\nfi\n";
     let rope = Rope::from_str(src);
