@@ -56,6 +56,9 @@ impl LspClient {
         if self.doc_versions.remove(path).is_none() {
             return;
         }
+        if let Ok(mut map) = self.latest_semantic_tokens_by_path.lock() {
+            map.remove(path);
+        }
 
         let Some(uri) = path_to_url(path) else {
             return;

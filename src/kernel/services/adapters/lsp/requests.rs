@@ -377,7 +377,11 @@ impl LspClient {
         };
 
         let id = self.next_id();
-        let prev = self.latest_semantic_tokens.swap(id, Ordering::Relaxed);
+        let prev = self
+            .latest_semantic_tokens_by_path
+            .lock()
+            .ok()
+            .and_then(|mut map| map.insert(path.to_path_buf(), id));
         self.track_request(
             id,
             LspRequestKind::SemanticTokens {
@@ -385,7 +389,7 @@ impl LspClient {
                 version,
             },
         );
-        if prev != 0 && prev != id {
+        if let Some(prev) = prev.filter(|prev| *prev != id) {
             self.cancel_request(prev);
             self.untrack_request(prev);
         }
@@ -418,7 +422,11 @@ impl LspClient {
         };
 
         let id = self.next_id();
-        let prev = self.latest_semantic_tokens.swap(id, Ordering::Relaxed);
+        let prev = self
+            .latest_semantic_tokens_by_path
+            .lock()
+            .ok()
+            .and_then(|mut map| map.insert(path.to_path_buf(), id));
         self.track_request(
             id,
             LspRequestKind::SemanticTokensRange {
@@ -427,7 +435,7 @@ impl LspClient {
                 range,
             },
         );
-        if prev != 0 && prev != id {
+        if let Some(prev) = prev.filter(|prev| *prev != id) {
             self.cancel_request(prev);
             self.untrack_request(prev);
         }

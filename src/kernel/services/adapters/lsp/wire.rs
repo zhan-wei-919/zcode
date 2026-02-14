@@ -234,7 +234,7 @@ pub(super) struct ReaderLoopArgs {
     pub(super) latest_code_action: Arc<AtomicI32>,
     pub(super) latest_completion: Arc<AtomicI32>,
     pub(super) latest_completion_resolve: Arc<AtomicI32>,
-    pub(super) latest_semantic_tokens: Arc<AtomicI32>,
+    pub(super) latest_semantic_tokens_by_path: Arc<Mutex<FxHashMap<PathBuf, i32>>>,
     pub(super) latest_inlay_hints: Arc<AtomicI32>,
     pub(super) latest_folding_range: Arc<AtomicI32>,
     pub(super) latest_signature_help: Arc<AtomicI32>,
@@ -262,7 +262,7 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
         latest_code_action,
         latest_completion,
         latest_completion_resolve,
-        latest_semantic_tokens,
+        latest_semantic_tokens_by_path,
         latest_inlay_hints,
         latest_folding_range,
         latest_signature_help,
@@ -403,8 +403,17 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
                         }
                         LspRequestKind::SemanticTokens { .. }
                         | LspRequestKind::SemanticTokensRange { .. } => {
-                            resp.id
-                                == RequestId::from(latest_semantic_tokens.load(Ordering::Relaxed))
+                            let latest = match &kind {
+                                LspRequestKind::SemanticTokens { path, .. }
+                                | LspRequestKind::SemanticTokensRange { path, .. } => {
+                                    latest_semantic_tokens_by_path
+                                        .lock()
+                                        .ok()
+                                        .and_then(|map| map.get(path).copied())
+                                }
+                                _ => None,
+                            };
+                            latest.is_some_and(|id| resp.id == RequestId::from(id))
                         }
                         LspRequestKind::InlayHints { .. } => {
                             resp.id == RequestId::from(latest_inlay_hints.load(Ordering::Relaxed))

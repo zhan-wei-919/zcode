@@ -1,6 +1,9 @@
 use super::*;
 use crate::kernel::services::ports::{AsyncExecutor, BoxFuture};
 use crate::kernel::services::KernelServiceHost;
+use lsp_server::Message;
+#[cfg(unix)]
+use std::collections::VecDeque;
 use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
 
@@ -45,6 +48,41 @@ impl Drop for EnvRestore {
         Self::restore_var("GOPATH", self.gopath.take());
         Self::restore_var("HOME", self.home.take());
     }
+}
+
+#[cfg(unix)]
+fn ready_lsp_client_for_request_tests(
+    server: LspServerKind,
+) -> (LspClient, std::sync::mpsc::Receiver<Message>) {
+    struct NoopExecutor;
+
+    impl AsyncExecutor for NoopExecutor {
+        fn spawn(&self, _task: BoxFuture) {}
+    }
+
+    let host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let mut client = LspClient::new(PathBuf::from("."), server, host.context());
+
+    let (tx, rx) = std::sync::mpsc::channel::<Message>();
+    let pending = Arc::new(std::sync::Mutex::new(super::wire::LspPending {
+        state: super::wire::InitState::Ready,
+        queue: VecDeque::new(),
+    }));
+    let child = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("sleep 30")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn stub child process");
+    client.process = Some(super::wire::LspProcess {
+        tx,
+        pending,
+        child: Arc::new(std::sync::Mutex::new(child)),
+    });
+
+    (client, rx)
 }
 
 #[test]
@@ -619,4 +657,125 @@ fn resolve_server_command_go_prefers_user_init_options() {
         init_options,
         Some(serde_json::json!({ "semanticTokens": false }))
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn semantic_tokens_requests_for_different_files_do_not_cancel_each_other() {
+    let (mut client, rx) = ready_lsp_client_for_request_tests(LspServerKind::Jdtls);
+
+    let path_a = PathBuf::from("/tmp/AuthServiceApplication.java");
+    let path_b = PathBuf::from("/tmp/JwtAuthenticationFilter.java");
+    client.doc_versions.insert(path_a.clone(), 1);
+    client.doc_versions.insert(path_b.clone(), 1);
+
+    client.request_semantic_tokens(&path_a, 1);
+    client.request_semantic_tokens(&path_b, 1);
+
+    let first = rx.recv().expect("first message");
+    let second = rx.recv().expect("second message");
+
+    match first {
+        Message::Request(req) => {
+            assert_eq!(req.id, lsp_server::RequestId::from(1));
+            assert_eq!(req.method, "textDocument/semanticTokens/full");
+        }
+        other => panic!("expected first semantic tokens request, got {other:?}"),
+    }
+
+    match second {
+        Message::Request(req) => {
+            assert_eq!(req.id, lsp_server::RequestId::from(2));
+            assert_eq!(req.method, "textDocument/semanticTokens/full");
+        }
+        other => panic!("expected second semantic tokens request, got {other:?}"),
+    }
+    assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+
+    let pending = client
+        .pending_requests
+        .lock()
+        .expect("lock pending requests");
+    assert!(pending.contains_key(&lsp_server::RequestId::from(1)));
+    assert!(pending.contains_key(&lsp_server::RequestId::from(2)));
+}
+
+#[test]
+#[cfg(unix)]
+fn semantic_tokens_requests_for_same_file_cancel_previous_request() {
+    let (mut client, rx) = ready_lsp_client_for_request_tests(LspServerKind::Jdtls);
+
+    let path = PathBuf::from("/tmp/AuthServiceApplication.java");
+    client.doc_versions.insert(path.clone(), 1);
+
+    client.request_semantic_tokens(&path, 1);
+    client.request_semantic_tokens(&path, 1);
+
+    let first = rx.recv().expect("first message");
+    let second = rx.recv().expect("second message");
+    let third = rx.recv().expect("third message");
+
+    match first {
+        Message::Request(req) => {
+            assert_eq!(req.id, lsp_server::RequestId::from(1));
+            assert_eq!(req.method, "textDocument/semanticTokens/full");
+        }
+        other => panic!("expected first semantic tokens request, got {other:?}"),
+    }
+
+    match second {
+        Message::Notification(notification) => {
+            assert_eq!(notification.method, "$/cancelRequest");
+            let params = serde_json::from_value::<lsp_types::CancelParams>(notification.params)
+                .expect("decode cancel params");
+            assert_eq!(params.id, lsp_types::NumberOrString::Number(1));
+        }
+        other => panic!("expected cancel notification, got {other:?}"),
+    }
+
+    match third {
+        Message::Request(req) => {
+            assert_eq!(req.id, lsp_server::RequestId::from(2));
+            assert_eq!(req.method, "textDocument/semanticTokens/full");
+        }
+        other => panic!("expected second semantic tokens request, got {other:?}"),
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn semantic_tokens_cancellation_does_not_cross_lsp_clients() {
+    let (mut java_client, java_rx) = ready_lsp_client_for_request_tests(LspServerKind::Jdtls);
+    let (mut rust_client, rust_rx) =
+        ready_lsp_client_for_request_tests(LspServerKind::RustAnalyzer);
+
+    let java_path = PathBuf::from("/tmp/AuthServiceApplication.java");
+    let rust_path = PathBuf::from("/tmp/main.rs");
+    java_client.doc_versions.insert(java_path.clone(), 1);
+    rust_client.doc_versions.insert(rust_path.clone(), 1);
+
+    java_client.request_semantic_tokens(&java_path, 1);
+    rust_client.request_semantic_tokens(&rust_path, 1);
+
+    let java_first = java_rx.recv().expect("java first message");
+    let rust_first = rust_rx.recv().expect("rust first message");
+
+    match java_first {
+        Message::Request(req) => {
+            assert_eq!(req.id, lsp_server::RequestId::from(1));
+            assert_eq!(req.method, "textDocument/semanticTokens/full");
+        }
+        other => panic!("expected java semantic tokens request, got {other:?}"),
+    }
+
+    match rust_first {
+        Message::Request(req) => {
+            assert_eq!(req.id, lsp_server::RequestId::from(1));
+            assert_eq!(req.method, "textDocument/semanticTokens/full");
+        }
+        other => panic!("expected rust semantic tokens request, got {other:?}"),
+    }
+
+    assert!(matches!(java_rx.try_recv(), Err(TryRecvError::Empty)));
+    assert!(matches!(rust_rx.try_recv(), Err(TryRecvError::Empty)));
 }
