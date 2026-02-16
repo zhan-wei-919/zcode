@@ -2778,7 +2778,9 @@ fn test_editor_drag_overflow_keeps_horizontal_follow_on_later_drag() {
 
     let path = dir.path().join("wide.txt");
     let long_line = "x".repeat(240);
-    let content = (0..80).map(|_| format!("{long_line}\n")).collect::<String>();
+    let content = (0..80)
+        .map(|_| format!("{long_line}\n"))
+        .collect::<String>();
     let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
         pane: 0,
         path,
@@ -2894,7 +2896,10 @@ fn test_markdown_checkbox_click_toggles_task_marker() {
         .and_then(|pane| pane.active_tab())
         .and_then(|tab| tab.buffer.line(1))
         .expect("line 1");
-    assert_eq!(line_after_click.trim_end_matches('\n'), "- [x] finish refactor");
+    assert_eq!(
+        line_after_click.trim_end_matches('\n'),
+        "- [x] finish refactor"
+    );
 }
 
 #[test]
@@ -3090,4 +3095,96 @@ fn test_editor_vertical_scrollbar_drag_updates_line_offset_without_selection() {
         .expect("active tab");
     assert!(tab.viewport.line_offset > 0);
     assert!(tab.buffer.selection().is_none());
+}
+
+#[test]
+fn test_lsp_definition_sets_transient_destination_highlight() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let path = dir.path().join("main.rs");
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "fn target() {}\nfn main() { target(); }\n".to_string(),
+    }));
+
+    assert!(workbench.definition_jump_highlight.is_none());
+    assert!(workbench.pending_definition_highlight.is_none());
+
+    let _ = workbench.dispatch_kernel(KernelAction::LspDefinition {
+        path: path.clone(),
+        line: 0,
+        column: 3,
+    });
+
+    let tab = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    let (row, _col) = tab.buffer.cursor();
+
+    let highlight = workbench
+        .definition_jump_highlight
+        .expect("definition jump should arm transient highlight");
+    assert_eq!(highlight.pane, 0);
+    assert_eq!(highlight.tab_id, tab.id);
+    assert_eq!(highlight.row, row);
+    assert_eq!(highlight.row, 0);
+    assert!(workbench.pending_definition_highlight.is_none());
+}
+
+#[test]
+fn test_lsp_definition_highlight_is_deferred_until_target_file_opens() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let current_path = dir.path().join("current.rs");
+    let target_path = dir.path().join("target.rs");
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: current_path,
+        content: "fn main() { helper(); }\n".to_string(),
+    }));
+
+    let _ = workbench.dispatch_kernel(KernelAction::LspDefinition {
+        path: target_path.clone(),
+        line: 1,
+        column: 0,
+    });
+
+    assert!(workbench.definition_jump_highlight.is_none());
+    let pending = workbench
+        .pending_definition_highlight
+        .as_ref()
+        .expect("target should be pending before file load");
+    assert_eq!(pending.path, target_path);
+    assert_eq!(pending.row, 1);
+
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: target_path.clone(),
+        content: "line0\nline1\n".to_string(),
+    }));
+
+    let highlight = workbench
+        .definition_jump_highlight
+        .expect("highlight should activate once target file opens");
+    assert_eq!(highlight.pane, 0);
+    assert_eq!(highlight.row, 1);
+    assert!(workbench.pending_definition_highlight.is_none());
+
+    let expired = DefinitionJumpHighlight {
+        started_at: Instant::now() - DEFINITION_JUMP_HIGHLIGHT_DURATION - Duration::from_millis(1),
+        ..highlight
+    };
+    workbench.definition_jump_highlight = Some(expired);
+
+    assert!(workbench.tick());
+    assert!(workbench.definition_jump_highlight.is_none());
 }

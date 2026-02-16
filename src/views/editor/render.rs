@@ -28,10 +28,16 @@ const V_SCROLL_TRACK_SYMBOL: char = '│';
 const V_SCROLL_THUMB_SYMBOL: char = '█';
 
 #[derive(Debug, Clone, Copy, Default)]
+pub struct TransientRowHighlight {
+    pub row: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
 pub struct EditorPaneRenderOptions {
     pub hovered_tab: Option<usize>,
     pub workspace_empty: bool,
     pub show_vertical_scrollbar: bool,
+    pub transient_row_highlight: Option<TransientRowHighlight>,
 }
 
 pub fn paint_editor_pane(
@@ -481,6 +487,7 @@ fn paint_editor_body(
             search_matches: &pane.search_bar.matches,
             current_match_index: pane.search_bar.current_match_index,
             markdown,
+            transient_row_highlight: options.transient_row_highlight,
         },
     );
 
@@ -648,6 +655,7 @@ struct ContentPaintCtx<'a> {
     search_matches: &'a [Match],
     current_match_index: Option<usize>,
     markdown: Option<&'a MarkdownDocument>,
+    transient_row_highlight: Option<TransientRowHighlight>,
 }
 
 fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintCtx<'_>) {
@@ -662,6 +670,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         search_matches,
         current_match_index,
         markdown,
+        transient_row_highlight,
     } = ctx;
     if area.is_empty() {
         return;
@@ -701,6 +710,8 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             match_cursor = match_cursor.saturating_add(1);
         }
         let line_matches = &search_matches[line_match_start..match_cursor];
+        let row_bg = transient_row_bg(theme, transient_row_highlight, row);
+        let row_base_style = row_bg.map_or(base_style, |bg| base_style.bg(bg));
 
         // For markdown non-cursor lines, use WYSIWYG rendering
         if is_markdown && row != cursor_row {
@@ -716,7 +727,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                     doc::DocPaintLineParams {
                         line: &doc_line,
                         theme,
-                        base_style,
+                        base_style: row_base_style,
                         clip: row_clip,
                         horiz_offset,
                     },
@@ -820,7 +831,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                 break;
             }
 
-            let mut style = base_style;
+            let mut style = row_base_style;
             if has_selection
                 && g_idx >= selection_range.0
                 && g_idx < selection_range.1
@@ -833,7 +844,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                         || style_for_highlight(highlight_spans, &mut highlight_idx, g_start, theme),
                     )
                 {
-                    style = base_style.patch(hl);
+                    style = row_base_style.patch(hl);
                 }
                 if let Some(bg) = search_match_bg(
                     line_matches,
@@ -854,7 +865,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                 if visible_w == 0 {
                     break;
                 }
-                if style != base_style {
+                if style != row_base_style {
                     painter.style_rect(Rect::new(x, y, visible_w, 1), style);
                 }
                 x = x.saturating_add(visible_w);
@@ -956,7 +967,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                     let style = if selected {
                         indent_guide_style.bg(theme.palette_selected_bg)
                     } else {
-                        indent_guide_style.bg(theme.editor_bg)
+                        indent_guide_style.bg(row_base_style.bg.unwrap_or(theme.editor_bg))
                     };
 
                     painter.text_clipped(
@@ -989,14 +1000,26 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                     let end = text_window::truncate_to_width(&hint_text, avail);
                     let visible_hint = hint_text.get(..end).unwrap_or_default();
 
-                    let hint_style = Style::default()
+                    let mut hint_style = Style::default()
                         .fg(theme.palette_muted_fg)
                         .add_mod(Mod::ITALIC);
+                    if let Some(bg) = row_bg {
+                        hint_style = hint_style.bg(bg);
+                    }
                     painter.text_clipped(Pos::new(x, y), visible_hint, hint_style, row_clip);
                 }
             }
         }
     }
+}
+
+fn transient_row_bg(
+    theme: &Theme,
+    transient_row_highlight: Option<TransientRowHighlight>,
+    row: usize,
+) -> Option<Color> {
+    let highlight = transient_row_highlight?;
+    (highlight.row == row).then_some(theme.search_current_match_bg)
 }
 
 fn append_markdown_selection_spans(line: &mut DocLine, tab: &EditorTabState, row: usize) {

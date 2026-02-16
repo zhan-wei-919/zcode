@@ -10,10 +10,20 @@ use crate::kernel::{Action as KernelAction, EditorAction, Effect as KernelEffect
 use crate::models::OpKind;
 use ropey::Rope;
 use rustc_hash::FxHashSet;
+use std::path::PathBuf;
 use std::sync::mpsc;
+use std::time::Instant;
 
 impl Workbench {
     pub(super) fn dispatch_kernel(&mut self, action: KernelAction) -> bool {
+        if let KernelAction::LspDefinition { path, line, .. } = &action {
+            self.pending_definition_highlight = Some(super::PendingDefinitionHighlight {
+                path: path.clone(),
+                row: *line as usize,
+                armed_at: Instant::now(),
+            });
+        }
+
         let _scope = perf::scope("kernel.dispatch");
         let result = {
             let _scope = perf::scope("kernel.reduce");
@@ -28,7 +38,55 @@ impl Workbench {
                 self.run_effect(effect);
             }
         }
-        result.state_changed
+        let mut state_changed = result.state_changed;
+        state_changed |= self.try_activate_definition_jump_highlight();
+        state_changed
+    }
+
+    fn active_editor_location(
+        &self,
+    ) -> Option<(usize, crate::kernel::editor::TabId, PathBuf, usize)> {
+        let pane = self.store.state().ui.editor_layout.active_pane;
+        let tab = self
+            .store
+            .state()
+            .editor
+            .pane(pane)
+            .and_then(|pane_state| pane_state.active_tab())?;
+        let path = tab.path.clone()?;
+        let (row, _col) = tab.buffer.cursor();
+        Some((pane, tab.id, path, row))
+    }
+
+    fn try_activate_definition_jump_highlight(&mut self) -> bool {
+        let Some((target_path, target_row, armed_at)) = self
+            .pending_definition_highlight
+            .as_ref()
+            .map(|pending| (pending.path.clone(), pending.row, pending.armed_at))
+        else {
+            return false;
+        };
+
+        if armed_at.elapsed() >= super::DEFINITION_JUMP_PENDING_TIMEOUT {
+            self.pending_definition_highlight = None;
+            return false;
+        }
+
+        let Some((pane, tab_id, path, row)) = self.active_editor_location() else {
+            return false;
+        };
+        if path != target_path || row != target_row {
+            return false;
+        }
+
+        self.pending_definition_highlight = None;
+        self.definition_jump_highlight = Some(super::DefinitionJumpHighlight {
+            pane,
+            tab_id,
+            row,
+            started_at: Instant::now(),
+        });
+        true
     }
 
     fn sync_editor_search_slots(&mut self) {

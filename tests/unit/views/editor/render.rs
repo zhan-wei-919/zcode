@@ -152,6 +152,47 @@ fn paint_editor_pane_search_matches_use_match_and_current_match_backgrounds() {
 }
 
 #[test]
+fn paint_editor_pane_transient_row_highlight_applies_destination_background() {
+    let config = EditorConfig::default();
+    let mut pane = EditorPaneState::new(&config);
+    pane.tabs.push(EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.txt"),
+        "alpha\nbeta\n",
+        &config,
+    ));
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
+    let theme = Theme::default();
+    let mut painter = Painter::new();
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &theme,
+        crate::views::EditorPaneRenderOptions {
+            transient_row_highlight: Some(crate::views::TransientRowHighlight { row: 0 }),
+            ..default_render_options(true)
+        },
+        None,
+    );
+
+    let mut backend = TestBackend::new(layout.area.w, layout.area.h);
+    backend.draw(layout.area, painter.cmds());
+    let buf = backend.buffer();
+
+    let row0 = layout.content_area.y;
+    let row1 = layout.content_area.y + 1;
+    let highlighted = buf.cell(layout.content_area.x + 1, row0).unwrap();
+    let untouched = buf.cell(layout.content_area.x + 1, row1).unwrap();
+
+    assert_eq!(highlighted.style.bg, Some(theme.search_current_match_bg));
+    assert_ne!(untouched.style.bg, Some(theme.search_current_match_bg));
+}
+
+#[test]
 fn paint_editor_pane_selection_background_overrides_search_match_background() {
     let config = EditorConfig::default();
     let mut pane = EditorPaneState::new(&config);

@@ -13,7 +13,7 @@ use crate::views::doc;
 use crate::views::editor::markdown::MarkdownDocument;
 use crate::views::{
     compute_editor_pane_layout, compute_tab_row_layout, cursor_position_editor, paint_editor_pane,
-    EditorPaneLayout, EditorPaneRenderOptions,
+    EditorPaneLayout, EditorPaneRenderOptions, TransientRowHighlight,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -566,6 +566,31 @@ impl Workbench {
             && self.editor_scrollbar_hover == Some(pane)
     }
 
+    fn definition_jump_row_highlight_for_pane(&self, pane: usize) -> Option<TransientRowHighlight> {
+        let highlight = self.definition_jump_highlight?;
+        if highlight.pane != pane {
+            return None;
+        }
+
+        let tab_id = self
+            .store
+            .state()
+            .editor
+            .pane(pane)
+            .and_then(|pane_state| pane_state.active_tab())
+            .map(|tab| tab.id)?;
+        if tab_id != highlight.tab_id {
+            return None;
+        }
+
+        let elapsed = highlight.started_at.elapsed();
+        if elapsed >= super::super::DEFINITION_JUMP_HIGHLIGHT_DURATION {
+            return None;
+        }
+
+        Some(TransientRowHighlight { row: highlight.row })
+    }
+
     pub(super) fn render_editor_panes(&mut self, backend: &mut dyn Backend, area: UiRect) {
         let panes = self.store.state().ui.editor_layout.panes.max(1);
         let hovered = self.store.state().ui.hovered_tab;
@@ -582,10 +607,14 @@ impl Workbench {
             .resize_with(panes, || (0, 0));
         self.layout_cache.editor_container_area = (!area.is_empty()).then_some(area);
         let hovered_for_pane = |p: usize| hovered.filter(|(hp, _)| *hp == p).map(|(_, i)| i);
+        let transient_row_highlights = (0..panes)
+            .map(|p| self.definition_jump_row_highlight_for_pane(p))
+            .collect::<Vec<_>>();
         let pane_options = |p: usize| EditorPaneRenderOptions {
             hovered_tab: hovered_for_pane(p),
             workspace_empty,
             show_vertical_scrollbar: false,
+            transient_row_highlight: transient_row_highlights.get(p).copied().flatten(),
         };
 
         match panes {

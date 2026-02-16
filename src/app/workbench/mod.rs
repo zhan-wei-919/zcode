@@ -60,11 +60,28 @@ const GLOBAL_SEARCH_CHANNEL_CAP: usize = 64;
 const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 const HOVER_IDLE_DELAY: Duration = Duration::from_millis(500);
 const TERMINAL_CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+const DEFINITION_JUMP_HIGHLIGHT_DURATION: Duration = Duration::from_millis(1100);
+const DEFINITION_JUMP_PENDING_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 struct PendingRestart {
     path: PathBuf,
     hard: bool,
+}
+
+#[derive(Debug, Clone)]
+struct PendingDefinitionHighlight {
+    path: PathBuf,
+    row: usize,
+    armed_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DefinitionJumpHighlight {
+    pane: usize,
+    tab_id: TabId,
+    row: usize,
+    started_at: Instant,
 }
 
 fn env_truthy(key: &str) -> bool {
@@ -287,6 +304,8 @@ pub struct Workbench {
     terminal_selecting: bool,
     click_tracker: ClickTracker,
     editor_mouse: Vec<mouse_tracker::EditorMouseTracker>,
+    pending_definition_highlight: Option<PendingDefinitionHighlight>,
+    definition_jump_highlight: Option<DefinitionJumpHighlight>,
     markdown_views: FxHashMap<TabId, crate::views::editor::markdown_cache::MarkdownViewState>,
     pending_restart: Option<PendingRestart>,
     pending_theme_save_deadline: Option<Instant>,
@@ -498,6 +517,8 @@ impl Workbench {
             editor_mouse: (0..panes)
                 .map(|_| mouse_tracker::EditorMouseTracker::new())
                 .collect(),
+            pending_definition_highlight: None,
+            definition_jump_highlight: None,
             markdown_views: FxHashMap::default(),
             pending_restart: None,
             pending_theme_save_deadline: None,

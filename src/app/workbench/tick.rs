@@ -32,6 +32,7 @@ impl Workbench {
         changed |= self.poll_folding_range_debounce();
         changed |= self.poll_idle_hover();
         changed |= self.poll_terminal_cursor_blink();
+        changed |= self.poll_definition_jump_highlight();
         changed |= self.poll_theme_save();
         self.poll_completion_rank_save();
 
@@ -647,6 +648,28 @@ impl Workbench {
         if self.terminal_cursor_last_blink.elapsed() >= super::TERMINAL_CURSOR_BLINK_INTERVAL {
             self.terminal_cursor_last_blink = Instant::now();
             self.terminal_cursor_visible = !self.terminal_cursor_visible;
+            return true;
+        }
+
+        false
+    }
+
+    fn poll_definition_jump_highlight(&mut self) -> bool {
+        if self
+            .pending_definition_highlight
+            .as_ref()
+            .is_some_and(|pending| {
+                pending.armed_at.elapsed() >= super::DEFINITION_JUMP_PENDING_TIMEOUT
+            })
+        {
+            self.pending_definition_highlight = None;
+        }
+
+        let Some(highlight) = self.definition_jump_highlight else {
+            return false;
+        };
+        if highlight.started_at.elapsed() >= super::DEFINITION_JUMP_HIGHLIGHT_DURATION {
+            self.definition_jump_highlight = None;
             return true;
         }
 
