@@ -39,17 +39,22 @@ impl EditorState {
                 end_byte,
                 text,
             } => self.apply_text_edit_to_tab(pane, tab_index, start_byte, end_byte, &text),
-            EditorAction::MouseDown { pane, x, y, now } => self.mouse_down(pane, x, y, now),
-            EditorAction::MouseSelectWord { pane, x, y } => self.mouse_select_word(pane, x, y),
-            EditorAction::MouseContextMenu { pane, x, y } => self.mouse_context_menu(pane, x, y),
-            EditorAction::MouseDrag {
+            EditorAction::ReplaceRangeChars {
                 pane,
-                x,
-                y,
-                overflow_y,
-                past_right,
-            } => self.mouse_drag(pane, x, y, overflow_y, past_right),
-            EditorAction::MouseUp { pane } => self.mouse_up(pane),
+                start_char,
+                end_char,
+                text,
+            } => self.replace_range_chars(pane, start_char, end_char, &text),
+            EditorAction::PlaceCursor {
+                pane,
+                row,
+                col,
+                granularity,
+            } => self.place_cursor(pane, row, col, granularity),
+            EditorAction::ExtendSelection { pane, row, col } => {
+                self.extend_selection(pane, row, col)
+            }
+            EditorAction::EndSelectionGesture { pane } => self.end_selection_gesture(pane),
             EditorAction::Scroll { pane, delta_lines } => self.scroll(pane, delta_lines),
             EditorAction::ScrollHorizontal {
                 pane,
@@ -740,34 +745,47 @@ impl EditorState {
         (true, Vec::new())
     }
 
-    fn mouse_down(
+    fn replace_range_chars(
         &mut self,
         pane: usize,
-        x: u16,
-        y: u16,
-        now: std::time::Instant,
+        start_char: usize,
+        end_char: usize,
+        text: &str,
     ) -> (bool, Vec<Effect>) {
-        let tab_size = self.config.tab_size;
-        let click_slop = self.config.click_slop;
-        let triple_click_ms = self.config.triple_click_ms;
+        if text.is_empty() && start_char == end_char {
+            return (false, Vec::new());
+        }
 
+        let tab_size = self.config.tab_size;
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
         };
         let Some(tab) = pane_state.active_tab_mut() else {
             return (false, Vec::new());
         };
-        let changed = tab.mouse_down(x, y, now, tab_size, click_slop, triple_click_ms);
-        (changed, Vec::new())
+
+        let len_chars = tab.buffer.len_chars();
+        let mut start_char = start_char.min(len_chars);
+        let mut end_char = end_char.min(len_chars);
+        if start_char > end_char {
+            std::mem::swap(&mut start_char, &mut end_char);
+        }
+
+        let parent = tab.history.head();
+        let op = tab
+            .buffer
+            .replace_range_op_adjust_cursor(start_char, end_char, text, parent);
+        tab.apply_edit_op(op, tab_size);
+        tab.buffer.clear_selection();
+        (true, Vec::new())
     }
 
-    fn mouse_drag(
+    fn place_cursor(
         &mut self,
         pane: usize,
-        x: u16,
-        y: u16,
-        overflow_y: i16,
-        past_right: bool,
+        row: usize,
+        col: usize,
+        granularity: crate::models::Granularity,
     ) -> (bool, Vec<Effect>) {
         let tab_size = self.config.tab_size;
         let Some(pane_state) = self.panes.get_mut(pane) else {
@@ -776,11 +794,11 @@ impl EditorState {
         let Some(tab) = pane_state.active_tab_mut() else {
             return (false, Vec::new());
         };
-        let changed = tab.mouse_drag(x, y, tab_size, overflow_y, past_right);
+        let changed = tab.place_cursor(row, col, granularity, tab_size);
         (changed, Vec::new())
     }
 
-    fn mouse_select_word(&mut self, pane: usize, x: u16, y: u16) -> (bool, Vec<Effect>) {
+    fn extend_selection(&mut self, pane: usize, row: usize, col: usize) -> (bool, Vec<Effect>) {
         let tab_size = self.config.tab_size;
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
@@ -788,30 +806,18 @@ impl EditorState {
         let Some(tab) = pane_state.active_tab_mut() else {
             return (false, Vec::new());
         };
-        let changed = tab.mouse_select_word(x, y, tab_size);
+        let changed = tab.extend_selection(row, col, tab_size);
         (changed, Vec::new())
     }
 
-    fn mouse_context_menu(&mut self, pane: usize, x: u16, y: u16) -> (bool, Vec<Effect>) {
-        let tab_size = self.config.tab_size;
+    fn end_selection_gesture(&mut self, pane: usize) -> (bool, Vec<Effect>) {
         let Some(pane_state) = self.panes.get_mut(pane) else {
             return (false, Vec::new());
         };
         let Some(tab) = pane_state.active_tab_mut() else {
             return (false, Vec::new());
         };
-        let changed = tab.mouse_context_menu(x, y, tab_size);
-        (changed, Vec::new())
-    }
-
-    fn mouse_up(&mut self, pane: usize) -> (bool, Vec<Effect>) {
-        let Some(pane_state) = self.panes.get_mut(pane) else {
-            return (false, Vec::new());
-        };
-        let Some(tab) = pane_state.active_tab_mut() else {
-            return (false, Vec::new());
-        };
-        let changed = tab.mouse_up();
+        let changed = tab.end_selection_gesture();
         (changed, Vec::new())
     }
 

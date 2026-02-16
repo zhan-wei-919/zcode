@@ -10,6 +10,7 @@ use crate::ui::core::painter::{BorderKind, Painter};
 use crate::ui::core::style::Style as UiStyle;
 use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, SplitDrop};
 use crate::views::doc;
+use crate::views::editor::markdown::MarkdownDocument;
 use crate::views::{
     compute_editor_pane_layout, compute_tab_row_layout, cursor_position_editor, paint_editor_pane,
     EditorPaneLayout, EditorPaneRenderOptions,
@@ -530,16 +531,12 @@ impl Workbench {
         pane: usize,
         layout: &EditorPaneLayout,
         pane_state: &EditorPaneState,
-        hovered_tab: Option<usize>,
-        workspace_empty: bool,
+        markdown: Option<&MarkdownDocument>,
+        mut options: EditorPaneRenderOptions,
     ) {
         let mut painter = Painter::new();
         let config = &self.store.state().editor.config;
-        let options = EditorPaneRenderOptions {
-            hovered_tab,
-            workspace_empty,
-            show_vertical_scrollbar: self.show_editor_vertical_scrollbar(pane, layout),
-        };
+        options.show_vertical_scrollbar = self.show_editor_vertical_scrollbar(pane, layout);
         paint_editor_pane(
             &mut painter,
             layout,
@@ -547,6 +544,7 @@ impl Workbench {
             config,
             &self.ui_theme,
             options,
+            markdown,
         );
 
         backend.draw(layout.area, painter.cmds());
@@ -584,6 +582,11 @@ impl Workbench {
             .resize_with(panes, || (0, 0));
         self.layout_cache.editor_container_area = (!area.is_empty()).then_some(area);
         let hovered_for_pane = |p: usize| hovered.filter(|(hp, _)| *hp == p).map(|(_, i)| i);
+        let pane_options = |p: usize| EditorPaneRenderOptions {
+            hovered_tab: hovered_for_pane(p),
+            workspace_empty,
+            show_vertical_scrollbar: false,
+        };
 
         match panes {
             1 => {
@@ -599,6 +602,7 @@ impl Workbench {
                     compute_editor_pane_layout(area, pane_state, config)
                 };
                 self.sync_editor_viewport_size(0, &layout);
+                let md_tab_id = self.ensure_markdown_view_for_active_tab(0);
                 if let Some(pane_state) = self.store.state().editor.pane(0) {
                     push_editor_area_node(&mut self.ui_tree, 0, &layout);
                     push_editor_tab_nodes(
@@ -609,13 +613,14 @@ impl Workbench {
                         hovered_for_pane(0),
                     );
                     push_editor_split_drop_zones(&mut self.ui_tree, 0, &layout);
+                    let markdown = md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
                     self.draw_editor_pane(
                         backend,
                         0,
                         &layout,
                         pane_state,
-                        hovered_for_pane(0),
-                        workspace_empty,
+                        markdown,
+                        pane_options(0),
                     );
                 }
             }
@@ -639,6 +644,7 @@ impl Workbench {
                                 compute_editor_pane_layout(area, pane_state, config)
                             };
                             self.sync_editor_viewport_size(active, &layout);
+                            let md_tab_id = self.ensure_markdown_view_for_active_tab(active);
                             if let Some(pane_state) = self.store.state().editor.pane(active) {
                                 push_editor_area_node(&mut self.ui_tree, active, &layout);
                                 push_editor_tab_nodes(
@@ -648,13 +654,15 @@ impl Workbench {
                                     pane_state,
                                     hovered_for_pane(active),
                                 );
+                                let markdown =
+                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
                                 self.draw_editor_pane(
                                     backend,
                                     active,
                                     &layout,
                                     pane_state,
-                                    hovered_for_pane(active),
-                                    workspace_empty,
+                                    markdown,
+                                    pane_options(active),
                                 );
                             }
                             return;
@@ -703,6 +711,7 @@ impl Workbench {
                                 compute_editor_pane_layout(left_inner, pane_state, config)
                             };
                             self.sync_editor_viewport_size(0, &layout);
+                            let md_tab_id = self.ensure_markdown_view_for_active_tab(0);
                             if let Some(pane_state) = self.store.state().editor.pane(0) {
                                 push_editor_area_node(&mut self.ui_tree, 0, &layout);
                                 push_editor_tab_nodes(
@@ -712,13 +721,15 @@ impl Workbench {
                                     pane_state,
                                     hovered_for_pane(0),
                                 );
+                                let markdown =
+                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
                                 self.draw_editor_pane(
                                     backend,
                                     0,
                                     &layout,
                                     pane_state,
-                                    hovered_for_pane(0),
-                                    workspace_empty,
+                                    markdown,
+                                    pane_options(0),
                                 );
                             }
                         }
@@ -734,6 +745,7 @@ impl Workbench {
                                 compute_editor_pane_layout(right_inner, pane_state, config)
                             };
                             self.sync_editor_viewport_size(1, &layout);
+                            let md_tab_id = self.ensure_markdown_view_for_active_tab(1);
                             if let Some(pane_state) = self.store.state().editor.pane(1) {
                                 push_editor_area_node(&mut self.ui_tree, 1, &layout);
                                 push_editor_tab_nodes(
@@ -743,13 +755,15 @@ impl Workbench {
                                     pane_state,
                                     hovered_for_pane(1),
                                 );
+                                let markdown =
+                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
                                 self.draw_editor_pane(
                                     backend,
                                     1,
                                     &layout,
                                     pane_state,
-                                    hovered_for_pane(1),
-                                    workspace_empty,
+                                    markdown,
+                                    pane_options(1),
                                 );
                             }
                         }
@@ -771,6 +785,7 @@ impl Workbench {
                                 compute_editor_pane_layout(area, pane_state, config)
                             };
                             self.sync_editor_viewport_size(active, &layout);
+                            let md_tab_id = self.ensure_markdown_view_for_active_tab(active);
                             if let Some(pane_state) = self.store.state().editor.pane(active) {
                                 push_editor_area_node(&mut self.ui_tree, active, &layout);
                                 push_editor_tab_nodes(
@@ -780,13 +795,15 @@ impl Workbench {
                                     pane_state,
                                     hovered_for_pane(active),
                                 );
+                                let markdown =
+                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
                                 self.draw_editor_pane(
                                     backend,
                                     active,
                                     &layout,
                                     pane_state,
-                                    hovered_for_pane(active),
-                                    workspace_empty,
+                                    markdown,
+                                    pane_options(active),
                                 );
                             }
                             return;
@@ -835,6 +852,7 @@ impl Workbench {
                                 compute_editor_pane_layout(top_inner, pane_state, config)
                             };
                             self.sync_editor_viewport_size(0, &layout);
+                            let md_tab_id = self.ensure_markdown_view_for_active_tab(0);
                             if let Some(pane_state) = self.store.state().editor.pane(0) {
                                 push_editor_area_node(&mut self.ui_tree, 0, &layout);
                                 push_editor_tab_nodes(
@@ -844,13 +862,15 @@ impl Workbench {
                                     pane_state,
                                     hovered_for_pane(0),
                                 );
+                                let markdown =
+                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
                                 self.draw_editor_pane(
                                     backend,
                                     0,
                                     &layout,
                                     pane_state,
-                                    hovered_for_pane(0),
-                                    workspace_empty,
+                                    markdown,
+                                    pane_options(0),
                                 );
                             }
                         }
@@ -866,6 +886,7 @@ impl Workbench {
                                 compute_editor_pane_layout(bottom_inner, pane_state, config)
                             };
                             self.sync_editor_viewport_size(1, &layout);
+                            let md_tab_id = self.ensure_markdown_view_for_active_tab(1);
                             if let Some(pane_state) = self.store.state().editor.pane(1) {
                                 push_editor_area_node(&mut self.ui_tree, 1, &layout);
                                 push_editor_tab_nodes(
@@ -875,13 +896,15 @@ impl Workbench {
                                     pane_state,
                                     hovered_for_pane(1),
                                 );
+                                let markdown =
+                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
                                 self.draw_editor_pane(
                                     backend,
                                     1,
                                     &layout,
                                     pane_state,
-                                    hovered_for_pane(1),
-                                    workspace_empty,
+                                    markdown,
+                                    pane_options(1),
                                 );
                             }
                         }
@@ -908,6 +931,7 @@ impl Workbench {
                     compute_editor_pane_layout(area, pane_state, config)
                 };
                 self.sync_editor_viewport_size(active, &layout);
+                let md_tab_id = self.ensure_markdown_view_for_active_tab(active);
                 if let Some(pane_state) = self.store.state().editor.pane(active) {
                     push_editor_area_node(&mut self.ui_tree, active, &layout);
                     push_editor_tab_nodes(
@@ -917,13 +941,14 @@ impl Workbench {
                         pane_state,
                         hovered_for_pane(active),
                     );
+                    let markdown = md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
                     self.draw_editor_pane(
                         backend,
                         active,
                         &layout,
                         pane_state,
-                        hovered_for_pane(active),
-                        workspace_empty,
+                        markdown,
+                        pane_options(active),
                     );
                 }
             }

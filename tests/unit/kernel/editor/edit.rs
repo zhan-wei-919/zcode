@@ -1,7 +1,6 @@
 use super::*;
 use crate::kernel::editor::{HighlightKind, HighlightSpan, TabId};
 use std::path::PathBuf;
-use std::time::Instant;
 
 #[test]
 fn test_rust_brace_pair_and_electric_enter() {
@@ -108,16 +107,8 @@ fn test_cursor_left_does_not_extend_empty_char_selection() {
     );
 
     let end = tab.buffer.line_grapheme_len(0);
-    let now = Instant::now();
-    assert!(tab.mouse_down(
-        end as u16,
-        0,
-        now,
-        config.tab_size,
-        config.click_slop,
-        config.triple_click_ms,
-    ));
-    assert!(tab.mouse_up());
+    assert!(tab.place_cursor(0, end, crate::models::Granularity::Char, config.tab_size));
+    assert!(tab.end_selection_gesture());
     assert!(
         tab.buffer.selection().is_none(),
         "single click should not keep empty char selection"

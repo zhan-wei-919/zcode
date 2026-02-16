@@ -30,6 +30,7 @@ fn paint_editor_pane_no_tab_renders_empty_message() {
         &config,
         &Theme::default(),
         default_render_options(true),
+        None,
     );
 
     let has_message = painter
@@ -57,6 +58,7 @@ fn paint_editor_pane_search_bar_draws_find_label() {
         &config,
         &Theme::default(),
         default_render_options(true),
+        None,
     );
 
     let texts: Vec<&str> = painter
@@ -88,6 +90,7 @@ fn paint_editor_pane_search_bar_draws_nav_buttons() {
         &config,
         &Theme::default(),
         default_render_options(true),
+        None,
     );
 
     let texts: Vec<&str> = painter
@@ -130,6 +133,7 @@ fn paint_editor_pane_search_matches_use_match_and_current_match_backgrounds() {
         &config,
         &theme,
         default_render_options(true),
+        None,
     );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -178,6 +182,7 @@ fn paint_editor_pane_selection_background_overrides_search_match_background() {
         &config,
         &theme,
         default_render_options(true),
+        None,
     );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -211,6 +216,7 @@ fn paint_editor_pane_indent_guides_do_not_overwrite_code() {
         &config,
         &Theme::default(),
         default_render_options(true),
+        None,
     );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -252,6 +258,7 @@ fn paint_editor_pane_indent_guides_respect_selection_background() {
         &config,
         &theme,
         default_render_options(true),
+        None,
     );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -296,6 +303,7 @@ fn paint_editor_pane_long_file_draws_vertical_scrollbar() {
         &config,
         &Theme::default(),
         default_render_options(true),
+        None,
     );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -346,6 +354,7 @@ fn paint_editor_pane_long_file_hides_vertical_scrollbar_when_not_hovered() {
         &config,
         &Theme::default(),
         default_render_options(false),
+        None,
     );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -389,6 +398,7 @@ fn paint_editor_pane_vertical_scrollbar_thumb_moves_with_line_offset() {
             &config,
             &Theme::default(),
             default_render_options(true),
+            None,
         );
 
         let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -443,6 +453,7 @@ fn paint_editor_tabs_active_tab_uses_selected_palette() {
         &config,
         &theme,
         default_render_options(true),
+        None,
     );
 
     let mut backend = TestBackend::new(layout.area.w, layout.area.h);
@@ -495,6 +506,7 @@ fn paint_editor_tabs_truncate_titles_with_ellipsis_in_narrow_width() {
         &config,
         &Theme::default(),
         default_render_options(true),
+        None,
     );
 
     let tab_row_clip = Rect::new(

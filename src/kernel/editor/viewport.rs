@@ -139,6 +139,7 @@ pub fn screen_to_pos(
     Some((row, col))
 }
 
+#[cfg(test)]
 pub fn screen_to_col(
     viewport: &EditorViewportState,
     buffer: &TextBuffer,

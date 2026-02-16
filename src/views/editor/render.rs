@@ -15,6 +15,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::layout::{vertical_scrollbar_metrics, EditorPaneLayout, VerticalScrollbarMetrics};
+use super::markdown::{self, MarkdownDocument};
 use super::tab_row::{compute_tab_row_layout, ellipsize_title};
 
 // U+250A "BOX DRAWINGS LIGHT QUADRUPLE DASH VERTICAL" keeps guides subtle.
@@ -40,6 +41,7 @@ pub fn paint_editor_pane(
     config: &EditorConfig,
     theme: &Theme,
     options: EditorPaneRenderOptions,
+    markdown: Option<&MarkdownDocument>,
 ) {
     if layout.area.is_empty() {
         return;
@@ -51,15 +53,7 @@ pub fn paint_editor_pane(
         paint_search_bar(painter, search_area, &pane.search_bar, theme);
     }
 
-    paint_editor_body(
-        painter,
-        layout,
-        pane,
-        config,
-        theme,
-        options.workspace_empty,
-        options.show_vertical_scrollbar,
-    );
+    paint_editor_body(painter, layout, pane, config, theme, options, markdown);
 }
 
 pub fn cursor_position_editor(
@@ -411,8 +405,8 @@ fn paint_editor_body(
     pane: &EditorPaneState,
     config: &EditorConfig,
     theme: &Theme,
-    workspace_empty: bool,
-    show_vertical_scrollbar: bool,
+    options: EditorPaneRenderOptions,
+    markdown: Option<&MarkdownDocument>,
 ) {
     if layout.editor_area.is_empty() {
         return;
@@ -425,7 +419,7 @@ fn paint_editor_body(
         let style = Style::default()
             .bg(theme.editor_bg)
             .fg(theme.palette_muted_fg);
-        let msg = if workspace_empty {
+        let msg = if options.workspace_empty {
             "Folder is empty"
         } else {
             "No file open"
@@ -446,7 +440,7 @@ fn paint_editor_body(
     };
 
     let (line_offset, horiz_offset) = effective_viewport(tab, layout, config);
-    let scrollbar_metrics = show_vertical_scrollbar.then(|| {
+    let scrollbar_metrics = options.show_vertical_scrollbar.then(|| {
         vertical_scrollbar_metrics(
             layout,
             tab.buffer.len_lines().max(1),
@@ -486,6 +480,7 @@ fn paint_editor_body(
             show_indent_guides: config.show_indent_guides,
             search_matches: &pane.search_bar.matches,
             current_match_index: pane.search_bar.current_match_index,
+            markdown,
         },
     );
 
@@ -652,6 +647,7 @@ struct ContentPaintCtx<'a> {
     show_indent_guides: bool,
     search_matches: &'a [Match],
     current_match_index: Option<usize>,
+    markdown: Option<&'a MarkdownDocument>,
 }
 
 fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintCtx<'_>) {
@@ -665,6 +661,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         show_indent_guides,
         search_matches,
         current_match_index,
+        markdown,
     } = ctx;
     if area.is_empty() {
         return;
@@ -707,7 +704,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
         // For markdown non-cursor lines, use WYSIWYG rendering
         if is_markdown && row != cursor_row {
-            if let Some(md) = tab.markdown() {
+            if let Some(md) = markdown {
                 let rendered = md.render_line(row, tab.buffer.rope(), area.w as usize);
                 let mut doc_line = doc::from_markdown_rendered(rendered);
                 append_markdown_selection_spans(&mut doc_line, tab, row);
@@ -743,7 +740,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
         let md_source_spans: Vec<HighlightSpan>;
         let highlight_spans = if is_markdown && highlight_spans.is_none() {
-            if let Some(md) = tab.markdown() {
+            if let Some(md) = markdown {
                 md_source_spans = md.highlight_source_line(row, tab.buffer.rope());
                 if md_source_spans.is_empty() {
                     None
@@ -1027,7 +1024,7 @@ fn append_markdown_selection_spans(line: &mut DocLine, tab: &EditorTabState, row
         let g_start = byte_offset;
         byte_offset = byte_offset.saturating_add(g.len());
 
-        let src_byte = crate::kernel::editor::markdown::display_to_source_byte(offset_map, g_start);
+        let src_byte = markdown::display_to_source_byte(offset_map, g_start);
         let selected = if src_byte < rope.len_bytes() {
             let src_char = rope.byte_to_char(src_byte);
             let col = src_char.saturating_sub(src_line_start_char);

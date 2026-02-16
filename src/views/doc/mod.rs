@@ -1,10 +1,12 @@
 use crate::core::text_window;
-use crate::kernel::editor::markdown::{MdRenderedLine, MdSpanKind};
 use crate::kernel::editor::{highlight_snippet, HighlightKind, LanguageId};
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::Style;
 use crate::ui::core::theme::Theme;
+use crate::views::editor::markdown::{
+    self, MarkdownDocument, MdBlockKind, MdRenderedLine, MdSpanKind,
+};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
@@ -16,15 +18,6 @@ pub const MAX_RENDER_LINES: usize = 2000;
 pub struct RenderCacheKey {
     pub text_hash: u64,
     pub width: u16,
-}
-
-#[derive(Debug, Clone)]
-enum Block {
-    Text(Vec<String>),
-    Code {
-        language: Option<LanguageId>,
-        lines: Vec<String>,
-    },
 }
 
 #[derive(Debug, Clone)]
@@ -334,61 +327,59 @@ pub fn from_markdown_rendered(rendered: MdRenderedLine) -> DocLine {
 }
 
 pub fn render_markdown(markdown: &str, width: u16, max_lines: usize) -> Vec<DocLine> {
-    if width == 0 || max_lines == 0 {
+    if width == 0 || max_lines == 0 || markdown.is_empty() {
         return Vec::new();
     }
 
-    let blocks = parse_markdown_blocks(markdown);
-    let mut out: Vec<DocLine> = Vec::new();
+    let rope = ropey::Rope::from_str(markdown);
+    let md = MarkdownDocument::new(&rope);
+    let mut total = rope.len_lines().max(1);
+    if markdown.ends_with('\n') {
+        total = total.saturating_sub(1);
+    }
 
-    for block in blocks {
+    let mut out: Vec<DocLine> = Vec::new();
+    let mut in_code = false;
+    let mut code_lang: Option<LanguageId> = None;
+    let mut code_lines: Vec<String> = Vec::new();
+
+    for line_idx in 0..total {
         if out.len() >= max_lines {
             break;
         }
 
-        match block {
-            Block::Text(lines) => {
-                for line in lines {
-                    if out.len() >= max_lines {
-                        break;
-                    }
-                    wrap_and_push_text_lines(&mut out, &line, width, max_lines);
+        match md.block_kind(line_idx) {
+            MdBlockKind::CodeFence => {
+                if in_code {
+                    push_code_block_lines(&mut out, code_lang, &code_lines, max_lines);
+                    code_lines.clear();
+                    in_code = false;
+                    code_lang = None;
+                } else {
+                    in_code = true;
+                    code_lang = md
+                        .fence_language(line_idx)
+                        .and_then(markdown::language_id_for_fence);
                 }
             }
-            Block::Code { language, lines } => {
-                if lines.is_empty() {
-                    continue;
+            MdBlockKind::CodeBlock if in_code => {
+                code_lines.push(rope_line_without_newline(&rope, line_idx));
+            }
+            _ => {
+                if in_code {
+                    push_code_block_lines(&mut out, code_lang, &code_lines, max_lines);
+                    code_lines.clear();
+                    in_code = false;
+                    code_lang = None;
                 }
-
-                // Compute highlights once per fenced block.
-                let highlights = language.map(|lang| highlight_snippet(lang, &lines.join("\n")));
-
-                for (i, line) in lines.into_iter().enumerate() {
-                    if out.len() >= max_lines {
-                        break;
-                    }
-                    let hl = highlights
-                        .as_ref()
-                        .and_then(|h| h.get(i))
-                        .filter(|v| !v.is_empty())
-                        .cloned();
-                    let spans = hl
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|span| DocSpan {
-                            start: span.start,
-                            end: span.end,
-                            kind: DocSpanKind::Syntax(span.kind),
-                        })
-                        .collect::<Vec<_>>();
-                    out.push(DocLine {
-                        text: line,
-                        spans,
-                        offset_map: None,
-                    });
-                }
+                let line = rope_line_without_newline(&rope, line_idx);
+                wrap_and_push_text_lines(&mut out, &line, width, max_lines);
             }
         }
+    }
+
+    if in_code && out.len() < max_lines {
+        push_code_block_lines(&mut out, code_lang, &code_lines, max_lines);
     }
 
     out
@@ -479,76 +470,54 @@ fn wrap_and_push_text_lines(out: &mut Vec<DocLine>, line: &str, width: u16, max_
     }
 }
 
-fn parse_markdown_blocks(markdown: &str) -> Vec<Block> {
-    let mut out = Vec::new();
-
-    let mut text_lines: Vec<String> = Vec::new();
-    let mut code_lines: Vec<String> = Vec::new();
-    let mut in_code = false;
-    let mut language: Option<LanguageId> = None;
-
-    // Rough markdown: recognize ``` fences and treat the rest as text.
-    for line in markdown.lines() {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("```") {
-            if in_code {
-                out.push(Block::Code {
-                    language,
-                    lines: std::mem::take(&mut code_lines),
-                });
-                in_code = false;
-                language = None;
-            } else {
-                if !text_lines.is_empty() {
-                    out.push(Block::Text(std::mem::take(&mut text_lines)));
-                }
-                let fence_lang = rest.split_whitespace().next().unwrap_or_default();
-                language = language_id_for_fence(fence_lang);
-                in_code = true;
-            }
-            continue;
-        }
-
-        if in_code {
-            code_lines.push(line.to_string());
-        } else {
-            text_lines.push(line.to_string());
-        }
+fn push_code_block_lines(
+    out: &mut Vec<DocLine>,
+    language: Option<LanguageId>,
+    lines: &[String],
+    max_lines: usize,
+) {
+    if lines.is_empty() || out.len() >= max_lines {
+        return;
     }
 
-    if in_code {
-        out.push(Block::Code {
-            language,
-            lines: code_lines,
+    let highlights = language.map(|lang| highlight_snippet(lang, &lines.join("\n")));
+    for (idx, line) in lines.iter().enumerate() {
+        if out.len() >= max_lines {
+            break;
+        }
+        let hl = highlights
+            .as_ref()
+            .and_then(|h| h.get(idx))
+            .filter(|v| !v.is_empty())
+            .cloned();
+        let spans = hl
+            .unwrap_or_default()
+            .into_iter()
+            .map(|span| DocSpan {
+                start: span.start,
+                end: span.end,
+                kind: DocSpanKind::Syntax(span.kind),
+            })
+            .collect::<Vec<_>>();
+        out.push(DocLine {
+            text: line.clone(),
+            spans,
+            offset_map: None,
         });
-    } else if !text_lines.is_empty() {
-        out.push(Block::Text(text_lines));
     }
-
-    out
 }
 
-fn language_id_for_fence(lang: &str) -> Option<LanguageId> {
-    match lang.to_ascii_lowercase().as_str() {
-        "rust" | "rs" => Some(LanguageId::Rust),
-        "go" => Some(LanguageId::Go),
-        "python" | "py" => Some(LanguageId::Python),
-        "java" => Some(LanguageId::Java),
-        "c" => Some(LanguageId::C),
-        "cpp" | "c++" | "cc" | "cxx" => Some(LanguageId::Cpp),
-        "javascript" | "js" => Some(LanguageId::JavaScript),
-        "jsx" | "javascriptreact" => Some(LanguageId::Jsx),
-        "typescript" | "ts" => Some(LanguageId::TypeScript),
-        "tsx" | "typescriptreact" => Some(LanguageId::Tsx),
-        "json" => Some(LanguageId::Json),
-        "yaml" | "yml" => Some(LanguageId::Yaml),
-        "html" | "htm" => Some(LanguageId::Html),
-        "xml" => Some(LanguageId::Xml),
-        "css" => Some(LanguageId::Css),
-        "toml" => Some(LanguageId::Toml),
-        "bash" | "sh" | "shell" | "zsh" => Some(LanguageId::Bash),
-        _ => None,
+fn rope_line_without_newline(rope: &ropey::Rope, line: usize) -> String {
+    let total = rope.len_lines().max(1);
+    if line >= total {
+        return String::new();
     }
+
+    let mut s = rope.line(line).to_string();
+    while s.ends_with('\n') || s.ends_with('\r') {
+        s.pop();
+    }
+    s
 }
 
 #[cfg(test)]

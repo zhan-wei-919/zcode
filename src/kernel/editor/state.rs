@@ -1,12 +1,11 @@
 use crate::kernel::git::GitGutterMarks;
 use crate::kernel::services::ports::{EditorConfig, LspFoldingRange, Match};
-use crate::models::{EditHistory, EditOp, Granularity, OpKind, TextBuffer};
+use crate::models::{EditHistory, EditOp, OpKind, TextBuffer};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use unicode_xid::UnicodeXID;
 
-use super::markdown::MarkdownDocument;
 use super::syntax::SyntaxDocument;
 use super::{viewport, HighlightSpan, LanguageId};
 
@@ -127,31 +126,6 @@ impl TabId {
     }
 }
 
-#[derive(Debug)]
-pub struct EditorMouseState {
-    pub last_click: Option<(u16, u16, Instant)>,
-    pub click_count: u8,
-    pub dragging: bool,
-    pub granularity: Granularity,
-}
-
-impl EditorMouseState {
-    pub fn new() -> Self {
-        Self {
-            last_click: None,
-            click_count: 0,
-            dragging: false,
-            granularity: Granularity::Char,
-        }
-    }
-}
-
-impl Default for EditorMouseState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 pub struct EditorTabState {
     pub id: TabId,
     pub title: String,
@@ -163,7 +137,6 @@ pub struct EditorTabState {
     pub edit_version: u64,
     pub last_edit_op: Option<EditOp>,
     pub(super) cursor_goal_col: Option<usize>,
-    pub mouse: EditorMouseState,
     pub disk_state: DiskState,
     pub saved_snapshot: Option<DiskSnapshot>,
     pub last_reload_request_id: u64,
@@ -173,7 +146,6 @@ pub struct EditorTabState {
     inlay_hints: Option<InlayHintsState>,
     folding: Option<FoldingState>,
     syntax: Option<SyntaxDocument>,
-    pub(super) markdown: Option<MarkdownDocument>,
 }
 
 impl std::fmt::Debug for EditorTabState {
@@ -207,7 +179,6 @@ impl EditorTabState {
             edit_version: 0,
             last_edit_op: None,
             cursor_goal_col: None,
-            mouse: EditorMouseState::new(),
             disk_state: DiskState::InSync,
             saved_snapshot: None,
             last_reload_request_id: 0,
@@ -217,7 +188,6 @@ impl EditorTabState {
             inlay_hints: None,
             folding: None,
             syntax: None,
-            markdown: None,
         }
     }
 
@@ -230,11 +200,6 @@ impl EditorTabState {
         let buffer = TextBuffer::from_text(content);
         let history = EditHistory::new(buffer.rope().clone());
         let syntax = SyntaxDocument::for_path(&path, buffer.rope());
-        let markdown = if LanguageId::from_path(&path) == Some(LanguageId::Markdown) {
-            Some(MarkdownDocument::new(buffer.rope()))
-        } else {
-            None
-        };
 
         Self {
             id,
@@ -250,7 +215,6 @@ impl EditorTabState {
             edit_version: 0,
             last_edit_op: None,
             cursor_goal_col: None,
-            mouse: EditorMouseState::new(),
             disk_state: DiskState::InSync,
             saved_snapshot: None,
             last_reload_request_id: 0,
@@ -260,7 +224,6 @@ impl EditorTabState {
             inlay_hints: None,
             folding: None,
             syntax,
-            markdown,
         }
     }
 
@@ -271,11 +234,6 @@ impl EditorTabState {
             .unwrap_or_else(|| "Untitled".to_string());
         self.path = Some(path.clone());
         self.syntax = SyntaxDocument::for_path(&path, self.buffer.rope());
-        self.markdown = if LanguageId::from_path(&path) == Some(LanguageId::Markdown) {
-            Some(MarkdownDocument::new(self.buffer.rope()))
-        } else {
-            None
-        };
         self.semantic_highlight = None;
         self.git_gutter = None;
         self.inlay_hints = None;
@@ -366,18 +324,14 @@ impl EditorTabState {
     }
 
     pub fn language(&self) -> Option<LanguageId> {
-        if self.markdown.is_some() {
-            return Some(LanguageId::Markdown);
+        if let Some(lang) = self.path.as_ref().and_then(|p| LanguageId::from_path(p)) {
+            return Some(lang);
         }
         self.syntax.as_ref().map(|s| s.language())
     }
 
     pub fn is_markdown(&self) -> bool {
-        self.markdown.is_some()
-    }
-
-    pub fn markdown(&self) -> Option<&MarkdownDocument> {
-        self.markdown.as_ref()
+        self.path.as_ref().and_then(|p| LanguageId::from_path(p)) == Some(LanguageId::Markdown)
     }
 
     /// Returns the nearest identifier position at or immediately before `pos`.
@@ -939,11 +893,6 @@ impl EditorTabState {
             .path
             .as_ref()
             .and_then(|p| SyntaxDocument::for_path(p, self.buffer.rope()));
-        self.markdown = self
-            .path
-            .as_ref()
-            .filter(|p| LanguageId::from_path(p) == Some(LanguageId::Markdown))
-            .map(|_| MarkdownDocument::new(self.buffer.rope()));
         self.semantic_highlight = None;
         self.git_gutter = None;
         self.inlay_hints = None;

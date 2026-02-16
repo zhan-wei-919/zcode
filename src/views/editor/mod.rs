@@ -1,7 +1,10 @@
 //! Editor UI: pure render + hit-test over kernel state.
 
+pub mod coord;
 mod hit_test;
 mod layout;
+pub mod markdown;
+pub mod markdown_cache;
 mod render;
 mod tab_row;
 

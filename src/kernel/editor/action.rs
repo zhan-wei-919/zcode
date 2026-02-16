@@ -1,6 +1,6 @@
 use crate::kernel::services::ports::SearchMessage;
+use crate::models::Granularity;
 use std::path::PathBuf;
-use std::time::Instant;
 
 use super::ReloadRequest;
 use super::TabId;
@@ -42,30 +42,24 @@ pub enum EditorAction {
         end_byte: usize,
         text: String,
     },
-    MouseDown {
+    ReplaceRangeChars {
         pane: usize,
-        x: u16,
-        y: u16,
-        now: Instant,
+        start_char: usize,
+        end_char: usize,
+        text: String,
     },
-    MouseSelectWord {
+    PlaceCursor {
         pane: usize,
-        x: u16,
-        y: u16,
+        row: usize,
+        col: usize,
+        granularity: Granularity,
     },
-    MouseContextMenu {
+    ExtendSelection {
         pane: usize,
-        x: u16,
-        y: u16,
+        row: usize,
+        col: usize,
     },
-    MouseDrag {
-        pane: usize,
-        x: u16,
-        y: u16,
-        overflow_y: i16,
-        past_right: bool,
-    },
-    MouseUp {
+    EndSelectionGesture {
         pane: usize,
     },
     Scroll {

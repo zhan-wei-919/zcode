@@ -50,6 +50,10 @@ impl Workbench {
             self.editor_search_rx
                 .extend(std::iter::repeat_with(|| None).take(desired - current));
         }
+
+        self.editor_mouse
+            .resize_with(desired, super::mouse_tracker::EditorMouseTracker::new);
+        self.sync_markdown_views();
     }
 
     fn run_effect(&mut self, effect: KernelEffect) {

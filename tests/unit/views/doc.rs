@@ -1,4 +1,5 @@
 use super::*;
+use crate::views::editor::markdown::{MdRenderedLine, MdSpanKind, MdStyleSpan};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -96,12 +97,12 @@ fn clamp_scroll_offset_limits_scroll_range() {
 
 #[test]
 fn from_markdown_rendered_preserves_text_spans_and_offset_map() {
-    let rendered = crate::kernel::editor::markdown::MdRenderedLine {
+    let rendered = MdRenderedLine {
         text: "title".to_string(),
-        spans: vec![crate::kernel::editor::markdown::MdStyleSpan {
+        spans: vec![MdStyleSpan {
             start: 0,
             end: 5,
-            kind: crate::kernel::editor::markdown::MdSpanKind::Heading(2),
+            kind: MdSpanKind::Heading(2),
         }],
         offset_map: vec![(0, 2), (5, 7)],
     };
@@ -109,10 +110,10 @@ fn from_markdown_rendered_preserves_text_spans_and_offset_map() {
     let line = from_markdown_rendered(rendered);
     assert_eq!(line.text, "title");
     assert_eq!(line.offset_map.as_deref(), Some(&[(0, 2), (5, 7)][..]));
-    assert!(line.spans.iter().any(|s| matches!(
-        s.kind,
-        DocSpanKind::Markdown(crate::kernel::editor::markdown::MdSpanKind::Heading(2))
-    )));
+    assert!(line
+        .spans
+        .iter()
+        .any(|s| matches!(s.kind, DocSpanKind::Markdown(MdSpanKind::Heading(2)))));
 }
 
 #[test]

@@ -2,7 +2,6 @@
 
 mod action;
 mod edit;
-pub mod markdown;
 mod mouse;
 mod reducer;
 mod search;
@@ -13,11 +12,9 @@ mod viewport;
 pub use crate::kernel::language::LanguageId;
 pub use action::EditorAction;
 pub use state::{
-    DiskSnapshot, DiskState, EditorMouseState, EditorPaneState, EditorState, EditorTabState,
-    EditorViewportState, ReloadCause, ReloadRequest, SearchBarField, SearchBarMode, SearchBarState,
-    TabId,
+    DiskSnapshot, DiskState, EditorPaneState, EditorState, EditorTabState, EditorViewportState,
+    ReloadCause, ReloadRequest, SearchBarField, SearchBarMode, SearchBarState, TabId,
 };
 pub use syntax::{highlight_snippet, HighlightKind, HighlightSpan};
 pub(crate) use viewport::clamp_and_follow;
 pub use viewport::cursor_display_x_abs;
-pub(crate) use viewport::screen_to_col;

@@ -2771,6 +2771,133 @@ fn test_editor_right_click_inside_selection_keeps_existing_selection() {
 }
 
 #[test]
+fn test_editor_drag_overflow_keeps_horizontal_follow_on_later_drag() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let path = dir.path().join("wide.txt");
+    let long_line = "x".repeat(240);
+    let content = (0..80).map(|_| format!("{long_line}\n")).collect::<String>();
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content,
+    }));
+
+    render_once(&mut workbench, 120, 40);
+
+    let (start_x, start_y, overflow_drag_y, inside_drag_y, far_right_x) = {
+        let area = *workbench
+            .layout_cache
+            .editor_inner_areas
+            .first()
+            .expect("editor area");
+        let state = workbench.store.state();
+        let pane = state.editor.pane(0).expect("pane");
+        let layout = compute_editor_pane_layout(area, pane, &state.editor.config);
+        (
+            layout.content_area.x,
+            layout.content_area.y,
+            layout.content_area.bottom().saturating_add(2),
+            layout.content_area.bottom().saturating_sub(1),
+            layout.content_area.right().saturating_add(30),
+        )
+    };
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        start_x,
+        start_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        start_x,
+        overflow_drag_y,
+    ));
+
+    let overflow_line_offset = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.viewport.line_offset)
+        .expect("active tab");
+    assert!(
+        overflow_line_offset > 0,
+        "overflow drag should scroll viewport down"
+    );
+
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        far_right_x,
+        inside_drag_y,
+    ));
+    let _ = workbench.handle_input(&mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        far_right_x,
+        inside_drag_y,
+    ));
+
+    let tab = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert!(
+        tab.viewport.horiz_offset > 0,
+        "after overflow drag, dragging to far right should still auto-follow horizontally"
+    );
+}
+
+#[test]
+fn test_markdown_checkbox_click_toggles_task_marker() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let path = dir.path().join("todo.md");
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "intro\n- [ ] finish refactor\n".to_string(),
+    }));
+
+    render_once(&mut workbench, 120, 40);
+
+    let (x, y) = {
+        let area = *workbench
+            .layout_cache
+            .editor_inner_areas
+            .first()
+            .expect("editor area");
+        let state = workbench.store.state();
+        let pane = state.editor.pane(0).expect("pane");
+        let layout = compute_editor_pane_layout(area, pane, &state.editor.config);
+        (
+            layout.content_area.x.saturating_add(2), // "[" in "• [ ] ..."
+            layout.content_area.y.saturating_add(1),
+        )
+    };
+
+    let _ = workbench.handle_input(&mouse(MouseEventKind::Down(MouseButton::Left), x, y));
+    let _ = workbench.handle_input(&mouse(MouseEventKind::Up(MouseButton::Left), x, y));
+
+    let line_after_click = workbench
+        .store
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .and_then(|tab| tab.buffer.line(1))
+        .expect("line 1");
+    assert_eq!(line_after_click.trim_end_matches('\n'), "- [x] finish refactor");
+}
+
+#[test]
 fn test_shift_scroll_down_moves_editor_horizontally() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();

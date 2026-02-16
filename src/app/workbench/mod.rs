@@ -4,6 +4,7 @@ use super::theme::UiTheme;
 use crate::core::event::InputEvent;
 use crate::core::wakeup::WakeupSender;
 use crate::core::Command;
+use crate::kernel::editor::TabId;
 use crate::kernel::services::adapters::lsp::LspServerCommandOverride;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
@@ -35,6 +36,7 @@ mod input;
 mod interaction;
 mod mouse;
 mod mouse_route;
+mod mouse_tracker;
 mod paint;
 mod palette;
 mod render;
@@ -284,6 +286,8 @@ pub struct Workbench {
     terminal_selection: Option<TerminalSelection>,
     terminal_selecting: bool,
     click_tracker: ClickTracker,
+    editor_mouse: Vec<mouse_tracker::EditorMouseTracker>,
+    markdown_views: FxHashMap<TabId, crate::views::editor::markdown_cache::MarkdownViewState>,
     pending_restart: Option<PendingRestart>,
     pending_theme_save_deadline: Option<Instant>,
     pending_completion_rank_save_deadline: Option<Instant>,
@@ -491,6 +495,10 @@ impl Workbench {
             terminal_selection: None,
             terminal_selecting: false,
             click_tracker: ClickTracker::default(),
+            editor_mouse: (0..panes)
+                .map(|_| mouse_tracker::EditorMouseTracker::new())
+                .collect(),
+            markdown_views: FxHashMap::default(),
             pending_restart: None,
             pending_theme_save_deadline: None,
             pending_completion_rank_save_deadline: None,
@@ -831,6 +839,56 @@ impl Workbench {
 
     fn active_editor_pane(&self) -> usize {
         self.store.state().ui.editor_layout.active_pane
+    }
+
+    fn ensure_markdown_view_for_tab(
+        &mut self,
+        tab_id: TabId,
+        is_markdown: bool,
+        rope: &ropey::Rope,
+        edit_version: u64,
+    ) {
+        if !is_markdown {
+            self.markdown_views.remove(&tab_id);
+            return;
+        }
+
+        let view = self
+            .markdown_views
+            .entry(tab_id)
+            .or_insert_with(|| crate::views::editor::markdown_cache::MarkdownViewState::new(rope));
+        view.ensure_current(rope, edit_version);
+    }
+
+    fn ensure_markdown_view_for_active_tab(&mut self, pane: usize) -> Option<TabId> {
+        let (tab_id, edit_version, rope) = {
+            let tab = self.store.state().editor.pane(pane)?.active_tab()?;
+            if !tab.is_markdown() {
+                self.markdown_views.remove(&tab.id);
+                return None;
+            }
+            (tab.id, tab.edit_version, tab.buffer.rope().clone())
+        };
+        self.ensure_markdown_view_for_tab(tab_id, true, &rope, edit_version);
+        Some(tab_id)
+    }
+
+    fn markdown_doc_for_tab(
+        &self,
+        tab_id: TabId,
+    ) -> Option<&crate::views::editor::markdown::MarkdownDocument> {
+        self.markdown_views.get(&tab_id).map(|view| view.doc())
+    }
+
+    fn sync_markdown_views(&mut self) {
+        let mut open = FxHashSet::default();
+        for pane in &self.store.state().editor.panes {
+            for tab in &pane.tabs {
+                open.insert(tab.id);
+            }
+        }
+        self.markdown_views
+            .retain(|tab_id, _| open.contains(tab_id));
     }
 }
 

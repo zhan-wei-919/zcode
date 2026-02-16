@@ -4,6 +4,7 @@
 //! non-cursor lines (hiding markers, applying formatting) and source-line
 //! highlighting for the cursor line.
 
+use crate::kernel::editor::{HighlightKind, HighlightSpan, LanguageId};
 use crate::models::{EditOp, OpKind};
 use unicode_width::UnicodeWidthStr;
 
@@ -242,11 +243,7 @@ impl MarkdownDocument {
     }
 
     /// Produce highlight spans for the cursor line (raw source with dimmed markers).
-    pub fn highlight_source_line(
-        &self,
-        line: usize,
-        rope: &ropey::Rope,
-    ) -> Vec<super::HighlightSpan> {
+    pub fn highlight_source_line(&self, line: usize, rope: &ropey::Rope) -> Vec<HighlightSpan> {
         let kind = self.block_kind(line);
         let src = rope_line_without_newline(rope, line);
         highlight_source(&src, kind)
@@ -1403,7 +1400,7 @@ fn finalize_offset_map(
 // Source-line highlighting (cursor line)
 // ---------------------------------------------------------------------------
 
-fn highlight_source(src: &str, kind: MdBlockKind) -> Vec<super::HighlightSpan> {
+fn highlight_source(src: &str, kind: MdBlockKind) -> Vec<HighlightSpan> {
     // For the cursor line, we dim the markdown markers so the user can see them
     // but they're visually de-emphasized.
     let mut spans = Vec::new();
@@ -1419,19 +1416,19 @@ fn highlight_source(src: &str, kind: MdBlockKind) -> Vec<super::HighlightSpan> {
             // Trim leading whitespace
             let leading_ws = src.len() - src.trim_start().len();
             if prefix_end + leading_ws > 0 {
-                spans.push(super::HighlightSpan {
+                spans.push(HighlightSpan {
                     start: 0,
                     end: leading_ws + prefix_end,
-                    kind: super::HighlightKind::Comment, // dim markers
+                    kind: HighlightKind::Comment, // dim markers
                 });
             }
         }
         MdBlockKind::CodeFence | MdBlockKind::HorizontalRule => {
             if !src.is_empty() {
-                spans.push(super::HighlightSpan {
+                spans.push(HighlightSpan {
                     start: 0,
                     end: src.len(),
-                    kind: super::HighlightKind::Comment,
+                    kind: HighlightKind::Comment,
                 });
             }
         }
@@ -1446,10 +1443,10 @@ fn highlight_source(src: &str, kind: MdBlockKind) -> Vec<super::HighlightSpan> {
                 0
             };
             if marker_end > 0 {
-                spans.push(super::HighlightSpan {
+                spans.push(HighlightSpan {
                     start: 0,
                     end: marker_end,
-                    kind: super::HighlightKind::Comment,
+                    kind: HighlightKind::Comment,
                 });
             }
         }
@@ -1460,10 +1457,10 @@ fn highlight_source(src: &str, kind: MdBlockKind) -> Vec<super::HighlightSpan> {
                 } else {
                     source_content_start
                 };
-                spans.push(super::HighlightSpan {
+                spans.push(HighlightSpan {
                     start: indent.len(),
                     end: marker_end,
-                    kind: super::HighlightKind::Comment,
+                    kind: HighlightKind::Comment,
                 });
             }
         }
@@ -1488,6 +1485,29 @@ pub fn display_to_source_byte(offset_map: &[(usize, usize)], display_byte: usize
     }
 }
 
+pub fn language_id_for_fence(lang: &str) -> Option<LanguageId> {
+    match lang.to_ascii_lowercase().as_str() {
+        "rust" | "rs" => Some(LanguageId::Rust),
+        "go" => Some(LanguageId::Go),
+        "python" | "py" => Some(LanguageId::Python),
+        "java" => Some(LanguageId::Java),
+        "c" => Some(LanguageId::C),
+        "cpp" | "c++" | "cc" | "cxx" => Some(LanguageId::Cpp),
+        "javascript" | "js" => Some(LanguageId::JavaScript),
+        "jsx" | "javascriptreact" => Some(LanguageId::Jsx),
+        "typescript" | "ts" => Some(LanguageId::TypeScript),
+        "tsx" | "typescriptreact" => Some(LanguageId::Tsx),
+        "json" => Some(LanguageId::Json),
+        "yaml" | "yml" => Some(LanguageId::Yaml),
+        "html" | "htm" => Some(LanguageId::Html),
+        "xml" => Some(LanguageId::Xml),
+        "css" => Some(LanguageId::Css),
+        "toml" => Some(LanguageId::Toml),
+        "bash" | "sh" | "shell" | "zsh" => Some(LanguageId::Bash),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
-#[path = "../../../tests/unit/kernel/editor/markdown.rs"]
+#[path = "../../../tests/unit/views/editor/markdown.rs"]
 mod tests;
