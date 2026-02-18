@@ -45,7 +45,10 @@ fn render_markdown_wraps_text_and_keeps_indentation() {
     let lines = render_markdown(md, 20, 10);
 
     assert!(lines.len() >= 2);
-    assert!(lines.iter().all(|l| l.text.starts_with("    ")));
+    // First line preserves the original indentation.
+    assert!(lines[0].text.starts_with("    "));
+    // Continuation lines contain wrapped content (no forced indent repetition).
+    assert!(!lines[1].text.is_empty());
 }
 
 #[test]

@@ -115,8 +115,8 @@ impl Workbench {
 
         let desired_width = inner_w.saturating_add(2).max(3);
 
-        // Prevent hover docs from taking over the whole screen; allow scrolling instead.
-        let max_height = area.h.min(15);
+        // Allow a generous popup height; content beyond the viewport is scrollable.
+        let max_height = (area.h * 2 / 3).max(5).min(area.h);
         if max_height < 3 {
             return;
         }

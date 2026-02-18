@@ -372,8 +372,8 @@ pub fn render_markdown(markdown: &str, width: u16, max_lines: usize) -> Vec<DocL
                     in_code = false;
                     code_lang = None;
                 }
-                let line = rope_line_without_newline(&rope, line_idx);
-                wrap_and_push_text_lines(&mut out, &line, width, max_lines);
+                let rendered = md.render_line(line_idx, &rope, width as usize);
+                wrap_and_push_rendered_line(&mut out, rendered, width, max_lines);
             }
         }
     }
@@ -385,12 +385,17 @@ pub fn render_markdown(markdown: &str, width: u16, max_lines: usize) -> Vec<DocL
     out
 }
 
-fn wrap_and_push_text_lines(out: &mut Vec<DocLine>, line: &str, width: u16, max_lines: usize) {
+fn wrap_and_push_rendered_line(
+    out: &mut Vec<DocLine>,
+    rendered: markdown::MdRenderedLine,
+    width: u16,
+    max_lines: usize,
+) {
     if width == 0 || out.len() >= max_lines {
         return;
     }
 
-    if line.is_empty() {
+    if rendered.text.is_empty() {
         out.push(DocLine {
             text: String::new(),
             spans: Vec::new(),
@@ -400,73 +405,65 @@ fn wrap_and_push_text_lines(out: &mut Vec<DocLine>, line: &str, width: u16, max_
     }
 
     let max_w = width as usize;
+    let text_width = rendered.text.as_str().width();
 
-    let indent_end = line
-        .char_indices()
-        .find(|(_, ch)| *ch != ' ' && *ch != '\t')
-        .map(|(i, _)| i)
-        .unwrap_or(line.len());
-    let indent = &line[..indent_end];
-    let indent_w = indent.width();
-    let mut rest = &line[indent_end..];
-
-    // If the indent itself already fills the line, render a truncated indent line.
-    if indent_w >= max_w {
-        let end = text_window::truncate_to_width(indent, max_w);
-        out.push(DocLine {
-            text: indent.get(..end).unwrap_or_default().to_string(),
-            spans: Vec::new(),
-            offset_map: None,
-        });
+    if text_width <= max_w {
+        out.push(from_markdown_rendered(rendered));
         return;
     }
 
-    let mut first = true;
-    while out.len() < max_lines {
-        let avail = max_w.saturating_sub(indent_w).max(1);
-        let end = text_window::truncate_to_width(rest, avail);
+    // Wrap the rendered text while preserving spans.
+    let text = &rendered.text;
+    let spans = &rendered.spans;
+    let mut pos = 0usize;
+
+    while pos < text.len() && out.len() < max_lines {
+        let remaining = &text[pos..];
+        let end = text_window::truncate_to_width(remaining, max_w);
         if end == 0 {
             break;
         }
 
-        let mut part = &rest[..end];
-        let mut next = &rest[end..];
+        let mut split = pos + end;
 
-        // Prefer breaking at whitespace when possible.
-        if end < rest.len() {
-            if let Some(ws) = part.rfind([' ', '\t']) {
+        // Prefer breaking at whitespace.
+        if split < text.len() {
+            if let Some(ws) = text[pos..split].rfind([' ', '\t']) {
                 if ws > 0 {
-                    part = &part[..ws];
-                    next = &rest[ws..];
+                    split = pos + ws;
                 }
             }
         }
 
-        let mut text = String::new();
-        text.push_str(indent);
-        if first {
-            // Keep original spacing after indentation on the first line.
-            text.push_str(part);
-        } else {
-            text.push_str(part.trim_start_matches([' ', '\t']));
-        }
+        let seg_text = text[pos..split].to_string();
+        let seg_spans = spans
+            .iter()
+            .filter_map(|span| {
+                let s = span.start.max(pos);
+                let e = span.end.min(split);
+                if s < e {
+                    Some(DocSpan {
+                        start: s - pos,
+                        end: e - pos,
+                        kind: DocSpanKind::Markdown(span.kind),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         out.push(DocLine {
-            text,
-            spans: Vec::new(),
+            text: seg_text,
+            spans: seg_spans,
             offset_map: None,
         });
 
-        rest = next;
-        rest = rest
-            .strip_prefix(' ')
-            .or_else(|| rest.strip_prefix('\t'))
-            .unwrap_or(rest);
-
-        if rest.is_empty() {
-            break;
+        pos = split;
+        // Skip whitespace at the break point.
+        while pos < text.len() && matches!(text.as_bytes().get(pos), Some(b' ' | b'\t')) {
+            pos += 1;
         }
-        first = false;
     }
 }
 
