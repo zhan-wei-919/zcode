@@ -6,7 +6,7 @@ use crate::ui::core::geom::Pos;
 use crate::ui::core::geom::Rect as UiRect;
 use crate::ui::core::id::IdPath;
 use crate::ui::core::layout::Insets;
-use crate::ui::core::painter::{BorderKind, Painter};
+use crate::ui::core::painter::Painter;
 use crate::ui::core::style::Style as UiStyle;
 use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, SplitDrop};
 use crate::views::doc;
@@ -361,11 +361,11 @@ impl Workbench {
             return;
         }
 
-        let desired_width = max_inner_width.saturating_add(2);
-        let desired_height = rows.len().saturating_add(2);
+        let desired_width = max_inner_width;
+        let desired_height = rows.len();
 
-        let width = desired_width.max(8).min(area.w as usize).max(1) as u16;
-        let height = desired_height.max(3).min(area.h as usize).max(1) as u16;
+        let width = desired_width.max(6).min(area.w as usize).max(1) as u16;
+        let height = desired_height.max(1).min(area.h as usize).max(1) as u16;
 
         let right = area.right();
         let mut x = cx;
@@ -389,12 +389,7 @@ impl Workbench {
             .fg(self.ui_theme.palette_fg);
         painter.fill_rect(popup_area, base_style);
 
-        let border_style = UiStyle::default()
-            .fg(self.ui_theme.focus_border)
-            .bg(self.ui_theme.popup_bg);
-        painter.border(popup_area, border_style, BorderKind::Plain);
-
-        let inner = popup_area.inset(Insets::all(1));
+        let inner = popup_area;
         if inner.is_empty() {
             return;
         }
@@ -468,7 +463,7 @@ impl Workbench {
 
             // Prefer a narrow doc panel: shrink to natural width (capped) rather than using
             // all available space. Long docs scroll instead of taking over the screen.
-            let avail_inner_w = doc_area_max.w.saturating_sub(2).max(1);
+            let avail_inner_w = doc_area_max.w.max(1);
             let inner_w = (natural_w.min(u16::MAX as usize) as u16)
                 .clamp(1, 120)
                 .min(avail_inner_w);
@@ -480,8 +475,8 @@ impl Workbench {
             let total_lines = rendered.len();
             self.completion_doc.total_lines = total_lines;
 
-            let desired_h = total_lines.saturating_add(2).min(u16::MAX as usize).max(3) as u16;
-            let desired_w = inner_w.saturating_add(2).max(3);
+            let desired_h = total_lines.min(u16::MAX as usize).max(1) as u16;
+            let desired_w = inner_w.max(1);
 
             doc_area_max.w = desired_w.min(doc_area_max.w);
             doc_area_max.h = desired_h.min(doc_area_max.h);
@@ -500,11 +495,10 @@ impl Workbench {
             }
 
             painter.fill_rect(doc_area_max, base_style);
-            painter.border(doc_area_max, border_style, BorderKind::Plain);
 
             self.completion_doc.last_area = Some(doc_area_max);
 
-            let inner = doc_area_max.inset(Insets::all(1));
+            let inner = doc_area_max;
             if inner.is_empty() {
                 return;
             }

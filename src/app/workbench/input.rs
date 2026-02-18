@@ -1,5 +1,5 @@
 use super::Workbench;
-use crate::core::event::InputEvent;
+use crate::core::event::{InputEvent, MouseEventKind};
 use crate::kernel::Action as KernelAction;
 use crate::tui::view::EventResult;
 use crate::ui::core::id::IdPath;
@@ -8,6 +8,7 @@ use crate::ui::core::runtime::UiRuntimeOutput;
 use crate::ui::core::tree::NodeKind;
 
 use super::mouse_route::{mouse_target_from_focus, plan_mouse_dispatch, FocusPlan, MouseTarget};
+use super::util;
 
 fn apply_focus_plan(
     workbench: &mut Workbench,
@@ -53,6 +54,35 @@ fn dispatch_by_target(
 }
 
 pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> EventResult {
+    // Intercept mouse events within the hover popup before any other processing.
+    // This prevents record_user_input from clearing the hover state.
+    if let InputEvent::Mouse(me) = event {
+        if workbench.store.state().ui.hover_message.is_some() {
+            if let Some(area) = workbench.hover_popup.last_area {
+                if util::rect_contains(area, me.column, me.row) {
+                    match me.kind {
+                        MouseEventKind::ScrollUp => {
+                            let step =
+                                workbench.store.state().editor.config.scroll_step().max(1) as isize;
+                            let _ = workbench.scroll_hover_popup_by(-step);
+                            return EventResult::Consumed;
+                        }
+                        MouseEventKind::ScrollDown => {
+                            let step =
+                                workbench.store.state().editor.config.scroll_step().max(1) as isize;
+                            let _ = workbench.scroll_hover_popup_by(step);
+                            return EventResult::Consumed;
+                        }
+                        MouseEventKind::Moved => {
+                            return EventResult::Consumed;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
     if matches!(
         event,
         InputEvent::Key(_) | InputEvent::Mouse(_) | InputEvent::Paste(_)
