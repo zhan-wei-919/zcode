@@ -335,8 +335,7 @@ fn should_append_trailing_space(item: &LspCompletionItem) -> bool {
     }
 
     // Only for simple identifiers — not values like operators or punctuation.
-    text.chars()
-        .all(|ch| ch == '_' || ch.is_alphanumeric())
+    text.chars().all(|ch| ch == '_' || ch.is_alphanumeric())
 }
 
 pub(super) fn completion_replace_range(

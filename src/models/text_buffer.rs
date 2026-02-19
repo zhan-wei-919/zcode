@@ -161,6 +161,51 @@ impl TextBuffer {
         self.rope.line_to_char(pos.0) + self.grapheme_to_char_index(pos.0, pos.1)
     }
 
+    fn char_range_for_grapheme_range_same_row(
+        &self,
+        row: usize,
+        start_grapheme: usize,
+        end_grapheme: usize,
+    ) -> (usize, usize) {
+        let line_char_start = self.rope.line_to_char(row);
+        let slice = self.rope.line(row);
+        if slice.len_bytes() == slice.len_chars() {
+            let len = ascii_line_len_no_newline(slice);
+            let start = start_grapheme.min(len);
+            let end = end_grapheme.min(len);
+            return (
+                line_char_start.saturating_add(start),
+                line_char_start.saturating_add(end),
+            );
+        }
+
+        let line = slice_to_cow(slice);
+        let mut grapheme_idx = 0usize;
+        let mut chars_taken = 0usize;
+        let mut start_chars: Option<usize> = None;
+        let mut end_chars: Option<usize> = None;
+
+        for g in line.graphemes(true) {
+            if start_chars.is_none() && grapheme_idx == start_grapheme {
+                start_chars = Some(chars_taken);
+            }
+            if end_chars.is_none() && grapheme_idx == end_grapheme {
+                end_chars = Some(chars_taken);
+                break;
+            }
+
+            chars_taken = chars_taken.saturating_add(g.chars().count());
+            grapheme_idx = grapheme_idx.saturating_add(1);
+        }
+
+        let start_chars = start_chars.unwrap_or(chars_taken);
+        let end_chars = end_chars.unwrap_or(chars_taken);
+        (
+            line_char_start.saturating_add(start_chars),
+            line_char_start.saturating_add(end_chars),
+        )
+    }
+
     pub fn grapheme_to_char_index(&self, row: usize, grapheme_index: usize) -> usize {
         let slice = self.rope.line(row);
         if slice.len_bytes() == slice.len_chars() {
@@ -287,8 +332,7 @@ impl TextBuffer {
         let cursor_before = self.cursor;
 
         if col > 0 {
-            let start = self.pos_to_char((row, col - 1));
-            let end = self.pos_to_char((row, col));
+            let (start, end) = self.char_range_for_grapheme_range_same_row(row, col - 1, col);
             let deleted: String = self.rope.slice(start..end).to_string();
 
             self.rope.remove(start..end);
@@ -335,8 +379,7 @@ impl TextBuffer {
         let line_len = self.line_grapheme_len(row);
 
         if col < line_len {
-            let start = self.pos_to_char((row, col));
-            let end = self.pos_to_char((row, col + 1));
+            let (start, end) = self.char_range_for_grapheme_range_same_row(row, col, col + 1);
             let deleted: String = self.rope.slice(start..end).to_string();
 
             self.rope.remove(start..end);

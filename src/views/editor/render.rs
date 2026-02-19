@@ -456,7 +456,6 @@ fn paint_editor_body(
     });
     let height = layout.editor_area.h as usize;
     let visible_lines = tab.visible_lines_in_viewport(line_offset, height.max(1));
-    let syntax = build_syntax_highlights(tab, &visible_lines);
 
     if config.show_line_numbers && !layout.gutter_area.is_empty() {
         paint_gutter(
@@ -472,6 +471,8 @@ fn paint_editor_body(
     if layout.content_area.is_empty() {
         return;
     }
+
+    let syntax = build_syntax_highlights(tab, &visible_lines);
 
     paint_content(
         painter,
@@ -786,6 +787,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         let mut byte_offset: usize = 0;
         let mut semantic_idx: usize = 0;
         let mut highlight_idx: usize = 0;
+        let mut line_match_cursor: usize = 0;
 
         if horiz_offset > 0 {
             let start = (horiz_offset as usize).min(line.len());
@@ -852,6 +854,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                     g_start,
                     current_match_index,
                     theme,
+                    &mut line_match_cursor,
                 ) {
                     style = style.bg(bg);
                 }
@@ -938,9 +941,16 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
                 let indent_width = col;
                 let mut level_start_col: u32 = 0;
+                let mut guide_span_idx: usize = 0;
                 while level_start_col.saturating_add(tab_size) <= indent_width {
                     let guide_col = level_start_col;
                     level_start_col = level_start_col.saturating_add(tab_size);
+
+                    while guide_span_idx + 1 < spans_vec.len()
+                        && spans_vec[guide_span_idx].1 <= guide_col
+                    {
+                        guide_span_idx += 1;
+                    }
 
                     if guide_col < horiz_offset {
                         continue;
@@ -954,10 +964,12 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                         continue;
                     }
 
-                    let guide_g_idx = spans_vec
-                        .iter()
-                        .find(|(start, end, _)| *start <= guide_col && guide_col < *end)
-                        .map(|(_, _, g_idx)| *g_idx);
+                    let guide_g_idx =
+                        spans_vec
+                            .get(guide_span_idx)
+                            .and_then(|(start, end, g_idx)| {
+                                (*start <= guide_col && guide_col < *end).then_some(*g_idx)
+                            });
 
                     let selected = has_selection
                         && guide_g_idx.is_some_and(|g_idx| {
@@ -1176,17 +1188,25 @@ fn search_match_bg(
     byte_in_line: usize,
     current_match_index: Option<usize>,
     theme: &Theme,
+    cursor: &mut usize,
 ) -> Option<Color> {
-    for (offset, m) in line_matches.iter().enumerate() {
+    while *cursor < line_matches.len() {
+        let offset = *cursor;
+        let m = &line_matches[offset];
         let len = m.end.saturating_sub(m.start);
         if len == 0 {
+            *cursor += 1;
             continue;
         }
 
         let start = m.col;
         let end = start.saturating_add(len);
-        if byte_in_line < start || byte_in_line >= end {
+        if byte_in_line >= end {
+            *cursor += 1;
             continue;
+        }
+        if byte_in_line < start {
+            return None;
         }
 
         let idx = global_start_idx.saturating_add(offset);

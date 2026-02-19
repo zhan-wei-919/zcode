@@ -57,6 +57,32 @@ fn test_insert_str_combining_mark_keeps_cursor_grapheme_index() {
 }
 
 #[test]
+fn test_delete_backward_removes_single_emoji_grapheme() {
+    let mut buffer = TextBuffer::from_text("👍🏽a");
+    buffer.set_cursor(0, 1);
+
+    let _ = buffer
+        .delete_backward_op(OpId::root())
+        .expect("delete backward");
+
+    assert_eq!(buffer.text(), "a");
+    assert_eq!(buffer.cursor(), (0, 0));
+}
+
+#[test]
+fn test_delete_forward_removes_single_combining_grapheme() {
+    let mut buffer = TextBuffer::from_text("e\u{301}x");
+    buffer.set_cursor(0, 0);
+
+    let _ = buffer
+        .delete_forward_op(OpId::root())
+        .expect("delete forward");
+
+    assert_eq!(buffer.text(), "x");
+    assert_eq!(buffer.cursor(), (0, 0));
+}
+
+#[test]
 fn test_line_grapheme_len() {
     let buffer = TextBuffer::from_text("hello\nworld\n");
 
