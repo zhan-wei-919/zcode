@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Arc;
 use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +49,7 @@ const FULL_CACHE_MAX_BYTES: usize = 2 * 1024 * 1024;
 struct FullDocHighlightCache {
     line_count: usize,
     byte_len: usize,
-    lines: Vec<Vec<HighlightSpan>>,
+    lines: Arc<Vec<Vec<HighlightSpan>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -57,7 +58,7 @@ struct RangeHighlightCache {
     end_line_exclusive: usize,
     line_count: usize,
     byte_len: usize,
-    lines: Vec<Vec<HighlightSpan>>,
+    lines: Arc<Vec<Vec<HighlightSpan>>>,
 }
 
 pub struct SyntaxDocument {
@@ -169,41 +170,73 @@ impl SyntaxDocument {
         start_line: usize,
         end_line_exclusive: usize,
     ) -> Vec<Vec<HighlightSpan>> {
+        self.highlight_lines_shared(rope, start_line, end_line_exclusive)
+            .as_ref()
+            .clone()
+    }
+
+    pub fn highlight_lines_shared(
+        &self,
+        rope: &Rope,
+        start_line: usize,
+        end_line_exclusive: usize,
+    ) -> Arc<Vec<Vec<HighlightSpan>>> {
         if start_line >= end_line_exclusive {
-            return Vec::new();
+            return Arc::new(Vec::new());
         }
 
         let total_lines = rope.len_lines().max(1);
         let start_line = start_line.min(total_lines);
         let end_line_exclusive = end_line_exclusive.min(total_lines);
         if start_line >= end_line_exclusive {
-            return Vec::new();
+            return Arc::new(Vec::new());
         }
 
         let byte_len = rope.len_bytes();
         if total_lines <= FULL_CACHE_MAX_LINES && byte_len <= FULL_CACHE_MAX_BYTES {
             if let Some(cache) = self.full_doc_cache.borrow().as_ref() {
                 if cache.line_count == total_lines && cache.byte_len == byte_len {
-                    return cache.lines[start_line..end_line_exclusive].to_vec();
+                    if let Some(range) = self.range_cache.borrow().as_ref() {
+                        if range.start_line == start_line
+                            && range.end_line_exclusive == end_line_exclusive
+                            && range.line_count == total_lines
+                            && range.byte_len == byte_len
+                        {
+                            return Arc::clone(&range.lines);
+                        }
+                    }
+
+                    let lines = Arc::new(cache.lines[start_line..end_line_exclusive].to_vec());
+                    *self.range_cache.borrow_mut() = Some(RangeHighlightCache {
+                        start_line,
+                        end_line_exclusive,
+                        line_count: total_lines,
+                        byte_len,
+                        lines: Arc::clone(&lines),
+                    });
+                    return lines;
                 }
             }
 
             let range_start = rope.line_to_byte(0);
             let range_end = rope.line_to_byte(total_lines);
             let spans = collect_highlights(self.language, &self.tree, rope, range_start, range_end);
-            let lines = project_abs_spans_to_lines(rope, 0, total_lines, &spans);
+            let lines = Arc::new(project_abs_spans_to_lines(rope, 0, total_lines, &spans));
             *self.full_doc_cache.borrow_mut() = Some(FullDocHighlightCache {
                 line_count: total_lines,
                 byte_len,
-                lines,
+                lines: Arc::clone(&lines),
             });
 
-            return self
-                .full_doc_cache
-                .borrow()
-                .as_ref()
-                .map(|cache| cache.lines[start_line..end_line_exclusive].to_vec())
-                .unwrap_or_default();
+            let window = Arc::new(lines[start_line..end_line_exclusive].to_vec());
+            *self.range_cache.borrow_mut() = Some(RangeHighlightCache {
+                start_line,
+                end_line_exclusive,
+                line_count: total_lines,
+                byte_len,
+                lines: Arc::clone(&window),
+            });
+            return window;
         }
 
         if let Some(cache) = self.range_cache.borrow().as_ref() {
@@ -212,20 +245,25 @@ impl SyntaxDocument {
                 && cache.line_count == total_lines
                 && cache.byte_len == byte_len
             {
-                return cache.lines.clone();
+                return Arc::clone(&cache.lines);
             }
         }
 
         let range_start = rope.line_to_byte(start_line);
         let range_end = rope.line_to_byte(end_line_exclusive);
         let spans = collect_highlights(self.language, &self.tree, rope, range_start, range_end);
-        let lines = project_abs_spans_to_lines(rope, start_line, end_line_exclusive, &spans);
+        let lines = Arc::new(project_abs_spans_to_lines(
+            rope,
+            start_line,
+            end_line_exclusive,
+            &spans,
+        ));
         *self.range_cache.borrow_mut() = Some(RangeHighlightCache {
             start_line,
             end_line_exclusive,
             line_count: total_lines,
             byte_len,
-            lines: lines.clone(),
+            lines: Arc::clone(&lines),
         });
         lines
     }

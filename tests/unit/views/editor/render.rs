@@ -577,3 +577,33 @@ fn paint_editor_tabs_truncate_titles_with_ellipsis_in_narrow_width() {
         "tab titles should use ellipsis when compressed"
     );
 }
+
+#[test]
+fn build_syntax_highlights_returns_shared_for_contiguous_visible_lines() {
+    let config = EditorConfig::default();
+    let tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n",
+        &config,
+    );
+    let visible = vec![0usize, 1usize, 2usize];
+
+    let syntax = build_syntax_highlights(&tab, &visible).expect("syntax available");
+    assert!(matches!(syntax, SyntaxHighlightLines::Shared(_)));
+}
+
+#[test]
+fn build_syntax_highlights_returns_owned_for_sparse_visible_lines() {
+    let config = EditorConfig::default();
+    let tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n",
+        &config,
+    );
+    let visible = vec![0usize, 2usize];
+
+    let syntax = build_syntax_highlights(&tab, &visible).expect("syntax available");
+    assert!(matches!(syntax, SyntaxHighlightLines::Owned(_)));
+}

@@ -3,6 +3,7 @@ use crate::kernel::services::ports::{EditorConfig, LspFoldingRange, Match};
 use crate::models::{EditHistory, EditOp, OpKind, TextBuffer};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 use unicode_xid::UnicodeXID;
 
@@ -390,6 +391,15 @@ impl EditorTabState {
     ) -> Option<Vec<Vec<HighlightSpan>>> {
         let syntax = self.syntax.as_ref()?;
         Some(syntax.highlight_lines(self.buffer.rope(), start_line, end_line_exclusive))
+    }
+
+    pub fn highlight_lines_shared(
+        &self,
+        start_line: usize,
+        end_line_exclusive: usize,
+    ) -> Option<Arc<Vec<Vec<HighlightSpan>>>> {
+        let syntax = self.syntax.as_ref()?;
+        Some(syntax.highlight_lines_shared(self.buffer.rope(), start_line, end_line_exclusive))
     }
 
     pub fn semantic_highlight_lines(

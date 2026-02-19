@@ -2,6 +2,7 @@ use super::*;
 use crate::models::{EditOp, OpId};
 use ropey::Rope;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 #[test]
@@ -650,6 +651,19 @@ fn test_highlight_lines_cache_hit_returns_same_spans() {
     let first = doc.highlight_lines(&rope, 0, 2);
     let second = doc.highlight_lines(&rope, 0, 2);
     assert_eq!(first, second);
+}
+
+#[test]
+fn test_highlight_lines_shared_reuses_cached_window_for_same_range() {
+    let src = "fn alpha() { let x = 1; }\nfn beta() { let y = 2; }\n";
+    let rope = Rope::from_str(src);
+    let doc =
+        SyntaxDocument::for_path(Path::new("cache_hit_shared.rs"), &rope).expect("rust syntax");
+
+    let first = doc.highlight_lines_shared(&rope, 0, 2);
+    let second = doc.highlight_lines_shared(&rope, 0, 2);
+
+    assert!(Arc::ptr_eq(&first, &second));
 }
 
 #[test]

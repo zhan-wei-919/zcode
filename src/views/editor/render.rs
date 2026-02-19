@@ -11,6 +11,7 @@ use crate::ui::core::style::{Color, Mod, Style};
 use crate::ui::core::theme::Theme;
 use crate::views::doc::{self, DocLine, DocSpan, DocSpanKind};
 use memchr::memchr;
+use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -481,7 +482,7 @@ fn paint_editor_body(
             area: layout.content_area,
             visible_lines: &visible_lines,
             horiz_offset,
-            highlight_lines: syntax.as_deref(),
+            highlight_lines: syntax.as_ref(),
             tab_size: config.tab_size,
             theme,
             show_indent_guides: config.show_indent_guides,
@@ -497,31 +498,61 @@ fn paint_editor_body(
     }
 }
 
+#[derive(Debug, Clone)]
+enum SyntaxHighlightLines {
+    Shared(Arc<Vec<Vec<HighlightSpan>>>),
+    Owned(Vec<Vec<HighlightSpan>>),
+}
+
+impl SyntaxHighlightLines {
+    fn line(&self, index: usize) -> Option<&[HighlightSpan]> {
+        match self {
+            Self::Shared(lines) => lines.get(index).map(Vec::as_slice),
+            Self::Owned(lines) => lines.get(index).map(Vec::as_slice),
+        }
+    }
+}
+
 fn build_syntax_highlights(
     tab: &EditorTabState,
     visible_lines: &[usize],
-) -> Option<Vec<Vec<HighlightSpan>>> {
+) -> Option<SyntaxHighlightLines> {
     if visible_lines.is_empty() {
-        return Some(Vec::new());
+        return Some(SyntaxHighlightLines::Owned(Vec::new()));
+    }
+
+    let first_start = visible_lines[0];
+    let mut first_end = first_start.saturating_add(1);
+    let mut next = 1usize;
+    while next < visible_lines.len() && visible_lines[next] == first_end {
+        first_end = first_end.saturating_add(1);
+        next = next.saturating_add(1);
+    }
+
+    let first = tab.highlight_lines_shared(first_start, first_end)?;
+    if next == visible_lines.len() {
+        return Some(SyntaxHighlightLines::Shared(first));
     }
 
     let mut out: Vec<Vec<HighlightSpan>> = Vec::with_capacity(visible_lines.len());
-    let mut idx = 0usize;
+    out.extend(first.iter().cloned());
+
+    let mut idx = next;
     while idx < visible_lines.len() {
         let start = visible_lines[idx];
         let mut end = start.saturating_add(1);
-        let mut next = idx.saturating_add(1);
-        while next < visible_lines.len() && visible_lines[next] == end {
+        let mut segment_end_idx = idx.saturating_add(1);
+        while segment_end_idx < visible_lines.len() && visible_lines[segment_end_idx] == end {
             end = end.saturating_add(1);
-            next = next.saturating_add(1);
+            segment_end_idx = segment_end_idx.saturating_add(1);
         }
 
-        let segment = tab.highlight_lines(start, end)?;
-        out.extend(segment);
-        idx = next;
+        let segment = tab.highlight_lines_shared(start, end)?;
+        out.extend(segment.iter().cloned());
+        idx = segment_end_idx;
     }
 
-    Some(out)
+    Some(SyntaxHighlightLines::Owned(out))
 }
 
 fn paint_gutter(
@@ -649,7 +680,7 @@ struct ContentPaintCtx<'a> {
     area: Rect,
     visible_lines: &'a [usize],
     horiz_offset: u32,
-    highlight_lines: Option<&'a [Vec<HighlightSpan>]>,
+    highlight_lines: Option<&'a SyntaxHighlightLines>,
     tab_size: u8,
     theme: &'a Theme,
     show_indent_guides: bool,
@@ -745,9 +776,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         let highlight_spans = if is_markdown {
             None // We'll use md_source_spans below
         } else {
-            highlight_lines
-                .and_then(|lines| lines.get(screen_row))
-                .map(|spans| spans.as_slice())
+            highlight_lines.and_then(|lines| lines.line(screen_row))
         };
 
         let md_source_spans: Vec<HighlightSpan>;
