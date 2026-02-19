@@ -339,22 +339,32 @@ impl Workbench {
             let marker = if is_selected { ">" } else { " " };
 
             let text = item.label.as_str();
-            let mut detail = "";
+            let mut detail = String::new();
             if let Some(d) = item.detail.as_deref() {
                 if !d.trim().is_empty() {
-                    detail = d;
+                    detail = d.to_string();
+                }
+            }
+            // When detail is empty and insert_text differs from label, show
+            // a simplified insert_text so the user can distinguish items with
+            // the same label (e.g. Java's two "class" completions).
+            if detail.is_empty() && item.insert_text != text {
+                let preview = strip_snippet_markers(&item.insert_text);
+                if preview != text {
+                    detail = preview;
                 }
             }
 
             let width = if detail.is_empty() {
                 UnicodeWidthStr::width(text)
             } else {
-                UnicodeWidthStr::width(text).saturating_add(1 + UnicodeWidthStr::width(detail))
+                UnicodeWidthStr::width(text)
+                    .saturating_add(1 + UnicodeWidthStr::width(detail.as_str()))
             };
             // marker + space + text + optional (space + detail)
             let inner_w = 2usize.saturating_add(width);
             max_inner_width = max_inner_width.max(inner_w);
-            rows.push((is_selected, marker, text.to_string(), detail.to_string()));
+            rows.push((is_selected, marker, text.to_string(), detail));
         }
 
         if area.is_empty() {
@@ -395,10 +405,18 @@ impl Workbench {
         }
 
         let selected_bg = UiStyle::default().bg(self.ui_theme.palette_selected_bg);
-        let marker_selected = UiStyle::default().fg(self.ui_theme.focus_border);
-        let marker_normal = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
-        let label_style = UiStyle::default().fg(self.ui_theme.palette_fg);
-        let detail_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+        let marker_selected = UiStyle::default()
+            .fg(self.ui_theme.focus_border)
+            .bg(self.ui_theme.popup_bg);
+        let marker_normal = UiStyle::default()
+            .fg(self.ui_theme.palette_muted_fg)
+            .bg(self.ui_theme.popup_bg);
+        let label_style = UiStyle::default()
+            .fg(self.ui_theme.palette_fg)
+            .bg(self.ui_theme.popup_bg);
+        let detail_style = UiStyle::default()
+            .fg(self.ui_theme.palette_muted_fg)
+            .bg(self.ui_theme.popup_bg);
 
         for (idx, (is_selected, marker, label, detail)) in rows.into_iter().enumerate() {
             let y = inner.y.saturating_add(idx.min(u16::MAX as usize) as u16);
@@ -406,6 +424,7 @@ impl Workbench {
                 break;
             }
             let row_area = UiRect::new(inner.x, y, inner.w, 1);
+            painter.fill_rect(row_area, base_style);
             if is_selected {
                 painter.fill_rect(row_area, selected_bg);
             }
@@ -418,13 +437,13 @@ impl Workbench {
             };
             painter.text_clipped(Pos::new(x, y), marker, marker_style, row_area);
             x = x.saturating_add(1);
-            painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_area);
+            painter.text_clipped(Pos::new(x, y), " ", base_style, row_area);
             x = x.saturating_add(1);
             let label_w = label.width().min(u16::MAX as usize) as u16;
             painter.text_clipped(Pos::new(x, y), label, label_style, row_area);
             x = x.saturating_add(label_w);
             if !detail.trim().is_empty() {
-                painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_area);
+                painter.text_clipped(Pos::new(x, y), " ", base_style, row_area);
                 x = x.saturating_add(1);
                 painter.text_clipped(Pos::new(x, y), detail, detail_style, row_area);
             }
@@ -1051,6 +1070,61 @@ fn completion_doc_area(
     let h = avail_h.min(15);
     let area = UiRect::new(screen.x, y, screen.w, h);
     (!area.is_empty()).then_some(area)
+}
+
+/// Strip snippet placeholders like `${1:text}`, `$0`, etc. to produce a
+/// human-readable single-line preview of the insert text.
+fn strip_snippet_markers(snippet: &str) -> String {
+    let mut out = String::with_capacity(snippet.len());
+    let bytes = snippet.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'$' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                // ${N:text} or ${N} — extract the text part if present.
+                if let Some(close) = snippet[i..].find('}') {
+                    let inner = &snippet[i + 2..i + close];
+                    if let Some(colon) = inner.find(':') {
+                        out.push_str(&inner[colon + 1..]);
+                    }
+                    i += close + 1;
+                    continue;
+                }
+            } else if i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+                // $N — skip.
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        // Collapse newlines and tabs into a single space.
+        if bytes[i] == b'\n' || bytes[i] == b'\r' || bytes[i] == b'\t' {
+            if !out.ends_with(' ') {
+                out.push(' ');
+            }
+            i += 1;
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    // Collapse runs of multiple spaces.
+    let mut result = String::with_capacity(out.len());
+    let mut prev_space = false;
+    for ch in out.chars() {
+        if ch == ' ' {
+            if !prev_space {
+                result.push(' ');
+            }
+            prev_space = true;
+        } else {
+            result.push(ch);
+            prev_space = false;
+        }
+    }
+    result.trim().to_string()
 }
 
 fn push_editor_area_node(

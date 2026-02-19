@@ -268,7 +268,7 @@ impl CompletionInsertion {
 }
 
 pub(super) fn resolve_completion_insertion(item: &LspCompletionItem) -> CompletionInsertion {
-    match item.insert_text_format {
+    let mut insertion = match item.insert_text_format {
         LspInsertTextFormat::PlainText => {
             let mut insertion = CompletionInsertion::from_plain_text(item.insert_text.clone());
             if insertion.cursor.is_none()
@@ -282,7 +282,16 @@ pub(super) fn resolve_completion_insertion(item: &LspCompletionItem) -> Completi
             insertion
         }
         LspInsertTextFormat::Snippet => CompletionInsertion::from_snippet(&item.insert_text),
+    };
+
+    if !insertion.has_cursor_or_selection()
+        && should_append_trailing_space(item)
+        && !insertion.text.ends_with(' ')
+    {
+        insertion.text.push(' ');
     }
+
+    insertion
 }
 
 fn should_append_callable_parentheses(item: &LspCompletionItem) -> bool {
@@ -312,6 +321,22 @@ fn should_append_callable_parentheses(item: &LspCompletionItem) -> bool {
 
 fn completion_kind_is_callable(kind: Option<u32>) -> bool {
     matches!(kind, Some(2..=4))
+}
+
+fn should_append_trailing_space(item: &LspCompletionItem) -> bool {
+    // LSP CompletionItemKind::Keyword = 14
+    if !matches!(item.kind, Some(14)) {
+        return false;
+    }
+
+    let text = item.insert_text.as_str();
+    if text.is_empty() || text.ends_with(' ') {
+        return false;
+    }
+
+    // Only for simple identifiers — not values like operators or punctuation.
+    text.chars()
+        .all(|ch| ch == '_' || ch.is_alphanumeric())
 }
 
 pub(super) fn completion_replace_range(
@@ -1032,7 +1057,7 @@ mod tests {
         };
 
         let insertion = resolve_completion_insertion(&item);
-        assert_eq!(insertion.text, "static");
+        assert_eq!(insertion.text, "static ");
         assert!(insertion.cursor.is_none());
         assert!(insertion.selection.is_none());
     }
