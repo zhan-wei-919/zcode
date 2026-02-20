@@ -722,6 +722,8 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
     let is_markdown = tab.is_markdown();
     let cursor_row = tab.buffer.cursor().0;
+    let selection = tab.buffer.selection();
+    let has_selection = selection.is_some_and(|s| !s.is_empty());
     let mut match_cursor = visible_lines
         .first()
         .map(|first_line| search_matches.partition_point(|m| m.line < *first_line))
@@ -735,11 +737,11 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         };
 
         while match_cursor < search_matches.len() && search_matches[match_cursor].line < row {
-            match_cursor = match_cursor.saturating_add(1);
+            match_cursor += 1;
         }
         let line_match_start = match_cursor;
         while match_cursor < search_matches.len() && search_matches[match_cursor].line == row {
-            match_cursor = match_cursor.saturating_add(1);
+            match_cursor += 1;
         }
         let line_matches = &search_matches[line_match_start..match_cursor];
         let row_bg = transient_row_bg(theme, transient_row_highlight, row);
@@ -768,9 +770,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             }
         }
 
-        let selection_range =
-            selection_range_for_row(tab.buffer.selection(), row).unwrap_or((0, 0));
-        let has_selection = tab.buffer.selection().is_some_and(|s| !s.is_empty());
+        let selection_range = selection_range_for_row(selection, row).unwrap_or((0, 0));
 
         // For markdown cursor lines, use markdown source highlighting if no tree-sitter
         let highlight_spans = if is_markdown {
@@ -796,6 +796,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         };
 
         let semantic_spans = tab.semantic_highlight_line(row);
+        let has_semantic_spans = semantic_spans.is_some_and(|spans| !spans.is_empty());
         let inlay_hints = tab.inlay_hint_line(row);
 
         let line = tab
@@ -814,9 +815,11 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         let mut g_idx_base: usize = 0;
         let mut display_col: u32 = 0;
         let mut byte_offset: usize = 0;
+        let has_syntax_spans = highlight_spans.is_some_and(|spans| !spans.is_empty());
         let mut semantic_idx: usize = 0;
-        let mut highlight_idx: usize = 0;
+        let mut highlight_state = HighlightCacheState::default();
         let mut line_match_cursor: usize = 0;
+        let has_line_matches = !line_matches.is_empty();
 
         if horiz_offset > 0 {
             let start = (horiz_offset as usize).min(line.len());
@@ -833,9 +836,9 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         let mut seg: Option<TextSegment> = None;
 
         for (g_rel_idx, g) in visible.graphemes(true).enumerate() {
-            let g_idx = g_idx_base.saturating_add(g_rel_idx);
+            let g_idx = g_idx_base + g_rel_idx;
             let g_start = byte_offset;
-            byte_offset = byte_offset.saturating_add(g.len());
+            byte_offset += g.len();
 
             let width = if g == "\t" {
                 let rem = display_col % tab_size;
@@ -853,7 +856,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             }
 
             if display_col < horiz_offset {
-                display_col = display_col.saturating_add(width);
+                display_col += width;
                 continue;
             }
 
@@ -870,22 +873,33 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             {
                 style = selection_style;
             } else {
-                if let Some(hl) =
-                    style_for_highlight(semantic_spans, &mut semantic_idx, g_start, theme).or_else(
-                        || style_for_highlight(highlight_spans, &mut highlight_idx, g_start, theme),
-                    )
-                {
+                let mut highlight_style = None;
+                if has_semantic_spans {
+                    highlight_style =
+                        style_for_highlight(semantic_spans, &mut semantic_idx, g_start, theme);
+                }
+                if highlight_style.is_none() && has_syntax_spans {
+                    highlight_style = style_for_highlight_cached(
+                        highlight_spans,
+                        &mut highlight_state,
+                        g_start,
+                        theme,
+                    );
+                }
+                if let Some(hl) = highlight_style {
                     style = row_base_style.patch(hl);
                 }
-                if let Some(bg) = search_match_bg(
-                    line_matches,
-                    line_match_start,
-                    g_start,
-                    current_match_index,
-                    theme,
-                    &mut line_match_cursor,
-                ) {
-                    style = style.bg(bg);
+                if has_line_matches {
+                    if let Some(bg) = search_match_bg(
+                        line_matches,
+                        line_match_start,
+                        g_start,
+                        current_match_index,
+                        theme,
+                        &mut line_match_cursor,
+                    ) {
+                        style = style.bg(bg);
+                    }
                 }
             }
 
@@ -901,7 +915,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                     painter.style_rect(Rect::new(x, y, visible_w, 1), style);
                 }
                 x = x.saturating_add(visible_w);
-                display_col = display_col.saturating_add(width);
+                display_col += width;
                 continue;
             }
 
@@ -934,7 +948,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             }
 
             x = x.saturating_add(w);
-            display_col = display_col.saturating_add(width);
+            display_col += width;
         }
 
         flush_text_segment(painter, line, y, row_clip, &mut seg);
@@ -1175,6 +1189,64 @@ fn selection_range_for_row(
     Some((sel_start, sel_end))
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct HighlightCacheState {
+    idx: usize,
+    active_end: usize,
+    active_style: Option<Style>,
+}
+
+#[inline]
+fn style_for_highlight_cached(
+    highlight_spans: Option<&[HighlightSpan]>,
+    state: &mut HighlightCacheState,
+    byte_offset: usize,
+    theme: &Theme,
+) -> Option<Style> {
+    let spans = highlight_spans?;
+
+    if let Some(style) = state.active_style {
+        if byte_offset < state.active_end {
+            return Some(style);
+        }
+    }
+
+    while state.idx < spans.len() && spans[state.idx].end <= byte_offset {
+        state.idx += 1;
+    }
+
+    let span = spans.get(state.idx)?;
+    if byte_offset < span.start || byte_offset >= span.end {
+        state.active_end = 0;
+        state.active_style = None;
+        return None;
+    }
+
+    let style = style_for_highlight_kind(span.kind, theme);
+    state.active_end = span.end;
+    state.active_style = Some(style);
+    Some(style)
+}
+
+#[inline]
+fn style_for_highlight_kind(kind: HighlightKind, theme: &Theme) -> Style {
+    match kind {
+        HighlightKind::Comment => Style::default().fg(theme.syntax_comment_fg),
+        HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
+        HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
+        HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
+        HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
+        HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),
+        HighlightKind::Lifetime => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::Function => Style::default().fg(theme.syntax_function_fg),
+        HighlightKind::Macro => Style::default().fg(theme.syntax_macro_fg),
+        HighlightKind::Namespace => Style::default().fg(theme.syntax_namespace_fg),
+        HighlightKind::Variable => Style::default().fg(theme.syntax_variable_fg),
+        HighlightKind::Constant => Style::default().fg(theme.syntax_constant_fg),
+    }
+}
+
 fn style_for_highlight(
     highlight_spans: Option<&[HighlightSpan]>,
     highlight_idx: &mut usize,
@@ -1192,23 +1264,7 @@ fn style_for_highlight(
         return None;
     }
 
-    let style = match span.kind {
-        HighlightKind::Comment => Style::default().fg(theme.syntax_comment_fg),
-        HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
-        HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
-        HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
-        HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
-        HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
-        HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),
-        HighlightKind::Lifetime => Style::default().fg(theme.syntax_keyword_fg),
-        HighlightKind::Function => Style::default().fg(theme.syntax_function_fg),
-        HighlightKind::Macro => Style::default().fg(theme.syntax_macro_fg),
-        HighlightKind::Namespace => Style::default().fg(theme.syntax_namespace_fg),
-        HighlightKind::Variable => Style::default().fg(theme.syntax_variable_fg),
-        HighlightKind::Constant => Style::default().fg(theme.syntax_constant_fg),
-    };
-
-    Some(style)
+    Some(style_for_highlight_kind(span.kind, theme))
 }
 
 fn search_match_bg(

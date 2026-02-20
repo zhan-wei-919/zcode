@@ -1,5 +1,7 @@
 use super::*;
-use crate::kernel::editor::{EditorPaneState, EditorTabState, SearchBarMode, TabId};
+use crate::kernel::editor::{
+    EditorPaneState, EditorTabState, HighlightKind, HighlightSpan, SearchBarMode, TabId,
+};
 use crate::kernel::services::ports::{EditorConfig, Match};
 use crate::models::{Granularity, Selection};
 use crate::ui::backend::test::TestBackend;
@@ -576,6 +578,94 @@ fn paint_editor_tabs_truncate_titles_with_ellipsis_in_narrow_width() {
         has_ellipsis,
         "tab titles should use ellipsis when compressed"
     );
+}
+
+#[test]
+fn style_for_highlight_respects_span_boundaries() {
+    let theme = Theme::default();
+    let spans = vec![HighlightSpan {
+        start: 2,
+        end: 5,
+        kind: HighlightKind::Comment,
+    }];
+    let mut idx = 0usize;
+    let expected = crate::ui::core::style::Style::default().fg(theme.syntax_comment_fg);
+
+    assert_eq!(style_for_highlight(Some(&spans), &mut idx, 0, &theme), None);
+    assert_eq!(
+        style_for_highlight(Some(&spans), &mut idx, 2, &theme),
+        Some(expected)
+    );
+    assert_eq!(
+        style_for_highlight(Some(&spans), &mut idx, 4, &theme),
+        Some(expected)
+    );
+    assert_eq!(style_for_highlight(Some(&spans), &mut idx, 5, &theme), None);
+}
+
+#[test]
+fn style_for_highlight_advances_across_gaps() {
+    let theme = Theme::default();
+    let spans = vec![
+        HighlightSpan {
+            start: 0,
+            end: 2,
+            kind: HighlightKind::Keyword,
+        },
+        HighlightSpan {
+            start: 4,
+            end: 7,
+            kind: HighlightKind::String,
+        },
+    ];
+    let mut idx = 0usize;
+    let keyword_style = crate::ui::core::style::Style::default().fg(theme.syntax_keyword_fg);
+    let string_style = crate::ui::core::style::Style::default().fg(theme.syntax_string_fg);
+
+    assert_eq!(
+        style_for_highlight(Some(&spans), &mut idx, 0, &theme),
+        Some(keyword_style)
+    );
+    assert_eq!(
+        style_for_highlight(Some(&spans), &mut idx, 1, &theme),
+        Some(keyword_style)
+    );
+    assert_eq!(style_for_highlight(Some(&spans), &mut idx, 2, &theme), None);
+    assert_eq!(style_for_highlight(Some(&spans), &mut idx, 3, &theme), None);
+    assert_eq!(
+        style_for_highlight(Some(&spans), &mut idx, 4, &theme),
+        Some(string_style)
+    );
+    assert_eq!(
+        style_for_highlight(Some(&spans), &mut idx, 6, &theme),
+        Some(string_style)
+    );
+    assert_eq!(style_for_highlight(Some(&spans), &mut idx, 7, &theme), None);
+}
+
+#[test]
+fn style_for_highlight_cached_matches_non_cached_lookup() {
+    let theme = Theme::default();
+    let spans = vec![
+        HighlightSpan {
+            start: 0,
+            end: 2,
+            kind: HighlightKind::Keyword,
+        },
+        HighlightSpan {
+            start: 4,
+            end: 7,
+            kind: HighlightKind::String,
+        },
+    ];
+
+    let mut idx = 0usize;
+    let mut state = HighlightCacheState::default();
+    for byte in 0..8 {
+        let expected = style_for_highlight(Some(&spans), &mut idx, byte, &theme);
+        let actual = style_for_highlight_cached(Some(&spans), &mut state, byte, &theme);
+        assert_eq!(actual, expected, "byte offset {byte}");
+    }
 }
 
 #[test]
