@@ -904,6 +904,10 @@ impl Workbench {
     }
 
     fn sync_markdown_views(&mut self) {
+        if self.markdown_views.is_empty() {
+            return;
+        }
+
         let mut open = FxHashSet::default();
         for pane in &self.store.state().editor.panes {
             for tab in &pane.tabs {
