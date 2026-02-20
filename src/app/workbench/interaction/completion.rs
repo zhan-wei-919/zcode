@@ -2,11 +2,10 @@ use super::super::Workbench;
 use crate::core::Command;
 use crate::kernel::lsp_registry;
 use crate::kernel::store::strategy_for_tab;
-use crate::kernel::FocusTarget;
-use std::time::Instant;
+use crate::kernel::{Action as KernelAction, FocusTarget};
 
 impl Workbench {
-    pub(super) fn maybe_schedule_completion_debounce(&mut self, cmd: &Command) {
+    pub(super) fn maybe_trigger_completion(&mut self, cmd: &Command) {
         if self.store.state().ui.focus != FocusTarget::Editor {
             return;
         }
@@ -52,40 +51,29 @@ impl Workbench {
             return;
         }
 
-        self.lsp_debounce.completion = Some(Instant::now());
+        let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::LspCompletion));
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::app::workbench::interaction::classify_lsp_edit_trigger;
-    use crate::core::Command;
+    use super::*;
     use crate::kernel::editor::TabId;
     use crate::kernel::services::ports::EditorConfig;
-    use crate::kernel::store::strategy_for_tab;
     use std::path::PathBuf;
-    use std::time::{Duration, Instant};
 
     #[test]
-    fn completion_schedule_is_immediate() {
+    fn completion_schedule_gate_checks_context() {
         let config = EditorConfig::default();
         let mut tab = crate::kernel::editor::EditorTabState::from_file(
             TabId::new(1),
             PathBuf::from("test.rs"),
-            "pri",
+            "// comment",
             &config,
         );
-        tab.buffer.set_cursor(0, 3);
+        tab.buffer.set_cursor(0, 2);
 
-        let start = Instant::now();
-        let timing = config.lsp_input_timing.clone();
-        let trigger = classify_lsp_edit_trigger(&Command::InsertChar('x'), &timing)
-            .expect("insert trigger should exist");
-        let _ = trigger;
-        let deadline = Instant::now();
-
-        assert!(deadline <= start + Duration::from_millis(5));
         let strategy = strategy_for_tab(&tab);
-        assert!(strategy.context_allows_completion(&tab));
+        assert!(!strategy.context_allows_completion(&tab));
     }
 }

@@ -41,7 +41,6 @@ impl Workbench {
             self.hover_popup.last_request = None;
             self.hover_popup.last_anchor = None;
         }
-        self.lsp_debounce.completion = None;
         self.lsp_debounce.inlay_hints = None;
         self.lsp_debounce.folding_range = None;
         if self.store.state().ui.focus == FocusTarget::BottomPanel
@@ -286,7 +285,7 @@ impl Workbench {
 
             let cmd_for_schedule = cmd.clone();
             let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd));
-            self.maybe_schedule_completion_debounce(&cmd_for_schedule);
+            self.maybe_trigger_completion(&cmd_for_schedule);
             self.maybe_schedule_semantic_tokens_debounce(&cmd_for_schedule);
             self.maybe_schedule_inlay_hints_debounce(&cmd_for_schedule);
             self.maybe_schedule_folding_range_debounce(&cmd_for_schedule);
@@ -317,7 +316,7 @@ impl Workbench {
                 (KeyCode::Char(ch), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
                     let cmd = Command::InsertChar(ch);
                     let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd.clone()));
-                    self.maybe_schedule_completion_debounce(&cmd);
+                    self.maybe_trigger_completion(&cmd);
                     self.maybe_schedule_semantic_tokens_debounce(&cmd);
                     self.maybe_schedule_inlay_hints_debounce(&cmd);
                     self.maybe_schedule_folding_range_debounce(&cmd);

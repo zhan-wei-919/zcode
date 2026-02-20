@@ -165,7 +165,6 @@ struct CompletionDocState {
 
 #[derive(Debug, Default)]
 struct LspDebounceState {
-    completion: Option<Instant>,
     semantic_tokens: Option<Instant>,
     inlay_hints: Option<Instant>,
     folding_range: Option<Instant>,

@@ -1479,8 +1479,7 @@ impl Store {
                     let tab_supports_completion = caps.is_none_or(|caps| caps.completion);
                     let tab_supports_completion_resolve =
                         caps.is_none_or(|caps| caps.completion_resolve);
-                    let tab_supports_signature_help =
-                        caps.is_none_or(|caps| caps.signature_help);
+                    let tab_supports_signature_help = caps.is_none_or(|caps| caps.signature_help);
 
                     let completion_triggers: &[char] = caps
                         .map(|caps| caps.completion_triggers.as_slice())

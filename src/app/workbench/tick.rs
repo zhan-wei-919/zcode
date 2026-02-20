@@ -26,7 +26,6 @@ impl Workbench {
         changed |= self.poll_logs();
         changed |= self.poll_settings();
         self.store.tick();
-        changed |= self.poll_completion_debounce();
         changed |= self.poll_semantic_tokens_debounce();
         changed |= self.poll_inlay_hints_debounce();
         changed |= self.poll_folding_range_debounce();
@@ -373,40 +372,6 @@ impl Workbench {
                 },
             );
         }
-        false
-    }
-
-    fn poll_completion_debounce(&mut self) -> bool {
-        let Some(deadline) = self.lsp_debounce.completion else {
-            return false;
-        };
-        let now = Instant::now();
-        if now < deadline {
-            return false;
-        }
-
-        let overshoot = now.duration_since(deadline);
-        if overshoot.as_millis() > 5 {
-            tracing::debug!(
-                overshoot_ms = overshoot.as_millis() as u64,
-                target = "lsp.pipeline",
-                "completion debounce overshoot"
-            );
-        }
-
-        self.lsp_debounce.completion = None;
-
-        if self.store.state().ui.focus != FocusTarget::Editor {
-            return false;
-        }
-        if self.store.state().ui.command_palette.visible
-            || self.store.state().ui.input_dialog.visible
-            || self.store.state().ui.confirm_dialog.visible
-        {
-            return false;
-        }
-
-        let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::LspCompletion));
         false
     }
 
