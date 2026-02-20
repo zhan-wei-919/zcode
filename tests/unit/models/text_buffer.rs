@@ -83,6 +83,34 @@ fn test_delete_forward_removes_single_combining_grapheme() {
 }
 
 #[test]
+fn test_delete_backward_keeps_char_offset_cache_for_next_insert() {
+    let mut buffer = TextBuffer::from_text("e\u{301}x");
+    buffer.set_cursor(0, 1);
+
+    let _ = buffer
+        .delete_backward_op(OpId::root())
+        .expect("delete backward");
+    let _ = buffer.insert_char_op('a', OpId::root());
+
+    assert_eq!(buffer.text(), "ax");
+    assert_eq!(buffer.cursor(), (0, 1));
+}
+
+#[test]
+fn test_delete_forward_keeps_char_offset_cache_for_next_insert() {
+    let mut buffer = TextBuffer::from_text("ab\ncd");
+    buffer.set_cursor(0, 2);
+
+    let _ = buffer
+        .delete_forward_op(OpId::root())
+        .expect("delete forward");
+    let _ = buffer.insert_char_op('X', OpId::root());
+
+    assert_eq!(buffer.text(), "abXcd");
+    assert_eq!(buffer.cursor(), (0, 3));
+}
+
+#[test]
 fn test_line_grapheme_len() {
     let buffer = TextBuffer::from_text("hello\nworld\n");
 

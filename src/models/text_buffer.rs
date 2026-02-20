@@ -338,7 +338,7 @@ impl TextBuffer {
             self.rope.remove(start..end);
             let cursor_after = (row, col - 1);
             self.cursor = cursor_after;
-            self.invalidate_char_pos_cache();
+            self.cached_char_pos = Some(start);
 
             Some(EditOp::delete(
                 parent,
@@ -357,7 +357,7 @@ impl TextBuffer {
             self.rope.remove(start..end);
             let cursor_after = (row - 1, prev_len);
             self.cursor = cursor_after;
-            self.invalidate_char_pos_cache();
+            self.cached_char_pos = Some(start);
 
             Some(EditOp::delete(
                 parent,
@@ -384,7 +384,7 @@ impl TextBuffer {
 
             self.rope.remove(start..end);
             // 光标位置不变
-            self.invalidate_char_pos_cache();
+            self.cached_char_pos = Some(start);
 
             Some(EditOp::delete(
                 parent,
@@ -401,7 +401,7 @@ impl TextBuffer {
 
             self.rope.remove(start..end);
             // 光标位置不变
-            self.invalidate_char_pos_cache();
+            self.cached_char_pos = Some(start);
 
             Some(EditOp::delete(
                 parent,
@@ -434,7 +434,7 @@ impl TextBuffer {
         let cursor_after = start_pos;
         self.cursor = cursor_after;
         self.selection = None;
-        self.invalidate_char_pos_cache();
+        self.cached_char_pos = Some(start_char);
 
         Some(EditOp::delete(
             parent,
