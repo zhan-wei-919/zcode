@@ -281,6 +281,7 @@ pub struct Workbench {
     file_save_versions: FxHashMap<(usize, PathBuf), u64>,
     lsp_open_paths_version: u64,
     lsp_open_paths: FxHashSet<PathBuf>,
+    file_watcher_open_paths_version: u64,
     theme: UiTheme,
     ui_theme: crate::ui::core::theme::Theme,
     terminal_color_support: TerminalColorSupport,
@@ -464,6 +465,7 @@ impl Workbench {
         );
         let panes = store.state().ui.editor_layout.panes.max(1);
         let lsp_open_paths_version = store.state().editor.open_paths_version;
+        let file_watcher_open_paths_version = store.state().editor.open_paths_version;
 
         let core_theme = crate::app::theme::to_core_theme(&theme);
         let ui_theme =
@@ -488,6 +490,7 @@ impl Workbench {
             file_save_versions: FxHashMap::default(),
             lsp_open_paths_version,
             lsp_open_paths: FxHashSet::default(),
+            file_watcher_open_paths_version,
             theme,
             ui_theme,
             terminal_color_support,

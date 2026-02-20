@@ -614,16 +614,21 @@ impl Workbench {
             return;
         };
 
-        let mut current_paths = FxHashSet::default();
-        for pane in &self.store.state().editor.panes {
-            for tab in &pane.tabs {
-                if let Some(path) = tab.path.as_ref() {
-                    current_paths.insert(path.clone());
-                }
-            }
+        let open_paths_version = self.store.state().editor.open_paths_version;
+        if open_paths_version == self.file_watcher_open_paths_version {
+            return;
         }
 
-        watcher.sync_open_files(current_paths.iter().map(|path| path.as_path()));
+        let paths = self
+            .store
+            .state()
+            .editor
+            .panes
+            .iter()
+            .flat_map(|pane| pane.tabs.iter())
+            .filter_map(|tab| tab.path.as_deref());
+        watcher.sync_open_files(paths);
+        self.file_watcher_open_paths_version = open_paths_version;
     }
 
     fn sync_lsp(&mut self) {
