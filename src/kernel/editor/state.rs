@@ -1,6 +1,6 @@
 use crate::kernel::git::GitGutterMarks;
 use crate::kernel::services::ports::{EditorConfig, LspFoldingRange, Match};
-use crate::models::{EditHistory, EditOp, OpId, OpKind, TextBuffer};
+use crate::models::{EditHistory, EditOp, Granularity, OpId, OpKind, Selection, TextBuffer};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -127,6 +127,65 @@ impl TabId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SnippetTabstop {
+    pub(crate) index: u32,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SnippetSession {
+    tabstops: Vec<SnippetTabstop>,
+    active: usize,
+}
+
+impl SnippetSession {
+    fn new(insertion_start_char: usize, tabstops: Vec<SnippetTabstop>) -> Option<Self> {
+        if tabstops.is_empty() {
+            return None;
+        }
+
+        let mut deduped: std::collections::BTreeMap<u32, SnippetTabstop> =
+            std::collections::BTreeMap::new();
+
+        for tabstop in tabstops {
+            let has = deduped.contains_key(&tabstop.index);
+            if has {
+                continue;
+            }
+
+            let start = insertion_start_char.saturating_add(tabstop.start);
+            let end = insertion_start_char.saturating_add(tabstop.end);
+            let (start, end) = if start <= end {
+                (start, end)
+            } else {
+                (end, start)
+            };
+            deduped.insert(
+                tabstop.index,
+                SnippetTabstop {
+                    index: tabstop.index,
+                    start,
+                    end,
+                },
+            );
+        }
+
+        if !deduped.keys().any(|idx| *idx > 0) {
+            return None;
+        }
+
+        let mut ordered = deduped.into_values().collect::<Vec<_>>();
+        ordered.sort_by_key(|t| if t.index == 0 { u32::MAX } else { t.index });
+
+        Some(Self {
+            tabstops: ordered,
+            active: 0,
+        })
+    }
+}
+
 pub struct EditorTabState {
     pub id: TabId,
     pub title: String,
@@ -138,6 +197,7 @@ pub struct EditorTabState {
     pub edit_version: u64,
     pub last_edit_op_id: Option<OpId>,
     pub(super) cursor_goal_col: Option<usize>,
+    snippet_session: Option<SnippetSession>,
     pub disk_state: DiskState,
     pub saved_snapshot: Option<DiskSnapshot>,
     pub last_reload_request_id: u64,
@@ -180,6 +240,7 @@ impl EditorTabState {
             edit_version: 0,
             last_edit_op_id: None,
             cursor_goal_col: None,
+            snippet_session: None,
             disk_state: DiskState::InSync,
             saved_snapshot: None,
             last_reload_request_id: 0,
@@ -216,6 +277,7 @@ impl EditorTabState {
             edit_version: 0,
             last_edit_op_id: None,
             cursor_goal_col: None,
+            snippet_session: None,
             disk_state: DiskState::InSync,
             saved_snapshot: None,
             last_reload_request_id: 0,
@@ -239,6 +301,149 @@ impl EditorTabState {
         self.git_gutter = None;
         self.inlay_hints = None;
         self.clear_folding();
+        self.snippet_session = None;
+    }
+
+    pub(crate) fn begin_snippet_session(
+        &mut self,
+        insertion_start_char: usize,
+        tabstops: Vec<SnippetTabstop>,
+    ) {
+        self.snippet_session = SnippetSession::new(insertion_start_char, tabstops);
+    }
+
+    pub(crate) fn cancel_snippet_session(&mut self) {
+        self.snippet_session = None;
+    }
+
+    pub(crate) fn snippet_active_range(&self) -> Option<((usize, usize), (usize, usize))> {
+        let session = self.snippet_session.as_ref()?;
+        let tabstop = *session.tabstops.get(session.active)?;
+
+        let len_chars = self.buffer.len_chars();
+        let start_char = tabstop.start.min(len_chars);
+        let end_char = tabstop.end.min(len_chars).max(start_char);
+
+        let start = self.buffer.cursor_pos_from_char_offset(start_char);
+        let end = self.buffer.cursor_pos_from_char_offset(end_char);
+        Some((start, end))
+    }
+
+    pub(crate) fn snippet_move_next(&mut self, tab_size: u8) -> bool {
+        let Some(session) = self.snippet_session.as_mut() else {
+            return false;
+        };
+
+        if session.active.saturating_add(1) >= session.tabstops.len() {
+            self.snippet_session = None;
+            return false;
+        }
+
+        session.active = session.active.saturating_add(1);
+        let target = session.tabstops[session.active];
+        self.apply_snippet_tabstop(target, tab_size);
+        true
+    }
+
+    pub(crate) fn snippet_move_prev(&mut self, tab_size: u8) -> bool {
+        let Some(session) = self.snippet_session.as_mut() else {
+            return false;
+        };
+
+        if session.active == 0 {
+            return false;
+        }
+
+        session.active = session.active.saturating_sub(1);
+        let target = session.tabstops[session.active];
+        self.apply_snippet_tabstop(target, tab_size);
+        true
+    }
+
+    pub(crate) fn snippet_apply_edit(&mut self, op: &EditOp) {
+        let Some(session) = self.snippet_session.as_mut() else {
+            return;
+        };
+        let Some(active) = session.tabstops.get_mut(session.active) else {
+            self.snippet_session = None;
+            return;
+        };
+
+        let (edit_start, deleted_len, inserted_len) = match &op.kind {
+            OpKind::Insert { char_offset, text } => (*char_offset, 0usize, text.chars().count()),
+            OpKind::Delete { start, end, .. } => (*start, end.saturating_sub(*start), 0usize),
+            OpKind::Replace {
+                start,
+                end,
+                inserted,
+                ..
+            } => (*start, end.saturating_sub(*start), inserted.chars().count()),
+        };
+
+        let edit_end = edit_start.saturating_add(deleted_len);
+        if edit_start < active.start || edit_end > active.end {
+            self.snippet_session = None;
+            return;
+        }
+
+        let delta = inserted_len as isize - deleted_len as isize;
+        if delta == 0 {
+            return;
+        }
+
+        active.end = (active.end as isize + delta)
+            .max(active.start as isize)
+            .max(0) as usize;
+
+        for (idx, tabstop) in session.tabstops.iter_mut().enumerate() {
+            if idx == session.active {
+                continue;
+            }
+
+            if tabstop.end <= edit_start {
+                continue;
+            }
+
+            if tabstop.start >= edit_end {
+                tabstop.start = (tabstop.start as isize + delta).max(0) as usize;
+                tabstop.end = (tabstop.end as isize + delta).max(tabstop.start as isize) as usize;
+                continue;
+            }
+
+            self.snippet_session = None;
+            return;
+        }
+
+        let len_chars = self.buffer.len_chars();
+        for tabstop in &mut session.tabstops {
+            tabstop.start = tabstop.start.min(len_chars);
+            tabstop.end = tabstop.end.min(len_chars).max(tabstop.start);
+        }
+    }
+
+    fn apply_snippet_tabstop(&mut self, tabstop: SnippetTabstop, tab_size: u8) {
+        self.viewport.follow_cursor = true;
+
+        let len_chars = self.buffer.len_chars();
+        let start_char = tabstop.start.min(len_chars);
+        let end_char = tabstop.end.min(len_chars).max(start_char);
+
+        if start_char < end_char {
+            let start = self.buffer.cursor_pos_from_char_offset(start_char);
+            let end = self.buffer.cursor_pos_from_char_offset(end_char);
+
+            self.buffer
+                .set_selection(Some(Selection::new(start, Granularity::Char)));
+            self.buffer.update_selection_cursor(end);
+            self.buffer.set_cursor(end.0, end.1);
+        } else {
+            let cursor = self.buffer.cursor_pos_from_char_offset(start_char);
+            self.buffer.clear_selection();
+            self.buffer.set_cursor(cursor.0, cursor.1);
+        }
+
+        self.reset_cursor_goal_col();
+        viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
     }
 
     pub(crate) fn reset_cursor_goal_col(&mut self) {
@@ -898,6 +1103,7 @@ impl EditorTabState {
         self.dirty = false;
         self.edit_version = self.edit_version.saturating_add(1);
         self.last_edit_op_id = None;
+        self.snippet_session = None;
         self.disk_state = DiskState::ReloadedFromDisk { at: Instant::now() };
         self.syntax = self
             .path

@@ -2148,6 +2148,92 @@ fn completion_plain_text_moves_cursor_inside_trailing_parens() {
 }
 
 #[test]
+fn snippet_tab_navigation_moves_between_placeholders() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+
+    let path = store.state.workspace_root.join("snippet.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: String::new(),
+    }));
+
+    let tab_size = store.state.editor.config.tab_size;
+    let insertion = CompletionInsertion::from_snippet("fn ${1:name}(${2:arg}) { $0 }");
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .and_then(|pane| pane.active_tab_mut())
+            .expect("tab exists");
+        assert!(tab.insert_text(&insertion.text, tab_size));
+        apply_completion_insertion_cursor(tab, &insertion, tab_size);
+    }
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert_eq!(tab.buffer.text(), "fn name(arg) {  }");
+    assert_eq!(tab.buffer.cursor(), (0, "fn name".len()));
+    assert!(tab
+        .buffer
+        .selection()
+        .is_some_and(|sel| sel.range() == ((0, 3), (0, 7))));
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertTab));
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert!(tab
+        .buffer
+        .selection()
+        .is_some_and(|sel| sel.range() == ((0, 8), (0, 11))));
+    assert_eq!(tab.buffer.cursor(), (0, 11));
+
+    let _ = store.dispatch(Action::RunCommand(Command::SnippetPrevPlaceholder));
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert!(tab
+        .buffer
+        .selection()
+        .is_some_and(|sel| sel.range() == ((0, 3), (0, 7))));
+    assert_eq!(tab.buffer.cursor(), (0, 7));
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertTab));
+    let _ = store.dispatch(Action::RunCommand(Command::InsertTab));
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert!(tab.buffer.selection().is_none());
+    assert_eq!(tab.buffer.cursor(), (0, 15));
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertTab));
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert_eq!(tab.buffer.text(), "fn name(arg) { \t }");
+}
+
+#[test]
 fn lsp_position_to_byte_offset_handles_emoji_crlf_and_out_of_bounds() {
     let mut store = new_store();
     let path = store.state.workspace_root.join("main.rs");

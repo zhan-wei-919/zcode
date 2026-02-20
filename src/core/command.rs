@@ -26,6 +26,7 @@ pub enum Command {
     InsertChar(char),
     InsertNewline,
     InsertTab,
+    SnippetPrevPlaceholder,
     DeleteBackward,
     DeleteForward,
     DeleteLine,
@@ -196,6 +197,7 @@ impl Command {
             Command::InsertChar(_) => "insertChar",
             Command::InsertNewline => "insertNewline",
             Command::InsertTab => "insertTab",
+            Command::SnippetPrevPlaceholder => "snippetPrevPlaceholder",
             Command::DeleteBackward => "deleteBackward",
             Command::DeleteForward => "deleteForward",
             Command::DeleteLine => "deleteLine",
@@ -335,6 +337,7 @@ impl Command {
             "cursorWordRight" => Command::CursorWordRight,
             "insertNewline" => Command::InsertNewline,
             "insertTab" => Command::InsertTab,
+            "snippetPrevPlaceholder" => Command::SnippetPrevPlaceholder,
             "deleteBackward" => Command::DeleteBackward,
             "deleteForward" => Command::DeleteForward,
             "deleteLine" => Command::DeleteLine,
@@ -505,6 +508,7 @@ impl Command {
                 | Command::ExtendSelectionLineEnd
                 | Command::ExtendSelectionWordLeft
                 | Command::ExtendSelectionWordRight
+                | Command::SnippetPrevPlaceholder
         )
     }
 }

@@ -208,6 +208,10 @@ fn default_editor_keybindings() -> FxHashMap<Key, Command> {
 
     bindings.insert(Key::simple(KeyCode::Enter), Command::InsertNewline);
     bindings.insert(Key::simple(KeyCode::Tab), Command::InsertTab);
+    bindings.insert(
+        Key::simple(KeyCode::BackTab),
+        Command::SnippetPrevPlaceholder,
+    );
     bindings.insert(Key::simple(KeyCode::Backspace), Command::DeleteBackward);
     bindings.insert(Key::simple(KeyCode::Delete), Command::DeleteForward);
     bindings.insert(Key::ctrl(KeyCode::Char('d')), Command::DeleteLine);

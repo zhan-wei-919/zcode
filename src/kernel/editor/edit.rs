@@ -64,6 +64,36 @@ impl EditorTabState {
     ) -> (bool, Vec<crate::kernel::Effect>) {
         use crate::kernel::Effect;
 
+        if matches!(
+            command,
+            Command::Undo
+                | Command::Redo
+                | Command::CursorLeft
+                | Command::CursorRight
+                | Command::CursorUp
+                | Command::CursorDown
+                | Command::CursorLineStart
+                | Command::CursorLineEnd
+                | Command::CursorFileStart
+                | Command::CursorFileEnd
+                | Command::CursorWordLeft
+                | Command::CursorWordRight
+                | Command::ClearSelection
+                | Command::SelectAll
+                | Command::SelectWord
+                | Command::SelectLine
+                | Command::ExtendSelectionLeft
+                | Command::ExtendSelectionRight
+                | Command::ExtendSelectionUp
+                | Command::ExtendSelectionDown
+                | Command::ExtendSelectionLineStart
+                | Command::ExtendSelectionLineEnd
+                | Command::ExtendSelectionWordLeft
+                | Command::ExtendSelectionWordRight
+        ) {
+            self.cancel_snippet_session();
+        }
+
         self.viewport.follow_cursor = true;
         let tab_size = config.tab_size;
 
@@ -253,10 +283,14 @@ impl EditorTabState {
                 changed
             }
             Command::InsertTab => {
+                if self.snippet_move_next(tab_size) {
+                    return true;
+                }
                 let mut changed = self.delete_selection(tab_size);
                 changed |= self.insert_char('\t', tab_size);
                 changed
             }
+            Command::SnippetPrevPlaceholder => self.snippet_move_prev(tab_size),
             Command::DeleteBackward => {
                 if !self.delete_selection(tab_size) {
                     self.delete_backward(tab_size)
@@ -716,6 +750,7 @@ impl EditorTabState {
     }
 
     fn commit_op(&mut self, op: EditOp, tab_size: u8) {
+        self.snippet_apply_edit(&op);
         self.apply_syntax_edit(&op);
         self.invalidate_semantic_highlight_on_edit(&op);
         self.last_edit_op_id = Some(op.id);
@@ -965,6 +1000,7 @@ impl EditorTabState {
     }
 
     fn undo(&mut self, tab_size: u8) -> bool {
+        self.cancel_snippet_session();
         if let Some((rope, cursor)) = self.history.undo(self.buffer.rope()) {
             self.buffer.set_rope(rope);
             self.buffer.set_cursor(cursor.0, cursor.1);
@@ -980,6 +1016,7 @@ impl EditorTabState {
     }
 
     fn redo(&mut self, tab_size: u8) -> bool {
+        self.cancel_snippet_session();
         if let Some((rope, cursor)) = self.history.redo(self.buffer.rope()) {
             self.buffer.set_rope(rope);
             self.buffer.set_cursor(cursor.0, cursor.1);

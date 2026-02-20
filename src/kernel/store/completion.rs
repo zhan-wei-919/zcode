@@ -1,4 +1,5 @@
 use crate::kernel::editor::EditorTabState;
+use crate::kernel::editor::SnippetTabstop;
 use crate::kernel::language::LanguageId;
 use crate::kernel::services::ports::{
     LspCompletionItem, LspInsertTextFormat, LspPositionEncoding, LspRange,
@@ -232,6 +233,7 @@ pub(super) struct SnippetExpansion {
     pub(super) text: String,
     pub(super) cursor: Option<usize>,
     pub(super) selection: Option<(usize, usize)>,
+    pub(super) tabstops: Vec<SnippetTabstop>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,6 +241,7 @@ pub(super) struct CompletionInsertion {
     pub(super) text: String,
     pub(super) cursor: Option<usize>,
     pub(super) selection: Option<(usize, usize)>,
+    pub(super) tabstops: Vec<SnippetTabstop>,
 }
 
 impl CompletionInsertion {
@@ -250,6 +253,7 @@ impl CompletionInsertion {
             text,
             cursor,
             selection: None,
+            tabstops: Vec::new(),
         }
     }
 
@@ -259,6 +263,7 @@ impl CompletionInsertion {
             text: expanded.text,
             cursor: expanded.cursor,
             selection: expanded.selection,
+            tabstops: expanded.tabstops,
         }
     }
 
@@ -422,6 +427,15 @@ pub(super) fn adjust_completion_multiline_indentation(
         selection: insertion
             .selection
             .map(|(start, end)| (remap(start), remap(end))),
+        tabstops: insertion
+            .tabstops
+            .into_iter()
+            .map(|tabstop| SnippetTabstop {
+                index: tabstop.index,
+                start: remap(tabstop.start),
+                end: remap(tabstop.end),
+            })
+            .collect(),
     }
 }
 
@@ -466,6 +480,8 @@ pub(super) fn apply_completion_insertion_cursor(
         return;
     }
 
+    tab.cancel_snippet_session();
+
     let inserted_chars = insertion.text.chars().count();
     if inserted_chars == 0 {
         return;
@@ -485,6 +501,10 @@ pub(super) fn apply_completion_insertion_cursor(
     }
 
     tab.viewport.follow_cursor = true;
+
+    if !insertion.tabstops.is_empty() {
+        tab.begin_snippet_session(start_char, insertion.tabstops.clone());
+    }
 
     if let Some((mut sel_start_rel, mut sel_end_rel)) = insertion.selection {
         if sel_start_rel > sel_end_rel {
@@ -515,6 +535,7 @@ pub(super) fn expand_snippet(snippet: &str) -> SnippetExpansion {
     let mut out = String::with_capacity(snippet.len());
     let mut out_chars = 0usize;
 
+    let mut tabstops = Vec::<SnippetTabstop>::new();
     let mut best_placeholder: Option<(u32, usize, usize)> = None;
     let mut best_tabstop: Option<(u32, usize)> = None;
     let mut final_cursor: Option<usize> = None;
@@ -598,8 +619,15 @@ pub(super) fn expand_snippet(snippet: &str) -> SnippetExpansion {
                                     best_placeholder = Some((index, start, end));
                                 }
                             }
+
+                            tabstops.push(SnippetTabstop { index, start, end });
                         } else if index == 0 {
                             final_cursor = Some(out_chars);
+                            tabstops.push(SnippetTabstop {
+                                index,
+                                start: out_chars,
+                                end: out_chars,
+                            });
                         } else if index > 0 {
                             let replace = best_tabstop
                                 .as_ref()
@@ -607,6 +635,11 @@ pub(super) fn expand_snippet(snippet: &str) -> SnippetExpansion {
                             if replace {
                                 best_tabstop = Some((index, out_chars));
                             }
+                            tabstops.push(SnippetTabstop {
+                                index,
+                                start: out_chars,
+                                end: out_chars,
+                            });
                         }
 
                         continue;
@@ -622,6 +655,11 @@ pub(super) fn expand_snippet(snippet: &str) -> SnippetExpansion {
                     }
                     if num == 0 {
                         final_cursor = Some(out_chars);
+                        tabstops.push(SnippetTabstop {
+                            index: 0,
+                            start: out_chars,
+                            end: out_chars,
+                        });
                     } else {
                         let replace = best_tabstop
                             .as_ref()
@@ -629,6 +667,11 @@ pub(super) fn expand_snippet(snippet: &str) -> SnippetExpansion {
                         if replace {
                             best_tabstop = Some((num, out_chars));
                         }
+                        tabstops.push(SnippetTabstop {
+                            index: num,
+                            start: out_chars,
+                            end: out_chars,
+                        });
                     }
                 }
                 _ => {
@@ -655,6 +698,7 @@ pub(super) fn expand_snippet(snippet: &str) -> SnippetExpansion {
         text: out,
         cursor,
         selection,
+        tabstops,
     }
 }
 
@@ -1083,6 +1127,7 @@ mod tests {
                 .count(),
             ),
             selection: None,
+            tabstops: Vec::new(),
         };
 
         let adjusted = adjust_completion_multiline_indentation(&tab, 1, insertion);
@@ -1126,6 +1171,7 @@ mod tests {
                 .count(),
             ),
             selection: None,
+            tabstops: Vec::new(),
         };
 
         let adjusted = adjust_completion_multiline_indentation(&tab, 1, insertion.clone());

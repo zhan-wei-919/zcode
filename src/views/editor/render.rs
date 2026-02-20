@@ -715,6 +715,9 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         .bg(theme.palette_selected_bg)
         .fg(theme.palette_selected_fg);
 
+    let snippet_style = Style::default().bg(theme.palette_selected_bg);
+    let snippet_span = tab.snippet_active_range();
+
     // Indent guides should be subtle like VSCode/Helix (no "full bar" feeling).
     let indent_guide_style = Style::default().fg(theme.indent_guide_fg).add_mod(Mod::DIM);
 
@@ -771,6 +774,8 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         }
 
         let selection_range = selection_range_for_row(selection, row).unwrap_or((0, 0));
+        let snippet_range = snippet_range_for_row(snippet_span, row).unwrap_or((0, 0));
+        let has_snippet = snippet_range.0 != snippet_range.1;
 
         // For markdown cursor lines, use markdown source highlighting if no tree-sitter
         let highlight_spans = if is_markdown {
@@ -900,6 +905,10 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                     ) {
                         style = style.bg(bg);
                     }
+                }
+
+                if has_snippet && g_idx >= snippet_range.0 && g_idx < snippet_range.1 {
+                    style = style.patch(snippet_style);
                 }
             }
 
@@ -1187,6 +1196,32 @@ fn selection_range_for_row(
     };
 
     Some((sel_start, sel_end))
+}
+
+fn snippet_range_for_row(
+    snippet: Option<((usize, usize), (usize, usize))>,
+    row: usize,
+) -> Option<(usize, usize)> {
+    let ((start_row, start_col), (end_row, end_col)) = snippet?;
+    if row < start_row || row > end_row {
+        return None;
+    }
+
+    let (range_start, mut range_end) = if row == start_row && row == end_row {
+        (start_col, end_col)
+    } else if row == start_row {
+        (start_col, usize::MAX)
+    } else if row == end_row {
+        (0, end_col)
+    } else {
+        (0, usize::MAX)
+    };
+
+    if range_start == range_end {
+        range_end = range_end.saturating_add(1);
+    }
+
+    Some((range_start, range_end))
 }
 
 #[derive(Clone, Copy, Debug, Default)]

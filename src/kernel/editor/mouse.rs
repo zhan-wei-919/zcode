@@ -11,6 +11,7 @@ impl EditorTabState {
         granularity: Granularity,
         tab_size: u8,
     ) -> bool {
+        self.cancel_snippet_session();
         self.viewport.follow_cursor = true;
         self.buffer.set_cursor(row, col);
         self.reset_cursor_goal_col();
@@ -21,6 +22,7 @@ impl EditorTabState {
     }
 
     pub fn extend_selection(&mut self, row: usize, col: usize, tab_size: u8) -> bool {
+        self.cancel_snippet_session();
         self.viewport.follow_cursor = true;
         self.buffer.update_selection_cursor((row, col));
         self.buffer.set_cursor(row, col);
@@ -30,6 +32,7 @@ impl EditorTabState {
     }
 
     pub fn end_selection_gesture(&mut self) -> bool {
+        self.cancel_snippet_session();
         if self
             .buffer
             .selection()

@@ -1,6 +1,7 @@
 use super::*;
 use crate::kernel::editor::{
-    EditorPaneState, EditorTabState, HighlightKind, HighlightSpan, SearchBarMode, TabId,
+    EditorPaneState, EditorTabState, HighlightKind, HighlightSpan, SearchBarMode, SnippetTabstop,
+    TabId,
 };
 use crate::kernel::services::ports::{EditorConfig, Match};
 use crate::models::{Granularity, Selection};
@@ -235,6 +236,67 @@ fn paint_editor_pane_selection_background_overrides_search_match_background() {
     let y = layout.content_area.y;
     let cell = buf.cell(layout.content_area.x + 13, y).unwrap();
     assert_eq!(cell.style.bg, Some(theme.palette_selected_bg));
+}
+
+#[test]
+fn paint_editor_pane_snippet_placeholder_background_highlights_active_tabstop() {
+    let config = EditorConfig::default();
+    let mut pane = EditorPaneState::new(&config);
+
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("snippet.rs"),
+        "fn name(arg) {  }\n",
+        &config,
+    );
+    tab.buffer.clear_selection();
+    tab.buffer.set_cursor(0, 0);
+    tab.begin_snippet_session(
+        0,
+        vec![
+            SnippetTabstop {
+                index: 1,
+                start: 3,
+                end: 7,
+            },
+            SnippetTabstop {
+                index: 2,
+                start: 8,
+                end: 11,
+            },
+            SnippetTabstop {
+                index: 0,
+                start: 15,
+                end: 15,
+            },
+        ],
+    );
+    pane.tabs.push(tab);
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
+    let theme = Theme::default();
+    let mut painter = Painter::new();
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &theme,
+        default_render_options(true),
+        None,
+    );
+
+    let mut backend = TestBackend::new(layout.area.w, layout.area.h);
+    backend.draw(layout.area, painter.cmds());
+    let buf = backend.buffer();
+
+    let y = layout.content_area.y;
+    let highlighted = buf.cell(layout.content_area.x + 3, y).unwrap();
+    let untouched = buf.cell(layout.content_area.x + 1, y).unwrap();
+    assert_eq!(highlighted.symbol, "n");
+    assert_eq!(highlighted.style.bg, Some(theme.palette_selected_bg));
+    assert_eq!(untouched.style.bg, Some(theme.editor_bg));
 }
 
 #[test]
