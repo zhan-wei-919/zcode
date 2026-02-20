@@ -7,6 +7,7 @@ default-run = "zcode"
 [dependencies]
 ratatui = { version = "0.28", optional = true }
 crossterm = { version = "0.27", optional = true }
+compact_str = { version = "0.8.1", features = ["serde"] }
 ropey = "1.6.0"
 unicode-segmentation = "1.10"
 unicode-width = "0.1"

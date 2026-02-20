@@ -1,5 +1,6 @@
 use super::*;
 use crate::models::{EditOp, OpId};
+use compact_str::CompactString;
 use ropey::Rope;
 use std::path::Path;
 use std::sync::Arc;
@@ -681,7 +682,7 @@ fn test_apply_edit_invalidates_highlight_cache_and_updates_result() {
     let op = EditOp::insert(
         OpId::root(),
         insert_at,
-        "// note ".to_string(),
+        CompactString::new("// note "),
         (0, 0),
         (0, 0),
     );

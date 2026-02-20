@@ -215,22 +215,24 @@ impl EditorTabState {
                 if !had_selection && self.try_skip_closing(c, tab_size) {
                     return true;
                 }
-                let language = self.language();
-                if config.auto_indent
-                    && supports_auto_pairs(language)
-                    && !self.in_string_or_comment()
-                {
-                    match c {
-                        '{' => changed |= self.insert_brace_pair(tab_size),
-                        '(' => changed |= self.insert_pair('(', ')', tab_size),
-                        '[' => changed |= self.insert_pair('[', ']', tab_size),
-                        '"' => changed |= self.insert_pair('"', '"', tab_size),
-                        '\'' => changed |= self.insert_pair('\'', '\'', tab_size),
-                        _ => changed |= self.insert_char(c, tab_size),
+                if matches!(c, '{' | '(' | '[' | '"' | '\'') {
+                    let language = self.language();
+                    let can_pair = config.auto_indent
+                        && supports_auto_pairs(language)
+                        && !self.in_string_or_comment();
+                    if can_pair {
+                        match c {
+                            '{' => changed |= self.insert_brace_pair(tab_size),
+                            '(' => changed |= self.insert_pair('(', ')', tab_size),
+                            '[' => changed |= self.insert_pair('[', ']', tab_size),
+                            '"' => changed |= self.insert_pair('"', '"', tab_size),
+                            '\'' => changed |= self.insert_pair('\'', '\'', tab_size),
+                            _ => unreachable!("matches! gate ensures auto-pair chars"),
+                        }
+                        return changed;
                     }
-                } else {
-                    changed |= self.insert_char(c, tab_size);
                 }
+                changed |= self.insert_char(c, tab_size);
                 changed
             }
             Command::InsertNewline => {

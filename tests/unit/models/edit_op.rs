@@ -1,10 +1,17 @@
 use super::*;
+use compact_str::CompactString;
 use ropey::Rope;
 
 #[test]
 fn test_insert_apply() {
     let mut rope = Rope::from_str("hello");
-    let op = EditOp::insert(OpId::root(), 5, " world".to_string(), (0, 5), (0, 11));
+    let op = EditOp::insert(
+        OpId::root(),
+        5,
+        CompactString::new(" world"),
+        (0, 5),
+        (0, 11),
+    );
     op.apply(&mut rope);
     assert_eq!(rope.to_string(), "hello world");
 }
@@ -12,14 +19,21 @@ fn test_insert_apply() {
 #[test]
 fn test_delete_apply() {
     let mut rope = Rope::from_str("hello world");
-    let op = EditOp::delete(OpId::root(), 5, 11, " world".to_string(), (0, 11), (0, 5));
+    let op = EditOp::delete(
+        OpId::root(),
+        5,
+        11,
+        CompactString::new(" world"),
+        (0, 11),
+        (0, 5),
+    );
     op.apply(&mut rope);
     assert_eq!(rope.to_string(), "hello");
 }
 
 #[test]
 fn test_inverse() {
-    let insert_op = EditOp::insert(OpId::root(), 0, "hello".to_string(), (0, 0), (0, 5));
+    let insert_op = EditOp::insert(OpId::root(), 0, CompactString::new("hello"), (0, 0), (0, 5));
     let delete_kind = insert_op.inverse();
 
     let mut rope = Rope::new();
@@ -37,8 +51,8 @@ fn test_replace_apply() {
         OpId::root(),
         6,
         11,
-        "world".to_string(),
-        "rust".to_string(),
+        CompactString::new("world"),
+        CompactString::new("rust"),
         (0, 11),
         (0, 10),
     );
@@ -48,7 +62,7 @@ fn test_replace_apply() {
 
 #[test]
 fn test_serialization() {
-    let op = EditOp::insert(OpId::root(), 0, "hello".to_string(), (0, 0), (0, 5));
+    let op = EditOp::insert(OpId::root(), 0, CompactString::new("hello"), (0, 0), (0, 5));
     let json = op.to_json_line().unwrap();
     let restored = EditOp::from_json_line(&json).unwrap();
 

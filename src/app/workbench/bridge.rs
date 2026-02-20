@@ -718,7 +718,7 @@ fn lsp_change_from_tab(
             let start = lsp_position_at(tab.buffer.rope(), *char_offset, encoding);
             Some(LspTextChange {
                 range: Some(LspRange { start, end: start }),
-                text: text.clone(),
+                text: text.to_string(),
             })
         }
         OpKind::Delete { start, deleted, .. } => {
@@ -745,7 +745,7 @@ fn lsp_change_from_tab(
                     start: start_pos,
                     end: end_pos,
                 }),
-                text: inserted.clone(),
+                text: inserted.to_string(),
             })
         }
     }

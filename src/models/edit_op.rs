@@ -1,3 +1,4 @@
+use compact_str::CompactString;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -53,18 +54,18 @@ impl fmt::Display for OpId {
 pub enum OpKind {
     Insert {
         char_offset: usize,
-        text: String,
+        text: CompactString,
     },
     Delete {
         start: usize,
         end: usize,
-        deleted: String,
+        deleted: CompactString,
     },
     Replace {
         start: usize,
         end: usize,
-        deleted: String,
-        inserted: String,
+        deleted: CompactString,
+        inserted: CompactString,
     },
 }
 
@@ -81,7 +82,7 @@ impl EditOp {
     pub fn insert(
         parent: OpId,
         char_offset: usize,
-        text: String,
+        text: CompactString,
         cursor_before: (usize, usize),
         cursor_after: (usize, usize),
     ) -> Self {
@@ -98,7 +99,7 @@ impl EditOp {
         parent: OpId,
         start: usize,
         end: usize,
-        deleted: String,
+        deleted: CompactString,
         cursor_before: (usize, usize),
         cursor_after: (usize, usize),
     ) -> Self {
@@ -119,8 +120,8 @@ impl EditOp {
         parent: OpId,
         start: usize,
         end: usize,
-        deleted: String,
-        inserted: String,
+        deleted: CompactString,
+        inserted: CompactString,
         cursor_before: (usize, usize),
         cursor_after: (usize, usize),
     ) -> Self {
@@ -188,7 +189,7 @@ impl OpKind {
     pub fn apply(&self, rope: &mut ropey::Rope) {
         match self {
             OpKind::Insert { char_offset, text } => {
-                rope.insert(*char_offset, text);
+                rope.insert(*char_offset, text.as_str());
             }
             OpKind::Delete { start, end, .. } => {
                 rope.remove(*start..*end);
@@ -200,7 +201,7 @@ impl OpKind {
                 ..
             } => {
                 rope.remove(*start..*end);
-                rope.insert(*start, inserted);
+                rope.insert(*start, inserted.as_str());
             }
         }
     }

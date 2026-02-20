@@ -7,6 +7,7 @@
 
 use super::edit_op::{EditOp, OpId};
 use super::selection::Selection;
+use compact_str::CompactString;
 use ropey::{Rope, RopeSlice};
 use std::borrow::Cow;
 use std::io::{self, Write};
@@ -17,6 +18,13 @@ pub fn slice_to_cow(slice: RopeSlice<'_>) -> Cow<'_, str> {
     match slice.as_str() {
         Some(s) => Cow::Borrowed(s),
         None => Cow::Owned(slice.to_string()),
+    }
+}
+
+fn slice_to_compact(slice: RopeSlice<'_>) -> CompactString {
+    match slice.as_str() {
+        Some(s) => CompactString::new(s),
+        None => CompactString::from(slice.to_string()),
     }
 }
 
@@ -273,13 +281,9 @@ impl TextBuffer {
         self.cursor = cursor_after;
         self.cached_char_pos = Some(cursor_after_char_offset);
 
-        EditOp::insert(
-            parent,
-            char_offset,
-            c.to_string(),
-            cursor_before,
-            cursor_after,
-        )
+        let mut text = CompactString::default();
+        text.push(c);
+        EditOp::insert(parent, char_offset, text, cursor_before, cursor_after)
     }
 
     /// 插入字符串，返回 EditOp
@@ -297,7 +301,7 @@ impl TextBuffer {
         EditOp::insert(
             parent,
             char_offset,
-            s.to_string(),
+            CompactString::new(s),
             cursor_before,
             cursor_after,
         )
@@ -320,7 +324,7 @@ impl TextBuffer {
         EditOp::insert(
             parent,
             char_offset,
-            s.to_string(),
+            CompactString::new(s),
             cursor_before,
             cursor_after,
         )
@@ -333,7 +337,13 @@ impl TextBuffer {
 
         if col > 0 {
             let (start, end) = self.char_range_for_grapheme_range_same_row(row, col - 1, col);
-            let deleted: String = self.rope.slice(start..end).to_string();
+            let deleted = if end == start.saturating_add(1) && start < self.rope.len_chars() {
+                let mut text = CompactString::default();
+                text.push(self.rope.char(start));
+                text
+            } else {
+                slice_to_compact(self.rope.slice(start..end))
+            };
 
             self.rope.remove(start..end);
             let cursor_after = (row, col - 1);
@@ -352,7 +362,7 @@ impl TextBuffer {
             let prev_len = self.line_grapheme_len(row - 1);
             let start = self.pos_to_char((row, 0)) - 1;
             let end = start + 1;
-            let deleted = "\n".to_string();
+            let deleted = CompactString::new("\n");
 
             self.rope.remove(start..end);
             let cursor_after = (row - 1, prev_len);
@@ -380,7 +390,13 @@ impl TextBuffer {
 
         if col < line_len {
             let (start, end) = self.char_range_for_grapheme_range_same_row(row, col, col + 1);
-            let deleted: String = self.rope.slice(start..end).to_string();
+            let deleted = if end == start.saturating_add(1) && start < self.rope.len_chars() {
+                let mut text = CompactString::default();
+                text.push(self.rope.char(start));
+                text
+            } else {
+                slice_to_compact(self.rope.slice(start..end))
+            };
 
             self.rope.remove(start..end);
             // 光标位置不变
@@ -397,7 +413,7 @@ impl TextBuffer {
         } else if row + 1 < self.len_lines() {
             let start = self.pos_to_char((row, col));
             let end = start + 1;
-            let deleted = "\n".to_string();
+            let deleted = CompactString::new("\n");
 
             self.rope.remove(start..end);
             // 光标位置不变
@@ -428,7 +444,7 @@ impl TextBuffer {
         let end_char = self.pos_to_char(end_pos);
         let cursor_before = self.cursor;
 
-        let deleted: String = self.rope.slice(start_char..end_char).to_string();
+        let deleted = slice_to_compact(self.rope.slice(start_char..end_char));
         self.rope.remove(start_char..end_char);
 
         let cursor_after = start_pos;
@@ -472,7 +488,7 @@ impl TextBuffer {
         parent: OpId,
     ) -> EditOp {
         let cursor_before = self.cursor;
-        let deleted: String = self.rope.slice(start_char..end_char).to_string();
+        let deleted = slice_to_compact(self.rope.slice(start_char..end_char));
 
         self.rope.remove(start_char..end_char);
         self.rope.insert(start_char, inserted);
@@ -486,7 +502,7 @@ impl TextBuffer {
             start_char,
             end_char,
             deleted,
-            inserted.to_string(),
+            CompactString::new(inserted),
             cursor_before,
             cursor_after,
         )
@@ -500,7 +516,7 @@ impl TextBuffer {
         parent: OpId,
     ) -> EditOp {
         let cursor_before = self.cursor;
-        let deleted: String = self.rope.slice(start_char..end_char).to_string();
+        let deleted = slice_to_compact(self.rope.slice(start_char..end_char));
 
         self.rope.remove(start_char..end_char);
         self.rope.insert(start_char, inserted);
@@ -534,7 +550,7 @@ impl TextBuffer {
             start_char,
             end_char,
             deleted,
-            inserted.to_string(),
+            CompactString::new(inserted),
             cursor_before,
             cursor_after,
         )
@@ -549,7 +565,7 @@ impl TextBuffer {
     ) -> EditOp {
         let cursor_before = self.cursor;
         let cursor_before_char_offset = self.cursor_char_offset();
-        let deleted: String = self.rope.slice(start_char..end_char).to_string();
+        let deleted = slice_to_compact(self.rope.slice(start_char..end_char));
 
         self.rope.remove(start_char..end_char);
         self.rope.insert(start_char, inserted);
@@ -596,7 +612,7 @@ impl TextBuffer {
             start_char,
             end_char,
             deleted,
-            inserted.to_string(),
+            CompactString::new(inserted),
             cursor_before,
             cursor_after,
         )

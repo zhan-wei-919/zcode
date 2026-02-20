@@ -1,4 +1,5 @@
 use super::*;
+use compact_str::CompactString;
 
 #[test]
 fn test_undo_redo() {
@@ -7,7 +8,13 @@ fn test_undo_redo() {
 
     // 插入 " world"
     let mut rope = base.clone();
-    let op = EditOp::insert(history.head(), 5, " world".to_string(), (0, 5), (0, 11));
+    let op = EditOp::insert(
+        history.head(),
+        5,
+        CompactString::new(" world"),
+        (0, 5),
+        (0, 11),
+    );
     op.apply(&mut rope);
     history.push(op, &rope);
 
@@ -36,12 +43,12 @@ fn test_branch_on_edit_after_undo() {
 
     // 插入 "a"
     let mut rope = Rope::from_str("a");
-    let op_a = EditOp::insert(history.head(), 0, "a".to_string(), (0, 0), (0, 1));
+    let op_a = EditOp::insert(history.head(), 0, CompactString::new("a"), (0, 0), (0, 1));
     history.push(op_a.clone(), &rope);
 
     // 插入 "b"
     rope = Rope::from_str("ab");
-    let op_b = EditOp::insert(history.head(), 1, "b".to_string(), (0, 1), (0, 2));
+    let op_b = EditOp::insert(history.head(), 1, CompactString::new("b"), (0, 1), (0, 2));
     history.push(op_b.clone(), &rope);
 
     // Undo 一次（回到 "a"）
@@ -49,7 +56,7 @@ fn test_branch_on_edit_after_undo() {
 
     // 插入 "c"（创建分支）
     rope = Rope::from_str("ac");
-    let op_c = EditOp::insert(history.head(), 1, "c".to_string(), (0, 1), (0, 2));
+    let op_c = EditOp::insert(history.head(), 1, CompactString::new("c"), (0, 1), (0, 2));
     history.push(op_c.clone(), &rope);
 
     // 验证分支存在
@@ -76,15 +83,15 @@ fn test_log() {
 
     // 插入 "a", "b", "c"
     let mut rope = Rope::from_str("a");
-    let op_a = EditOp::insert(history.head(), 0, "a".to_string(), (0, 0), (0, 1));
+    let op_a = EditOp::insert(history.head(), 0, CompactString::new("a"), (0, 0), (0, 1));
     history.push(op_a, &rope);
 
     rope = Rope::from_str("ab");
-    let op_b = EditOp::insert(history.head(), 1, "b".to_string(), (0, 1), (0, 2));
+    let op_b = EditOp::insert(history.head(), 1, CompactString::new("b"), (0, 1), (0, 2));
     history.push(op_b, &rope);
 
     rope = Rope::from_str("abc");
-    let op_c = EditOp::insert(history.head(), 2, "c".to_string(), (0, 2), (0, 3));
+    let op_c = EditOp::insert(history.head(), 2, CompactString::new("c"), (0, 2), (0, 3));
     history.push(op_c, &rope);
 
     // log 应该返回 c, b, a
@@ -99,13 +106,13 @@ fn test_checkout() {
 
     // 插入 "a"
     let mut rope = Rope::from_str("a");
-    let op_a = EditOp::insert(history.head(), 0, "a".to_string(), (0, 0), (0, 1));
+    let op_a = EditOp::insert(history.head(), 0, CompactString::new("a"), (0, 0), (0, 1));
     let op_a_id = op_a.id;
     history.push(op_a, &rope);
 
     // 插入 "b"
     rope = Rope::from_str("ab");
-    let op_b = EditOp::insert(history.head(), 1, "b".to_string(), (0, 1), (0, 2));
+    let op_b = EditOp::insert(history.head(), 1, CompactString::new("b"), (0, 1), (0, 2));
     history.push(op_b, &rope);
 
     // checkout 到 op_a
@@ -122,7 +129,13 @@ fn test_is_dirty() {
     assert!(!history.is_dirty());
 
     let rope = Rope::from_str("hello world");
-    let op = EditOp::insert(history.head(), 5, " world".to_string(), (0, 5), (0, 11));
+    let op = EditOp::insert(
+        history.head(),
+        5,
+        CompactString::new(" world"),
+        (0, 5),
+        (0, 11),
+    );
     history.push(op, &rope);
 
     assert!(history.is_dirty());
@@ -134,7 +147,13 @@ fn test_dirty_save_point() {
     let mut history = EditHistory::new(base.clone());
 
     let mut rope = base.clone();
-    let op = EditOp::insert(history.head(), 5, " world".to_string(), (0, 5), (0, 11));
+    let op = EditOp::insert(
+        history.head(),
+        5,
+        CompactString::new(" world"),
+        (0, 5),
+        (0, 11),
+    );
     op.apply(&mut rope);
     history.push(op, &rope);
 
@@ -156,7 +175,7 @@ fn push_without_backup_does_not_queue_pending_ops() {
     let mut history = EditHistory::new(base.clone());
 
     let mut rope = base.clone();
-    let op = EditOp::insert(history.head(), 0, "a".to_string(), (0, 0), (0, 1));
+    let op = EditOp::insert(history.head(), 0, CompactString::new("a"), (0, 0), (0, 1));
     op.apply(&mut rope);
     history.push(op, &rope);
 
@@ -184,7 +203,7 @@ fn push_with_backup_queues_pending_ops() {
         });
 
     let mut rope = base.clone();
-    let op = EditOp::insert(history.head(), 0, "a".to_string(), (0, 0), (0, 1));
+    let op = EditOp::insert(history.head(), 0, CompactString::new("a"), (0, 0), (0, 1));
     op.apply(&mut rope);
     history.push(op, &rope);
 

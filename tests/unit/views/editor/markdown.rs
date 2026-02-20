@@ -1,5 +1,6 @@
 use super::*;
 use crate::models::{EditOp, OpId};
+use compact_str::CompactString;
 use ropey::Rope;
 
 // ---------------------------------------------------------------------------
@@ -353,8 +354,8 @@ fn apply_edit_updates_local_paragraph_classification() {
         OpId::root(),
         0,
         "plain text".chars().count(),
-        "plain text".to_string(),
-        "# plain text".to_string(),
+        CompactString::new("plain text"),
+        CompactString::new("# plain text"),
         (0, 0),
         (0, 0),
     );
@@ -370,7 +371,13 @@ fn apply_edit_falls_back_to_full_reparse_when_line_count_changes() {
     let mut md = MarkdownDocument::new(&Rope::from_str("a\nb\n"));
 
     let rope = Rope::from_str("a\nx\ny\nb\n");
-    let op = EditOp::insert(OpId::root(), 2, "x\ny\n".to_string(), (1, 0), (1, 0));
+    let op = EditOp::insert(
+        OpId::root(),
+        2,
+        CompactString::new("x\ny\n"),
+        (1, 0),
+        (1, 0),
+    );
 
     md.apply_edit(&op, &rope, 1);
 
