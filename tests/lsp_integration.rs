@@ -598,6 +598,78 @@ fn test_completion_triggers_without_tick_for_python() {
 }
 
 #[test]
+fn test_completion_coalesces_inflight_requests_for_python() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let py_path = dir.path().join("a.py");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&py_path, "\n").unwrap();
+
+    let (runtime, _rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: py_path.clone(),
+        content: std::fs::read_to_string(&py_path).unwrap(),
+    });
+
+    // Type 2 identifier characters back-to-back. Only the first should emit a completion
+    // request while the request is still inflight.
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char('p'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char('r'),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    let start = Instant::now();
+    loop {
+        let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        let count = trace
+            .lines()
+            .filter(|l| *l == "request textDocument/completion")
+            .count();
+        if count >= 1 {
+            // Give the second key press a moment to produce a request if it ever will.
+            std::thread::sleep(Duration::from_millis(50));
+            let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+            let count = trace
+                .lines()
+                .filter(|l| *l == "request textDocument/completion")
+                .count();
+            assert_eq!(
+                count, 1,
+                "expected inflight completion requests to be coalesced\n\ntrace:\n{trace}"
+            );
+            break;
+        }
+        if start.elapsed() > Duration::from_secs(3) {
+            panic!("timeout waiting for completion request\n\ntrace:\n{trace}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
 #[ignore]
 fn test_real_pyright_hover_and_completion_smoke() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());

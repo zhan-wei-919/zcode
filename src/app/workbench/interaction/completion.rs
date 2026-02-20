@@ -37,6 +37,22 @@ impl Workbench {
         }
 
         let strategy = strategy_for_tab(tab);
+        let completion_triggers: &[char] =
+            lsp_registry::client_key_for_path(&self.store.state().workspace_root, path)
+                .map(|(_, key)| key)
+                .and_then(|key| self.store.state().lsp.server_capabilities.get(&key))
+                .map(|caps| caps.completion_triggers.as_slice())
+                .unwrap_or(&[]);
+        let triggered_by_insert = match cmd {
+            Command::InsertChar(ch) => strategy.triggered_by_insert(tab, *ch, completion_triggers),
+            _ => false,
+        };
+        if triggered_by_insert {
+            // Kernel InsertChar already issues a completion request for LSP trigger characters
+            // (for example '.' / '::'). Avoid duplicating that request here.
+            return;
+        }
+
         let should_schedule = match cmd {
             Command::InsertChar(ch) => strategy.debounce_triggered_by_char(*ch),
             Command::DeleteBackward | Command::DeleteForward => true,
@@ -48,6 +64,21 @@ impl Workbench {
         }
 
         if !strategy.context_allows_completion(tab) {
+            return;
+        }
+
+        let inflight_for_tab = self
+            .store
+            .state()
+            .ui
+            .completion
+            .pending_request
+            .as_ref()
+            .is_some_and(|pending| pending.pane == pane && &pending.path == path);
+
+        // While a completion request is inflight, avoid spamming extra requests for
+        // identifier typing. This keeps latency low by letting the first request complete.
+        if inflight_for_tab && !matches!(cmd, Command::InsertChar('.' | ':')) {
             return;
         }
 
