@@ -8,7 +8,7 @@
 
 use super::edit_op::{EditOp, OpId};
 use ropey::Rope;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -50,12 +50,12 @@ struct Checkpoint {
 /// 编辑历史
 pub struct EditHistory {
     base_snapshot: Rope,
-    ops: HashMap<OpId, EditOp>,
+    ops: FxHashMap<OpId, EditOp>,
     head: OpId,
     saved_head: OpId,
-    children: HashMap<OpId, Vec<OpId>>,
-    preferred_child: HashMap<OpId, OpId>,
-    checkpoints: HashMap<OpId, Checkpoint>,
+    children: FxHashMap<OpId, Vec<OpId>>,
+    preferred_child: FxHashMap<OpId, OpId>,
+    checkpoints: FxHashMap<OpId, Checkpoint>,
     pending_ops: Vec<EditOp>,
     last_flush: Instant,
     last_persisted_head: OpId,
@@ -70,12 +70,12 @@ impl EditHistory {
     pub fn new(base_snapshot: Rope) -> Self {
         Self {
             base_snapshot,
-            ops: HashMap::new(),
+            ops: FxHashMap::default(),
             head: OpId::root(),
             saved_head: OpId::root(),
-            children: HashMap::new(),
-            preferred_child: HashMap::new(),
-            checkpoints: HashMap::new(),
+            children: FxHashMap::default(),
+            preferred_child: FxHashMap::default(),
+            checkpoints: FxHashMap::default(),
             pending_ops: Vec::new(),
             last_flush: Instant::now(),
             last_persisted_head: OpId::root(),
@@ -95,12 +95,12 @@ impl EditHistory {
 
         Ok(Self {
             base_snapshot,
-            ops: HashMap::new(),
+            ops: FxHashMap::default(),
             head: OpId::root(),
             saved_head: OpId::root(),
-            children: HashMap::new(),
-            preferred_child: HashMap::new(),
-            checkpoints: HashMap::new(),
+            children: FxHashMap::default(),
+            preferred_child: FxHashMap::default(),
+            checkpoints: FxHashMap::default(),
             pending_ops: Vec::new(),
             last_flush: Instant::now(),
             last_persisted_head: OpId::root(),
@@ -124,8 +124,15 @@ impl EditHistory {
         let op_id = op.id;
         let parent_id = op.parent;
 
+        let persistence_enabled = self.ops_file_path.is_some();
+
         // 添加到 DAG
-        self.ops.insert(op_id, op.clone());
+        if persistence_enabled {
+            self.ops.insert(op_id, op.clone());
+            self.pending_ops.push(op);
+        } else {
+            self.ops.insert(op_id, op);
+        }
         self.children.entry(parent_id).or_default().push(op_id);
         self.preferred_child.insert(parent_id, op_id);
 
@@ -147,9 +154,10 @@ impl EditHistory {
             );
         }
 
-        // 延迟写入磁盘
-        self.pending_ops.push(op);
-        self.maybe_flush();
+        // 延迟写入磁盘（仅在启用持久化时）
+        if persistence_enabled {
+            self.maybe_flush();
+        }
     }
 
     /// Undo：返回恢复后的 Rope 和光标位置
@@ -378,6 +386,9 @@ impl EditHistory {
     }
 
     fn maybe_flush(&mut self) {
+        if self.ops_file_path.is_none() {
+            return;
+        }
         let interval = Duration::from_millis(self.config.flush_interval_ms);
         let elapsed = self.last_flush.elapsed() > interval;
         let should_flush = self.pending_ops.len() >= self.config.flush_threshold
@@ -470,6 +481,9 @@ impl EditHistory {
     }
 
     pub fn tick(&mut self) {
+        if self.ops_file_path.is_none() {
+            return;
+        }
         if (self.head != self.last_persisted_head || !self.pending_ops.is_empty())
             && self.last_flush.elapsed() > Duration::from_millis(self.config.flush_interval_ms)
         {
@@ -483,9 +497,9 @@ impl EditHistory {
     ) -> std::io::Result<(Self, Rope, (usize, usize))> {
         let file = File::open(&ops_file_path)?;
         let reader = BufReader::new(file);
-        let mut ops = HashMap::new();
-        let mut children: HashMap<OpId, Vec<OpId>> = HashMap::new();
-        let mut preferred_child: HashMap<OpId, OpId> = HashMap::new();
+        let mut ops: FxHashMap<OpId, EditOp> = FxHashMap::default();
+        let mut children: FxHashMap<OpId, Vec<OpId>> = FxHashMap::default();
+        let mut preferred_child: FxHashMap<OpId, OpId> = FxHashMap::default();
         let mut head = OpId::root();
         let mut last_cursor = (0, 0);
         for line in reader.lines() {
@@ -533,7 +547,7 @@ impl EditHistory {
             head,
             saved_head: OpId::root(),
             children,
-            checkpoints: HashMap::new(),
+            checkpoints: FxHashMap::default(),
             pending_ops: Vec::new(),
             last_flush: Instant::now(),
             last_persisted_head: head,

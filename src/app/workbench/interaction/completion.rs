@@ -1,5 +1,4 @@
 use super::super::Workbench;
-use super::classify_lsp_edit_trigger;
 use crate::core::Command;
 use crate::kernel::lsp_registry;
 use crate::kernel::store::strategy_for_tab;
@@ -39,26 +38,20 @@ impl Workbench {
         }
 
         let strategy = strategy_for_tab(tab);
-        let timing = self.store.state().editor.config.lsp_input_timing.clone();
-        let trigger = match cmd {
-            Command::InsertChar(ch) if strategy.debounce_triggered_by_char(*ch) => {
-                classify_lsp_edit_trigger(cmd, &timing)
-            }
-            Command::DeleteBackward | Command::DeleteForward => {
-                classify_lsp_edit_trigger(cmd, &timing)
-            }
-            _ => None,
+        let should_schedule = match cmd {
+            Command::InsertChar(ch) => strategy.debounce_triggered_by_char(*ch),
+            Command::DeleteBackward | Command::DeleteForward => true,
+            _ => false,
         };
 
-        let Some(trigger) = trigger else {
+        if !should_schedule {
             return;
-        };
+        }
 
         if !strategy.context_allows_completion(tab) {
             return;
         }
 
-        let _ = trigger;
         self.lsp_debounce.completion = Some(Instant::now());
     }
 }

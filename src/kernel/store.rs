@@ -1468,39 +1468,53 @@ impl Store {
                     .and_then(|pane| pane.active_tab());
                 let tab_with_strategy = tab.map(|t| (t, completion_strategy::strategy_for_tab(t)));
                 let (
-                    tab_supports_completion,
-                    tab_completion_triggers,
-                    tab_supports_signature_help,
-                    tab_signature_help_triggers,
                     tab_supports_completion_resolve,
-                ) = tab
-                    .and_then(|t| t.path.as_ref())
-                    .and_then(|path| lsp_server_capabilities_for_path(&self.state, path))
-                    .map(|caps| {
-                        (
-                            caps.completion,
-                            caps.completion_triggers.clone(),
-                            caps.signature_help,
-                            caps.signature_help_triggers.clone(),
-                            caps.completion_resolve,
-                        )
-                    })
-                    .unwrap_or((true, Vec::new(), true, Vec::new(), true));
-                let should_complete = tab_with_strategy.is_some_and(|(tab, strategy)| {
-                    let Some(path) = tab.path.as_ref() else {
-                        return false;
-                    };
-                    if !is_lsp_source_path(path) {
-                        return false;
-                    }
+                    should_complete,
+                    should_trigger_signature_help,
+                ) = {
+                    let caps = tab
+                        .and_then(|t| t.path.as_ref())
+                        .and_then(|path| lsp_server_capabilities_for_path(&self.state, path));
 
-                    if !tab_supports_completion {
-                        return false;
-                    }
+                    let tab_supports_completion = caps.is_none_or(|caps| caps.completion);
+                    let tab_supports_completion_resolve =
+                        caps.is_none_or(|caps| caps.completion_resolve);
+                    let tab_supports_signature_help =
+                        caps.is_none_or(|caps| caps.signature_help);
 
-                    let triggers: &[char] = tab_completion_triggers.as_slice();
-                    strategy.triggered_by_insert(tab, ch, triggers)
-                });
+                    let completion_triggers: &[char] = caps
+                        .map(|caps| caps.completion_triggers.as_slice())
+                        .unwrap_or(&[]);
+                    let signature_help_triggers: &[char] = caps
+                        .map(|caps| caps.signature_help_triggers.as_slice())
+                        .unwrap_or(&[]);
+
+                    let should_complete = tab_with_strategy.is_some_and(|(tab, strategy)| {
+                        let Some(path) = tab.path.as_ref() else {
+                            return false;
+                        };
+                        if !is_lsp_source_path(path) {
+                            return false;
+                        }
+
+                        if !tab_supports_completion {
+                            return false;
+                        }
+
+                        strategy.triggered_by_insert(tab, ch, completion_triggers)
+                    });
+
+                    let should_trigger_signature_help = tab_supports_signature_help
+                        && self
+                            .active_tab_strategy()
+                            .signature_help_triggered(ch, signature_help_triggers);
+
+                    (
+                        tab_supports_completion_resolve,
+                        should_complete,
+                        should_trigger_signature_help,
+                    )
+                };
 
                 if should_complete {
                     if let Some((pane, path, line, column, version)) =
@@ -1593,27 +1607,20 @@ impl Store {
                     }
                 }
 
-                let supports_signature_help = tab_supports_signature_help;
-                if supports_signature_help {
-                    let triggers: &[char] = tab_signature_help_triggers.as_slice();
-                    if self
-                        .active_tab_strategy()
-                        .signature_help_triggered(ch, triggers)
+                if should_trigger_signature_help {
+                    if let Some((pane, path, line, column, version)) =
+                        lsp_request_target(&self.state)
                     {
-                        if let Some((pane, path, line, column, version)) =
-                            lsp_request_target(&self.state)
-                        {
-                            self.state.ui.signature_help.visible = false;
-                            self.state.ui.signature_help.text.clear();
-                            self.state.ui.signature_help.request =
-                                Some(super::state::SignatureHelpRequestContext {
-                                    pane,
-                                    path: path.clone(),
-                                    version,
-                                });
-                            effects.push(Effect::LspSignatureHelpRequest { path, line, column });
-                            state_changed = true;
-                        }
+                        self.state.ui.signature_help.visible = false;
+                        self.state.ui.signature_help.text.clear();
+                        self.state.ui.signature_help.request =
+                            Some(super::state::SignatureHelpRequestContext {
+                                pane,
+                                path: path.clone(),
+                                version,
+                            });
+                        effects.push(Effect::LspSignatureHelpRequest { path, line, column });
+                        state_changed = true;
                     }
                 }
 

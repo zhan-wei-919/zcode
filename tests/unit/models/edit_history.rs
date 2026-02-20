@@ -149,3 +149,47 @@ fn test_dirty_save_point() {
     assert_eq!(redo_rope.to_string(), "hello world");
     assert!(!history.is_dirty());
 }
+
+#[test]
+fn push_without_backup_does_not_queue_pending_ops() {
+    let base = Rope::from_str("");
+    let mut history = EditHistory::new(base.clone());
+
+    let mut rope = base.clone();
+    let op = EditOp::insert(history.head(), 0, "a".to_string(), (0, 0), (0, 1));
+    op.apply(&mut rope);
+    history.push(op, &rope);
+
+    assert!(history.pending_ops.is_empty());
+}
+
+#[test]
+fn push_with_backup_queues_pending_ops() {
+    let base = Rope::from_str("");
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "zcode-edit-history-{}.ops",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+
+    let mut history = EditHistory::with_backup(base.clone(), path.clone())
+        .expect("history with backup should be created")
+        .with_config(EditHistoryConfig {
+            flush_interval_ms: 60_000,
+            flush_threshold: 1_000_000,
+            checkpoint_interval: 0,
+        });
+
+    let mut rope = base.clone();
+    let op = EditOp::insert(history.head(), 0, "a".to_string(), (0, 0), (0, 1));
+    op.apply(&mut rope);
+    history.push(op, &rope);
+
+    assert_eq!(history.pending_ops.len(), 1);
+
+    drop(history);
+    let _ = std::fs::remove_file(path);
+}

@@ -707,10 +707,11 @@ fn lsp_change_from_tab(
     tab: &crate::kernel::editor::EditorTabState,
     encoding: LspPositionEncoding,
 ) -> Option<LspTextChange> {
-    let op = tab.last_edit_op.as_ref()?;
-    if op.id != tab.history.head() {
+    let op_id = tab.last_edit_op_id?;
+    if op_id != tab.history.head() {
         return None;
     }
+    let op = tab.history.get_op(&op_id)?;
 
     match &op.kind {
         OpKind::Insert { char_offset, text } => {
@@ -799,4 +800,45 @@ fn lsp_position_after_text(
     pos.line = line;
     pos.character = col;
     pos
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Command;
+    use crate::kernel::editor::TabId;
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    #[test]
+    fn lsp_change_from_tab_reads_last_edit_op_from_history() {
+        let config = EditorConfig::default();
+        let mut tab = crate::kernel::editor::EditorTabState::from_file(
+            TabId::new(1),
+            PathBuf::from("test.rs"),
+            "",
+            &config,
+        );
+        tab.buffer.set_cursor(0, 0);
+
+        let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
+        let insert = lsp_change_from_tab(&tab, LspPositionEncoding::Utf16)
+            .expect("insert edit should produce incremental change");
+        assert_eq!(insert.text, "x");
+        let range = insert.range.expect("insert should include range");
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 0);
+        assert_eq!(range.end.line, range.start.line);
+        assert_eq!(range.end.character, range.start.character);
+
+        let _ = tab.apply_command(Command::DeleteBackward, 0, &config);
+        let delete = lsp_change_from_tab(&tab, LspPositionEncoding::Utf16)
+            .expect("delete edit should produce incremental change");
+        assert_eq!(delete.text, "");
+        let range = delete.range.expect("delete should include range");
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 0);
+        assert_eq!(range.end.line, 0);
+        assert_eq!(range.end.character, 1);
+    }
 }

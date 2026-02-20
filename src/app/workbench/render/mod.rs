@@ -151,7 +151,7 @@ impl Workbench {
             if self.store.state().ui.focus == FocusTarget::Editor
                 && self.store.state().ui.editor_layout.active_pane == pane
             {
-                let timing = self.store.state().editor.config.lsp_input_timing.clone();
+                let timing = &self.store.state().editor.config.lsp_input_timing;
                 let inlay_delay = Duration::from_millis(timing.identifier_debounce_ms.inlay_hints);
                 let folding_delay =
                     Duration::from_millis(timing.identifier_debounce_ms.folding_range);

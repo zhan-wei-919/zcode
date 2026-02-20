@@ -1,6 +1,6 @@
 use crate::kernel::git::GitGutterMarks;
 use crate::kernel::services::ports::{EditorConfig, LspFoldingRange, Match};
-use crate::models::{EditHistory, EditOp, OpKind, TextBuffer};
+use crate::models::{EditHistory, EditOp, OpId, OpKind, TextBuffer};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -136,7 +136,7 @@ pub struct EditorTabState {
     pub history: EditHistory,
     pub dirty: bool,
     pub edit_version: u64,
-    pub last_edit_op: Option<EditOp>,
+    pub last_edit_op_id: Option<OpId>,
     pub(super) cursor_goal_col: Option<usize>,
     pub disk_state: DiskState,
     pub saved_snapshot: Option<DiskSnapshot>,
@@ -178,7 +178,7 @@ impl EditorTabState {
             history,
             dirty: false,
             edit_version: 0,
-            last_edit_op: None,
+            last_edit_op_id: None,
             cursor_goal_col: None,
             disk_state: DiskState::InSync,
             saved_snapshot: None,
@@ -214,7 +214,7 @@ impl EditorTabState {
             history,
             dirty: false,
             edit_version: 0,
-            last_edit_op: None,
+            last_edit_op_id: None,
             cursor_goal_col: None,
             disk_state: DiskState::InSync,
             saved_snapshot: None,
@@ -897,7 +897,7 @@ impl EditorTabState {
         self.history = EditHistory::new(self.buffer.rope().clone());
         self.dirty = false;
         self.edit_version = self.edit_version.saturating_add(1);
-        self.last_edit_op = None;
+        self.last_edit_op_id = None;
         self.disk_state = DiskState::ReloadedFromDisk { at: Instant::now() };
         self.syntax = self
             .path

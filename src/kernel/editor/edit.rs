@@ -716,7 +716,7 @@ impl EditorTabState {
     fn commit_op(&mut self, op: EditOp, tab_size: u8) {
         self.apply_syntax_edit(&op);
         self.invalidate_semantic_highlight_on_edit(&op);
-        self.last_edit_op = Some(op.clone());
+        self.last_edit_op_id = Some(op.id);
         self.reset_cursor_goal_col();
         self.history.push(op, self.buffer.rope());
         self.dirty = true;
@@ -969,7 +969,7 @@ impl EditorTabState {
             self.reset_cursor_goal_col();
             self.reparse_syntax();
             self.dirty = self.history.is_dirty();
-            self.last_edit_op = None;
+            self.last_edit_op_id = None;
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
             self.bump_version();
             return true;
@@ -984,7 +984,7 @@ impl EditorTabState {
             self.reset_cursor_goal_col();
             self.reparse_syntax();
             self.dirty = self.history.is_dirty();
-            self.last_edit_op = None;
+            self.last_edit_op_id = None;
             viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
             self.bump_version();
             return true;

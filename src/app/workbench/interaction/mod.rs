@@ -73,7 +73,7 @@ pub(super) fn lsp_debounce_duration(
 }
 
 fn is_lsp_boundary_char(ch: char, boundary_chars: &str) -> bool {
-    boundary_chars.chars().any(|boundary| boundary == ch)
+    boundary_chars.contains(ch)
 }
 
 #[cfg(test)]

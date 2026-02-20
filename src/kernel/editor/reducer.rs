@@ -1175,7 +1175,7 @@ impl EditorState {
                 let _ = tab.replace_current_match(m, &replace_text, tab_size);
             }
             if multi {
-                tab.last_edit_op = None;
+                tab.last_edit_op_id = None;
             }
         }
 

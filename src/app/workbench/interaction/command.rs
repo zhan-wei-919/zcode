@@ -174,9 +174,9 @@ impl Workbench {
             return;
         }
 
-        let timing = self.store.state().editor.config.lsp_input_timing.clone();
+        let timing = &self.store.state().editor.config.lsp_input_timing;
 
-        let edit_trigger = classify_lsp_edit_trigger(cmd, &timing);
+        let edit_trigger = classify_lsp_edit_trigger(cmd, timing);
 
         let supports_semantic_tokens_range =
             lsp_registry::client_key_for_path(&self.store.state().workspace_root, path)
@@ -195,15 +195,14 @@ impl Workbench {
             && tab.buffer.len_lines().max(1) >= 2000;
 
         if let Some(trigger) = edit_trigger {
-            let delay =
-                lsp_debounce_duration(&timing, LspDebouncePipeline::SemanticTokens, trigger);
+            let delay = lsp_debounce_duration(timing, LspDebouncePipeline::SemanticTokens, trigger);
             self.lsp_debounce.semantic_tokens = Some(Instant::now() + delay);
             return;
         }
 
         if move_should_schedule {
             let delay = lsp_debounce_duration(
-                &timing,
+                timing,
                 LspDebouncePipeline::SemanticTokens,
                 LspDebounceTrigger::Identifier,
             );
@@ -242,9 +241,9 @@ impl Workbench {
             return;
         }
 
-        let timing = self.store.state().editor.config.lsp_input_timing.clone();
+        let timing = &self.store.state().editor.config.lsp_input_timing;
 
-        let edit_trigger = classify_lsp_edit_trigger(cmd, &timing);
+        let edit_trigger = classify_lsp_edit_trigger(cmd, timing);
         let move_should_schedule = matches!(
             cmd,
             Command::CursorUp
@@ -256,14 +255,14 @@ impl Workbench {
         );
 
         if let Some(trigger) = edit_trigger {
-            let delay = lsp_debounce_duration(&timing, LspDebouncePipeline::InlayHints, trigger);
+            let delay = lsp_debounce_duration(timing, LspDebouncePipeline::InlayHints, trigger);
             self.lsp_debounce.inlay_hints = Some(Instant::now() + delay);
             return;
         }
 
         if move_should_schedule {
             let delay = lsp_debounce_duration(
-                &timing,
+                timing,
                 LspDebouncePipeline::InlayHints,
                 LspDebounceTrigger::Identifier,
             );
@@ -302,12 +301,12 @@ impl Workbench {
             return;
         }
 
-        let timing = self.store.state().editor.config.lsp_input_timing.clone();
+        let timing = &self.store.state().editor.config.lsp_input_timing;
 
-        let edit_trigger = classify_lsp_edit_trigger(cmd, &timing);
+        let edit_trigger = classify_lsp_edit_trigger(cmd, timing);
 
         if let Some(trigger) = edit_trigger {
-            let delay = lsp_debounce_duration(&timing, LspDebouncePipeline::FoldingRange, trigger);
+            let delay = lsp_debounce_duration(timing, LspDebouncePipeline::FoldingRange, trigger);
             self.lsp_debounce.folding_range = Some(Instant::now() + delay);
         }
     }
