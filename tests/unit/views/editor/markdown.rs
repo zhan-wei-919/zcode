@@ -223,15 +223,6 @@ fn render_code_block_uses_plain_content_without_bg() {
 }
 
 #[test]
-fn render_inline_unescapes_backslash_markers() {
-    let rope = Rope::from_str("\\[Open] and \\[Stat] and \\\\ literal\n");
-    let md = MarkdownDocument::new(&rope);
-    let rendered = md.render_line(0, &rope, 80);
-
-    assert_eq!(rendered.text, "[Open] and [Stat] and \\ literal");
-}
-
-#[test]
 fn render_table_header_and_separator() {
     let rope = Rope::from_str("| Name | Value |\n| :--- | ---: |\n| foo | 42 |\n");
     let md = MarkdownDocument::new(&rope);

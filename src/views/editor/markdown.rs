@@ -1129,17 +1129,6 @@ fn render_inline(
     let mut i = 0;
 
     while i < len {
-        if bytes[i] == b'\\' && i + 1 < len {
-            let escaped = bytes[i + 1];
-            if escaped.is_ascii_punctuation() || escaped == b' ' || escaped == b'\t' {
-                let display_pos = display_offset + text.len();
-                offset_map.push((display_pos, source_offset + i + 1));
-                text.push(escaped as char);
-                i += 2;
-                continue;
-            }
-        }
-
         // Bold: **...**
         if i + 1 < len && bytes[i] == b'*' && bytes[i + 1] == b'*' {
             if let Some((content, end)) = find_closing(src, i + 2, "**") {

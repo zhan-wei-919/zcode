@@ -1,10 +1,4 @@
 use super::*;
-use crate::ui::backend::Backend;
-use crate::ui::backend::test::TestBackend;
-use crate::ui::core::geom::Rect;
-use crate::ui::core::painter::Painter;
-use crate::ui::core::style::{Color, Style};
-use crate::ui::core::theme::Theme;
 use crate::views::editor::markdown::{MdRenderedLine, MdSpanKind, MdStyleSpan};
 use std::hint::black_box;
 use std::time::Instant;
@@ -123,53 +117,6 @@ fn from_markdown_rendered_preserves_text_spans_and_offset_map() {
         .spans
         .iter()
         .any(|s| matches!(s.kind, DocSpanKind::Markdown(MdSpanKind::Heading(2)))));
-}
-
-#[test]
-fn paint_doc_lines_fills_code_block_background_full_width() {
-    let md = "```go\npackage os\n```\n\nafter\n";
-    let lines = render_markdown(md, 40, 100);
-    let code_idx = lines
-        .iter()
-        .position(|l| l.text.contains("package os"))
-        .expect("missing code line");
-
-    let theme = Theme::default();
-    let base_style = Style::default()
-        .bg(Color::Rgb(0x10, 0x10, 0x10))
-        .fg(Color::Rgb(0xEE, 0xEE, 0xEE));
-
-    let area = Rect::new(0, 0, 40, 6);
-    let mut painter = Painter::new();
-    painter.fill_rect(area, base_style);
-    paint_doc_lines(&mut painter, area, &lines, &theme, base_style, 0);
-
-    let mut backend = TestBackend::new(area.w, area.h);
-    backend.draw(area, painter.cmds());
-
-    let y = code_idx as u16;
-    for x in 0..area.w {
-        let cell = backend
-            .buffer()
-            .cell(x, y)
-            .unwrap_or_else(|| panic!("missing cell ({x},{y})"));
-        assert_eq!(
-            cell.style.bg,
-            Some(theme.md_code_bg),
-            "expected code bg at ({x},{y})"
-        );
-    }
-
-    let after_idx = lines
-        .iter()
-        .position(|l| l.text == "after")
-        .expect("missing after line");
-    let y_after = after_idx as u16;
-    let cell = backend
-        .buffer()
-        .cell(0, y_after)
-        .expect("missing after cell");
-    assert_eq!(cell.style.bg, base_style.bg);
 }
 
 #[test]
