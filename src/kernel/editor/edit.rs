@@ -51,6 +51,10 @@ fn supports_brace_electric_enter(language: Option<LanguageId>) -> bool {
     )
 }
 
+fn supports_paren_electric_enter(language: Option<LanguageId>) -> bool {
+    language == Some(LanguageId::Go)
+}
+
 fn supports_python_colon_indent(language: Option<LanguageId>) -> bool {
     language == Some(LanguageId::Python)
 }
@@ -267,12 +271,17 @@ impl EditorTabState {
             }
             Command::InsertNewline => {
                 let language = self.language();
-                if config.auto_indent
-                    && supports_brace_electric_enter(language)
-                    && !self.in_string_or_comment()
-                    && self.expand_empty_brace_pair(tab_size)
-                {
-                    return true;
+                if config.auto_indent && !self.in_string_or_comment() {
+                    if supports_brace_electric_enter(language)
+                        && self.expand_empty_pair("{", "}", tab_size)
+                    {
+                        return true;
+                    }
+                    if supports_paren_electric_enter(language)
+                        && self.expand_empty_pair("(", ")", tab_size)
+                    {
+                        return true;
+                    }
                 }
                 let mut changed = self.delete_selection(tab_size);
                 if config.auto_indent {
@@ -861,7 +870,7 @@ impl EditorTabState {
         true
     }
 
-    fn expand_empty_brace_pair(&mut self, tab_size: u8) -> bool {
+    fn expand_empty_pair(&mut self, open: &str, close: &str, tab_size: u8) -> bool {
         if self.buffer.has_selection() {
             return false;
         }
@@ -891,7 +900,7 @@ impl EditorTabState {
             _ => return false,
         };
 
-        if graphemes[left] != "{" || graphemes[right] != "}" || left >= right {
+        if graphemes[left] != open || graphemes[right] != close || left >= right {
             return false;
         }
         if !(left + 1..right).all(|i| is_ws(graphemes[i])) {
@@ -904,21 +913,22 @@ impl EditorTabState {
             .unwrap_or(line.len());
         let base_indent = &line[..indent_end];
         let base_indent_chars = base_indent.chars().count();
-        const INDENT_SPACES: usize = 4;
+        let indent_spaces = tab_size as usize;
+        let indent = " ".repeat(indent_spaces);
 
         let mut inserted =
-            String::with_capacity(1 + base_indent.len() + INDENT_SPACES + 1 + base_indent.len());
+            String::with_capacity(1 + base_indent.len() + indent.len() + 1 + base_indent.len());
         inserted.push('\n');
         inserted.push_str(base_indent);
-        inserted.push_str("    ");
+        inserted.push_str(&indent);
         inserted.push('\n');
         inserted.push_str(base_indent);
 
         let start_char = self.buffer.pos_to_char((row, left + 1));
         let end_char = self.buffer.pos_to_char((row, right));
 
-        let cursor_after = (row.saturating_add(1), base_indent_chars + INDENT_SPACES);
-        let cursor_after_char_offset = start_char + 1 + base_indent_chars + INDENT_SPACES;
+        let cursor_after = (row.saturating_add(1), base_indent_chars + indent_spaces);
+        let cursor_after_char_offset = start_char + 1 + base_indent_chars + indent_spaces;
         let parent = self.history.head();
 
         let op = self.buffer.replace_range_op(

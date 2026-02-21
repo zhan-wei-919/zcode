@@ -48,6 +48,23 @@ fn test_electric_enter_with_whitespace_between_braces() {
 }
 
 #[test]
+fn test_go_paren_pair_and_electric_enter() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.go"),
+        "import ()",
+        &config,
+    );
+
+    tab.buffer.set_cursor(0, "import (".len());
+
+    let _ = tab.apply_command(Command::InsertNewline, 0, &config);
+    assert_eq!(tab.buffer.text(), "import (\n    \n)");
+    assert_eq!(tab.buffer.cursor(), (1, 4));
+}
+
+#[test]
 fn test_replace_is_undoable() {
     let config = EditorConfig::default();
     let mut tab =
