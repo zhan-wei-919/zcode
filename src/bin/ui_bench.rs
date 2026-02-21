@@ -18,6 +18,7 @@ fn main() -> std::io::Result<()> {
     let mut height: u16 = 40;
     let mut panes: usize = 2;
     let mut tabs_per_pane: usize = 5;
+    let mut render_on_input = false;
     let mut explorer_files: usize = 200;
     let mut normal_lines: usize = 2000;
     let mut normal_cols: usize = 80;
@@ -37,6 +38,8 @@ fn main() -> std::io::Result<()> {
             panes = value.parse().unwrap_or(panes);
         } else if let Some(value) = arg.strip_prefix("--tabs=") {
             tabs_per_pane = value.parse().unwrap_or(tabs_per_pane);
+        } else if arg == "--render-on-input" {
+            render_on_input = true;
         } else if let Some(value) = arg.strip_prefix("--explorer-files=") {
             explorer_files = value.parse().unwrap_or(explorer_files);
         } else if let Some(value) = arg.strip_prefix("--lines=") {
@@ -85,6 +88,10 @@ fn main() -> std::io::Result<()> {
 
     workbench.bench_set_active_pane(0);
     workbench.bench_run_command(Command::FocusEditor);
+    // Default: benchmark typing on the "normal" document (tab 0), not the last opened long-line tab.
+    for _ in 0..tabs_per_pane.saturating_sub(1) {
+        workbench.bench_run_command(Command::PrevTab);
+    }
     let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
         code: KeyCode::End,
         modifiers: KeyModifiers::NONE,
@@ -123,9 +130,17 @@ fn main() -> std::io::Result<()> {
             kind: KeyEventKind::Press,
         };
         let _ = workbench.handle_input(&InputEvent::Key(key_event));
+        if render_on_input {
+            workbench.render(&mut backend, area);
+            let _ = workbench.flush_post_render_sync();
+        }
     }
     let input_elapsed = input_start.elapsed();
-    print_input_summary(events, input_elapsed);
+    if render_on_input {
+        print_input_render_summary(events, input_elapsed);
+    } else {
+        print_input_summary(events, input_elapsed);
+    }
 
     let report = perf::report_and_reset();
     if !report.is_empty() {
@@ -206,6 +221,21 @@ fn print_input_summary(events: usize, elapsed: Duration) {
         "input: events={events} total={:?} ns/event={:.1} events/s={:.0}",
         elapsed,
         per_event * 1_000_000_000.0,
+        eps
+    );
+}
+
+fn print_input_render_summary(events: usize, elapsed: Duration) {
+    let per_event = elapsed.as_secs_f64() / events.max(1) as f64;
+    let eps = if per_event > 0.0 {
+        1.0 / per_event
+    } else {
+        0.0
+    };
+    println!(
+        "input+render: events={events} total={:?} us/event={:.2} events/s={:.0}",
+        elapsed,
+        per_event * 1_000_000.0,
         eps
     );
 }

@@ -1,6 +1,7 @@
 //! Syntax support (in-process): parsing + highlighting helpers.
 
 use crate::kernel::language::LanguageId;
+use crate::kernel::services::adapters::perf;
 use crate::models::EditOp;
 use ropey::Rope;
 use std::cell::RefCell;
@@ -42,16 +43,6 @@ struct AbsHighlightSpan {
     depth: usize,
 }
 
-const FULL_CACHE_MAX_LINES: usize = 20_000;
-const FULL_CACHE_MAX_BYTES: usize = 2 * 1024 * 1024;
-
-#[derive(Debug, Clone)]
-struct FullDocHighlightCache {
-    line_count: usize,
-    byte_len: usize,
-    lines: Arc<Vec<Vec<HighlightSpan>>>,
-}
-
 #[derive(Debug, Clone)]
 struct RangeHighlightCache {
     start_line: usize,
@@ -65,7 +56,6 @@ pub struct SyntaxDocument {
     language: LanguageId,
     parser: Parser,
     tree: Tree,
-    full_doc_cache: RefCell<Option<FullDocHighlightCache>>,
     range_cache: RefCell<Option<RangeHighlightCache>>,
 }
 
@@ -109,7 +99,6 @@ impl SyntaxDocument {
             language,
             parser,
             tree,
-            full_doc_cache: RefCell::new(None),
             range_cache: RefCell::new(None),
         })
     }
@@ -119,7 +108,6 @@ impl SyntaxDocument {
     }
 
     fn clear_highlight_cache(&self) {
-        *self.full_doc_cache.borrow_mut() = None;
         *self.range_cache.borrow_mut() = None;
     }
 
@@ -181,6 +169,7 @@ impl SyntaxDocument {
         start_line: usize,
         end_line_exclusive: usize,
     ) -> Arc<Vec<Vec<HighlightSpan>>> {
+        let _scope = perf::scope("syntax.highlight");
         if start_line >= end_line_exclusive {
             return Arc::new(Vec::new());
         }
@@ -193,52 +182,6 @@ impl SyntaxDocument {
         }
 
         let byte_len = rope.len_bytes();
-        if total_lines <= FULL_CACHE_MAX_LINES && byte_len <= FULL_CACHE_MAX_BYTES {
-            if let Some(cache) = self.full_doc_cache.borrow().as_ref() {
-                if cache.line_count == total_lines && cache.byte_len == byte_len {
-                    if let Some(range) = self.range_cache.borrow().as_ref() {
-                        if range.start_line == start_line
-                            && range.end_line_exclusive == end_line_exclusive
-                            && range.line_count == total_lines
-                            && range.byte_len == byte_len
-                        {
-                            return Arc::clone(&range.lines);
-                        }
-                    }
-
-                    let lines = Arc::new(cache.lines[start_line..end_line_exclusive].to_vec());
-                    *self.range_cache.borrow_mut() = Some(RangeHighlightCache {
-                        start_line,
-                        end_line_exclusive,
-                        line_count: total_lines,
-                        byte_len,
-                        lines: Arc::clone(&lines),
-                    });
-                    return lines;
-                }
-            }
-
-            let range_start = rope.line_to_byte(0);
-            let range_end = rope.line_to_byte(total_lines);
-            let spans = collect_highlights(self.language, &self.tree, rope, range_start, range_end);
-            let lines = Arc::new(project_abs_spans_to_lines(rope, 0, total_lines, &spans));
-            *self.full_doc_cache.borrow_mut() = Some(FullDocHighlightCache {
-                line_count: total_lines,
-                byte_len,
-                lines: Arc::clone(&lines),
-            });
-
-            let window = Arc::new(lines[start_line..end_line_exclusive].to_vec());
-            *self.range_cache.borrow_mut() = Some(RangeHighlightCache {
-                start_line,
-                end_line_exclusive,
-                line_count: total_lines,
-                byte_len,
-                lines: Arc::clone(&window),
-            });
-            return window;
-        }
-
         if let Some(cache) = self.range_cache.borrow().as_ref() {
             if cache.start_line == start_line
                 && cache.end_line_exclusive == end_line_exclusive
@@ -249,6 +192,7 @@ impl SyntaxDocument {
             }
         }
 
+        let _scope = perf::scope("syntax.highlight.range");
         let range_start = rope.line_to_byte(start_line);
         let range_end = rope.line_to_byte(end_line_exclusive);
         let spans = collect_highlights(self.language, &self.tree, rope, range_start, range_end);
