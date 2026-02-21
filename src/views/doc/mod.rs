@@ -25,6 +25,14 @@ pub struct DocLine {
     pub text: String,
     pub spans: Vec<DocSpan>,
     pub offset_map: Option<Vec<(usize, usize)>>,
+    pub kind: DocLineKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DocLineKind {
+    #[default]
+    Text,
+    CodeBlock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +143,13 @@ pub fn paint_doc_lines(
             break;
         }
         let row_clip = Rect::new(area.x, y, area.w, 1);
+        let row_style = match line.kind {
+            DocLineKind::Text => base_style,
+            DocLineKind::CodeBlock => base_style.bg(theme.md_code_bg),
+        };
+        if line.kind == DocLineKind::CodeBlock {
+            painter.fill_rect(row_clip, row_style);
+        }
         paint_doc_line(
             painter,
             Pos::new(area.x, y),
@@ -142,7 +157,7 @@ pub fn paint_doc_lines(
             DocPaintLineParams {
                 line,
                 theme,
-                base_style,
+                base_style: row_style,
                 clip: row_clip,
                 horiz_offset: 0,
             },
@@ -323,6 +338,7 @@ pub fn from_markdown_rendered(rendered: MdRenderedLine) -> DocLine {
         text: rendered.text,
         spans,
         offset_map: Some(rendered.offset_map),
+        kind: DocLineKind::Text,
     }
 }
 
@@ -373,7 +389,13 @@ pub fn render_markdown(markdown: &str, width: u16, max_lines: usize) -> Vec<DocL
                     code_lang = None;
                 }
                 let rendered = md.render_line(line_idx, &rope, width as usize);
-                wrap_and_push_rendered_line(&mut out, rendered, width, max_lines);
+                wrap_and_push_rendered_line(
+                    &mut out,
+                    rendered,
+                    width,
+                    max_lines,
+                    DocLineKind::Text,
+                );
             }
         }
     }
@@ -390,6 +412,7 @@ fn wrap_and_push_rendered_line(
     rendered: markdown::MdRenderedLine,
     width: u16,
     max_lines: usize,
+    kind: DocLineKind,
 ) {
     if width == 0 || out.len() >= max_lines {
         return;
@@ -400,6 +423,7 @@ fn wrap_and_push_rendered_line(
             text: String::new(),
             spans: Vec::new(),
             offset_map: None,
+            kind,
         });
         return;
     }
@@ -408,7 +432,9 @@ fn wrap_and_push_rendered_line(
     let text_width = rendered.text.as_str().width();
 
     if text_width <= max_w {
-        out.push(from_markdown_rendered(rendered));
+        let mut line = from_markdown_rendered(rendered);
+        line.kind = kind;
+        out.push(line);
         return;
     }
 
@@ -457,6 +483,7 @@ fn wrap_and_push_rendered_line(
             text: seg_text,
             spans: seg_spans,
             offset_map: None,
+            kind,
         });
 
         pos = split;
@@ -500,6 +527,7 @@ fn push_code_block_lines(
             text: line.clone(),
             spans,
             offset_map: None,
+            kind: DocLineKind::CodeBlock,
         });
     }
 }
