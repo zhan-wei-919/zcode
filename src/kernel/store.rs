@@ -1007,6 +1007,9 @@ impl Store {
                     });
                 }
 
+                // Flush pending semantic highlights immediately on completion confirm.
+                self.flush_pending_semantic_highlights_for_path(&req.path);
+
                 DispatchResult {
                     effects,
                     state_changed: true,

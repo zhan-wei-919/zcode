@@ -416,16 +416,22 @@ impl Workbench {
         let selected_bg = UiStyle::default().bg(self.ui_theme.palette_selected_bg);
         let marker_selected = UiStyle::default()
             .fg(self.ui_theme.focus_border)
-            .bg(self.ui_theme.popup_bg);
+            .bg(self.ui_theme.palette_selected_bg);
         let marker_normal = UiStyle::default()
             .fg(self.ui_theme.palette_muted_fg)
             .bg(self.ui_theme.popup_bg);
-        let label_style = UiStyle::default()
+        let label_style_normal = UiStyle::default()
             .fg(self.ui_theme.palette_fg)
             .bg(self.ui_theme.popup_bg);
-        let detail_style = UiStyle::default()
+        let label_style_selected = UiStyle::default()
+            .fg(self.ui_theme.palette_fg)
+            .bg(self.ui_theme.palette_selected_bg);
+        let detail_style_normal = UiStyle::default()
             .fg(self.ui_theme.palette_muted_fg)
             .bg(self.ui_theme.popup_bg);
+        let detail_style_selected = UiStyle::default()
+            .fg(self.ui_theme.palette_muted_fg)
+            .bg(self.ui_theme.palette_selected_bg);
 
         for (idx, (is_selected, marker, label, detail)) in rows.into_iter().enumerate() {
             let y = inner.y.saturating_add(idx.min(u16::MAX as usize) as u16);
@@ -438,6 +444,12 @@ impl Workbench {
                 painter.fill_rect(row_area, selected_bg);
             }
 
+            let (label_style, detail_style) = if is_selected {
+                (label_style_selected, detail_style_selected)
+            } else {
+                (label_style_normal, detail_style_normal)
+            };
+
             let mut x = inner.x;
             let marker_style = if is_selected {
                 marker_selected
@@ -446,13 +458,13 @@ impl Workbench {
             };
             painter.text_clipped(Pos::new(x, y), marker, marker_style, row_area);
             x = x.saturating_add(1);
-            painter.text_clipped(Pos::new(x, y), " ", base_style, row_area);
+            painter.text_clipped(Pos::new(x, y), " ", if is_selected { selected_bg } else { base_style }, row_area);
             x = x.saturating_add(1);
             let label_w = label.width().min(u16::MAX as usize) as u16;
             painter.text_clipped(Pos::new(x, y), label, label_style, row_area);
             x = x.saturating_add(label_w);
             if !detail.trim().is_empty() {
-                painter.text_clipped(Pos::new(x, y), " ", base_style, row_area);
+                painter.text_clipped(Pos::new(x, y), " ", if is_selected { selected_bg } else { base_style }, row_area);
                 x = x.saturating_add(1);
                 painter.text_clipped(Pos::new(x, y), detail, detail_style, row_area);
             }
@@ -520,6 +532,23 @@ impl Workbench {
                     x = area.x;
                 }
                 doc_area_max.x = x;
+            }
+
+            // Draw separator between completion list and side doc panel.
+            if place_side && doc_area_max.w > 1 {
+                let sep_style = UiStyle::default()
+                    .fg(self.ui_theme.separator)
+                    .bg(self.ui_theme.popup_bg);
+                for row in 0..popup_area.h {
+                    let sy = popup_area.y.saturating_add(row);
+                    if sy >= area.bottom() {
+                        break;
+                    }
+                    let clip = UiRect::new(popup_area.right(), sy, 1, 1);
+                    painter.text_clipped(Pos::new(popup_area.right(), sy), "│", sep_style, clip);
+                }
+                doc_area_max.x = doc_area_max.x.saturating_add(1);
+                doc_area_max.w = doc_area_max.w.saturating_sub(1);
             }
 
             painter.fill_rect(doc_area_max, base_style);
