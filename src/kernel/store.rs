@@ -3,6 +3,7 @@ use crate::kernel::services::ports::{
     LspCompletionTriggerContext, LspPosition, LspRange, LspTextEdit, LspWorkspaceEdit,
     LspWorkspaceFileEdit,
 };
+use std::path::Path;
 
 #[cfg(test)]
 use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding};
@@ -299,6 +300,19 @@ impl Store {
             .pane(active_pane)
             .and_then(|pane_state| pane_state.active_tab())
             .and_then(|tab| tab.path.clone())
+    }
+
+    fn flush_pending_semantic_highlights_for_path(&mut self, path: &Path) -> bool {
+        let mut changed = false;
+        for pane in &mut self.state.editor.panes {
+            for tab in &mut pane.tabs {
+                if tab.path.as_deref() != Some(path) {
+                    continue;
+                }
+                changed |= tab.flush_pending_semantic_highlight();
+            }
+        }
+        changed
     }
 
     fn sync_explorer_selection_to_path(&mut self, path: &std::path::Path) -> bool {
@@ -1477,6 +1491,19 @@ impl Store {
 
                 let mut effects = effects;
                 effects.extend(cmd_effects);
+
+                let boundary_chars = self
+                    .state
+                    .editor
+                    .config
+                    .lsp_input_timing
+                    .boundary_chars
+                    .as_str();
+                if boundary_chars.contains(ch) {
+                    if let Some(path) = self.active_editor_file_path() {
+                        state_changed |= self.flush_pending_semantic_highlights_for_path(&path);
+                    }
+                }
 
                 let tab = self
                     .state
@@ -3483,6 +3510,8 @@ impl Store {
                     other,
                     Command::NextTab | Command::PrevTab | Command::CloseTab
                 );
+                let should_flush_newline = matches!(other, Command::InsertNewline);
+                let should_flush_tab = matches!(other, Command::InsertTab);
                 let (changed, cmd_effects) = self.state.editor.apply_command(pane, other);
                 if changed {
                     state_changed = true;
@@ -3490,6 +3519,23 @@ impl Store {
                 // TODO: avoid allocation by using SmallVec if needed.
                 let mut effects = effects;
                 effects.extend(cmd_effects);
+
+                if should_flush_newline || should_flush_tab {
+                    let boundary_chars = self
+                        .state
+                        .editor
+                        .config
+                        .lsp_input_timing
+                        .boundary_chars
+                        .as_str();
+                    let should_flush = (should_flush_newline && boundary_chars.contains('\n'))
+                        || (should_flush_tab && boundary_chars.contains('\t'));
+                    if should_flush {
+                        if let Some(path) = self.active_editor_file_path() {
+                            state_changed |= self.flush_pending_semantic_highlights_for_path(&path);
+                        }
+                    }
+                }
 
                 let mut collapsed = false;
                 if changed && is_close_tab {

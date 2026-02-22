@@ -609,7 +609,114 @@ fn lsp_semantic_tokens_legend_change_misses_fast_path() {
         version,
         tokens,
     });
-    assert!(second.state_changed);
+    assert!(!second.state_changed);
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|p| p.active_tab())
+        .expect("tab exists");
+    let second_kind = tab
+        .semantic_highlight_lines(0, 1)
+        .and_then(|rows| rows.first())
+        .and_then(|line| line.first())
+        .map(|span| span.kind);
+    assert_eq!(second_kind, Some(HighlightKind::Variable));
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar(' ')));
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|p| p.active_tab())
+        .expect("tab exists");
+    let second_kind = tab
+        .semantic_highlight_lines(0, 1)
+        .and_then(|rows| rows.first())
+        .and_then(|line| line.first())
+        .map(|span| span.kind);
+    assert_eq!(second_kind, Some(HighlightKind::Keyword));
+}
+
+#[test]
+fn semantic_tokens_are_deferred_until_boundary_flush() {
+    let mut store = new_store();
+    install_rust_lsp_caps(&mut store);
+
+    let path = store.state.workspace_root.join("semantic_defer.rs");
+    let content = "let value = 1;\n";
+    let version = open_shared_path_tabs(&mut store, 1, &path, content);
+    let tokens = vec![LspSemanticToken {
+        line: 0,
+        start: 4,
+        length: 5,
+        token_type: 1,
+        modifiers: 0,
+    }];
+
+    let first = store.dispatch(Action::LspSemanticTokens {
+        path: path.clone(),
+        version,
+        tokens: tokens.clone(),
+    });
+    assert!(first.state_changed);
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|p| p.active_tab())
+        .expect("tab exists");
+    let first_kind = tab
+        .semantic_highlight_lines(0, 1)
+        .and_then(|rows| rows.first())
+        .and_then(|line| line.first())
+        .map(|span| span.kind);
+    assert_eq!(first_kind, Some(HighlightKind::Variable));
+
+    let _ = store.dispatch(Action::LspServerCapabilities {
+        server: LspServerKind::RustAnalyzer,
+        root: store.state.workspace_root.clone(),
+        capabilities: LspServerCapabilities {
+            semantic_tokens: true,
+            semantic_tokens_full: true,
+            semantic_tokens_range: true,
+            semantic_tokens_legend: Some(LspSemanticTokensLegend {
+                token_types: vec!["function".to_string(), "keyword".to_string()],
+                token_modifiers: vec![],
+            }),
+            completion: true,
+            completion_resolve: true,
+            signature_help: true,
+            inlay_hints: true,
+            folding_range: true,
+            ..Default::default()
+        },
+    });
+
+    let second = store.dispatch(Action::LspSemanticTokens {
+        path,
+        version,
+        tokens,
+    });
+    assert!(!second.state_changed);
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|p| p.active_tab())
+        .expect("tab exists");
+    let second_kind = tab
+        .semantic_highlight_lines(0, 1)
+        .and_then(|rows| rows.first())
+        .and_then(|line| line.first())
+        .map(|span| span.kind);
+    assert_eq!(second_kind, Some(HighlightKind::Variable));
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar(' ')));
 
     let tab = store
         .state

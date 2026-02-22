@@ -840,21 +840,25 @@ impl super::Store {
                         }
 
                         if tokens.is_empty() {
-                            changed |= tab.set_semantic_highlight(version, Vec::new());
-                            continue;
+                            let _ = tab.set_pending_semantic_highlight_from_slice(version, &[]);
+                        } else {
+                            if snapshot_lines.is_none() {
+                                snapshot_lines = Some(semantic_highlight_lines_from_tokens(
+                                    tab.buffer.rope(),
+                                    &tokens,
+                                    &legend,
+                                    encoding,
+                                ));
+                            }
+
+                            if let Some(lines) = snapshot_lines.as_ref() {
+                                let _ =
+                                    tab.set_pending_semantic_highlight_from_slice(version, lines);
+                            }
                         }
 
-                        if snapshot_lines.is_none() {
-                            snapshot_lines = Some(semantic_highlight_lines_from_tokens(
-                                tab.buffer.rope(),
-                                &tokens,
-                                &legend,
-                                encoding,
-                            ));
-                        }
-
-                        if let Some(lines) = snapshot_lines.as_ref() {
-                            changed |= tab.set_semantic_highlight_from_slice(version, lines);
+                        if !tab.has_semantic_highlight() {
+                            changed |= tab.flush_pending_semantic_highlight();
                         }
                     }
                 }
@@ -962,9 +966,13 @@ impl super::Store {
                         }
 
                         if let Some(lines) = snapshot_lines.as_ref() {
-                            changed |= tab.set_semantic_highlight_range_from_slice(
+                            let _ = tab.set_pending_semantic_highlight_range_from_slice(
                                 version, start_line, lines,
                             );
+                        }
+
+                        if !tab.has_semantic_highlight() {
+                            changed |= tab.flush_pending_semantic_highlight();
                         }
                     }
                 }

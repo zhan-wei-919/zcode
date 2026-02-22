@@ -209,6 +209,7 @@ pub struct EditorTabState {
     pub last_reload_request_id: u64,
     pub last_applied_reload_request_id: u64,
     semantic_highlight: Option<SemanticHighlightState>,
+    pending_semantic_highlight: Option<SemanticHighlightState>,
     git_gutter: Option<GitGutterMarks>,
     inlay_hints: Option<InlayHintsState>,
     folding: Option<FoldingState>,
@@ -257,6 +258,7 @@ impl EditorTabState {
             last_reload_request_id: 0,
             last_applied_reload_request_id: 0,
             semantic_highlight: None,
+            pending_semantic_highlight: None,
             git_gutter: None,
             inlay_hints: None,
             folding: None,
@@ -302,6 +304,7 @@ impl EditorTabState {
             last_reload_request_id: 0,
             last_applied_reload_request_id: 0,
             semantic_highlight: None,
+            pending_semantic_highlight: None,
             git_gutter: None,
             inlay_hints: None,
             folding: None,
@@ -328,6 +331,7 @@ impl EditorTabState {
         self.syntax_highlight_inflight_version = None;
         self.syntax_highlight_pending_version = None;
         self.semantic_highlight = None;
+        self.pending_semantic_highlight = None;
         self.git_gutter = None;
         self.inlay_hints = None;
         self.clear_folding();
@@ -685,6 +689,12 @@ impl EditorTabState {
         semantic.lines(start_line, end_line_exclusive)
     }
 
+    pub(crate) fn has_semantic_highlight(&self) -> bool {
+        self.semantic_highlight
+            .as_ref()
+            .is_some_and(|semantic| semantic.has_any_spans())
+    }
+
     pub fn set_semantic_highlight(&mut self, version: u64, lines: Vec<Vec<HighlightSpan>>) -> bool {
         let same = self
             .semantic_highlight
@@ -712,6 +722,24 @@ impl EditorTabState {
         }
 
         self.semantic_highlight = Some(SemanticHighlightState::from_full(version, lines.to_vec()));
+        true
+    }
+
+    pub(crate) fn set_pending_semantic_highlight_from_slice(
+        &mut self,
+        version: u64,
+        lines: &[Vec<HighlightSpan>],
+    ) -> bool {
+        let same = self
+            .pending_semantic_highlight
+            .as_ref()
+            .is_some_and(|s| s.matches_full(version, lines));
+        if same {
+            return false;
+        }
+
+        self.pending_semantic_highlight =
+            Some(SemanticHighlightState::from_full(version, lines.to_vec()));
         true
     }
 
@@ -760,11 +788,61 @@ impl EditorTabState {
         true
     }
 
-    pub(super) fn invalidate_semantic_highlight_on_edit(&mut self, op: &EditOp) {
-        let Some(semantic) = self.semantic_highlight.as_mut() else {
-            return;
+    pub(crate) fn set_pending_semantic_highlight_range_from_slice(
+        &mut self,
+        version: u64,
+        start_line: usize,
+        lines: &[Vec<HighlightSpan>],
+    ) -> bool {
+        if lines.is_empty() {
+            return false;
+        }
+
+        let end_line_exclusive = start_line.saturating_add(lines.len());
+        if self
+            .pending_semantic_highlight
+            .as_ref()
+            .is_some_and(|semantic| {
+                semantic.version == version
+                    && semantic
+                        .lines(start_line, end_line_exclusive)
+                        .is_some_and(|current| current == lines)
+            })
+        {
+            return false;
+        }
+
+        let semantic =
+            self.pending_semantic_highlight
+                .get_or_insert_with(|| SemanticHighlightState {
+                    version,
+                    segments: Vec::new(),
+                });
+
+        if semantic.version != version {
+            semantic.version = version;
+            semantic.segments.clear();
+        }
+
+        semantic.replace_range(start_line, end_line_exclusive, lines.to_vec());
+        true
+    }
+
+    pub(crate) fn flush_pending_semantic_highlight(&mut self) -> bool {
+        let Some(pending) = self.pending_semantic_highlight.take() else {
+            return false;
         };
 
+        let changed = match self.semantic_highlight.as_ref() {
+            Some(current) => !current.visually_eq(&pending),
+            None => pending.has_any_spans(),
+        };
+
+        self.semantic_highlight = Some(pending);
+        changed
+    }
+
+    pub(super) fn invalidate_semantic_highlight_on_edit(&mut self, op: &EditOp) {
         let (start_char, inserted_text, deleted_text) = match &op.kind {
             OpKind::Insert { char_offset, text } => (*char_offset, text.as_str(), ""),
             OpKind::Delete { start, deleted, .. } => (*start, "", deleted.as_str()),
@@ -776,37 +854,63 @@ impl EditorTabState {
             } => (*start, inserted.as_str(), deleted.as_str()),
             OpKind::Batch { .. } => {
                 self.semantic_highlight = None;
+                self.pending_semantic_highlight = None;
                 return;
             }
+        };
+
+        let (start_line, local_start_byte) = {
+            let rope = self.buffer.rope();
+            let start_char = start_char.min(rope.len_chars());
+            let start_line = rope.char_to_line(start_char);
+            let start_byte = rope.char_to_byte(start_char);
+            let line_start_byte = rope.line_to_byte(start_line);
+            let local_start_byte = start_byte.saturating_sub(line_start_byte);
+            (start_line, local_start_byte)
+        };
+
+        let inserted_lines = inserted_text.matches('\n').count();
+        let deleted_lines = deleted_text.matches('\n').count();
+        let delta_lines = inserted_lines as isize - deleted_lines as isize;
+        let is_single_line_edit = inserted_lines == 0 && deleted_lines == 0;
+        let edit = SemanticHighlightEdit {
+            next_version: self.edit_version.saturating_add(1),
+            start_line,
+            local_start_byte,
+            deleted_len: deleted_text.len(),
+            inserted_len: inserted_text.len(),
+            delta_lines,
+            is_single_line_edit,
+        };
+
+        Self::apply_semantic_highlight_edit(&mut self.semantic_highlight, edit);
+        Self::apply_semantic_highlight_edit(&mut self.pending_semantic_highlight, edit);
+    }
+
+    fn apply_semantic_highlight_edit(
+        semantic_highlight: &mut Option<SemanticHighlightState>,
+        edit: SemanticHighlightEdit,
+    ) {
+        let Some(semantic) = semantic_highlight.as_mut() else {
+            return;
         };
 
         if semantic.segments.is_empty() {
             return;
         }
 
-        let rope = self.buffer.rope();
-        let start_char = start_char.min(rope.len_chars());
-        let start_line = rope.char_to_line(start_char);
-        let start_byte = rope.char_to_byte(start_char);
-        let line_start_byte = rope.line_to_byte(start_line);
-        let local_start_byte = start_byte.saturating_sub(line_start_byte);
-
-        let inserted_lines = inserted_text.matches('\n').count();
-        let deleted_lines = deleted_text.matches('\n').count();
-        let delta_lines = inserted_lines as isize - deleted_lines as isize;
-
-        if inserted_lines == 0 && deleted_lines == 0 {
+        if edit.is_single_line_edit {
             semantic.apply_byte_edit(
-                start_line,
-                local_start_byte,
-                deleted_text.len(),
-                inserted_text.len(),
+                edit.start_line,
+                edit.local_start_byte,
+                edit.deleted_len,
+                edit.inserted_len,
             );
         } else {
-            semantic.apply_newline_edit(start_line, delta_lines);
+            semantic.apply_newline_edit(edit.start_line, edit.delta_lines);
         }
 
-        semantic.version = self.edit_version.saturating_add(1);
+        semantic.version = edit.next_version;
     }
 
     pub(crate) fn semantic_highlight_line(&self, line: usize) -> Option<&[HighlightSpan]> {
@@ -1209,11 +1313,23 @@ impl EditorTabState {
         self.syntax_highlight_inflight_version = None;
         self.syntax_highlight_pending_version = None;
         self.semantic_highlight = None;
+        self.pending_semantic_highlight = None;
         self.git_gutter = None;
         self.inlay_hints = None;
         self.clear_folding();
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, config.tab_size);
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SemanticHighlightEdit {
+    next_version: u64,
+    start_line: usize,
+    local_start_byte: usize,
+    deleted_len: usize,
+    inserted_len: usize,
+    delta_lines: isize,
+    is_single_line_edit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1251,6 +1367,16 @@ impl SemanticHighlightState {
             && self.segments.len() == 1
             && self.segments[0].start_line == 0
             && self.segments[0].lines.as_slice() == lines
+    }
+
+    fn visually_eq(&self, other: &Self) -> bool {
+        self.segments == other.segments
+    }
+
+    fn has_any_spans(&self) -> bool {
+        self.segments
+            .iter()
+            .any(|seg| seg.lines.iter().any(|line| !line.is_empty()))
     }
 
     fn replace_range(
