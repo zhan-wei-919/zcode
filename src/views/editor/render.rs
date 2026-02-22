@@ -500,15 +500,16 @@ fn paint_editor_body(
 
 #[derive(Debug, Clone)]
 enum SyntaxHighlightLines {
-    Shared(Arc<Vec<Vec<HighlightSpan>>>),
-    Owned(Vec<Vec<HighlightSpan>>),
+    Shared(Arc<Vec<Arc<Vec<HighlightSpan>>>>),
+    // Keep `Owned` as `Arc` per-line spans so stitching multiple segments stays cheap (no deep copy).
+    Owned(Vec<Arc<Vec<HighlightSpan>>>),
 }
 
 impl SyntaxHighlightLines {
     fn line(&self, index: usize) -> Option<&[HighlightSpan]> {
         match self {
-            Self::Shared(lines) => lines.get(index).map(Vec::as_slice),
-            Self::Owned(lines) => lines.get(index).map(Vec::as_slice),
+            Self::Shared(lines) => lines.get(index).map(|line| line.as_slice()),
+            Self::Owned(lines) => lines.get(index).map(|line| line.as_slice()),
         }
     }
 }
@@ -534,7 +535,7 @@ fn build_syntax_highlights(
         return Some(SyntaxHighlightLines::Shared(first));
     }
 
-    let mut out: Vec<Vec<HighlightSpan>> = Vec::with_capacity(visible_lines.len());
+    let mut out: Vec<Arc<Vec<HighlightSpan>>> = Vec::with_capacity(visible_lines.len());
     out.extend(first.iter().cloned());
 
     let mut idx = next;

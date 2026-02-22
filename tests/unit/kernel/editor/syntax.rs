@@ -664,7 +664,10 @@ fn test_highlight_lines_shared_reuses_cached_window_for_same_range() {
     let first = doc.highlight_lines_shared(&rope, 0, 2);
     let second = doc.highlight_lines_shared(&rope, 0, 2);
 
-    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(first.len(), second.len());
+    for (left, right) in first.iter().zip(second.iter()) {
+        assert!(Arc::ptr_eq(left, right));
+    }
 }
 
 #[test]
@@ -693,6 +696,69 @@ fn test_apply_edit_invalidates_highlight_cache_and_updates_result() {
     assert!(after[0]
         .iter()
         .any(|span| span.kind == HighlightKind::Comment));
+}
+
+#[test]
+fn test_apply_edit_only_invalidates_affected_lines() {
+    let src = "fn alpha() { let x = 1; }\nfn beta() { let y = 2; }\nfn gamma() { let z = 3; }\n";
+    let mut rope = Rope::from_str(src);
+    let mut doc = SyntaxDocument::for_path(Path::new("cache_edit_incremental.rs"), &rope)
+        .expect("rust syntax");
+
+    let before = doc.highlight_lines_shared(&rope, 0, 3);
+    let line0_before = Arc::clone(&before[0]);
+    let line1_before = Arc::clone(&before[1]);
+    let line2_before = Arc::clone(&before[2]);
+
+    let insert_at = src.find("let y").expect("insert position");
+    let op = EditOp::insert(
+        OpId::root(),
+        insert_at,
+        CompactString::new("/* note */ "),
+        (0, 0),
+        (0, 0),
+    );
+    op.apply(&mut rope);
+    doc.apply_edit(&rope, &op);
+
+    let after = doc.highlight_lines_shared(&rope, 0, 3);
+    assert!(Arc::ptr_eq(&line0_before, &after[0]));
+    assert!(!Arc::ptr_eq(&line1_before, &after[1]));
+    assert!(Arc::ptr_eq(&line2_before, &after[2]));
+
+    assert!(after[1]
+        .iter()
+        .any(|span| span.kind == HighlightKind::Comment));
+}
+
+#[test]
+fn test_apply_edit_splice_keeps_unaffected_tail_lines_cached() {
+    let src = "fn alpha() { let x = 1; }\nfn beta() { let y = 2; }\nfn gamma() { let z = 3; }\n";
+    let mut rope = Rope::from_str(src);
+    let mut doc =
+        SyntaxDocument::for_path(Path::new("cache_edit_splice.rs"), &rope).expect("rust syntax");
+
+    let before = doc.highlight_lines_shared(&rope, 0, 3);
+    let tail_before = Arc::clone(&before[2]);
+
+    let insert_at = src
+        .match_indices('\n')
+        .nth(1)
+        .map(|(idx, _)| idx)
+        .expect("second newline");
+    let op = EditOp::insert(
+        OpId::root(),
+        insert_at,
+        CompactString::new("\n"),
+        (0, 0),
+        (0, 0),
+    );
+    op.apply(&mut rope);
+    doc.apply_edit(&rope, &op);
+
+    let after = doc.highlight_lines_shared(&rope, 3, 4);
+    assert_eq!(after.len(), 1);
+    assert!(Arc::ptr_eq(&tail_before, &after[0]));
 }
 
 #[test]

@@ -12,6 +12,8 @@ use unicode_xid::UnicodeXID;
 use super::syntax::SyntaxDocument;
 use super::{viewport, HighlightSpan, LanguageId};
 
+type SharedSyntaxHighlightLines = Arc<Vec<Arc<Vec<HighlightSpan>>>>;
+
 #[derive(Debug, Clone)]
 pub enum DiskState {
     InSync,
@@ -619,7 +621,7 @@ impl EditorTabState {
         &self,
         start_line: usize,
         end_line_exclusive: usize,
-    ) -> Option<Arc<Vec<Vec<HighlightSpan>>>> {
+    ) -> Option<SharedSyntaxHighlightLines> {
         let syntax = self.syntax.as_ref()?;
         Some(syntax.highlight_lines_shared(self.buffer.rope(), start_line, end_line_exclusive))
     }
