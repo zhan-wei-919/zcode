@@ -157,6 +157,10 @@ impl MarkdownDocument {
                 deleted,
                 ..
             } => (*start, inserted.as_str(), deleted.as_str()),
+            OpKind::Batch { .. } => {
+                self.reparse(rope, version);
+                return;
+            }
         };
 
         let inserted_lines = inserted.matches('\n').count();

@@ -95,3 +95,21 @@ fn place_cursor_line_selects_full_line() {
     let text = text.unwrap();
     assert!(text.contains("Hello World"));
 }
+
+#[test]
+fn add_cursor_at_demotes_old_primary() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::untitled(TabId::new(1), &config);
+    tab.buffer = crate::models::TextBuffer::from_text("abc\ndef\n");
+    tab.viewport.height = 10;
+    tab.viewport.width = 40;
+
+    tab.buffer.set_cursor(0, 1);
+    assert!(tab.secondary_cursors.is_empty());
+
+    let changed = tab.add_cursor_at(1, 2, config.tab_size);
+    assert!(changed);
+    assert_eq!(tab.buffer.cursor(), (1, 2));
+    assert_eq!(tab.secondary_cursors.len(), 1);
+    assert_eq!(tab.secondary_cursors[0].pos, (0, 1));
+}

@@ -753,6 +753,7 @@ fn lsp_change_from_tab(
                 text: inserted.to_string(),
             })
         }
+        OpKind::Batch { .. } => None,
     }
 }
 

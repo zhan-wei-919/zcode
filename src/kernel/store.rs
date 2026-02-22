@@ -1336,6 +1336,23 @@ impl Store {
                     };
                 }
 
+                let is_multi_cursor = self
+                    .state
+                    .editor
+                    .pane(pane)
+                    .and_then(|p| p.active_tab())
+                    .is_some_and(|t| t.is_multi_cursor());
+                if is_multi_cursor {
+                    let (changed, eff) = self
+                        .state
+                        .editor
+                        .apply_command(pane, Command::RemoveSecondaryCursors);
+                    return DispatchResult {
+                        effects: eff,
+                        state_changed: changed,
+                    };
+                }
+
                 let has_selection = self
                     .state
                     .editor

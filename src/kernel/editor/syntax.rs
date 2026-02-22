@@ -319,6 +319,7 @@ fn build_input_edit(rope: &Rope, op: &EditOp) -> Option<InputEdit> {
             deleted,
             inserted,
         } => (*start, deleted.as_str(), inserted.as_str()),
+        crate::models::edit_op::OpKind::Batch { .. } => return None,
     };
 
     if start_char > rope.len_chars() {

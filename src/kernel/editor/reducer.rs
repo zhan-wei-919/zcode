@@ -1,12 +1,107 @@
 use crate::core::Command;
 use crate::kernel::services::ports::SearchMessage;
 use crate::kernel::Effect;
+use crate::models::{cursor_set, Granularity, SecondaryCursor, Selection};
 
 use super::action::EditorAction;
 use super::state::{
-    DiskState, EditorPaneState, EditorState, ReloadCause, ReloadRequest, SearchBarMode, TabId,
+    DiskState, EditorPaneState, EditorState, EditorTabState, ReloadCause, ReloadRequest,
+    SearchBarMode, TabId,
 };
 use super::viewport;
+
+#[derive(Clone, Copy, Debug)]
+struct SecondaryCursorSnapshot {
+    cursor_char: usize,
+    selection: Option<(usize, usize)>,
+    goal_col: Option<usize>,
+}
+
+fn snapshot_secondary_cursors(tab: &EditorTabState) -> Vec<SecondaryCursorSnapshot> {
+    tab.secondary_cursors
+        .iter()
+        .map(|c| {
+            let cursor_char = tab.buffer.pos_to_char(c.pos);
+            let selection = c.selection.as_ref().filter(|s| !s.is_empty()).map(|s| {
+                (
+                    tab.buffer.pos_to_char(s.anchor()),
+                    tab.buffer.pos_to_char(s.cursor()),
+                )
+            });
+            SecondaryCursorSnapshot {
+                cursor_char,
+                selection,
+                goal_col: c.goal_col,
+            }
+        })
+        .collect()
+}
+
+fn apply_secondary_cursors_after_edit(
+    tab: &mut EditorTabState,
+    snapshots: Vec<SecondaryCursorSnapshot>,
+    start_char: usize,
+    end_char: usize,
+    inserted_len: usize,
+) -> Vec<(usize, usize)> {
+    let mut secondaries: Vec<SecondaryCursor> = Vec::with_capacity(snapshots.len());
+
+    for snapshot in snapshots {
+        let new_cursor_char = cursor_set::adjust_char_offset_after_edit(
+            snapshot.cursor_char,
+            start_char,
+            end_char,
+            inserted_len,
+        );
+
+        let new_selection = snapshot
+            .selection
+            .map(|(anchor_char, cursor_char)| {
+                let anchor_char = cursor_set::adjust_char_offset_after_edit(
+                    anchor_char,
+                    start_char,
+                    end_char,
+                    inserted_len,
+                );
+                let cursor_char = cursor_set::adjust_char_offset_after_edit(
+                    cursor_char,
+                    start_char,
+                    end_char,
+                    inserted_len,
+                );
+                (anchor_char, cursor_char)
+            })
+            .and_then(|(anchor_char, cursor_char)| {
+                if anchor_char == cursor_char {
+                    return None;
+                }
+                let anchor = tab.buffer.cursor_pos_from_char_offset(anchor_char);
+                let cursor = tab.buffer.cursor_pos_from_char_offset(cursor_char);
+                let mut sel = Selection::new(anchor, Granularity::Char);
+                sel.update_cursor(cursor, tab.buffer.rope());
+                Some(sel)
+            });
+
+        let pos = tab.buffer.cursor_pos_from_char_offset(new_cursor_char);
+        secondaries.push(SecondaryCursor {
+            pos,
+            selection: new_selection,
+            goal_col: snapshot.goal_col,
+        });
+    }
+
+    tab.secondary_cursors = secondaries;
+    let merged = cursor_set::merge_overlapping(
+        tab.buffer.cursor(),
+        tab.buffer.selection(),
+        &mut tab.secondary_cursors,
+    );
+    tab.buffer
+        .set_cursor(merged.primary_pos.0, merged.primary_pos.1);
+    tab.buffer.set_selection(merged.primary_selection);
+
+    cursor_set::secondary_cursor_positions(&tab.secondary_cursors)
+}
 
 impl EditorState {
     pub fn dispatch_action(&mut self, action: EditorAction) -> (bool, Vec<Effect>) {
@@ -51,6 +146,7 @@ impl EditorState {
                 col,
                 granularity,
             } => self.place_cursor(pane, row, col, granularity),
+            EditorAction::AddCursorAt { pane, row, col } => self.add_cursor_at(pane, row, col),
             EditorAction::ExtendSelection { pane, row, col } => {
                 self.extend_selection(pane, row, col)
             }
@@ -727,6 +823,15 @@ impl EditorState {
             return (false, Vec::new());
         }
 
+        let is_multi_cursor = tab.is_multi_cursor();
+        let extra_before =
+            is_multi_cursor.then(|| cursor_set::secondary_cursor_positions(&tab.secondary_cursors));
+        let secondary_before = if is_multi_cursor {
+            snapshot_secondary_cursors(tab)
+        } else {
+            Vec::new()
+        };
+
         let rope = tab.buffer.rope();
         let len_bytes = rope.len_bytes();
         let start_byte = start_byte.min(len_bytes);
@@ -738,9 +843,24 @@ impl EditorState {
         }
 
         let parent = tab.history.head();
-        let op = tab
+        let mut op = tab
             .buffer
             .replace_range_op_adjust_cursor(start_char, end_char, text, parent);
+
+        if is_multi_cursor {
+            let inserted_len = text.chars().count();
+            let extra_after = apply_secondary_cursors_after_edit(
+                tab,
+                secondary_before,
+                start_char,
+                end_char,
+                inserted_len,
+            );
+            op.extra_cursors_before = extra_before;
+            op.extra_cursors_after = Some(extra_after);
+            op.cursor_after = tab.buffer.cursor();
+        }
+
         tab.apply_edit_op(op, tab_size);
         (true, Vec::new())
     }
@@ -764,6 +884,15 @@ impl EditorState {
             return (false, Vec::new());
         };
 
+        let is_multi_cursor = tab.is_multi_cursor();
+        let extra_before =
+            is_multi_cursor.then(|| cursor_set::secondary_cursor_positions(&tab.secondary_cursors));
+        let secondary_before = if is_multi_cursor {
+            snapshot_secondary_cursors(tab)
+        } else {
+            Vec::new()
+        };
+
         let len_chars = tab.buffer.len_chars();
         let mut start_char = start_char.min(len_chars);
         let mut end_char = end_char.min(len_chars);
@@ -772,11 +901,28 @@ impl EditorState {
         }
 
         let parent = tab.history.head();
-        let op = tab
+        let mut op = tab
             .buffer
             .replace_range_op_adjust_cursor(start_char, end_char, text, parent);
+
+        if is_multi_cursor {
+            let inserted_len = text.chars().count();
+            let extra_after = apply_secondary_cursors_after_edit(
+                tab,
+                secondary_before,
+                start_char,
+                end_char,
+                inserted_len,
+            );
+            op.extra_cursors_before = extra_before;
+            op.extra_cursors_after = Some(extra_after);
+            op.cursor_after = tab.buffer.cursor();
+        }
+
         tab.apply_edit_op(op, tab_size);
-        tab.buffer.clear_selection();
+        if !is_multi_cursor {
+            tab.buffer.clear_selection();
+        }
         (true, Vec::new())
     }
 
@@ -795,6 +941,18 @@ impl EditorState {
             return (false, Vec::new());
         };
         let changed = tab.place_cursor(row, col, granularity, tab_size);
+        (changed, Vec::new())
+    }
+
+    fn add_cursor_at(&mut self, pane: usize, row: usize, col: usize) -> (bool, Vec<Effect>) {
+        let tab_size = self.config.tab_size;
+        let Some(pane_state) = self.panes.get_mut(pane) else {
+            return (false, Vec::new());
+        };
+        let Some(tab) = pane_state.active_tab_mut() else {
+            return (false, Vec::new());
+        };
+        let changed = tab.add_cursor_at(row, col, tab_size);
         (changed, Vec::new())
     }
 

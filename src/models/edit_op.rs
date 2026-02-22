@@ -67,6 +67,17 @@ pub enum OpKind {
         deleted: CompactString,
         inserted: CompactString,
     },
+    Batch {
+        edits: Vec<BatchEdit>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BatchEdit {
+    pub start: usize,
+    pub end: usize,
+    pub deleted: CompactString,
+    pub inserted: CompactString,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -76,6 +87,10 @@ pub struct EditOp {
     pub(crate) kind: OpKind,
     pub(crate) cursor_before: (usize, usize),
     pub(crate) cursor_after: (usize, usize),
+    #[serde(default)]
+    pub(crate) extra_cursors_before: Option<Vec<(usize, usize)>>,
+    #[serde(default)]
+    pub(crate) extra_cursors_after: Option<Vec<(usize, usize)>>,
 }
 
 impl EditOp {
@@ -92,6 +107,8 @@ impl EditOp {
             kind: OpKind::Insert { char_offset, text },
             cursor_before,
             cursor_after,
+            extra_cursors_before: None,
+            extra_cursors_after: None,
         }
     }
 
@@ -113,6 +130,8 @@ impl EditOp {
             },
             cursor_before,
             cursor_after,
+            extra_cursors_before: None,
+            extra_cursors_after: None,
         }
     }
 
@@ -136,6 +155,8 @@ impl EditOp {
             },
             cursor_before,
             cursor_after,
+            extra_cursors_before: None,
+            extra_cursors_after: None,
         }
     }
 
@@ -161,6 +182,19 @@ impl EditOp {
                 deleted: inserted.clone(),
                 inserted: deleted.clone(),
             },
+            OpKind::Batch { edits } => {
+                let mut inverse = Vec::with_capacity(edits.len());
+                for edit in edits.iter().rev() {
+                    let inserted_len = edit.inserted.chars().count();
+                    inverse.push(BatchEdit {
+                        start: edit.start,
+                        end: edit.start.saturating_add(inserted_len),
+                        deleted: edit.inserted.clone(),
+                        inserted: edit.deleted.clone(),
+                    });
+                }
+                OpKind::Batch { edits: inverse }
+            }
         }
     }
 
@@ -202,6 +236,12 @@ impl OpKind {
             } => {
                 rope.remove(*start..*end);
                 rope.insert(*start, inserted.as_str());
+            }
+            OpKind::Batch { edits } => {
+                for edit in edits {
+                    rope.remove(edit.start..edit.end);
+                    rope.insert(edit.start, edit.inserted.as_str());
+                }
             }
         }
     }

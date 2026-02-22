@@ -54,6 +54,11 @@ pub enum EditorAction {
         col: usize,
         granularity: Granularity,
     },
+    AddCursorAt {
+        pane: usize,
+        row: usize,
+        col: usize,
+    },
     ExtendSelection {
         pane: usize,
         row: usize,

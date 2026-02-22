@@ -47,6 +47,13 @@ pub enum Command {
     ExtendSelectionWordLeft,
     ExtendSelectionWordRight,
 
+    // ==================== Multi-Cursor ====================
+    AddCursorAbove,
+    AddCursorBelow,
+    AddCursorAtNextMatch,
+    AddCursorAtAllMatches,
+    RemoveSecondaryCursors,
+
     // ==================== 滚动操作 ====================
     ScrollUp,
     ScrollDown,
@@ -215,6 +222,11 @@ impl Command {
             Command::ExtendSelectionLineEnd => "extendSelectionLineEnd",
             Command::ExtendSelectionWordLeft => "extendSelectionWordLeft",
             Command::ExtendSelectionWordRight => "extendSelectionWordRight",
+            Command::AddCursorAbove => "addCursorAbove",
+            Command::AddCursorBelow => "addCursorBelow",
+            Command::AddCursorAtNextMatch => "addCursorAtNextMatch",
+            Command::AddCursorAtAllMatches => "addCursorAtAllMatches",
+            Command::RemoveSecondaryCursors => "removeSecondaryCursors",
             Command::ScrollUp => "scrollUp",
             Command::ScrollDown => "scrollDown",
             Command::PageUp => "pageUp",
@@ -355,6 +367,11 @@ impl Command {
             "extendSelectionLineEnd" => Command::ExtendSelectionLineEnd,
             "extendSelectionWordLeft" => Command::ExtendSelectionWordLeft,
             "extendSelectionWordRight" => Command::ExtendSelectionWordRight,
+            "addCursorAbove" => Command::AddCursorAbove,
+            "addCursorBelow" => Command::AddCursorBelow,
+            "addCursorAtNextMatch" => Command::AddCursorAtNextMatch,
+            "addCursorAtAllMatches" => Command::AddCursorAtAllMatches,
+            "removeSecondaryCursors" => Command::RemoveSecondaryCursors,
             "scrollUp" => Command::ScrollUp,
             "scrollDown" => Command::ScrollDown,
             "pageUp" => Command::PageUp,

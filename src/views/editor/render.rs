@@ -4,7 +4,7 @@ use crate::kernel::editor::{
     SearchBarField, SearchBarMode, SearchBarState,
 };
 use crate::kernel::services::ports::{EditorConfig, Match};
-use crate::models::slice_to_cow;
+use crate::models::{cursor_set, slice_to_cow};
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::{Color, Mod, Style};
@@ -725,8 +725,6 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
     let is_markdown = tab.is_markdown();
     let cursor_row = tab.buffer.cursor().0;
-    let selection = tab.buffer.selection();
-    let has_selection = selection.is_some_and(|s| !s.is_empty());
     let mut match_cursor = visible_lines
         .first()
         .map(|first_line| search_matches.partition_point(|m| m.line < *first_line))
@@ -773,7 +771,10 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             }
         }
 
-        let selection_range = selection_range_for_row(selection, row).unwrap_or((0, 0));
+        let selection_ranges =
+            cursor_set::selections_for_row(tab.buffer.selection(), &tab.secondary_cursors, row);
+        let has_selection = !selection_ranges.is_empty();
+        let mut selection_cursor: usize = 0;
         let snippet_range = snippet_range_for_row(snippet_span, row).unwrap_or((0, 0));
         let has_snippet = snippet_range.0 != snippet_range.1;
 
@@ -871,11 +872,20 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             }
 
             let mut style = row_base_style;
-            if has_selection
-                && g_idx >= selection_range.0
-                && g_idx < selection_range.1
-                && selection_range.0 != selection_range.1
-            {
+            let selected = if has_selection {
+                while selection_cursor < selection_ranges.len()
+                    && g_idx >= selection_ranges[selection_cursor].1
+                {
+                    selection_cursor += 1;
+                }
+                selection_cursor < selection_ranges.len()
+                    && g_idx >= selection_ranges[selection_cursor].0
+                    && g_idx < selection_ranges[selection_cursor].1
+            } else {
+                false
+            };
+
+            if selected {
                 style = selection_style;
             } else {
                 let mut highlight_style = None;
@@ -1025,9 +1035,10 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
                     let selected = has_selection
                         && guide_g_idx.is_some_and(|g_idx| {
-                            g_idx >= selection_range.0 && g_idx < selection_range.1
-                        })
-                        && selection_range.0 != selection_range.1;
+                            selection_ranges
+                                .iter()
+                                .any(|(start, end)| g_idx >= *start && g_idx < *end)
+                        });
                     let style = if selected {
                         indent_guide_style.bg(theme.palette_selected_bg)
                     } else {
@@ -1074,6 +1085,35 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                 }
             }
         }
+
+        if !tab.secondary_cursors.is_empty() {
+            let cursor_style = Style::default()
+                .bg(theme.palette_selected_fg)
+                .fg(theme.palette_selected_bg);
+            for col in cursor_set::secondary_positions_for_row(&tab.secondary_cursors, row) {
+                let x_abs = display_x_abs_for_grapheme_col(
+                    line,
+                    col.min(tab.buffer.line_grapheme_len(row)),
+                    tab_size,
+                );
+                if x_abs < horiz_offset {
+                    continue;
+                }
+                let rel = x_abs - horiz_offset;
+                let rel = if rel < area.w as u32 {
+                    rel
+                } else if rel == area.w as u32 && area.w > 0 {
+                    (area.w - 1) as u32
+                } else {
+                    continue;
+                };
+                let cursor_x = area.x.saturating_add(rel as u16);
+                if cursor_x >= right {
+                    continue;
+                }
+                painter.style_rect(Rect::new(cursor_x, y, 1, 1), cursor_style);
+            }
+        }
     }
 }
 
@@ -1087,13 +1127,11 @@ fn transient_row_bg(
 }
 
 fn append_markdown_selection_spans(line: &mut DocLine, tab: &EditorTabState, row: usize) {
-    let selection = tab.buffer.selection();
-    let Some((sel_start, sel_end)) = selection_range_for_row(selection, row) else {
+    let ranges =
+        cursor_set::selections_for_row(tab.buffer.selection(), &tab.secondary_cursors, row);
+    if ranges.is_empty() {
         return;
     };
-    if sel_start == sel_end {
-        return;
-    }
 
     let Some(offset_map) = line.offset_map.as_deref() else {
         return;
@@ -1106,6 +1144,7 @@ fn append_markdown_selection_spans(line: &mut DocLine, tab: &EditorTabState, row
     let src_line_start_char = rope.line_to_char(row);
     let mut byte_offset = 0usize;
     let mut current_start: Option<usize> = None;
+    let mut range_cursor: usize = 0;
 
     for g in line.text.graphemes(true) {
         let g_start = byte_offset;
@@ -1115,7 +1154,12 @@ fn append_markdown_selection_spans(line: &mut DocLine, tab: &EditorTabState, row
         let selected = if src_byte < rope.len_bytes() {
             let src_char = rope.byte_to_char(src_byte);
             let col = src_char.saturating_sub(src_line_start_char);
-            col >= sel_start && col < sel_end
+            while range_cursor < ranges.len() && col >= ranges[range_cursor].1 {
+                range_cursor += 1;
+            }
+            range_cursor < ranges.len()
+                && col >= ranges[range_cursor].0
+                && col < ranges[range_cursor].1
         } else {
             false
         };
@@ -1147,6 +1191,23 @@ fn append_markdown_selection_spans(line: &mut DocLine, tab: &EditorTabState, row
     }
 }
 
+fn display_x_abs_for_grapheme_col(line: &str, col: usize, tab_size: u32) -> u32 {
+    let mut display_col: u32 = 0;
+    let tab_size = tab_size.max(1);
+    for (i, g) in line.graphemes(true).enumerate() {
+        if i >= col {
+            break;
+        }
+        if g == "\t" {
+            let rem = display_col % tab_size;
+            display_col += if rem == 0 { tab_size } else { tab_size - rem };
+        } else {
+            display_col = display_col.saturating_add(g.width() as u32);
+        }
+    }
+    display_col
+}
+
 fn paint_vertical_scrollbar(
     painter: &mut Painter,
     metrics: &VerticalScrollbarMetrics,
@@ -1173,29 +1234,6 @@ fn paint_vertical_scrollbar(
         V_SCROLL_THUMB_SYMBOL,
         thumb_style,
     );
-}
-
-fn selection_range_for_row(
-    selection: Option<&crate::models::Selection>,
-    row: usize,
-) -> Option<(usize, usize)> {
-    let s = selection?;
-    let ((start_row, start_col), (end_row, end_col)) = s.range();
-    if row < start_row || row > end_row {
-        return None;
-    }
-
-    let (sel_start, sel_end) = if row == start_row && row == end_row {
-        (start_col, end_col)
-    } else if row == start_row {
-        (start_col, usize::MAX)
-    } else if row == end_row {
-        (0, end_col)
-    } else {
-        (0, usize::MAX)
-    };
-
-    Some((sel_start, sel_end))
 }
 
 fn snippet_range_for_row(

@@ -1,6 +1,8 @@
 use crate::kernel::git::GitGutterMarks;
 use crate::kernel::services::ports::{EditorConfig, LspFoldingRange, Match};
-use crate::models::{EditHistory, EditOp, Granularity, OpId, OpKind, Selection, TextBuffer};
+use crate::models::{
+    EditHistory, EditOp, Granularity, OpId, OpKind, SecondaryCursor, Selection, TextBuffer,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -196,6 +198,7 @@ pub struct EditorTabState {
     pub dirty: bool,
     pub edit_version: u64,
     pub last_edit_op_id: Option<OpId>,
+    pub(crate) secondary_cursors: Vec<SecondaryCursor>,
     pub(super) cursor_goal_col: Option<usize>,
     snippet_session: Option<SnippetSession>,
     pub disk_state: DiskState,
@@ -239,6 +242,7 @@ impl EditorTabState {
             dirty: false,
             edit_version: 0,
             last_edit_op_id: None,
+            secondary_cursors: Vec::new(),
             cursor_goal_col: None,
             snippet_session: None,
             disk_state: DiskState::InSync,
@@ -276,6 +280,7 @@ impl EditorTabState {
             dirty: false,
             edit_version: 0,
             last_edit_op_id: None,
+            secondary_cursors: Vec::new(),
             cursor_goal_col: None,
             snippet_session: None,
             disk_state: DiskState::InSync,
@@ -378,6 +383,10 @@ impl EditorTabState {
                 inserted,
                 ..
             } => (*start, end.saturating_sub(*start), inserted.chars().count()),
+            OpKind::Batch { .. } => {
+                self.snippet_session = None;
+                return;
+            }
         };
 
         let edit_end = edit_start.saturating_add(deleted_len);
@@ -456,6 +465,14 @@ impl EditorTabState {
 
     pub(crate) fn set_cursor_goal_col(&mut self, col: usize) {
         self.cursor_goal_col = Some(col);
+    }
+
+    pub(crate) fn is_multi_cursor(&self) -> bool {
+        !self.secondary_cursors.is_empty()
+    }
+
+    pub(crate) fn clear_secondary_cursors(&mut self) {
+        self.secondary_cursors.clear();
     }
 
     pub fn next_reload_request_id(&mut self) -> u64 {
@@ -705,6 +722,10 @@ impl EditorTabState {
                 inserted,
                 ..
             } => (*start, inserted.as_str(), deleted.as_str()),
+            OpKind::Batch { .. } => {
+                self.semantic_highlight = None;
+                return;
+            }
         };
 
         if semantic.segments.is_empty() {
@@ -1103,6 +1124,7 @@ impl EditorTabState {
         self.dirty = false;
         self.edit_version = self.edit_version.saturating_add(1);
         self.last_edit_op_id = None;
+        self.secondary_cursors.clear();
         self.snippet_session = None;
         self.disk_state = DiskState::ReloadedFromDisk { at: Instant::now() };
         self.syntax = self

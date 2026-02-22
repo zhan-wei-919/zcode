@@ -200,6 +200,14 @@ impl Workbench {
                                     triple_click_ms,
                                 );
 
+                                if event.modifiers.contains(KeyModifiers::ALT) {
+                                    let _ = self.dispatch_kernel(KernelAction::Editor(
+                                        EditorAction::AddCursorAt { pane, row, col },
+                                    ));
+                                    self.editor_mouse[pane].stop_drag();
+                                    return EventResult::Consumed;
+                                }
+
                                 if granularity == Granularity::Char {
                                     let toggle = {
                                         let md = active_md_tab_id

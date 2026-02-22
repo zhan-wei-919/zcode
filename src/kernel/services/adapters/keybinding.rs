@@ -214,8 +214,21 @@ fn default_editor_keybindings() -> FxHashMap<Key, Command> {
     );
     bindings.insert(Key::simple(KeyCode::Backspace), Command::DeleteBackward);
     bindings.insert(Key::simple(KeyCode::Delete), Command::DeleteForward);
-    bindings.insert(Key::ctrl(KeyCode::Char('d')), Command::DeleteLine);
+    bindings.insert(Key::ctrl(KeyCode::Char('d')), Command::AddCursorAtNextMatch);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('k')), Command::DeleteLine);
     bindings.insert(Key::ctrl(KeyCode::Char('k')), Command::DeleteToLineEnd);
+    bindings.insert(
+        Key::new(KeyCode::Up, KeyModifiers::CONTROL | KeyModifiers::ALT),
+        Command::AddCursorAbove,
+    );
+    bindings.insert(
+        Key::new(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT),
+        Command::AddCursorBelow,
+    );
+    bindings.insert(
+        Key::ctrl_shift(KeyCode::Char('l')),
+        Command::AddCursorAtAllMatches,
+    );
     bindings.insert(Key::simple(KeyCode::F(2)), Command::LspHover);
     bindings.insert(Key::simple(KeyCode::F(12)), Command::LspDefinition);
     bindings.insert(Key::shift(KeyCode::F(12)), Command::LspReferences);

@@ -46,9 +46,16 @@ impl Workbench {
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| tab.title.clone());
 
+                let cursor_count = tab.secondary_cursors.len().saturating_add(1);
+                let cursor_info = if tab.is_multi_cursor() {
+                    format!("Ln {}, Col {} ({} cursors)", row + 1, col + 1, cursor_count)
+                } else {
+                    format!("Ln {}, Col {}", row + 1, col + 1)
+                };
+
                 (
                     format!("{}{}{}", file_name, dirty, disk_indicator),
-                    format!("Ln {}, Col {}", row + 1, col + 1),
+                    cursor_info,
                 )
             } else {
                 ("No file".to_string(), String::new())

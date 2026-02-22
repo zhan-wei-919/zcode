@@ -47,6 +47,13 @@ struct Checkpoint {
     snapshot: Rope,
 }
 
+#[derive(Clone, Debug)]
+pub struct UndoResult {
+    pub rope: Rope,
+    pub cursor: (usize, usize),
+    pub secondary_cursors: Option<Vec<(usize, usize)>>,
+}
+
 /// 编辑历史
 pub struct EditHistory {
     base_snapshot: Rope,
@@ -161,7 +168,7 @@ impl EditHistory {
     }
 
     /// Undo：返回恢复后的 Rope 和光标位置
-    pub fn undo(&mut self, current_rope: &Rope) -> Option<(Rope, (usize, usize))> {
+    pub fn undo(&mut self, current_rope: &Rope) -> Option<UndoResult> {
         let current_id = self.head;
         if current_id.is_root() {
             return None;
@@ -169,6 +176,7 @@ impl EditHistory {
 
         let current_op = self.ops.get(&current_id)?;
         let cursor_pos = current_op.cursor_before();
+        let secondary_cursors = current_op.extra_cursors_before.clone();
         let parent_id = current_op.parent;
 
         self.preferred_child.insert(parent_id, current_id);
@@ -180,11 +188,15 @@ impl EditHistory {
         self.head = parent_id;
         self.maybe_flush();
 
-        Some((rope, cursor_pos))
+        Some(UndoResult {
+            rope,
+            cursor: cursor_pos,
+            secondary_cursors,
+        })
     }
 
     /// Redo：沿着最近的分支前进
-    pub fn redo(&mut self, current_rope: &Rope) -> Option<(Rope, (usize, usize))> {
+    pub fn redo(&mut self, current_rope: &Rope) -> Option<UndoResult> {
         // 获取当前节点的子节点
         let head_id = self.head;
         let children = self.children.get(&head_id)?;
@@ -200,6 +212,7 @@ impl EditHistory {
             .unwrap_or_else(|| *children.last().unwrap());
         let next_op = self.ops.get(&next_id)?;
         let cursor_pos = next_op.cursor_after();
+        let secondary_cursors = next_op.extra_cursors_after.clone();
 
         let mut rope = current_rope.clone();
         next_op.apply(&mut rope);
@@ -209,7 +222,11 @@ impl EditHistory {
         self.preferred_child.insert(head_id, next_id);
         self.maybe_flush();
 
-        Some((rope, cursor_pos))
+        Some(UndoResult {
+            rope,
+            cursor: cursor_pos,
+            secondary_cursors,
+        })
     }
 
     /// 获取当前 HEAD

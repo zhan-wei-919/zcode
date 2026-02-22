@@ -159,6 +159,31 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::EditorUnfold,
     },
     PaletteItem {
+        label: "Editor: Add Cursor Above",
+        label_lc: "editor: add cursor above",
+        command: Command::AddCursorAbove,
+    },
+    PaletteItem {
+        label: "Editor: Add Cursor Below",
+        label_lc: "editor: add cursor below",
+        command: Command::AddCursorBelow,
+    },
+    PaletteItem {
+        label: "Editor: Add Cursor at Next Match",
+        label_lc: "editor: add cursor at next match",
+        command: Command::AddCursorAtNextMatch,
+    },
+    PaletteItem {
+        label: "Editor: Add Cursor at All Matches",
+        label_lc: "editor: add cursor at all matches",
+        command: Command::AddCursorAtAllMatches,
+    },
+    PaletteItem {
+        label: "Editor: Remove Secondary Cursors",
+        label_lc: "editor: remove secondary cursors",
+        command: Command::RemoveSecondaryCursors,
+    },
+    PaletteItem {
         label: "View: Toggle Bottom Panel",
         label_lc: "view: toggle bottom panel",
         command: Command::ToggleBottomPanel,

@@ -22,18 +22,18 @@ fn test_undo_redo() {
     assert!(!history.can_redo());
 
     // Undo
-    let (undo_rope, cursor) = history.undo(&rope).unwrap();
-    assert_eq!(undo_rope.to_string(), "hello");
-    assert_eq!(cursor, (0, 5));
-    rope = undo_rope;
+    let undo = history.undo(&rope).unwrap();
+    assert_eq!(undo.rope.to_string(), "hello");
+    assert_eq!(undo.cursor, (0, 5));
+    rope = undo.rope;
 
     assert!(!history.can_undo());
     assert!(history.can_redo());
 
     // Redo
-    let (redo_rope, cursor) = history.redo(&rope).unwrap();
-    assert_eq!(redo_rope.to_string(), "hello world");
-    assert_eq!(cursor, (0, 11));
+    let redo = history.redo(&rope).unwrap();
+    assert_eq!(redo.rope.to_string(), "hello world");
+    assert_eq!(redo.cursor, (0, 11));
 }
 
 #[test]
@@ -68,12 +68,12 @@ fn test_branch_on_edit_after_undo() {
     assert_eq!(checkout_rope.to_string(), "ab");
     rope = checkout_rope;
 
-    let (undo_rope, _) = history.undo(&rope).unwrap();
-    assert_eq!(undo_rope.to_string(), "a");
-    rope = undo_rope;
+    let undo = history.undo(&rope).unwrap();
+    assert_eq!(undo.rope.to_string(), "a");
+    rope = undo.rope;
 
-    let (redo_rope, _) = history.redo(&rope).unwrap();
-    assert_eq!(redo_rope.to_string(), "ab");
+    let redo = history.redo(&rope).unwrap();
+    assert_eq!(redo.rope.to_string(), "ab");
 }
 
 #[test]
@@ -161,11 +161,11 @@ fn test_dirty_save_point() {
     history.on_save(&rope);
     assert!(!history.is_dirty());
 
-    let (undo_rope, _) = history.undo(&rope).unwrap();
+    let undo = history.undo(&rope).unwrap();
     assert!(history.is_dirty());
 
-    let (redo_rope, _) = history.redo(&undo_rope).unwrap();
-    assert_eq!(redo_rope.to_string(), "hello world");
+    let redo = history.redo(&undo.rope).unwrap();
+    assert_eq!(redo.rope.to_string(), "hello world");
     assert!(!history.is_dirty());
 }
 
