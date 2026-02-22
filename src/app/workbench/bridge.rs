@@ -317,6 +317,18 @@ impl Workbench {
                 }
                 self.editor_search_rx[pane] = None;
             }
+            KernelEffect::ComputeSyntaxHighlights {
+                tab_id,
+                version,
+                language,
+                rope,
+                tree,
+                segments,
+            } => {
+                let _scope = perf::scope("effect.syntax_highlight");
+                self.runtime
+                    .compute_syntax_highlights(tab_id, version, language, rope, tree, segments);
+            }
             KernelEffect::WriteFile {
                 pane,
                 path,

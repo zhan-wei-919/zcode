@@ -1,8 +1,10 @@
 use ropey::Rope;
 use serde_json::Value;
 use std::path::PathBuf;
+use tree_sitter::Tree;
 
-use crate::kernel::editor::ReloadRequest;
+use crate::kernel::editor::{ReloadRequest, TabId};
+use crate::kernel::language::LanguageId;
 use crate::kernel::services::ports::{
     LspCompletionItem, LspCompletionTriggerContext, LspPositionEncoding, LspRange, LspResourceOp,
     LspWorkspaceFileEdit, ThemeSettings,
@@ -46,6 +48,14 @@ pub enum Effect {
     },
     CancelEditorSearch {
         pane: usize,
+    },
+    ComputeSyntaxHighlights {
+        tab_id: TabId,
+        version: u64,
+        language: LanguageId,
+        rope: Rope,
+        tree: Tree,
+        segments: Vec<(usize, usize)>,
     },
     WriteFile {
         pane: usize,

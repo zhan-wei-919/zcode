@@ -8,7 +8,9 @@ use super::state::{
     DiskState, EditorPaneState, EditorState, EditorTabState, ReloadCause, ReloadRequest,
     SearchBarMode, TabId,
 };
+use super::syntax_highlight_cache::AsyncSyntaxHighlightCache;
 use super::viewport;
+use super::SyntaxHighlightPatch;
 
 #[derive(Clone, Copy, Debug)]
 struct SecondaryCursorSnapshot {
@@ -105,7 +107,7 @@ fn apply_secondary_cursors_after_edit(
 
 impl EditorState {
     pub fn dispatch_action(&mut self, action: EditorAction) -> (bool, Vec<Effect>) {
-        match action {
+        let (mut changed, mut effects) = match action {
             EditorAction::OpenFile {
                 pane,
                 path,
@@ -190,6 +192,11 @@ impl EditorState {
                 to_index,
             } => self.move_tab(tab_id, from_pane, to_pane, to_index),
             EditorAction::FileReloaded { content, request } => self.file_reloaded(request, content),
+            EditorAction::ApplySyntaxHighlightPatches {
+                tab_id,
+                version,
+                patches,
+            } => self.apply_syntax_highlight_patches(tab_id, version, patches),
             EditorAction::FileExternallyModified { path } => self.file_externally_modified(path),
             EditorAction::FileExternallyDeleted { path } => self.file_externally_deleted(path),
             EditorAction::AcceptDiskVersion {
@@ -198,11 +205,14 @@ impl EditorState {
                 content,
             } => self.accept_disk_version(pane, path, content),
             EditorAction::KeepMemoryVersion { pane } => self.keep_memory_version(pane),
-        }
+        };
+
+        changed |= self.maybe_schedule_syntax_highlights(&mut effects);
+        (changed, effects)
     }
 
     pub fn apply_command(&mut self, pane: usize, command: Command) -> (bool, Vec<Effect>) {
-        match command {
+        let (mut changed, mut effects) = match command {
             Command::NextTab => self.next_tab(pane),
             Command::PrevTab => self.prev_tab(pane),
             Command::CloseTab => self.close_tab(pane),
@@ -249,7 +259,10 @@ impl EditorState {
                 self.dispatch_action(EditorAction::ReplaceAll { pane })
             }
             cmd => self.forward_to_active_tab(pane, cmd),
-        }
+        };
+
+        changed |= self.maybe_schedule_syntax_highlights(&mut effects);
+        (changed, effects)
     }
 
     fn close_search_bar(&mut self, pane: usize) -> (bool, Vec<Effect>) {
@@ -1363,6 +1376,108 @@ impl EditorState {
         tab.reload_from_content(&content, &config);
         self.open_paths_version = self.open_paths_version.saturating_add(1);
         (true, Vec::new())
+    }
+
+    fn apply_syntax_highlight_patches(
+        &mut self,
+        tab_id: TabId,
+        version: u64,
+        patches: Vec<SyntaxHighlightPatch>,
+    ) -> (bool, Vec<Effect>) {
+        let mut state_changed = false;
+        for pane_state in &mut self.panes {
+            for tab in &mut pane_state.tabs {
+                if tab.id != tab_id {
+                    continue;
+                }
+
+                if tab.syntax_highlight_inflight_version == Some(version) {
+                    tab.syntax_highlight_inflight_version = None;
+                    state_changed = true;
+                }
+
+                if tab.edit_version != version {
+                    return (state_changed, Vec::new());
+                }
+
+                let Some(cache) = tab.syntax_highlight_cache.as_mut() else {
+                    return (state_changed, Vec::new());
+                };
+
+                for patch in patches {
+                    cache.apply_patch(patch.start_line, patch.lines);
+                }
+
+                state_changed = true;
+                return (state_changed, Vec::new());
+            }
+        }
+        (false, Vec::new())
+    }
+
+    fn maybe_schedule_syntax_highlights(&mut self, effects: &mut Vec<Effect>) -> bool {
+        let mut state_changed = false;
+        for pane_state in &mut self.panes {
+            let Some(tab) = pane_state.active_tab_mut() else {
+                continue;
+            };
+            state_changed |= Self::maybe_schedule_syntax_highlights_for_tab(tab, effects);
+        }
+        state_changed
+    }
+
+    fn maybe_schedule_syntax_highlights_for_tab(
+        tab: &mut EditorTabState,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
+        if tab.syntax().is_none() {
+            return false;
+        }
+
+        let version = tab.edit_version;
+
+        if let Some(inflight) = tab.syntax_highlight_inflight_version {
+            if inflight == version {
+                return false;
+            }
+            if tab.syntax_highlight_pending_version != Some(version) {
+                tab.syntax_highlight_pending_version = Some(version);
+                return true;
+            }
+            return false;
+        }
+
+        let rope = tab.buffer.rope();
+        if tab.syntax_highlight_cache.is_none() {
+            tab.syntax_highlight_cache = Some(AsyncSyntaxHighlightCache::new_for_rope(rope));
+        }
+        let Some(cache) = tab.syntax_highlight_cache.as_ref() else {
+            return false;
+        };
+        let segments = cache.dirty_segments();
+        if segments.is_empty() {
+            return false;
+        }
+
+        if tab.syntax_highlight_last_requested_version == version {
+            return false;
+        }
+
+        let Some(syntax) = tab.syntax() else {
+            return false;
+        };
+        effects.push(Effect::ComputeSyntaxHighlights {
+            tab_id: tab.id,
+            version,
+            language: syntax.language(),
+            rope: rope.clone(),
+            tree: syntax.tree().clone(),
+            segments,
+        });
+        tab.syntax_highlight_inflight_version = Some(version);
+        tab.syntax_highlight_last_requested_version = version;
+        tab.syntax_highlight_pending_version = None;
+        true
     }
 
     fn file_externally_modified(&mut self, path: std::path::PathBuf) -> (bool, Vec<Effect>) {

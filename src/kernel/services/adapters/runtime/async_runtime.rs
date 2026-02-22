@@ -1,5 +1,7 @@
 use super::message::AppMessage;
 use crate::kernel::editor::ReloadRequest;
+use crate::kernel::editor::TabId;
+use crate::kernel::language::LanguageId;
 use crate::kernel::services::adapters::git as git_helpers;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::{
@@ -22,6 +24,7 @@ use std::sync::mpsc::Sender;
 use std::sync::MutexGuard;
 #[cfg(feature = "terminal")]
 use std::sync::{Arc, Mutex};
+use tree_sitter::Tree;
 
 pub struct AsyncRuntime {
     runtime: tokio::runtime::Runtime,
@@ -62,6 +65,27 @@ impl AsyncRuntime {
 
     pub fn tokio_handle(&self) -> tokio::runtime::Handle {
         self.runtime.handle().clone()
+    }
+
+    pub fn compute_syntax_highlights(
+        &self,
+        tab_id: TabId,
+        version: u64,
+        language: LanguageId,
+        rope: Rope,
+        tree: Tree,
+        segments: Vec<(usize, usize)>,
+    ) {
+        let tx = self.tx.clone();
+        self.runtime.spawn_blocking(move || {
+            let patches =
+                crate::kernel::editor::compute_highlight_patches(language, &tree, &rope, &segments);
+            let _ = tx.send(AppMessage::SyntaxHighlightsComputed {
+                tab_id,
+                version,
+                patches,
+            });
+        });
     }
 
     pub fn git_detect_repo(&self, workspace_root: PathBuf) {

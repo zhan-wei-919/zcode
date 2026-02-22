@@ -18,6 +18,7 @@ pub(super) fn should_close_completion_on_editor_action(action: &EditorAction) ->
         EditorAction::SetViewportSize { .. }
             | EditorAction::SearchStarted { .. }
             | EditorAction::SearchMessage { .. }
+            | EditorAction::ApplySyntaxHighlightPatches { .. }
     )
 }
 

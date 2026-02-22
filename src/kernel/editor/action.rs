@@ -3,6 +3,7 @@ use crate::models::Granularity;
 use std::path::PathBuf;
 
 use super::ReloadRequest;
+use super::SyntaxHighlightPatch;
 use super::TabId;
 
 #[derive(Debug, Clone)]
@@ -146,6 +147,11 @@ pub enum EditorAction {
     FileReloaded {
         content: String,
         request: ReloadRequest,
+    },
+    ApplySyntaxHighlightPatches {
+        tab_id: TabId,
+        version: u64,
+        patches: Vec<SyntaxHighlightPatch>,
     },
     FileExternallyModified {
         path: PathBuf,

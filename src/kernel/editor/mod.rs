@@ -7,6 +7,7 @@ mod reducer;
 mod search;
 mod state;
 mod syntax;
+mod syntax_highlight_cache;
 mod viewport;
 
 pub use crate::kernel::language::LanguageId;
@@ -16,6 +17,7 @@ pub use state::{
     DiskSnapshot, DiskState, EditorPaneState, EditorState, EditorTabState, EditorViewportState,
     ReloadCause, ReloadRequest, SearchBarField, SearchBarMode, SearchBarState, TabId,
 };
-pub use syntax::{highlight_snippet, HighlightKind, HighlightSpan};
+pub(crate) use syntax::compute_highlight_patches;
+pub use syntax::{highlight_snippet, HighlightKind, HighlightSpan, SyntaxHighlightPatch};
 pub(crate) use viewport::clamp_and_follow;
 pub use viewport::cursor_display_x_abs;

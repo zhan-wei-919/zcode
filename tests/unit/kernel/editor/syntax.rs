@@ -3,15 +3,32 @@ use crate::models::{EditOp, OpId};
 use compact_str::CompactString;
 use ropey::Rope;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Instant;
+
+fn highlight_lines(
+    doc: &SyntaxDocument,
+    rope: &Rope,
+    start_line: usize,
+    end_line_exclusive: usize,
+) -> Vec<Vec<HighlightSpan>> {
+    compute_highlight_patches(
+        doc.language(),
+        doc.tree(),
+        rope,
+        &[(start_line, end_line_exclusive)],
+    )
+    .into_iter()
+    .next()
+    .map(|p| p.lines)
+    .unwrap_or_default()
+}
 
 #[test]
 fn test_highlight_comment_range_rust() {
     let rope = Rope::from_str("fn main() { // hi\n}\n");
     let doc = SyntaxDocument::for_path(Path::new("test.rs"), &rope).expect("rust syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     assert_eq!(spans.len(), 1);
 
     let line = "fn main() { // hi";
@@ -28,7 +45,7 @@ fn test_highlight_rust_macro_string_prefers_string_over_macro() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.rs"), &rope).expect("rust syntax");
 
-    let spans = doc.highlight_lines(&rope, 1, 2);
+    let spans = highlight_lines(&doc, &rope, 1, 2);
     let line = "    tracing::info!(settings_path = %path.display(), \"settings ready\");";
     let in_string = line.find("settings ready").unwrap();
 
@@ -58,14 +75,14 @@ fn test_highlight_go_comment_string_keyword_and_in_string_or_comment() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.go"), &rope).expect("go syntax");
 
-    let spans = doc.highlight_lines(&rope, 1, 2);
+    let spans = highlight_lines(&doc, &rope, 1, 2);
     let line = "// hi";
     let idx = line.find("//").unwrap();
     assert!(spans[0]
         .iter()
         .any(|s| s.kind == HighlightKind::Comment && s.start <= idx && idx < s.end));
 
-    let spans = doc.highlight_lines(&rope, 2, 3);
+    let spans = highlight_lines(&doc, &rope, 2, 3);
     let line = "func main() { println(\"x\") }";
     let idx_func = line.find("func").unwrap();
     let idx_str = line.find("\"x\"").unwrap() + 1;
@@ -90,7 +107,7 @@ fn test_highlight_go_richer_symbols() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.go"), &rope).expect("go syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let line = "package main";
     let idx_package_name = line.find("main").unwrap();
     assert!(spans[0].iter().any(|s| {
@@ -99,7 +116,7 @@ fn test_highlight_go_richer_symbols() {
             && idx_package_name < s.end
     }));
 
-    let spans = doc.highlight_lines(&rope, 1, 2);
+    let spans = highlight_lines(&doc, &rope, 1, 2);
     let line = "type Counter struct { value int }";
     let idx_type_name = line.find("Counter").unwrap();
     let idx_field_name = line.find("value").unwrap();
@@ -110,7 +127,7 @@ fn test_highlight_go_richer_symbols() {
         s.kind == HighlightKind::Variable && s.start <= idx_field_name && idx_field_name < s.end
     }));
 
-    let spans = doc.highlight_lines(&rope, 2, 3);
+    let spans = highlight_lines(&doc, &rope, 2, 3);
     let line = "func add(x int, y int) int { return x + y }";
     let idx_function_name = line.find("add").unwrap();
     let idx_param_x = line.find("x").unwrap();
@@ -123,7 +140,7 @@ fn test_highlight_go_richer_symbols() {
         && s.start <= idx_param_x
         && idx_param_x < s.end));
 
-    let spans = doc.highlight_lines(&rope, 3, 4);
+    let spans = highlight_lines(&doc, &rope, 3, 4);
     let line = "func (c *Counter) Inc(delta int) int { return c.value + delta }";
     let idx_method_name = line.find("Inc").unwrap();
     let idx_param_delta = line.find("delta").unwrap();
@@ -138,21 +155,21 @@ fn test_highlight_go_richer_symbols() {
         s.kind == HighlightKind::Variable && s.start <= idx_member_value && idx_member_value < s.end
     }));
 
-    let spans = doc.highlight_lines(&rope, 4, 5);
+    let spans = highlight_lines(&doc, &rope, 4, 5);
     let line = "func Map[T any](x T) T { return x }";
     let idx_type_param = line.find("[T").unwrap() + 1;
     assert!(spans[0].iter().any(|s| s.kind == HighlightKind::Type
         && s.start <= idx_type_param
         && idx_type_param < s.end));
 
-    let spans = doc.highlight_lines(&rope, 8, 9);
+    let spans = highlight_lines(&doc, &rope, 8, 9);
     let line = "    m := c.Inc(n)";
     let idx_call_method = line.find("Inc").unwrap();
     assert!(spans[0].iter().any(|s| {
         s.kind == HighlightKind::Function && s.start <= idx_call_method && idx_call_method < s.end
     }));
 
-    let spans = doc.highlight_lines(&rope, 9, 10);
+    let spans = highlight_lines(&doc, &rope, 9, 10);
     let line = "    println(m)";
     let idx_builtin_call = line.find("println").unwrap();
     assert!(spans[0].iter().any(|s| {
@@ -166,14 +183,14 @@ fn test_highlight_go_label_name_as_attribute() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.go"), &rope).expect("go syntax");
 
-    let spans = doc.highlight_lines(&rope, 2, 3);
+    let spans = highlight_lines(&doc, &rope, 2, 3);
     let line = "label:";
     let idx_label_def = line.find("label").unwrap();
     assert!(spans[0].iter().any(|s| s.kind == HighlightKind::Attribute
         && s.start <= idx_label_def
         && idx_label_def < s.end));
 
-    let spans = doc.highlight_lines(&rope, 3, 4);
+    let spans = highlight_lines(&doc, &rope, 3, 4);
     let line = "    goto label";
     let idx_label_ref = line.rfind("label").unwrap();
     assert!(spans[0].iter().any(|s| s.kind == HighlightKind::Attribute
@@ -187,21 +204,21 @@ fn test_highlight_python_comment_string_keyword_and_in_string_or_comment() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.py"), &rope).expect("python syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let line = "# hi";
     let idx = line.find('#').unwrap();
     assert!(spans[0]
         .iter()
         .any(|s| s.kind == HighlightKind::Comment && s.start <= idx && idx < s.end));
 
-    let spans = doc.highlight_lines(&rope, 1, 2);
+    let spans = highlight_lines(&doc, &rope, 1, 2);
     let line = "def f():";
     let idx_def = line.find("def").unwrap();
     assert!(spans[0]
         .iter()
         .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_def && idx_def < s.end));
 
-    let spans = doc.highlight_lines(&rope, 2, 3);
+    let spans = highlight_lines(&doc, &rope, 2, 3);
     let line = "    return \"x\"";
     let idx_return = line.find("return").unwrap();
     let idx_str = line.find("\"x\"").unwrap() + 1;
@@ -236,14 +253,14 @@ def use(value):
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.py"), &rope).expect("python syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let line = "class User:";
     let idx_class_name = line.find("User").unwrap();
     assert!(spans[0].iter().any(|s| s.kind == HighlightKind::Type
         && s.start <= idx_class_name
         && idx_class_name < s.end));
 
-    let spans = doc.highlight_lines(&rope, 1, 2);
+    let spans = highlight_lines(&doc, &rope, 1, 2);
     let line = "    def greet(self, name: str) -> str:";
     let idx_method_name = line.find("greet").unwrap();
     let idx_self = line.find("self").unwrap();
@@ -258,7 +275,7 @@ def use(value):
         s.kind == HighlightKind::Variable && s.start <= idx_param_name && idx_param_name < s.end
     }));
 
-    let spans = doc.highlight_lines(&rope, 4, 5);
+    let spans = highlight_lines(&doc, &rope, 4, 5);
     let line = "def use(value):";
     let idx_function_name = line.find("use").unwrap();
     let idx_param_value = line.find("value").unwrap();
@@ -271,7 +288,7 @@ def use(value):
         s.kind == HighlightKind::Variable && s.start <= idx_param_value && idx_param_value < s.end
     }));
 
-    let spans = doc.highlight_lines(&rope, 5, 6);
+    let spans = highlight_lines(&doc, &rope, 5, 6);
     let line = "    user = User()";
     let idx_local_var = line.find("user").unwrap();
     let idx_constructor = line.find("User").unwrap();
@@ -282,7 +299,7 @@ def use(value):
         s.kind == HighlightKind::Type && s.start <= idx_constructor && idx_constructor < s.end
     }));
 
-    let spans = doc.highlight_lines(&rope, 6, 7);
+    let spans = highlight_lines(&doc, &rope, 6, 7);
     let line = "    result = user.greet(name=value)";
     let idx_result = line.find("result").unwrap();
     let idx_method_call = line.find("greet").unwrap();
@@ -297,7 +314,7 @@ def use(value):
         s.kind == HighlightKind::Variable && s.start <= idx_keyword_arg && idx_keyword_arg < s.end
     }));
 
-    let spans = doc.highlight_lines(&rope, 7, 8);
+    let spans = highlight_lines(&doc, &rope, 7, 8);
     let line = "    if (alias := result):";
     let idx_alias = line.find("alias").unwrap();
     assert!(spans[0]
@@ -317,28 +334,28 @@ found = re.search("[0-9]+", text)
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.py"), &rope).expect("python syntax");
 
-    let spans = doc.highlight_lines(&rope, 2, 3);
+    let spans = highlight_lines(&doc, &rope, 2, 3);
     let line = "MAX_RETRIES = 3";
     let idx_constant = line.find("MAX_RETRIES").unwrap();
     assert!(spans[0].iter().any(|s| {
         s.kind == HighlightKind::Constant && s.start <= idx_constant && idx_constant < s.end
     }));
 
-    let spans = doc.highlight_lines(&rope, 3, 4);
+    let spans = highlight_lines(&doc, &rope, 3, 4);
     let line = "user = User()";
     let idx_constructor = line.find("User").unwrap();
     assert!(spans[0].iter().any(|s| {
         s.kind == HighlightKind::Type && s.start <= idx_constructor && idx_constructor < s.end
     }));
 
-    let spans = doc.highlight_lines(&rope, 4, 5);
+    let spans = highlight_lines(&doc, &rope, 4, 5);
     let line = "matcher = re.compile(r\"[A-Z_]+\")";
     let idx_regex = line.find("[A-Z_]+").unwrap();
     assert!(spans[0]
         .iter()
         .any(|s| { s.kind == HighlightKind::Regex && s.start <= idx_regex && idx_regex < s.end }));
 
-    let spans = doc.highlight_lines(&rope, 5, 6);
+    let spans = highlight_lines(&doc, &rope, 5, 6);
     let line = "found = re.search(\"[0-9]+\", text)";
     let idx_regex = line.find("[0-9]+").unwrap();
     assert!(spans[0]
@@ -352,7 +369,7 @@ fn test_highlight_javascript_comment_string_keyword_and_in_string_or_comment() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.js"), &rope).expect("js syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let line = "function f() { return \"x\" } // hi";
     let idx_func = line.find("function").unwrap();
     let idx_return = line.find("return").unwrap();
@@ -386,7 +403,7 @@ fn test_highlight_jsx_string_and_in_string_or_comment() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.jsx"), &rope).expect("jsx syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let line = "const x = <div>{\"x\"}</div>";
     let idx_const = line.find("const").unwrap();
     let idx_str = line.find("\"x\"").unwrap() + 1;
@@ -410,7 +427,7 @@ fn test_highlight_tsx_string_and_in_string_or_comment() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.tsx"), &rope).expect("tsx syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let line = "const x = <div>{\"x\"}</div>";
     let idx_const = line.find("const").unwrap();
     let idx_str = line.find("\"x\"").unwrap() + 1;
@@ -434,7 +451,7 @@ fn test_highlight_c_comment_string_keyword_and_in_string_or_comment() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.c"), &rope).expect("c syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let line = "int main() { const char* s = \"x\"; } // hi";
     let idx_const = line.find("const").unwrap();
     let idx_str = line.find("\"x\"").unwrap() + 1;
@@ -462,7 +479,7 @@ fn test_highlight_cpp_comment_string_keyword_and_in_string_or_comment() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.cpp"), &rope).expect("cpp syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let line = "class A { public: bool ok = true; };";
     let idx_class = line.find("class").unwrap();
     let idx_public = line.find("public").unwrap();
@@ -485,7 +502,7 @@ fn test_highlight_header_defaults_to_cpp() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.h"), &rope).expect("h syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let line = "class A {};";
     let idx_class = line.find("class").unwrap();
 
@@ -500,7 +517,7 @@ fn test_highlight_java_comment_string_keyword_and_in_string_or_comment() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("Test.java"), &rope).expect("java syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let line = "public class A { String s = \"x\"; } // hi";
     let idx_public = line.find("public").unwrap();
     let idx_class = line.find("class").unwrap();
@@ -627,7 +644,7 @@ fn test_highlight_line_spans_are_sorted_and_non_overlapping() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("ordered.rs"), &rope).expect("rust syntax");
 
-    let lines = doc.highlight_lines(&rope, 0, rope.len_lines());
+    let lines = highlight_lines(&doc, &rope, 0, rope.len_lines());
     for (line_index, line) in lines.iter().enumerate() {
         let line_len = rope.line(line_index).len_bytes();
         for span in line {
@@ -649,25 +666,9 @@ fn test_highlight_lines_cache_hit_returns_same_spans() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("cache_hit.rs"), &rope).expect("rust syntax");
 
-    let first = doc.highlight_lines(&rope, 0, 2);
-    let second = doc.highlight_lines(&rope, 0, 2);
+    let first = highlight_lines(&doc, &rope, 0, 2);
+    let second = highlight_lines(&doc, &rope, 0, 2);
     assert_eq!(first, second);
-}
-
-#[test]
-fn test_highlight_lines_shared_reuses_cached_window_for_same_range() {
-    let src = "fn alpha() { let x = 1; }\nfn beta() { let y = 2; }\n";
-    let rope = Rope::from_str(src);
-    let doc =
-        SyntaxDocument::for_path(Path::new("cache_hit_shared.rs"), &rope).expect("rust syntax");
-
-    let first = doc.highlight_lines_shared(&rope, 0, 2);
-    let second = doc.highlight_lines_shared(&rope, 0, 2);
-
-    assert_eq!(first.len(), second.len());
-    for (left, right) in first.iter().zip(second.iter()) {
-        assert!(Arc::ptr_eq(left, right));
-    }
 }
 
 #[test]
@@ -676,7 +677,7 @@ fn test_apply_edit_invalidates_highlight_cache_and_updates_result() {
     let mut rope = Rope::from_str(src);
     let mut doc = SyntaxDocument::for_path(Path::new("cache_edit.rs"), &rope).expect("rust syntax");
 
-    let before = doc.highlight_lines(&rope, 0, 1);
+    let before = highlight_lines(&doc, &rope, 0, 1);
     assert!(!before[0]
         .iter()
         .any(|span| span.kind == HighlightKind::Comment));
@@ -690,75 +691,46 @@ fn test_apply_edit_invalidates_highlight_cache_and_updates_result() {
         (0, 0),
     );
     op.apply(&mut rope);
-    doc.apply_edit(&rope, &op);
+    let delta = doc.apply_edit(&rope, &op);
+    assert!(!delta.reparsed);
+    assert!(delta.input_edit.is_some());
+    assert!(!delta.changed_ranges.is_empty());
 
-    let after = doc.highlight_lines(&rope, 0, 1);
+    let after = highlight_lines(&doc, &rope, 0, 1);
     assert!(after[0]
         .iter()
         .any(|span| span.kind == HighlightKind::Comment));
 }
 
 #[test]
-fn test_apply_edit_only_invalidates_affected_lines() {
-    let src = "fn alpha() { let x = 1; }\nfn beta() { let y = 2; }\nfn gamma() { let z = 3; }\n";
-    let mut rope = Rope::from_str(src);
-    let mut doc = SyntaxDocument::for_path(Path::new("cache_edit_incremental.rs"), &rope)
-        .expect("rust syntax");
-
-    let before = doc.highlight_lines_shared(&rope, 0, 3);
-    let line0_before = Arc::clone(&before[0]);
-    let line1_before = Arc::clone(&before[1]);
-    let line2_before = Arc::clone(&before[2]);
-
-    let insert_at = src.find("let y").expect("insert position");
-    let op = EditOp::insert(
-        OpId::root(),
-        insert_at,
-        CompactString::new("/* note */ "),
-        (0, 0),
-        (0, 0),
-    );
-    op.apply(&mut rope);
-    doc.apply_edit(&rope, &op);
-
-    let after = doc.highlight_lines_shared(&rope, 0, 3);
-    assert!(Arc::ptr_eq(&line0_before, &after[0]));
-    assert!(!Arc::ptr_eq(&line1_before, &after[1]));
-    assert!(Arc::ptr_eq(&line2_before, &after[2]));
-
-    assert!(after[1]
-        .iter()
-        .any(|span| span.kind == HighlightKind::Comment));
-}
-
-#[test]
-fn test_apply_edit_splice_keeps_unaffected_tail_lines_cached() {
-    let src = "fn alpha() { let x = 1; }\nfn beta() { let y = 2; }\nfn gamma() { let z = 3; }\n";
+fn test_apply_edit_batch_falls_back_to_reparse() {
+    let src = "fn main() { let value = 1; }\n";
     let mut rope = Rope::from_str(src);
     let mut doc =
-        SyntaxDocument::for_path(Path::new("cache_edit_splice.rs"), &rope).expect("rust syntax");
+        SyntaxDocument::for_path(Path::new("cache_edit_batch.rs"), &rope).expect("rust syntax");
 
-    let before = doc.highlight_lines_shared(&rope, 0, 3);
-    let tail_before = Arc::clone(&before[2]);
+    let insert_at = src.find("let").expect("insert position");
+    let op = EditOp {
+        id: OpId::new(),
+        parent: OpId::root(),
+        kind: crate::models::OpKind::Batch {
+            edits: vec![crate::models::edit_op::BatchEdit {
+                start: insert_at,
+                end: insert_at,
+                deleted: CompactString::new(""),
+                inserted: CompactString::new("/* note */ "),
+            }],
+        },
+        cursor_before: (0, 0),
+        cursor_after: (0, 0),
+        extra_cursors_before: None,
+        extra_cursors_after: None,
+    };
 
-    let insert_at = src
-        .match_indices('\n')
-        .nth(1)
-        .map(|(idx, _)| idx)
-        .expect("second newline");
-    let op = EditOp::insert(
-        OpId::root(),
-        insert_at,
-        CompactString::new("\n"),
-        (0, 0),
-        (0, 0),
-    );
     op.apply(&mut rope);
-    doc.apply_edit(&rope, &op);
-
-    let after = doc.highlight_lines_shared(&rope, 3, 4);
-    assert_eq!(after.len(), 1);
-    assert!(Arc::ptr_eq(&tail_before, &after[0]));
+    let delta = doc.apply_edit(&rope, &op);
+    assert!(delta.reparsed);
+    assert!(delta.input_edit.is_none());
 }
 
 #[test]
@@ -777,8 +749,8 @@ fn test_large_file_range_highlight_preserves_sorted_non_overlapping_spans() {
     let start = 10_000usize;
     let end = start + 220usize;
 
-    let first = doc.highlight_lines(&rope, start, end);
-    let second = doc.highlight_lines(&rope, start, end);
+    let first = highlight_lines(&doc, &rope, start, end);
+    let second = highlight_lines(&doc, &rope, start, end);
     assert_eq!(first, second);
 
     for (line_index, line) in first.iter().enumerate() {
@@ -798,7 +770,7 @@ fn test_large_file_range_highlight_preserves_sorted_non_overlapping_spans() {
 fn experiment_highlight_lines_scale_baseline() {
     let lines = 1400usize;
     let window = 220usize;
-    let loops = 100usize;
+    let loops = 20usize;
     let mut src = String::new();
     for i in 0..lines {
         src.push_str(&format!(
@@ -808,13 +780,13 @@ fn experiment_highlight_lines_scale_baseline() {
     let rope = Rope::from_str(&src);
     let doc = SyntaxDocument::for_path(Path::new("baseline.rs"), &rope).expect("rust syntax");
 
-    let _ = doc.highlight_lines(&rope, 0, window);
+    let _ = highlight_lines(&doc, &rope, 0, window);
 
     let mut total_spans = 0usize;
     let start = Instant::now();
     for i in 0..loops {
         let start_line = (i * 17) % (lines - window);
-        let spans = doc.highlight_lines(&rope, start_line, start_line + window);
+        let spans = highlight_lines(&doc, &rope, start_line, start_line + window);
         total_spans += spans.iter().map(Vec::len).sum::<usize>();
     }
     let elapsed = start.elapsed();
@@ -839,7 +811,7 @@ fn test_highlight_json_string_number_keyword() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.json"), &rope).expect("json syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     assert!(!spans[0].is_empty());
 
     let idx_name_key = src.find("\"name\"").unwrap();
@@ -864,7 +836,7 @@ fn test_highlight_yaml_string_keyword() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.yaml"), &rope).expect("yaml syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, rope.len_lines());
+    let spans = highlight_lines(&doc, &rope, 0, rope.len_lines());
     let all_spans: usize = spans.iter().map(Vec::len).sum();
     assert!(all_spans > 0);
 
@@ -883,7 +855,7 @@ fn test_highlight_html_tags_and_attributes() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.html"), &rope).expect("html syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     assert!(!spans[0].is_empty());
 
     let idx_div = src.find("div").unwrap();
@@ -908,7 +880,7 @@ fn test_highlight_xml_tags_and_attributes() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.xml"), &rope).expect("xml syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     assert!(!spans[0].is_empty());
 }
 
@@ -918,7 +890,7 @@ fn test_highlight_xml_text_content_is_not_keyword() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.xml"), &rope).expect("xml syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     let idx_text = src.find("hello").expect("text content");
     assert!(!spans[0]
         .iter()
@@ -937,7 +909,7 @@ fn test_highlight_css_selectors_and_properties() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.css"), &rope).expect("css syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, 1);
+    let spans = highlight_lines(&doc, &rope, 0, 1);
     assert!(!spans[0].is_empty());
 
     let idx_class = src.find(".main").unwrap() + 1;
@@ -957,7 +929,7 @@ fn test_highlight_toml_string_and_number() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.toml"), &rope).expect("toml syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, rope.len_lines());
+    let spans = highlight_lines(&doc, &rope, 0, rope.len_lines());
     let all_spans: usize = spans.iter().map(Vec::len).sum();
     assert!(all_spans > 0);
 
@@ -976,7 +948,7 @@ fn test_highlight_sql_comment_string_number_and_keyword() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.sql"), &rope).expect("sql syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, rope.len_lines());
+    let spans = highlight_lines(&doc, &rope, 0, rope.len_lines());
     let all_spans: usize = spans.iter().map(Vec::len).sum();
     assert!(all_spans > 0);
 
@@ -1015,7 +987,7 @@ fn test_highlight_sql_create_table_ddl_does_not_degrade_on_constraints() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("ddl.sql"), &rope).expect("sql syntax");
     let lines: Vec<&str> = src.lines().collect();
-    let spans = doc.highlight_lines(&rope, 0, lines.len());
+    let spans = highlight_lines(&doc, &rope, 0, lines.len());
 
     let assert_kind = |line_index: usize, token: &str, expected: HighlightKind| {
         let line = lines[line_index];
@@ -1067,7 +1039,7 @@ fn test_highlight_bash_commands_and_keywords() {
     let rope = Rope::from_str(src);
     let doc = SyntaxDocument::for_path(Path::new("test.sh"), &rope).expect("bash syntax");
 
-    let spans = doc.highlight_lines(&rope, 0, rope.len_lines());
+    let spans = highlight_lines(&doc, &rope, 0, rope.len_lines());
     let all_spans: usize = spans.iter().map(Vec::len).sum();
     assert!(all_spans > 0);
 

@@ -793,6 +793,19 @@ impl Workbench {
                     request,
                 }));
             }
+            AppMessage::SyntaxHighlightsComputed {
+                tab_id,
+                version,
+                patches,
+            } => {
+                let _ = self.dispatch_kernel(KernelAction::Editor(
+                    EditorAction::ApplySyntaxHighlightPatches {
+                        tab_id,
+                        version,
+                        patches,
+                    },
+                ));
+            }
         }
     }
 

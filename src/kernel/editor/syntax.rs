@@ -4,11 +4,9 @@ use crate::kernel::language::LanguageId;
 use crate::kernel::services::adapters::perf;
 use crate::models::EditOp;
 use ropey::Rope;
-use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::Arc;
 use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,38 +42,22 @@ struct AbsHighlightSpan {
 }
 
 #[derive(Debug, Clone)]
-struct LineHighlightCache {
-    line_count: usize,
-    byte_len: usize,
-    lines: Vec<Option<Arc<Vec<HighlightSpan>>>>,
+pub(crate) struct SyntaxEditDelta {
+    pub(crate) input_edit: Option<InputEdit>,
+    pub(crate) changed_ranges: Vec<tree_sitter::Range>,
+    pub(crate) reparsed: bool,
 }
 
-impl LineHighlightCache {
-    fn new(rope: &Rope) -> Self {
-        let line_count = rope.len_lines().max(1);
-        let byte_len = rope.len_bytes();
-        Self {
-            line_count,
-            byte_len,
-            lines: vec![None; line_count],
-        }
-    }
-
-    fn reset_for_rope(&mut self, rope: &Rope) {
-        let line_count = rope.len_lines().max(1);
-        let byte_len = rope.len_bytes();
-        self.line_count = line_count;
-        self.byte_len = byte_len;
-        self.lines.clear();
-        self.lines.resize_with(line_count, || None);
-    }
+#[derive(Debug, Clone)]
+pub struct SyntaxHighlightPatch {
+    pub start_line: usize,
+    pub lines: Vec<Vec<HighlightSpan>>,
 }
 
 pub struct SyntaxDocument {
     language: LanguageId,
     parser: Parser,
     tree: Tree,
-    line_cache: RefCell<LineHighlightCache>,
 }
 
 impl SyntaxDocument {
@@ -118,7 +100,6 @@ impl SyntaxDocument {
             language,
             parser,
             tree,
-            line_cache: RefCell::new(LineHighlightCache::new(rope)),
         })
     }
 
@@ -126,115 +107,44 @@ impl SyntaxDocument {
         self.language
     }
 
-    fn reset_highlight_cache(&self, rope: &Rope) {
-        self.line_cache.borrow_mut().reset_for_rope(rope);
+    pub fn tree(&self) -> &Tree {
+        &self.tree
     }
 
     pub fn reparse(&mut self, rope: &Rope) {
         if let Some(tree) = parse_rope(&mut self.parser, rope, None) {
             self.tree = tree;
         }
-        self.reset_highlight_cache(rope);
     }
 
-    pub fn apply_edit(&mut self, rope: &Rope, op: &EditOp) {
+    pub fn apply_edit(&mut self, rope: &Rope, op: &EditOp) -> SyntaxEditDelta {
         let Some(edit) = build_input_edit(rope, op) else {
             self.reparse(rope);
-            return;
+            return SyntaxEditDelta {
+                input_edit: None,
+                changed_ranges: Vec::new(),
+                reparsed: true,
+            };
         };
 
         self.tree.edit(&edit);
 
         let Some(new_tree) = parse_rope(&mut self.parser, rope, Some(&self.tree)) else {
             self.reparse(rope);
-            return;
+            return SyntaxEditDelta {
+                input_edit: None,
+                changed_ranges: Vec::new(),
+                reparsed: true,
+            };
         };
 
-        let changed: Vec<_> = self.tree.changed_ranges(&new_tree).collect();
+        let changed_ranges: Vec<_> = self.tree.changed_ranges(&new_tree).collect();
         self.tree = new_tree;
 
-        self.apply_edit_to_highlight_cache(rope, &edit, &changed);
-    }
-
-    fn apply_edit_to_highlight_cache(
-        &self,
-        rope: &Rope,
-        edit: &InputEdit,
-        changed: &[tree_sitter::Range],
-    ) {
-        let mut cache = self.line_cache.borrow_mut();
-        if cache.line_count == 0 || cache.lines.len() != cache.line_count {
-            cache.reset_for_rope(rope);
-            return;
-        }
-
-        let start_row = edit.start_position.row;
-        let old_end_row = edit.old_end_position.row;
-        let new_end_row = edit.new_end_position.row;
-
-        let Some(old_len) = old_end_row
-            .checked_sub(start_row)
-            .and_then(|n| n.checked_add(1))
-        else {
-            cache.reset_for_rope(rope);
-            return;
-        };
-        let Some(new_len) = new_end_row
-            .checked_sub(start_row)
-            .and_then(|n| n.checked_add(1))
-        else {
-            cache.reset_for_rope(rope);
-            return;
-        };
-
-        if start_row > cache.lines.len() || start_row.saturating_add(old_len) > cache.lines.len() {
-            cache.reset_for_rope(rope);
-            return;
-        }
-
-        cache.lines.splice(
-            start_row..start_row.saturating_add(old_len),
-            std::iter::repeat_with(|| None).take(new_len),
-        );
-
-        let total_lines = rope.len_lines().max(1);
-        cache.line_count = total_lines;
-        cache.byte_len = rope.len_bytes();
-
-        match cache.lines.len().cmp(&total_lines) {
-            Ordering::Equal => {}
-            Ordering::Less => cache.lines.resize_with(total_lines, || None),
-            Ordering::Greater => cache.lines.truncate(total_lines),
-        }
-
-        let rope_byte_len = rope.len_bytes();
-        for range in changed {
-            let mut start_byte = range.start_byte.min(rope_byte_len);
-            let mut end_byte = range.end_byte.min(rope_byte_len);
-            if start_byte >= end_byte {
-                continue;
-            }
-
-            // `tree_sitter::Range` boundaries can land on line terminators. Since our cached spans
-            // are per-line and don't include the newline itself, trim boundary `\n` bytes to avoid
-            // needlessly invalidating adjacent lines.
-            if start_byte < rope_byte_len && rope.byte(start_byte) == b'\n' {
-                start_byte = start_byte.saturating_add(1);
-            }
-            while end_byte > start_byte && rope.byte(end_byte.saturating_sub(1)) == b'\n' {
-                end_byte = end_byte.saturating_sub(1);
-            }
-            if start_byte >= end_byte {
-                continue;
-            }
-
-            let start_line = rope.byte_to_line(start_byte);
-            let end_line = rope.byte_to_line(end_byte.saturating_sub(1));
-            for line in start_line..=end_line {
-                if let Some(slot) = cache.lines.get_mut(line) {
-                    *slot = None;
-                }
-            }
+        SyntaxEditDelta {
+            input_edit: Some(edit),
+            changed_ranges,
+            reparsed: false,
         }
     }
 
@@ -255,115 +165,39 @@ impl SyntaxDocument {
             }
         }
     }
-
-    pub fn highlight_lines(
-        &self,
-        rope: &Rope,
-        start_line: usize,
-        end_line_exclusive: usize,
-    ) -> Vec<Vec<HighlightSpan>> {
-        self.highlight_lines_shared(rope, start_line, end_line_exclusive)
-            .iter()
-            .map(|line| line.as_ref().clone())
-            .collect()
-    }
-
-    pub fn highlight_lines_shared(
-        &self,
-        rope: &Rope,
-        start_line: usize,
-        end_line_exclusive: usize,
-    ) -> Arc<Vec<Arc<Vec<HighlightSpan>>>> {
-        let _scope = perf::scope("syntax.highlight");
-        if start_line >= end_line_exclusive {
-            return Arc::new(Vec::new());
-        }
-
-        let total_lines = rope.len_lines().max(1);
-        let start_line = start_line.min(total_lines);
-        let end_line_exclusive = end_line_exclusive.min(total_lines);
-        if start_line >= end_line_exclusive {
-            return Arc::new(Vec::new());
-        }
-
-        let byte_len = rope.len_bytes();
-        let mut cache = self.line_cache.borrow_mut();
-        if cache.line_count != total_lines
-            || cache.byte_len != byte_len
-            || cache.lines.len() != total_lines
-        {
-            cache.reset_for_rope(rope);
-        }
-
-        let _scope = perf::scope("syntax.highlight.fill");
-        let mut missing_start: Option<usize> = None;
-        for line in start_line..end_line_exclusive {
-            if cache.lines[line].is_none() {
-                if missing_start.is_none() {
-                    missing_start = Some(line);
-                }
-                continue;
-            }
-
-            let Some(segment_start) = missing_start.take() else {
-                continue;
-            };
-            let segment_end = line;
-            fill_highlight_cache_segment(
-                self.language,
-                &self.tree,
-                rope,
-                &mut cache.lines,
-                segment_start,
-                segment_end,
-            );
-        }
-
-        if let Some(segment_start) = missing_start.take() {
-            fill_highlight_cache_segment(
-                self.language,
-                &self.tree,
-                rope,
-                &mut cache.lines,
-                segment_start,
-                end_line_exclusive,
-            );
-        }
-
-        let mut out: Vec<Arc<Vec<HighlightSpan>>> =
-            Vec::with_capacity(end_line_exclusive - start_line);
-        for line in start_line..end_line_exclusive {
-            if let Some(spans) = cache.lines[line].as_ref() {
-                out.push(Arc::clone(spans));
-            } else {
-                out.push(Arc::new(Vec::new()));
-            }
-        }
-        Arc::new(out)
-    }
 }
 
-fn fill_highlight_cache_segment(
+pub(crate) fn compute_highlight_patches(
     language: LanguageId,
     tree: &Tree,
     rope: &Rope,
-    cache: &mut [Option<Arc<Vec<HighlightSpan>>>],
-    start_line: usize,
-    end_line_exclusive: usize,
-) {
-    if start_line >= end_line_exclusive {
-        return;
-    }
+    segments: &[(usize, usize)],
+) -> Vec<SyntaxHighlightPatch> {
+    let _scope = perf::scope("syntax.highlight.compute");
+    let total_lines = rope.len_lines().max(1);
 
-    let range_start = rope.line_to_byte(start_line);
-    let range_end = rope.line_to_byte(end_line_exclusive);
-    let spans = collect_highlights(language, tree, rope, range_start, range_end);
-    let per_line = project_abs_spans_to_lines(rope, start_line, end_line_exclusive, &spans);
-    for (idx, line) in per_line.into_iter().enumerate() {
-        if let Some(slot) = cache.get_mut(start_line.saturating_add(idx)) {
-            *slot = Some(Arc::new(line));
+    let mut patches = Vec::new();
+    for (start_line, end_line_exclusive) in segments.iter().copied() {
+        if start_line >= end_line_exclusive {
+            continue;
         }
+
+        let start_line = start_line.min(total_lines);
+        let end_line_exclusive = end_line_exclusive.min(total_lines);
+        if start_line >= end_line_exclusive {
+            continue;
+        }
+
+        let range_start = rope.line_to_byte(start_line);
+        let range_end = rope.line_to_byte(end_line_exclusive);
+        let spans = collect_highlights(language, tree, rope, range_start, range_end);
+        let per_line = project_abs_spans_to_lines(rope, start_line, end_line_exclusive, &spans);
+        patches.push(SyntaxHighlightPatch {
+            start_line,
+            lines: per_line,
+        });
     }
+    patches
 }
 
 /// Highlight an arbitrary snippet (e.g. LSP hover / completion documentation code fences).

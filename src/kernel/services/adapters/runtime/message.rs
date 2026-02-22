@@ -1,4 +1,5 @@
 use crate::kernel::editor::ReloadRequest;
+use crate::kernel::editor::{SyntaxHighlightPatch, TabId};
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem, TerminalId};
 use std::path::PathBuf;
@@ -80,5 +81,10 @@ pub enum AppMessage {
     FileReloaded {
         request: ReloadRequest,
         content: String,
+    },
+    SyntaxHighlightsComputed {
+        tab_id: TabId,
+        version: u64,
+        patches: Vec<SyntaxHighlightPatch>,
     },
 }

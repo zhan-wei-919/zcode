@@ -10,6 +10,7 @@ use std::time::{Instant, SystemTime};
 use unicode_xid::UnicodeXID;
 
 use super::syntax::SyntaxDocument;
+use super::syntax_highlight_cache::AsyncSyntaxHighlightCache;
 use super::{viewport, HighlightSpan, LanguageId};
 
 type SharedSyntaxHighlightLines = Arc<Vec<Arc<Vec<HighlightSpan>>>>;
@@ -212,6 +213,10 @@ pub struct EditorTabState {
     inlay_hints: Option<InlayHintsState>,
     folding: Option<FoldingState>,
     syntax: Option<SyntaxDocument>,
+    pub(super) syntax_highlight_cache: Option<AsyncSyntaxHighlightCache>,
+    pub(super) syntax_highlight_last_requested_version: u64,
+    pub(super) syntax_highlight_inflight_version: Option<u64>,
+    pub(super) syntax_highlight_pending_version: Option<u64>,
 }
 
 impl std::fmt::Debug for EditorTabState {
@@ -256,6 +261,10 @@ impl EditorTabState {
             inlay_hints: None,
             folding: None,
             syntax: None,
+            syntax_highlight_cache: None,
+            syntax_highlight_last_requested_version: u64::MAX,
+            syntax_highlight_inflight_version: None,
+            syntax_highlight_pending_version: None,
         }
     }
 
@@ -268,6 +277,9 @@ impl EditorTabState {
         let buffer = TextBuffer::from_text(content);
         let history = EditHistory::new(buffer.rope().clone());
         let syntax = SyntaxDocument::for_path(&path, buffer.rope());
+        let syntax_highlight_cache = syntax
+            .as_ref()
+            .map(|_| AsyncSyntaxHighlightCache::new_for_rope(buffer.rope()));
 
         Self {
             id,
@@ -294,6 +306,10 @@ impl EditorTabState {
             inlay_hints: None,
             folding: None,
             syntax,
+            syntax_highlight_cache,
+            syntax_highlight_last_requested_version: u64::MAX,
+            syntax_highlight_inflight_version: None,
+            syntax_highlight_pending_version: None,
         }
     }
 
@@ -304,6 +320,13 @@ impl EditorTabState {
             .unwrap_or_else(|| "Untitled".to_string());
         self.path = Some(path.clone());
         self.syntax = SyntaxDocument::for_path(&path, self.buffer.rope());
+        self.syntax_highlight_cache = self
+            .syntax
+            .as_ref()
+            .map(|_| AsyncSyntaxHighlightCache::new_for_rope(self.buffer.rope()));
+        self.syntax_highlight_last_requested_version = u64::MAX;
+        self.syntax_highlight_inflight_version = None;
+        self.syntax_highlight_pending_version = None;
         self.semantic_highlight = None;
         self.git_gutter = None;
         self.inlay_hints = None;
@@ -613,8 +636,13 @@ impl EditorTabState {
         start_line: usize,
         end_line_exclusive: usize,
     ) -> Option<Vec<Vec<HighlightSpan>>> {
-        let syntax = self.syntax.as_ref()?;
-        Some(syntax.highlight_lines(self.buffer.rope(), start_line, end_line_exclusive))
+        let lines = self.highlight_lines_shared(start_line, end_line_exclusive)?;
+        Some(
+            lines
+                .iter()
+                .map(|line| line.as_ref().clone())
+                .collect::<Vec<_>>(),
+        )
     }
 
     pub fn highlight_lines_shared(
@@ -622,8 +650,30 @@ impl EditorTabState {
         start_line: usize,
         end_line_exclusive: usize,
     ) -> Option<SharedSyntaxHighlightLines> {
-        let syntax = self.syntax.as_ref()?;
-        Some(syntax.highlight_lines_shared(self.buffer.rope(), start_line, end_line_exclusive))
+        let _syntax = self.syntax.as_ref()?;
+        let cache = self.syntax_highlight_cache.as_ref()?;
+
+        if start_line >= end_line_exclusive {
+            return Some(Arc::new(Vec::new()));
+        }
+
+        let total_lines = self.buffer.len_lines().max(1);
+        let start_line = start_line.min(total_lines);
+        let end_line_exclusive = end_line_exclusive.min(total_lines);
+        if start_line >= end_line_exclusive {
+            return Some(Arc::new(Vec::new()));
+        }
+
+        let mut out: Vec<Arc<Vec<HighlightSpan>>> =
+            Vec::with_capacity(end_line_exclusive - start_line);
+        for line in start_line..end_line_exclusive {
+            if let Some(spans) = cache.line(line) {
+                out.push(Arc::clone(spans));
+            } else {
+                out.push(Arc::new(Vec::new()));
+            }
+        }
+        Some(Arc::new(out))
     }
 
     pub fn semantic_highlight_lines(
@@ -1105,7 +1155,22 @@ impl EditorTabState {
         let Some(syntax) = self.syntax.as_mut() else {
             return;
         };
-        syntax.apply_edit(self.buffer.rope(), op);
+        let rope = self.buffer.rope();
+        let delta = syntax.apply_edit(rope, op);
+
+        let cache = self
+            .syntax_highlight_cache
+            .get_or_insert_with(|| AsyncSyntaxHighlightCache::new_for_rope(rope));
+
+        if delta.reparsed || delta.input_edit.is_none() {
+            cache.reset_for_rope(rope);
+            return;
+        }
+
+        if let Some(edit) = delta.input_edit.as_ref() {
+            cache.apply_edit_shape_shift(rope, edit);
+        }
+        cache.mark_dirty_from_changed_ranges(rope, &delta.changed_ranges);
     }
 
     pub(super) fn bump_version(&mut self) {
@@ -1117,6 +1182,9 @@ impl EditorTabState {
             return;
         };
         syntax.reparse(self.buffer.rope());
+        if let Some(cache) = self.syntax_highlight_cache.as_mut() {
+            cache.reset_for_rope(self.buffer.rope());
+        }
     }
 
     pub fn reload_from_content(&mut self, content: &str, config: &EditorConfig) {
@@ -1133,6 +1201,13 @@ impl EditorTabState {
             .path
             .as_ref()
             .and_then(|p| SyntaxDocument::for_path(p, self.buffer.rope()));
+        self.syntax_highlight_cache = self
+            .syntax
+            .as_ref()
+            .map(|_| AsyncSyntaxHighlightCache::new_for_rope(self.buffer.rope()));
+        self.syntax_highlight_last_requested_version = u64::MAX;
+        self.syntax_highlight_inflight_version = None;
+        self.syntax_highlight_pending_version = None;
         self.semantic_highlight = None;
         self.git_gutter = None;
         self.inlay_hints = None;
