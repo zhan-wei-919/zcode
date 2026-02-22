@@ -1,4 +1,10 @@
 use super::*;
+use crate::ui::backend::test::TestBackend;
+use crate::ui::backend::Backend;
+use crate::ui::core::geom::{Pos, Rect};
+use crate::ui::core::painter::Painter;
+use crate::ui::core::style::Style;
+use crate::ui::core::theme::Theme;
 use crate::views::editor::markdown::{MdRenderedLine, MdSpanKind, MdStyleSpan};
 use std::hint::black_box;
 use std::time::Instant;
@@ -55,6 +61,47 @@ fn render_markdown_wraps_text_and_keeps_indentation() {
 fn natural_width_ignores_fence_markers() {
     let md = "```rust\nabc   \n```\n";
     assert_eq!(natural_width(md), 3);
+}
+
+#[test]
+fn paint_doc_line_expands_tabs_in_code_blocks() {
+    let md = "```go\n\tlog.Fatal(err)\n```";
+    let lines = render_markdown(md, 80, 50);
+    let line = lines
+        .iter()
+        .find(|l| l.text.contains("log.Fatal"))
+        .expect("missing code line");
+
+    let theme = Theme::default();
+    let base_style = Style::default().bg(theme.popup_bg).fg(theme.palette_fg);
+
+    let area = Rect::new(0, 0, 40, 1);
+    let mut painter = Painter::new();
+    paint_doc_line(
+        &mut painter,
+        Pos::new(0, 0),
+        area.w,
+        DocPaintLineParams {
+            line,
+            theme: &theme,
+            base_style,
+            clip: area,
+            horiz_offset: 0,
+            tab_size: 4,
+        },
+    );
+
+    let mut backend = TestBackend::new(area.w, area.h);
+    backend.draw(area, painter.cmds());
+
+    // The tab expands to 4 spaces (tab_size=4). We must not emit a literal '\t'
+    // because terminals treat it as a cursor movement control char.
+    for x in 0..4u16 {
+        let cell = backend.buffer().cell(x, 0).expect("missing cell");
+        assert_eq!(cell.symbol, " ");
+    }
+    let cell = backend.buffer().cell(4, 0).expect("missing cell");
+    assert_eq!(cell.symbol, "l");
 }
 
 #[test]

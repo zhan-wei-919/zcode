@@ -66,11 +66,15 @@ impl Workbench {
         let Some(pane_state) = self.store.state().editor.pane(active_pane) else {
             return;
         };
-        let config = &self.store.state().editor.config;
-        let layout = compute_editor_pane_layout(pane_area, pane_state, config);
+        let tab_size = self.store.state().editor.config.tab_size;
+        let layout = {
+            let config = &self.store.state().editor.config;
+            compute_editor_pane_layout(pane_area, pane_state, config)
+        };
         let (cx, cy) = if let Some((x, y)) = self.hover_popup.last_anchor {
             (x, y)
         } else {
+            let config = &self.store.state().editor.config;
             let Some((cx, cy)) = cursor_position_editor(&layout, pane_state, config) else {
                 return;
             };
@@ -94,7 +98,7 @@ impl Workbench {
                 .as_deref()
                 .unwrap_or_default();
 
-            let natural_w = doc::natural_width(text);
+            let natural_w = doc::natural_width_with_tab_size(text, tab_size);
             let max_inner_w = area.w.saturating_sub(2).max(1);
             let inner_w = (natural_w.min(u16::MAX as usize) as u16)
                 .clamp(1, 120)
@@ -186,6 +190,7 @@ impl Workbench {
             &self.ui_theme,
             base_style,
             self.hover_popup.scroll,
+            tab_size,
         );
     }
 
@@ -313,8 +318,12 @@ impl Workbench {
         let Some(pane_state) = self.store.state().editor.pane(pane) else {
             return;
         };
+        let tab_size = self.store.state().editor.config.tab_size;
+        let layout = {
+            let config = &self.store.state().editor.config;
+            compute_editor_pane_layout(pane_area, pane_state, config)
+        };
         let config = &self.store.state().editor.config;
-        let layout = compute_editor_pane_layout(pane_area, pane_state, config);
         let Some((cx, cy)) = cursor_position_editor(&layout, pane_state, config) else {
             return;
         };
@@ -470,7 +479,7 @@ impl Workbench {
         });
 
         if let Some(doc_text) = doc_text {
-            let natural_w = doc::natural_width(doc_text);
+            let natural_w = doc::natural_width_with_tab_size(doc_text, tab_size);
 
             let max_area = completion_doc_area(area, popup_area, cy, 30);
             let Some(mut doc_area_max) = max_area else {
@@ -532,6 +541,7 @@ impl Workbench {
                 &self.ui_theme,
                 base_style,
                 self.completion_doc.scroll,
+                tab_size,
             );
         } else {
             self.completion_doc.render_cache.clear();

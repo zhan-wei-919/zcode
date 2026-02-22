@@ -97,10 +97,14 @@ pub fn text_hash(text: &str) -> u64 {
 }
 
 pub fn natural_width(markdown: &str) -> usize {
+    natural_width_with_tab_size(markdown, 4)
+}
+
+pub fn natural_width_with_tab_size(markdown: &str, tab_size: u8) -> usize {
     markdown
         .lines()
         .filter(|line| !line.trim_start().starts_with("```"))
-        .map(|line| UnicodeWidthStr::width(line.trim_end()))
+        .map(|line| line_width_with_tabs(line.trim_end(), tab_size))
         .max()
         .unwrap_or(0)
 }
@@ -120,6 +124,7 @@ pub fn paint_doc_lines(
     theme: &Theme,
     base_style: Style,
     scroll_y: usize,
+    tab_size: u8,
 ) {
     if area.is_empty() || lines.is_empty() {
         return;
@@ -145,6 +150,7 @@ pub fn paint_doc_lines(
                 base_style,
                 clip: row_clip,
                 horiz_offset: 0,
+                tab_size,
             },
         );
     }
@@ -157,6 +163,7 @@ pub struct DocPaintLineParams<'a> {
     pub base_style: Style,
     pub clip: Rect,
     pub horiz_offset: u32,
+    pub tab_size: u8,
 }
 
 pub fn paint_doc_line(painter: &mut Painter, pos: Pos, width: u16, params: DocPaintLineParams<'_>) {
@@ -166,6 +173,7 @@ pub fn paint_doc_line(painter: &mut Painter, pos: Pos, width: u16, params: DocPa
         base_style,
         clip,
         horiz_offset,
+        tab_size,
     } = params;
 
     if width == 0 || clip.is_empty() {
@@ -182,12 +190,23 @@ pub fn paint_doc_line(painter: &mut Painter, pos: Pos, width: u16, params: DocPa
     let mut x = pos.x;
     let mut byte_offset = 0usize;
     let mut display_col = 0u32;
+    let tab_size = tab_size.max(1) as u32;
 
     for g in line.text.graphemes(true) {
         let g_start = byte_offset;
         byte_offset = byte_offset.saturating_add(g.len());
 
-        let g_width = g.width() as u32;
+        let is_tab = g == "\t";
+        let g_width = if is_tab {
+            let rem = display_col % tab_size;
+            if rem == 0 {
+                tab_size
+            } else {
+                tab_size - rem
+            }
+        } else {
+            g.width() as u32
+        };
         if g_width == 0 {
             continue;
         }
@@ -204,6 +223,18 @@ pub fn paint_doc_line(painter: &mut Painter, pos: Pos, width: u16, params: DocPa
         let style = style_for_doc_spans_at(spans, &mut span_idx, g_start, theme, base_style);
 
         let w = g_width.min(u16::MAX as u32) as u16;
+        let visible_w = w.min(right.saturating_sub(x));
+        if visible_w == 0 {
+            break;
+        }
+
+        if is_tab {
+            painter.fill_rect(Rect::new(x, pos.y, visible_w, 1), style);
+            x = x.saturating_add(visible_w);
+            display_col = display_col.saturating_add(g_width);
+            continue;
+        }
+
         if x.saturating_add(w) > right {
             break;
         }
@@ -212,6 +243,21 @@ pub fn paint_doc_line(painter: &mut Painter, pos: Pos, width: u16, params: DocPa
         x = x.saturating_add(w);
         display_col = display_col.saturating_add(g_width);
     }
+}
+
+fn line_width_with_tabs(line: &str, tab_size: u8) -> usize {
+    let tab_size = tab_size.max(1) as usize;
+    let mut col = 0usize;
+    let mut first = true;
+    for seg in line.split('\t') {
+        if !first {
+            let rem = col % tab_size;
+            col = col.saturating_add(if rem == 0 { tab_size } else { tab_size - rem });
+        }
+        first = false;
+        col = col.saturating_add(UnicodeWidthStr::width(seg));
+    }
+    col
 }
 
 fn style_for_doc_spans_at(

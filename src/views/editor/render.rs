@@ -721,7 +721,8 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
     // Indent guides should be subtle like VSCode/Helix (no "full bar" feeling).
     let indent_guide_style = Style::default().fg(theme.indent_guide_fg).add_mod(Mod::DIM);
 
-    let tab_size = tab_size.max(1) as u32;
+    let tab_size_u8 = tab_size.max(1);
+    let tab_size = tab_size_u8 as u32;
 
     let is_markdown = tab.is_markdown();
     let cursor_row = tab.buffer.cursor().0;
@@ -765,6 +766,7 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                         base_style: row_base_style,
                         clip: row_clip,
                         horiz_offset,
+                        tab_size: tab_size_u8,
                     },
                 );
                 continue;
