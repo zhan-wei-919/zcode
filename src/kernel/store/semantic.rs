@@ -166,7 +166,10 @@ fn map_semantic_token_type(token_type: &str) -> (Option<HighlightKind>, bool) {
         "comment" => (Some(HighlightKind::Comment), false),
         "string" => (Some(HighlightKind::String), false),
         "regexp" => (Some(HighlightKind::Regex), false),
-        "keyword" | "modifier" | "operator" => (Some(HighlightKind::Keyword), false),
+        "keyword" | "modifier" => (Some(HighlightKind::Keyword), false),
+        // Operators like `==`, `:=`, `&&` are often returned by LSP semantic tokens.
+        // Coloring them adds visual noise, so keep them unstyled.
+        "operator" => (None, false),
         "number" => (Some(HighlightKind::Number), false),
         "type" | "struct" | "enum" | "interface" | "trait" | "typeParameter" | "class" => {
             (Some(HighlightKind::Type), false)
@@ -298,10 +301,10 @@ mod tests {
     }
 
     #[test]
-    fn semantic_token_operator_maps_to_keyword() {
+    fn semantic_token_operator_is_unstyled() {
         assert_eq!(
             highlight_kind_for_semantic_token("operator", 0, &LspSemanticTokensLegend::default()),
-            Some(HighlightKind::Keyword)
+            None
         );
     }
 

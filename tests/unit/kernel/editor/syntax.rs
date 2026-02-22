@@ -1011,3 +1011,45 @@ fn test_highlight_bash_commands_and_keywords() {
         .iter()
         .any(|s| s.kind == HighlightKind::String && s.start <= idx_str && idx_str < s.end));
 }
+
+#[test]
+fn test_highlight_go_operators_are_not_classified() {
+    let src = r#"package main
+
+func f(a, b, c, d, e, y int) {
+    if a == b || a != c && d == e {
+        x := y
+        x = 1
+    }
+}
+"#;
+
+    let spans = highlight_snippet(LanguageId::Go, src);
+    let lines: Vec<&str> = src.lines().collect();
+
+    let assert_no_span_at = |line: usize, needle: &str| {
+        let idx = lines[line].find(needle).expect("needle must exist");
+        for off in 0..needle.len() {
+            let pos = idx + off;
+            assert!(
+                !spans[line].iter().any(|s| s.start <= pos && pos < s.end),
+                "operator `{}` in line {} should not be highlighted; spans: {:?}",
+                needle,
+                line,
+                spans[line]
+            );
+        }
+    };
+
+    // if a == b || a != c && d == e {
+    assert_no_span_at(3, "==");
+    assert_no_span_at(3, "||");
+    assert_no_span_at(3, "!=");
+    assert_no_span_at(3, "&&");
+
+    // x := y
+    assert_no_span_at(4, ":=");
+
+    // x = 1
+    assert_no_span_at(5, "=");
+}
