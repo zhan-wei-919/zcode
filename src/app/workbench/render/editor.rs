@@ -458,13 +458,23 @@ impl Workbench {
             };
             painter.text_clipped(Pos::new(x, y), marker, marker_style, row_area);
             x = x.saturating_add(1);
-            painter.text_clipped(Pos::new(x, y), " ", if is_selected { selected_bg } else { base_style }, row_area);
+            painter.text_clipped(
+                Pos::new(x, y),
+                " ",
+                if is_selected { selected_bg } else { base_style },
+                row_area,
+            );
             x = x.saturating_add(1);
             let label_w = label.width().min(u16::MAX as usize) as u16;
             painter.text_clipped(Pos::new(x, y), label, label_style, row_area);
             x = x.saturating_add(label_w);
             if !detail.trim().is_empty() {
-                painter.text_clipped(Pos::new(x, y), " ", if is_selected { selected_bg } else { base_style }, row_area);
+                painter.text_clipped(
+                    Pos::new(x, y),
+                    " ",
+                    if is_selected { selected_bg } else { base_style },
+                    row_area,
+                );
                 x = x.saturating_add(1);
                 painter.text_clipped(Pos::new(x, y), detail, detail_style, row_area);
             }
