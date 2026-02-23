@@ -3515,6 +3515,7 @@ impl Store {
                 );
                 let should_flush_newline = matches!(other, Command::InsertNewline);
                 let should_flush_tab = matches!(other, Command::InsertTab);
+                let should_flush_cursor_move = other.is_cursor_command();
                 let (changed, cmd_effects) = self.state.editor.apply_command(pane, other);
                 if changed {
                     state_changed = true;
@@ -3537,6 +3538,13 @@ impl Store {
                         if let Some(path) = self.active_editor_file_path() {
                             state_changed |= self.flush_pending_semantic_highlights_for_path(&path);
                         }
+                    }
+                }
+
+                if should_flush_cursor_move {
+                    if let Some(path) = self.active_editor_file_path() {
+                        state_changed |=
+                            self.flush_pending_semantic_highlights_for_path(&path);
                     }
                 }
 
