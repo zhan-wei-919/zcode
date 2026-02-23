@@ -31,11 +31,6 @@ impl KeyModifiers {
     pub const ALT: Self = Self(1 << 2);
     pub const SUPER: Self = Self(1 << 3);
 
-    #[cfg(target_os = "macos")]
-    pub const CMD: Self = Self(1 << 3); // == SUPER
-    #[cfg(not(target_os = "macos"))]
-    pub const CMD: Self = Self(1 << 1); // == CONTROL
-
     pub fn contains(self, other: Self) -> bool {
         (self.0 & other.0) == other.0
     }
@@ -164,26 +159,6 @@ impl Key {
 
     pub fn ctrl_shift(code: KeyCode) -> Self {
         Self::new(code, KeyModifiers::CONTROL | KeyModifiers::SHIFT)
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn cmd(code: KeyCode) -> Self {
-        Self::new(code, KeyModifiers::SUPER)
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub fn cmd(code: KeyCode) -> Self {
-        Self::ctrl(code)
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn cmd_shift(code: KeyCode) -> Self {
-        Self::new(code, KeyModifiers::SUPER | KeyModifiers::SHIFT)
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub fn cmd_shift(code: KeyCode) -> Self {
-        Self::ctrl_shift(code)
     }
 }
 

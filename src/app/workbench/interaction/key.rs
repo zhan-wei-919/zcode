@@ -580,7 +580,7 @@ impl Workbench {
                 let _ = self.dispatch_kernel(KernelAction::ThemeEditorCycleLanguage);
                 EventResult::Consumed
             }
-            (KeyCode::Char('r'), mods) if mods.contains(KeyModifiers::CMD) => {
+            (KeyCode::Char('r'), mods) if mods.contains(KeyModifiers::CONTROL) => {
                 let _ = self.dispatch_kernel(KernelAction::ThemeEditorResetToken);
                 self.reset_theme_editor_token_to_default();
                 EventResult::Consumed

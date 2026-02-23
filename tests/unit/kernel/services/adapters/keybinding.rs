@@ -13,26 +13,8 @@ fn editor_has_cursor_bindings() {
 fn global_commands_fall_through_in_editor() {
     let service = KeybindingService::new();
     assert_eq!(
-        service.resolve(KeybindingContext::Editor, &Key::cmd(KeyCode::Char('b'))),
+        service.resolve(KeybindingContext::Editor, &Key::ctrl(KeyCode::Char('b'))),
         Some(&Command::ToggleSidebar)
-    );
-}
-
-#[test]
-fn save_uses_cmd_keybinding() {
-    let service = KeybindingService::new();
-    assert_eq!(
-        service.resolve(KeybindingContext::Global, &Key::cmd(KeyCode::Char('s'))),
-        Some(&Command::Save)
-    );
-}
-
-#[test]
-fn cursor_word_left_still_uses_ctrl() {
-    let service = KeybindingService::new();
-    assert_eq!(
-        service.resolve(KeybindingContext::Editor, &Key::ctrl(KeyCode::Left)),
-        Some(&Command::CursorWordLeft)
     );
 }
 

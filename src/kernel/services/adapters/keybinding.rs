@@ -149,44 +149,44 @@ fn default_global_keybindings() -> FxHashMap<Key, Command> {
 
     bindings.insert(Key::simple(KeyCode::Esc), Command::Escape);
 
-    bindings.insert(Key::cmd(KeyCode::Char('q')), Command::Quit);
-    bindings.insert(Key::cmd(KeyCode::Char('s')), Command::Save);
-    bindings.insert(Key::cmd(KeyCode::Char('w')), Command::CloseTab);
-    bindings.insert(Key::cmd(KeyCode::Tab), Command::NextTab);
-    bindings.insert(Key::cmd_shift(KeyCode::Tab), Command::PrevTab);
+    bindings.insert(Key::ctrl(KeyCode::Char('q')), Command::Quit);
+    bindings.insert(Key::ctrl(KeyCode::Char('s')), Command::Save);
+    bindings.insert(Key::ctrl(KeyCode::Char('w')), Command::CloseTab);
+    bindings.insert(Key::ctrl(KeyCode::Tab), Command::NextTab);
+    bindings.insert(Key::ctrl_shift(KeyCode::Tab), Command::PrevTab);
 
-    bindings.insert(Key::cmd(KeyCode::Char('z')), Command::Undo);
-    bindings.insert(Key::cmd(KeyCode::Char('y')), Command::Redo);
-    bindings.insert(Key::cmd_shift(KeyCode::Char('z')), Command::Redo);
-    bindings.insert(Key::cmd(KeyCode::Char('c')), Command::Copy);
-    bindings.insert(Key::cmd(KeyCode::Char('x')), Command::Cut);
-    bindings.insert(Key::cmd(KeyCode::Char('v')), Command::Paste);
-    bindings.insert(Key::cmd(KeyCode::Char('a')), Command::SelectAll);
+    bindings.insert(Key::ctrl(KeyCode::Char('z')), Command::Undo);
+    bindings.insert(Key::ctrl(KeyCode::Char('y')), Command::Redo);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('z')), Command::Redo);
+    bindings.insert(Key::ctrl(KeyCode::Char('c')), Command::Copy);
+    bindings.insert(Key::ctrl(KeyCode::Char('x')), Command::Cut);
+    bindings.insert(Key::ctrl(KeyCode::Char('v')), Command::Paste);
+    bindings.insert(Key::ctrl(KeyCode::Char('a')), Command::SelectAll);
 
-    bindings.insert(Key::cmd(KeyCode::Char('f')), Command::Find);
-    bindings.insert(Key::cmd(KeyCode::Char('h')), Command::Replace);
+    bindings.insert(Key::ctrl(KeyCode::Char('f')), Command::Find);
+    bindings.insert(Key::ctrl(KeyCode::Char('h')), Command::Replace);
     bindings.insert(Key::simple(KeyCode::F(3)), Command::FindNext);
     bindings.insert(Key::shift(KeyCode::F(3)), Command::FindPrev);
-    bindings.insert(Key::cmd(KeyCode::Char('g')), Command::FindNext);
-    bindings.insert(Key::cmd_shift(KeyCode::Char('g')), Command::FindPrev);
+    bindings.insert(Key::ctrl(KeyCode::Char('g')), Command::FindNext);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('g')), Command::FindPrev);
 
     bindings.insert(Key::simple(KeyCode::F(1)), Command::CommandPalette);
-    bindings.insert(Key::cmd_shift(KeyCode::Char('p')), Command::CommandPalette);
-    bindings.insert(Key::cmd(KeyCode::Char('b')), Command::ToggleSidebar);
-    bindings.insert(Key::cmd(KeyCode::Char('p')), Command::ToggleSidebarTab);
-    bindings.insert(Key::cmd_shift(KeyCode::Char('e')), Command::FocusExplorer);
-    bindings.insert(Key::cmd_shift(KeyCode::Char('f')), Command::FocusSearch);
-    bindings.insert(Key::cmd(KeyCode::Char('j')), Command::ToggleBottomPanel);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('p')), Command::CommandPalette);
+    bindings.insert(Key::ctrl(KeyCode::Char('b')), Command::ToggleSidebar);
+    bindings.insert(Key::ctrl(KeyCode::Char('p')), Command::ToggleSidebarTab);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('e')), Command::FocusExplorer);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('f')), Command::FocusSearch);
+    bindings.insert(Key::ctrl(KeyCode::Char('j')), Command::ToggleBottomPanel);
     bindings.insert(
-        Key::cmd_shift(KeyCode::Char('j')),
+        Key::ctrl_shift(KeyCode::Char('j')),
         Command::FocusBottomPanel,
     );
-    bindings.insert(Key::cmd(KeyCode::Char('\\')), Command::SplitEditorVertical);
+    bindings.insert(Key::ctrl(KeyCode::Char('\\')), Command::SplitEditorVertical);
     bindings.insert(
-        Key::cmd_shift(KeyCode::Char('\\')),
+        Key::ctrl_shift(KeyCode::Char('\\')),
         Command::CloseEditorSplit,
     );
-    bindings.insert(Key::cmd(KeyCode::Char(',')), Command::OpenSettings);
+    bindings.insert(Key::ctrl(KeyCode::Char(',')), Command::OpenSettings);
 
     bindings
 }
@@ -214,9 +214,9 @@ fn default_editor_keybindings() -> FxHashMap<Key, Command> {
     );
     bindings.insert(Key::simple(KeyCode::Backspace), Command::DeleteBackward);
     bindings.insert(Key::simple(KeyCode::Delete), Command::DeleteForward);
-    bindings.insert(Key::cmd(KeyCode::Char('d')), Command::AddCursorAtNextMatch);
-    bindings.insert(Key::cmd_shift(KeyCode::Char('k')), Command::DeleteLine);
-    bindings.insert(Key::cmd(KeyCode::Char('k')), Command::DeleteToLineEnd);
+    bindings.insert(Key::ctrl(KeyCode::Char('d')), Command::AddCursorAtNextMatch);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('k')), Command::DeleteLine);
+    bindings.insert(Key::ctrl(KeyCode::Char('k')), Command::DeleteToLineEnd);
     bindings.insert(
         Key::new(KeyCode::Up, KeyModifiers::CONTROL | KeyModifiers::ALT),
         Command::AddCursorAbove,
@@ -226,23 +226,23 @@ fn default_editor_keybindings() -> FxHashMap<Key, Command> {
         Command::AddCursorBelow,
     );
     bindings.insert(
-        Key::cmd_shift(KeyCode::Char('l')),
+        Key::ctrl_shift(KeyCode::Char('l')),
         Command::AddCursorAtAllMatches,
     );
     bindings.insert(Key::simple(KeyCode::F(2)), Command::LspHover);
     bindings.insert(Key::simple(KeyCode::F(12)), Command::LspDefinition);
     bindings.insert(Key::shift(KeyCode::F(12)), Command::LspReferences);
     bindings.insert(Key::alt(KeyCode::Enter), Command::LspCodeAction);
-    bindings.insert(Key::cmd(KeyCode::Char('.')), Command::LspCompletion);
-    bindings.insert(Key::cmd(KeyCode::Char(' ')), Command::LspCompletion);
-    bindings.insert(Key::cmd_shift(KeyCode::Char('r')), Command::LspRename);
+    bindings.insert(Key::ctrl(KeyCode::Char('.')), Command::LspCompletion);
+    bindings.insert(Key::ctrl(KeyCode::Char(' ')), Command::LspCompletion);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('r')), Command::LspRename);
     bindings.insert(
-        Key::cmd_shift(KeyCode::Char('o')),
+        Key::ctrl_shift(KeyCode::Char('o')),
         Command::LspDocumentSymbols,
     );
-    bindings.insert(Key::cmd(KeyCode::Char('t')), Command::LspWorkspaceSymbols);
-    bindings.insert(Key::cmd_shift(KeyCode::Char('[')), Command::EditorFold);
-    bindings.insert(Key::cmd_shift(KeyCode::Char(']')), Command::EditorUnfold);
+    bindings.insert(Key::ctrl(KeyCode::Char('t')), Command::LspWorkspaceSymbols);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char('[')), Command::EditorFold);
+    bindings.insert(Key::ctrl_shift(KeyCode::Char(']')), Command::EditorUnfold);
 
     bindings.insert(Key::shift(KeyCode::Left), Command::ExtendSelectionLeft);
     bindings.insert(Key::shift(KeyCode::Right), Command::ExtendSelectionRight);
