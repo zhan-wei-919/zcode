@@ -3543,8 +3543,7 @@ impl Store {
 
                 if should_flush_cursor_move {
                     if let Some(path) = self.active_editor_file_path() {
-                        state_changed |=
-                            self.flush_pending_semantic_highlights_for_path(&path);
+                        state_changed |= self.flush_pending_semantic_highlights_for_path(&path);
                     }
                 }
 

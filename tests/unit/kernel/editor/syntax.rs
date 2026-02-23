@@ -1091,3 +1091,67 @@ func f(a, b, c, d, e, y int) {
     // x = 1
     assert_no_span_at(5, "=");
 }
+
+#[test]
+fn test_go_import_paths_are_strings() {
+    let src = r#"package main
+
+import (
+	"log/slog"
+	"net/http"
+	"strings"
+)
+
+func main() {}
+"#;
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.go"), &rope).expect("go syntax");
+    let spans = highlight_lines(&doc, &rope, 0, rope.len_lines());
+
+    // Helper: find the byte range of `needle` in `line_str`
+    let find_in_line = |line: usize, needle: &str| -> (usize, usize) {
+        let line_str = rope.line(line).to_string();
+        let start = line_str
+            .find(needle)
+            .unwrap_or_else(|| panic!("'{}' not found in line {}", needle, line));
+        (start, start + needle.len())
+    };
+
+    // Line 3: \t"log/slog"
+    let (start, end) = find_in_line(3, "\"log/slog\"");
+    let line_spans = &spans[3];
+    // The entire import path including quotes should be a single String span
+    let covering = line_spans.iter().find(|s| s.start <= start && s.end >= end);
+    assert!(
+        covering.is_some_and(|s| s.kind == HighlightKind::String),
+        "\"log/slog\" should be a single String span, got: {:?}",
+        line_spans
+    );
+
+    // Line 4: \t"net/http"
+    let (start, end) = find_in_line(4, "\"net/http\"");
+    let covering = spans[4].iter().find(|s| s.start <= start && s.end >= end);
+    assert!(
+        covering.is_some_and(|s| s.kind == HighlightKind::String),
+        "\"net/http\" should be a single String span, got: {:?}",
+        spans[4]
+    );
+
+    // Line 5: \t"strings"
+    let (start, end) = find_in_line(5, "\"strings\"");
+    let covering = spans[5].iter().find(|s| s.start <= start && s.end >= end);
+    assert!(
+        covering.is_some_and(|s| s.kind == HighlightKind::String),
+        "\"strings\" should be a single String span, got: {:?}",
+        spans[5]
+    );
+
+    // Line 2: "import" should be Keyword
+    let (start, _end) = find_in_line(2, "import");
+    let covering = spans[2].iter().find(|s| s.start <= start && start < s.end);
+    assert!(
+        covering.is_some_and(|s| s.kind == HighlightKind::Keyword),
+        "import should be Keyword, got: {:?}",
+        spans[2]
+    );
+}
