@@ -69,6 +69,9 @@ impl Workbench {
                 FileWatchEvent::WorkspaceRenamed { from, to } => {
                     changed |= self.dispatch_kernel(KernelAction::ExplorerPathRenamed { from, to });
                 }
+                FileWatchEvent::WorkspaceDirChanged { path } => {
+                    changed |= self.dispatch_kernel(KernelAction::ExplorerDirChanged { path });
+                }
             }
         }
         changed

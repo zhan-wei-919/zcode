@@ -9,7 +9,7 @@ use crate::kernel::state::{
     CompletionRequestContext, ContextMenuRequest, PendingAction, PendingEditorNavigation,
     PendingEditorNavigationTarget,
 };
-use crate::models::{FileTree, Granularity, Selection};
+use crate::models::{FileTree, Granularity, LoadState, NodeKind, Selection};
 use std::ffi::{OsStr, OsString};
 use std::time::Instant;
 use tempfile::tempdir;
@@ -18,6 +18,70 @@ fn new_store() -> Store {
     let root = std::env::temp_dir();
     let tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
     Store::new(AppState::new(root, tree, EditorConfig::default()))
+}
+
+#[test]
+fn explorer_dir_changed_triggers_dir_reload_when_loaded() {
+    use crate::kernel::services::ports::DirEntryInfo;
+
+    let dir = tempdir().expect("create tempdir");
+    let root = dir.path().to_path_buf();
+    let mut tree = FileTree::new_with_root_for_test(OsString::from("root"), root.clone());
+    let docs_id = tree
+        .insert_child_with_state(
+            tree.root(),
+            OsString::from("docs"),
+            NodeKind::Dir,
+            LoadState::Loaded,
+        )
+        .expect("insert docs");
+    tree.expand(docs_id);
+
+    let docs_path = root.join("docs");
+    let mut store = Store::new(AppState::new(root.clone(), tree, EditorConfig::default()));
+
+    let result = store.dispatch(Action::ExplorerDirChanged {
+        path: docs_path.clone(),
+    });
+    assert!(
+        result
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::LoadDir(path) if path == &docs_path)),
+        "dir changed should request load_dir effect"
+    );
+
+    let docs_row = store
+        .state
+        .explorer
+        .rows
+        .iter()
+        .find(|row| row.name == "docs")
+        .expect("docs row visible");
+    assert_eq!(docs_row.load_state, LoadState::Loading);
+
+    let _ = store.dispatch(Action::DirLoaded {
+        path: docs_path.clone(),
+        entries: vec![DirEntryInfo {
+            name: "api.yaml".to_string(),
+            is_dir: false,
+        }],
+    });
+
+    assert!(store
+        .state
+        .explorer
+        .node_id_for_path(docs_path.join("api.yaml").as_path())
+        .is_some());
+
+    let docs_row = store
+        .state
+        .explorer
+        .rows
+        .iter()
+        .find(|row| row.name == "docs")
+        .expect("docs row visible");
+    assert_eq!(docs_row.load_state, LoadState::Loaded);
 }
 
 fn test_completion_item(id: u64, label: &str) -> LspCompletionItem {

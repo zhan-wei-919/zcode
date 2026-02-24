@@ -1135,6 +1135,24 @@ impl ExplorerState {
         true
     }
 
+    pub fn request_dir_reload(&mut self, path: PathBuf) -> (bool, Vec<Effect>) {
+        let Some(node_id) = self.tree.find_node_by_path(&path) else {
+            return (false, Vec::new());
+        };
+        if !self.tree.is_dir(node_id) {
+            return (false, Vec::new());
+        }
+
+        match self.tree.load_state(node_id) {
+            Some(LoadState::Loaded) => {
+                self.tree.set_load_state(node_id, LoadState::Loading);
+                self.refresh_rows();
+                (true, vec![Effect::LoadDir(path)])
+            }
+            Some(LoadState::Loading) | Some(LoadState::NotLoaded) | None => (false, Vec::new()),
+        }
+    }
+
     fn toggle_dir(&mut self, id: NodeId) -> (bool, Vec<Effect>) {
         if self.tree.is_expanded(id) {
             self.tree.collapse(id);

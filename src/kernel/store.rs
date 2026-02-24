@@ -1135,6 +1135,19 @@ impl Store {
                     state_changed,
                 }
             }
+            Action::ExplorerDirChanged { path } => {
+                let (state_changed, mut effects) = self.state.explorer.request_dir_reload(path);
+                if state_changed {
+                    if let Some(repo_root) = self.state.git.repo_root.clone() {
+                        effects.push(Effect::GitRefreshStatus { repo_root });
+                    }
+                }
+
+                DispatchResult {
+                    effects,
+                    state_changed,
+                }
+            }
             action @ Action::PaletteAppend(_)
             | action @ Action::PaletteBackspace
             | action @ Action::PaletteMoveSelection(_)

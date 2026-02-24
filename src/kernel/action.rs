@@ -298,6 +298,9 @@ pub enum Action {
         from: PathBuf,
         to: PathBuf,
     },
+    ExplorerDirChanged {
+        path: PathBuf,
+    },
     ThemeEditorOpen,
     ThemeEditorClose,
     ThemeEditorMoveTokenSelection {

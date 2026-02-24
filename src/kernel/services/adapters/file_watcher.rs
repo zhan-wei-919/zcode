@@ -15,6 +15,7 @@ pub enum FileWatchEvent {
     WorkspaceCreated { path: PathBuf, is_dir: bool },
     WorkspaceDeleted { path: PathBuf },
     WorkspaceRenamed { from: PathBuf, to: PathBuf },
+    WorkspaceDirChanged { path: PathBuf },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +30,16 @@ enum FsDelta {
 struct FileFingerprint {
     len: u64,
     modified: Option<SystemTime>,
+}
+
+#[derive(Default)]
+struct DrainBuckets {
+    workspace_renamed: FxHashSet<(PathBuf, PathBuf)>,
+    workspace_deleted: FxHashSet<PathBuf>,
+    workspace_created: FxHashMap<PathBuf, bool>,
+    workspace_dirs_changed: FxHashSet<PathBuf>,
+    editor_removed: FxHashSet<PathBuf>,
+    editor_modified: FxHashSet<PathBuf>,
 }
 
 pub struct FileWatcherService {
@@ -115,26 +126,24 @@ impl FileWatcherService {
     pub fn drain_events(&mut self) -> Vec<FileWatchEvent> {
         let _watcher_guard = &self.watcher;
 
-        let mut workspace_renamed = FxHashSet::<(PathBuf, PathBuf)>::default();
-        let mut workspace_deleted = FxHashSet::<PathBuf>::default();
-        let mut workspace_created = FxHashMap::<PathBuf, bool>::default();
-        let mut editor_removed = FxHashSet::<PathBuf>::default();
-        let mut editor_modified = FxHashSet::<PathBuf>::default();
+        let mut buckets = DrainBuckets::default();
 
         while let Ok(event) = self.raw_event_rx.try_recv() {
             for delta in normalize_notify_event(event) {
-                self.route_delta(
-                    delta,
-                    &mut workspace_renamed,
-                    &mut workspace_deleted,
-                    &mut workspace_created,
-                    &mut editor_removed,
-                    &mut editor_modified,
-                );
+                self.route_delta(delta, &mut buckets);
             }
         }
 
         let mut events = Vec::new();
+
+        let DrainBuckets {
+            workspace_renamed,
+            workspace_deleted,
+            workspace_created,
+            workspace_dirs_changed,
+            editor_removed,
+            editor_modified,
+        } = buckets;
 
         let mut renamed = workspace_renamed.into_iter().collect::<Vec<_>>();
         renamed.sort_unstable_by(|(a_from, a_to), (b_from, b_to)| {
@@ -162,6 +171,12 @@ impl FileWatcherService {
             events.push(FileWatchEvent::WorkspaceCreated { path, is_dir });
         }
 
+        let mut changed_dirs = workspace_dirs_changed.into_iter().collect::<Vec<_>>();
+        changed_dirs.sort_unstable();
+        for path in changed_dirs {
+            events.push(FileWatchEvent::WorkspaceDirChanged { path });
+        }
+
         let mut editor_modified_paths = editor_modified.into_iter().collect::<Vec<_>>();
         editor_modified_paths.sort_unstable();
         for path in editor_modified_paths {
@@ -171,47 +186,49 @@ impl FileWatcherService {
         events
     }
 
-    fn route_delta(
-        &mut self,
-        delta: FsDelta,
-        workspace_renamed: &mut FxHashSet<(PathBuf, PathBuf)>,
-        workspace_deleted: &mut FxHashSet<PathBuf>,
-        workspace_created: &mut FxHashMap<PathBuf, bool>,
-        editor_removed: &mut FxHashSet<PathBuf>,
-        editor_modified: &mut FxHashSet<PathBuf>,
-    ) {
+    fn route_delta(&mut self, delta: FsDelta, buckets: &mut DrainBuckets) {
         match delta {
             FsDelta::Modified { path } => {
-                for tab_path in self.match_open_paths(path.as_path()) {
+                let matched_open_paths = self.match_open_paths(path.as_path());
+                let is_open_path = !matched_open_paths.is_empty();
+
+                for tab_path in matched_open_paths {
                     if self.refresh_open_file_fingerprint(tab_path.as_path()) {
-                        editor_modified.insert(tab_path);
+                        buckets.editor_modified.insert(tab_path);
                     }
+                }
+
+                if !is_open_path {
+                    self.maybe_mark_workspace_dir_changed(
+                        path.as_path(),
+                        &mut buckets.workspace_dirs_changed,
+                    );
                 }
             }
             FsDelta::Deleted { path } => {
                 if let Some(path) = self.to_workspace_path(path.as_path()) {
-                    workspace_deleted.insert(path);
+                    buckets.workspace_deleted.insert(path);
                 }
                 for tab_path in self.match_open_paths(path.as_path()) {
                     self.open_file_fingerprints.remove(&tab_path);
-                    editor_removed.insert(tab_path);
+                    buckets.editor_removed.insert(tab_path);
                 }
             }
             FsDelta::Created { path, is_dir } => {
                 if path.exists() {
                     if let Some(path) = self.to_workspace_path(path.as_path()) {
-                        merge_created(workspace_created, path, is_dir);
+                        merge_created(&mut buckets.workspace_created, path, is_dir);
                     }
                 }
             }
             FsDelta::Renamed { from, to } => {
                 for tab_path in self.match_open_paths(from.as_path()) {
                     self.open_file_fingerprints.remove(&tab_path);
-                    editor_removed.insert(tab_path);
+                    buckets.editor_removed.insert(tab_path);
                 }
                 for tab_path in self.match_open_paths(to.as_path()) {
                     let _ = self.refresh_open_file_fingerprint(tab_path.as_path());
-                    editor_modified.insert(tab_path);
+                    buckets.editor_modified.insert(tab_path);
                 }
 
                 let from_in_workspace = self.to_workspace_path(from.as_path());
@@ -220,21 +237,39 @@ impl FileWatcherService {
 
                 match (from_in_workspace, to_in_workspace) {
                     (Some(from), Some(to)) => {
-                        workspace_renamed.insert((from, to));
+                        buckets.workspace_renamed.insert((from, to));
                     }
                     (Some(from), None) => {
-                        workspace_deleted.insert(from);
+                        buckets.workspace_deleted.insert(from);
                     }
                     (None, Some(to)) => {
                         if to_exists {
                             let is_dir = infer_is_dir(to.as_path(), None);
-                            merge_created(workspace_created, to, is_dir);
+                            merge_created(&mut buckets.workspace_created, to, is_dir);
                         }
                     }
                     (None, None) => {}
                 }
             }
         }
+    }
+
+    fn maybe_mark_workspace_dir_changed(
+        &self,
+        path: &Path,
+        workspace_dirs_changed: &mut FxHashSet<PathBuf>,
+    ) {
+        let raw = raw_absolute_path(path, self.workspace_root.as_path());
+        let candidate_dir = match std::fs::metadata(&raw) {
+            Ok(meta) if meta.is_dir() => Some(raw.as_path()),
+            _ => raw.parent(),
+        };
+
+        let Some(dir) = candidate_dir.and_then(|p| self.to_workspace_path(p)) else {
+            return;
+        };
+
+        workspace_dirs_changed.insert(dir);
     }
 
     fn refresh_open_file_fingerprint(&mut self, path: &Path) -> bool {
@@ -587,6 +622,54 @@ mod tests {
         assert!(
             !events.contains(&FileWatchEvent::EditorModified(path)),
             "self-save followup event should not trigger external reload"
+        );
+    }
+
+    #[test]
+    fn directory_modify_event_should_emit_workspace_dir_changed_for_parent() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let workspace_root = dir.path().to_path_buf();
+        let docs_dir = workspace_root.join("docs");
+        std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+
+        let (mut service, tx) = create_service_with_raw_channel(workspace_root.as_path());
+        tx.send(notify::Event {
+            kind: EventKind::Modify(ModifyKind::Any),
+            paths: vec![docs_dir.clone()],
+            attrs: Default::default(),
+        })
+        .expect("send modify event");
+
+        let events = service.drain_events();
+        assert!(
+            events.contains(&FileWatchEvent::WorkspaceDirChanged { path: docs_dir }),
+            "directory modify should request dir reload"
+        );
+    }
+
+    #[test]
+    fn modify_event_for_open_file_should_not_emit_workspace_dir_changed() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let workspace_root = dir.path().to_path_buf();
+        let path = workspace_root.join("a.rs");
+        std::fs::write(&path, "fn main() {}\n").expect("write file");
+
+        let (mut service, tx) = create_service_with_raw_channel(workspace_root.as_path());
+        service.sync_open_files([path.as_path()]);
+
+        tx.send(notify::Event {
+            kind: EventKind::Modify(ModifyKind::Any),
+            paths: vec![path.clone()],
+            attrs: Default::default(),
+        })
+        .expect("send modify event");
+
+        let events = service.drain_events();
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, FileWatchEvent::WorkspaceDirChanged { .. })),
+            "open file modifications should not force explorer reload"
         );
     }
 }
