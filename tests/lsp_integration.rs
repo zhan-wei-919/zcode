@@ -2806,6 +2806,82 @@ fn test_signature_help_closes_after_cursor_leaves_call() {
 }
 
 #[test]
+fn test_signature_help_does_not_open_on_comma_when_inactive() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.go");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "foo(\"a\")\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state()
+            .problems
+            .items()
+            .iter()
+            .any(|item| item.message == "didOpen")
+    });
+
+    // Move cursor to `foo("a"|)` so inserting a comma is an "edit inside an existing call".
+    for _ in 0..7 {
+        let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Right,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+    }
+
+    assert!(
+        !workbench.state().ui.signature_help.visible,
+        "expected signature help inactive before typing comma"
+    );
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char(','),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(450) {
+        drain_runtime_messages(&mut workbench, &rx);
+        workbench.tick();
+
+        let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+        assert!(
+            !trace
+                .lines()
+                .any(|line| line.trim() == "request textDocument/signatureHelp"),
+            "unexpected signatureHelp request for comma-trigger when inactive, trace:\n{trace}"
+        );
+
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
 fn test_lsp_progress_end_triggers_inlay_hints_refresh() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));

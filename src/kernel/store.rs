@@ -1519,6 +1519,9 @@ impl Store {
                     should_complete,
                     should_trigger_signature_help,
                 ) = {
+                    let signature_help_active = self.state.ui.signature_help.visible
+                        || self.state.ui.signature_help.request.is_some()
+                        || !self.state.ui.signature_help.text.is_empty();
                     let caps = tab
                         .and_then(|t| t.path.as_ref())
                         .and_then(|path| lsp_server_capabilities_for_path(&self.state, path));
@@ -1554,6 +1557,11 @@ impl Store {
                         && self
                             .active_tab_strategy()
                             .signature_help_triggered(ch, signature_help_triggers);
+                    // Avoid popping up signature help on `,` when it isn't already active.
+                    // This is a common editing gesture inside existing calls (e.g. building
+                    // variadic argument lists) where a persistent popup is distracting.
+                    let should_trigger_signature_help =
+                        should_trigger_signature_help && (ch != ',' || signature_help_active);
 
                     (
                         tab_supports_completion_resolve,
