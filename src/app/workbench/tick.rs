@@ -283,6 +283,16 @@ impl Workbench {
             return false;
         }
 
+        // Idle hover should be driven by the last mouse position within the editor content.
+        // Cursor-based hover remains available via the explicit `LspHover` command.
+        let Some(target) = self
+            .hover_popup
+            .target
+            .filter(|t| self.store.state().editor.pane(t.pane).is_some())
+        else {
+            return false;
+        };
+
         if self.store.state().ui.completion.visible
             || self.store.state().ui.completion.request.is_some()
             || self.store.state().ui.completion.pending_request.is_some()
@@ -295,14 +305,9 @@ impl Workbench {
             return false;
         }
 
-        let active_pane = self.store.state().ui.editor_layout.active_pane;
-        let (pane, pos, anchor) = self
-            .hover_popup
-            .target
-            .filter(|t| self.store.state().editor.pane(t.pane).is_some())
-            .map(|t| (t.pane, (t.row, t.col), Some(t.anchor)))
-            .unwrap_or_else(|| (active_pane, (usize::MAX, usize::MAX), None));
-
+        let pane = target.pane;
+        let pos = (target.row, target.col);
+        let anchor = Some(target.anchor);
         let Some(tab) = self
             .store
             .state()
@@ -334,14 +339,10 @@ impl Workbench {
             .map(|c| c.position_encoding)
             .unwrap_or(LspPositionEncoding::Utf16);
 
-        // Determine which buffer position we are hovering: mouse position (preferred), otherwise cursor.
-        let buf_pos = if pos.0 == usize::MAX {
-            tab.buffer.cursor()
-        } else {
-            let row = pos.0.min(tab.buffer.len_lines().saturating_sub(1));
-            let col = pos.1.min(tab.buffer.line_grapheme_len(row));
-            (row, col)
-        };
+        // Determine which buffer position we are hovering.
+        let row = pos.0.min(tab.buffer.len_lines().saturating_sub(1));
+        let col = pos.1.min(tab.buffer.line_grapheme_len(row));
+        let buf_pos = (row, col);
 
         let Some(buf_pos) = tab.identifier_pos_at_or_before(buf_pos) else {
             return false;

@@ -1998,6 +1998,68 @@ fn test_completion_popup_does_not_close_on_background_lsp_requests() {
 }
 
 #[test]
+fn test_idle_hover_does_not_trigger_without_mouse_target() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "fn main() {}\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state()
+            .problems
+            .items()
+            .iter()
+            .any(|item| item.message == "didOpen")
+    });
+
+    // Ensure the idle hover timer starts after the file is opened.
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Right,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(850) {
+        drain_runtime_messages(&mut workbench, &rx);
+        workbench.tick();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+    assert!(
+        !trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/hover"),
+        "unexpected idle hover request without mouse target, trace:\n{trace}"
+    );
+}
+
+#[test]
 fn test_idle_hover_does_not_trigger_when_cursor_not_on_identifier() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
