@@ -1106,10 +1106,11 @@ fn completion_doc_area(
         .saturating_sub(cursor_y.max(popup_bottom))
         .saturating_sub(1);
 
-    let (y, avail_h) = if avail_below >= avail_above {
-        (bottom.saturating_sub(avail_below), avail_below)
+    let place_below = avail_below >= avail_above;
+    let avail_h = if place_below {
+        avail_below
     } else {
-        (top, avail_above)
+        avail_above
     };
 
     if avail_h <= 1 {
@@ -1117,6 +1118,13 @@ fn completion_doc_area(
     }
 
     let h = avail_h.min(15);
+    let y = if place_below {
+        bottom.saturating_sub(avail_below)
+    } else {
+        // Anchor the doc panel to the completion popup/cursor instead of sticking to the top of
+        // the screen when there is extra space.
+        top.saturating_add(avail_above).saturating_sub(h)
+    };
     let area = UiRect::new(screen.x, y, screen.w, h);
     (!area.is_empty()).then_some(area)
 }
