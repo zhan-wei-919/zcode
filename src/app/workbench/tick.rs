@@ -713,6 +713,7 @@ impl Workbench {
             accent_fg: color_to_hex(t.accent_fg),
             syntax_comment_fg: color_to_hex(t.syntax_comment_fg),
             syntax_keyword_fg: color_to_hex(t.syntax_keyword_fg),
+            syntax_keyword_control_fg: color_to_hex(t.syntax_keyword_control_fg),
             syntax_string_fg: color_to_hex(t.syntax_string_fg),
             syntax_number_fg: color_to_hex(t.syntax_number_fg),
             syntax_type_fg: color_to_hex(t.syntax_type_fg),

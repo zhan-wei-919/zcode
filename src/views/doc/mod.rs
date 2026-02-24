@@ -311,6 +311,7 @@ fn style_for_syntax_highlight(kind: HighlightKind, theme: &Theme) -> Style {
         HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
         HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
         HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::KeywordControl => Style::default().fg(theme.syntax_keyword_control_fg),
         HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
         HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
         HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),

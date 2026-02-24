@@ -31,6 +31,7 @@ pub enum ThemeEditorToken {
     // Syntax foreground colors
     Comment,
     Keyword,
+    KeywordControl,
     String,
     Number,
     Type,
@@ -50,9 +51,10 @@ pub enum ThemeEditorToken {
 }
 
 impl ThemeEditorToken {
-    pub const ALL: [ThemeEditorToken; 17] = [
+    pub const ALL: [ThemeEditorToken; 18] = [
         ThemeEditorToken::Comment,
         ThemeEditorToken::Keyword,
+        ThemeEditorToken::KeywordControl,
         ThemeEditorToken::String,
         ThemeEditorToken::Number,
         ThemeEditorToken::Type,
@@ -74,6 +76,7 @@ impl ThemeEditorToken {
         match self {
             Self::Comment => "Comment",
             Self::Keyword => "Keyword",
+            Self::KeywordControl => "Keyword Ctrl",
             Self::String => "String",
             Self::Number => "Number",
             Self::Type => "Type",
@@ -96,21 +99,22 @@ impl ThemeEditorToken {
         match self {
             Self::Comment => 0,
             Self::Keyword => 1,
-            Self::String => 2,
-            Self::Number => 3,
-            Self::Type => 4,
-            Self::Attribute => 5,
-            Self::Namespace => 6,
-            Self::Macro => 7,
-            Self::Function => 8,
-            Self::Variable => 9,
-            Self::Constant => 10,
-            Self::Regex => 11,
-            Self::EditorBg => 12,
-            Self::SidebarBg => 13,
-            Self::ActivityBg => 14,
-            Self::PopupBg => 15,
-            Self::StatusbarBg => 16,
+            Self::KeywordControl => 2,
+            Self::String => 3,
+            Self::Number => 4,
+            Self::Type => 5,
+            Self::Attribute => 6,
+            Self::Namespace => 7,
+            Self::Macro => 8,
+            Self::Function => 9,
+            Self::Variable => 10,
+            Self::Constant => 11,
+            Self::Regex => 12,
+            Self::EditorBg => 13,
+            Self::SidebarBg => 14,
+            Self::ActivityBg => 15,
+            Self::PopupBg => 16,
+            Self::StatusbarBg => 17,
         }
     }
 

@@ -14,6 +14,7 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
         accent_fg: map_color_for_support(theme.accent_fg, support),
         syntax_comment_fg: map_color_for_support(theme.syntax_comment_fg, support),
         syntax_keyword_fg: map_color_for_support(theme.syntax_keyword_fg, support),
+        syntax_keyword_control_fg: map_color_for_support(theme.syntax_keyword_control_fg, support),
         syntax_string_fg: map_color_for_support(theme.syntax_string_fg, support),
         syntax_number_fg: map_color_for_support(theme.syntax_number_fg, support),
         syntax_type_fg: map_color_for_support(theme.syntax_type_fg, support),

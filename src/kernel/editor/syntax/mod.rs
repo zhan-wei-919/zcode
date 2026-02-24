@@ -26,6 +26,7 @@ pub enum HighlightKind {
     String,
     Regex,
     Keyword,
+    KeywordControl,
     Type,
     Number,
     Attribute,

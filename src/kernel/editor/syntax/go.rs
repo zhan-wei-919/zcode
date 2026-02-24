@@ -18,6 +18,10 @@ fn classify_go_node(node: Node<'_>) -> Option<HighlightKind> {
         "package_identifier" | "label_name" => Some(HighlightKind::Attribute),
         "identifier" => classify_go_identifier(node),
         "field_identifier" => classify_go_field_identifier(node),
+        "break" | "case" | "continue" | "default" | "defer" | "else" | "fallthrough" | "for"
+        | "go" | "goto" | "if" | "import" | "range" | "return" | "select" | "switch" => {
+            Some(HighlightKind::KeywordControl)
+        }
         _ => None,
     }
 }
@@ -87,29 +91,13 @@ fn classify_go_field_identifier(node: Node<'_>) -> Option<HighlightKind> {
 fn is_go_keyword(kind: &str) -> bool {
     matches!(
         kind,
-        "break"
-            | "case"
-            | "chan"
+        "chan"
             | "const"
-            | "continue"
-            | "default"
-            | "defer"
-            | "else"
-            | "fallthrough"
-            | "for"
             | "func"
-            | "go"
-            | "goto"
-            | "if"
-            | "import"
             | "interface"
             | "map"
             | "package"
-            | "range"
-            | "return"
-            | "select"
             | "struct"
-            | "switch"
             | "type"
             | "true"
             | "false"

@@ -204,6 +204,7 @@ fn token_color(token: ThemeEditorToken, theme: &Theme) -> Color {
     match token {
         ThemeEditorToken::Comment => theme.syntax_comment_fg,
         ThemeEditorToken::Keyword => theme.syntax_keyword_fg,
+        ThemeEditorToken::KeywordControl => theme.syntax_keyword_control_fg,
         ThemeEditorToken::String => theme.syntax_string_fg,
         ThemeEditorToken::Number => theme.syntax_number_fg,
         ThemeEditorToken::Type => theme.syntax_type_fg,
@@ -828,6 +829,7 @@ fn style_for_highlight(kind: HighlightKind, theme: &Theme) -> Style {
         HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
         HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
         HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::KeywordControl => Style::default().fg(theme.syntax_keyword_control_fg),
         HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
         HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
         HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),

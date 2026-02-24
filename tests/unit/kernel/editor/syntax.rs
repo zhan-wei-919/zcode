@@ -1146,12 +1146,12 @@ func main() {}
         spans[5]
     );
 
-    // Line 2: "import" should be Keyword
+    // Line 2: "import" should be KeywordControl
     let (start, _end) = find_in_line(2, "import");
     let covering = spans[2].iter().find(|s| s.start <= start && start < s.end);
     assert!(
-        covering.is_some_and(|s| s.kind == HighlightKind::Keyword),
-        "import should be Keyword, got: {:?}",
+        covering.is_some_and(|s| s.kind == HighlightKind::KeywordControl),
+        "import should be KeywordControl, got: {:?}",
         spans[2]
     );
 }

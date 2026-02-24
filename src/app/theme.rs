@@ -12,6 +12,7 @@ pub struct UiTheme {
     pub accent_fg: Color,
     pub syntax_comment_fg: Color,
     pub syntax_keyword_fg: Color,
+    pub syntax_keyword_control_fg: Color,
     pub syntax_string_fg: Color,
     pub syntax_number_fg: Color,
     pub syntax_type_fg: Color,
@@ -69,6 +70,7 @@ impl Default for UiTheme {
             accent_fg: Color::Indexed(3),
             syntax_comment_fg: Color::Rgb(0x6A, 0x99, 0x55),
             syntax_keyword_fg: Color::Rgb(0x56, 0x9C, 0xD6),
+            syntax_keyword_control_fg: Color::Rgb(0xC5, 0x86, 0xC0),
             syntax_string_fg: Color::Rgb(0xCE, 0x91, 0x78),
             syntax_number_fg: Color::Rgb(0xB5, 0xCE, 0xA8),
             syntax_type_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
@@ -149,6 +151,11 @@ impl UiTheme {
         if let Some(v) = &settings.syntax_keyword_fg {
             if let Some(c) = parse_color(v) {
                 self.syntax_keyword_fg = c;
+            }
+        }
+        if let Some(v) = &settings.syntax_keyword_control_fg {
+            if let Some(c) = parse_color(v) {
+                self.syntax_keyword_control_fg = c;
             }
         }
         if let Some(v) = &settings.syntax_string_fg {
@@ -369,6 +376,7 @@ pub(crate) fn to_core_theme(theme: &UiTheme) -> CoreTheme {
         accent_fg: theme.accent_fg,
         syntax_comment_fg: theme.syntax_comment_fg,
         syntax_keyword_fg: theme.syntax_keyword_fg,
+        syntax_keyword_control_fg: theme.syntax_keyword_control_fg,
         syntax_string_fg: theme.syntax_string_fg,
         syntax_number_fg: theme.syntax_number_fg,
         syntax_type_fg: theme.syntax_type_fg,

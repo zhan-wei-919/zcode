@@ -86,6 +86,8 @@ pub struct ThemeSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_keyword_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_keyword_control_fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_string_fg: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_number_fg: Option<String>,
@@ -162,6 +164,7 @@ impl Default for ThemeSettings {
             accent_fg: Some("yellow".to_string()),
             syntax_comment_fg: Some("#6A9955".to_string()),
             syntax_keyword_fg: Some("#569CD6".to_string()),
+            syntax_keyword_control_fg: Some("#C586C0".to_string()),
             syntax_string_fg: Some("#CE9178".to_string()),
             syntax_number_fg: Some("#B5CEA8".to_string()),
             syntax_type_fg: Some("#4EC9B0".to_string()),

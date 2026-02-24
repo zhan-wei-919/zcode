@@ -892,17 +892,28 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                 style = selection_style;
             } else {
                 let mut highlight_style = None;
-                if has_semantic_spans {
+                let syntax_kind = if has_syntax_spans {
+                    highlight_kind_cached(highlight_spans, &mut highlight_state, g_start)
+                } else {
+                    None
+                };
+                let syntax_is_leaf = matches!(
+                    syntax_kind,
+                    Some(
+                        HighlightKind::Comment
+                            | HighlightKind::String
+                            | HighlightKind::Regex
+                            | HighlightKind::KeywordControl
+                    )
+                );
+                if has_semantic_spans && !syntax_is_leaf {
                     highlight_style =
                         style_for_highlight(semantic_spans, &mut semantic_idx, g_start, theme);
                 }
-                if highlight_style.is_none() && has_syntax_spans {
-                    highlight_style = style_for_highlight_cached(
-                        highlight_spans,
-                        &mut highlight_state,
-                        g_start,
-                        theme,
-                    );
+                if highlight_style.is_none() {
+                    if let Some(kind) = syntax_kind {
+                        highlight_style = Some(style_for_highlight_kind(kind, theme));
+                    }
                 }
                 if let Some(hl) = highlight_style {
                     style = row_base_style.patch(hl);
@@ -1269,22 +1280,19 @@ fn snippet_range_for_row(
 struct HighlightCacheState {
     idx: usize,
     active_end: usize,
-    active_style: Option<Style>,
+    active_kind: Option<HighlightKind>,
 }
 
 #[inline]
-fn style_for_highlight_cached(
+fn highlight_kind_cached(
     highlight_spans: Option<&[HighlightSpan]>,
     state: &mut HighlightCacheState,
     byte_offset: usize,
-    theme: &Theme,
-) -> Option<Style> {
+) -> Option<HighlightKind> {
     let spans = highlight_spans?;
 
-    if let Some(style) = state.active_style {
-        if byte_offset < state.active_end {
-            return Some(style);
-        }
+    if state.active_kind.is_some() && byte_offset < state.active_end {
+        return state.active_kind;
     }
 
     while state.idx < spans.len() && spans[state.idx].end <= byte_offset {
@@ -1294,14 +1302,13 @@ fn style_for_highlight_cached(
     let span = spans.get(state.idx)?;
     if byte_offset < span.start || byte_offset >= span.end {
         state.active_end = 0;
-        state.active_style = None;
+        state.active_kind = None;
         return None;
     }
 
-    let style = style_for_highlight_kind(span.kind, theme);
     state.active_end = span.end;
-    state.active_style = Some(style);
-    Some(style)
+    state.active_kind = Some(span.kind);
+    Some(span.kind)
 }
 
 #[inline]
@@ -1311,6 +1318,7 @@ fn style_for_highlight_kind(kind: HighlightKind, theme: &Theme) -> Style {
         HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
         HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
         HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
+        HighlightKind::KeywordControl => Style::default().fg(theme.syntax_keyword_control_fg),
         HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
         HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
         HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),

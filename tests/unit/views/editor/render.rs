@@ -725,7 +725,8 @@ fn style_for_highlight_cached_matches_non_cached_lookup() {
     let mut state = HighlightCacheState::default();
     for byte in 0..8 {
         let expected = style_for_highlight(Some(&spans), &mut idx, byte, &theme);
-        let actual = style_for_highlight_cached(Some(&spans), &mut state, byte, &theme);
+        let actual = highlight_kind_cached(Some(&spans), &mut state, byte)
+            .map(|kind| style_for_highlight_kind(kind, &theme));
         assert_eq!(actual, expected, "byte offset {byte}");
     }
 }

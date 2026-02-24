@@ -759,6 +759,9 @@ impl Workbench {
             crate::kernel::state::ThemeEditorToken::Keyword => {
                 self.theme.syntax_keyword_fg = color;
             }
+            crate::kernel::state::ThemeEditorToken::KeywordControl => {
+                self.theme.syntax_keyword_control_fg = color;
+            }
             crate::kernel::state::ThemeEditorToken::String => {
                 self.theme.syntax_string_fg = color;
             }
@@ -820,6 +823,9 @@ impl Workbench {
         let color = match token {
             crate::kernel::state::ThemeEditorToken::Comment => defaults.syntax_comment_fg,
             crate::kernel::state::ThemeEditorToken::Keyword => defaults.syntax_keyword_fg,
+            crate::kernel::state::ThemeEditorToken::KeywordControl => {
+                defaults.syntax_keyword_control_fg
+            }
             crate::kernel::state::ThemeEditorToken::String => defaults.syntax_string_fg,
             crate::kernel::state::ThemeEditorToken::Number => defaults.syntax_number_fg,
             crate::kernel::state::ThemeEditorToken::Type => defaults.syntax_type_fg,
@@ -865,6 +871,9 @@ impl Workbench {
         let color = match token {
             crate::kernel::state::ThemeEditorToken::Comment => self.theme.syntax_comment_fg,
             crate::kernel::state::ThemeEditorToken::Keyword => self.theme.syntax_keyword_fg,
+            crate::kernel::state::ThemeEditorToken::KeywordControl => {
+                self.theme.syntax_keyword_control_fg
+            }
             crate::kernel::state::ThemeEditorToken::String => self.theme.syntax_string_fg,
             crate::kernel::state::ThemeEditorToken::Number => self.theme.syntax_number_fg,
             crate::kernel::state::ThemeEditorToken::Type => self.theme.syntax_type_fg,
