@@ -745,6 +745,64 @@ fn style_for_highlight_distinguishes_keyword_control_from_keyword() {
 }
 
 #[test]
+fn semantic_keyword_should_not_override_keyword_control() {
+    let theme = Theme::default();
+    let semantic_spans = vec![HighlightSpan {
+        start: 0,
+        end: 2,
+        kind: HighlightKind::Keyword,
+    }];
+
+    let syntax_kind = Some(HighlightKind::KeywordControl);
+    let mut semantic_idx = 0usize;
+    let mut highlight_style = None;
+    let opaque = syntax_kind.is_some_and(|kind| kind.is_opaque());
+    if !opaque {
+        highlight_style = style_for_highlight(Some(&semantic_spans), &mut semantic_idx, 0, &theme);
+    }
+    if highlight_style.is_none() {
+        if let Some(kind) = syntax_kind {
+            highlight_style = Some(
+                crate::ui::core::style::Style::default().fg(theme.syntax_fg(kind.color_group())),
+            );
+        }
+    }
+
+    let expected = crate::ui::core::style::Style::default()
+        .fg(theme.syntax_fg(SyntaxColorGroup::KeywordControl));
+    assert_eq!(highlight_style, Some(expected));
+}
+
+#[test]
+fn semantic_keyword_can_override_keyword() {
+    let theme = Theme::default();
+    let semantic_spans = vec![HighlightSpan {
+        start: 0,
+        end: 2,
+        kind: HighlightKind::Keyword,
+    }];
+
+    let syntax_kind = Some(HighlightKind::Keyword);
+    let mut semantic_idx = 0usize;
+    let mut highlight_style = None;
+    let opaque = syntax_kind.is_some_and(|kind| kind.is_opaque());
+    if !opaque {
+        highlight_style = style_for_highlight(Some(&semantic_spans), &mut semantic_idx, 0, &theme);
+    }
+    if highlight_style.is_none() {
+        if let Some(kind) = syntax_kind {
+            highlight_style = Some(
+                crate::ui::core::style::Style::default().fg(theme.syntax_fg(kind.color_group())),
+            );
+        }
+    }
+
+    let expected =
+        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::Keyword));
+    assert_eq!(highlight_style, Some(expected));
+}
+
+#[test]
 fn style_for_highlight_cached_matches_non_cached_lookup() {
     let theme = Theme::default();
     let spans = vec![

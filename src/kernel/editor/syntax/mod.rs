@@ -121,10 +121,14 @@ impl HighlightKind {
 
     /// Rendering merge: avoid semantic token overrides when a highlight kind is "opaque".
     ///
-    /// Tree-sitter is treated as authoritative for comments/strings/regex, which tend to be more
-    /// reliable than LSP semantic tokens for these categories.
+    /// Tree-sitter is treated as authoritative for comments/strings/regex. `KeywordControl` is
+    /// also syntax-authoritative so control-flow colors stay stable instead of being flattened by
+    /// generic semantic `keyword` tokens.
     pub const fn is_opaque(self) -> bool {
-        matches!(self, Self::Comment | Self::String | Self::Regex)
+        matches!(
+            self,
+            Self::Comment | Self::String | Self::Regex | Self::KeywordControl
+        )
     }
 
     pub const fn color_group(self) -> SyntaxColorGroup {

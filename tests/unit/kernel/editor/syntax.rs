@@ -60,7 +60,7 @@ fn highlight_kind_is_opaque_matches_expected() {
 
     assert!(!HighlightKind::Attribute.is_opaque());
     assert!(!HighlightKind::Keyword.is_opaque());
-    assert!(!HighlightKind::KeywordControl.is_opaque());
+    assert!(HighlightKind::KeywordControl.is_opaque());
     assert!(!HighlightKind::KeywordOperator.is_opaque());
     assert!(!HighlightKind::Type.is_opaque());
     assert!(!HighlightKind::TypeBuiltin.is_opaque());
