@@ -24,6 +24,64 @@ fn highlight_lines(
 }
 
 #[test]
+fn highlight_kind_is_leaf_matches_expected() {
+    assert!(HighlightKind::Comment.is_leaf());
+    assert!(HighlightKind::String.is_leaf());
+    assert!(HighlightKind::Regex.is_leaf());
+    assert!(HighlightKind::Attribute.is_leaf());
+
+    assert!(!HighlightKind::Keyword.is_leaf());
+    assert!(!HighlightKind::KeywordControl.is_leaf());
+    assert!(!HighlightKind::KeywordOperator.is_leaf());
+    assert!(!HighlightKind::Type.is_leaf());
+    assert!(!HighlightKind::TypeBuiltin.is_leaf());
+    assert!(!HighlightKind::Number.is_leaf());
+    assert!(!HighlightKind::Boolean.is_leaf());
+    assert!(!HighlightKind::Lifetime.is_leaf());
+    assert!(!HighlightKind::Function.is_leaf());
+    assert!(!HighlightKind::Method.is_leaf());
+    assert!(!HighlightKind::Macro.is_leaf());
+    assert!(!HighlightKind::Namespace.is_leaf());
+    assert!(!HighlightKind::Variable.is_leaf());
+    assert!(!HighlightKind::Parameter.is_leaf());
+    assert!(!HighlightKind::Property.is_leaf());
+    assert!(!HighlightKind::Constant.is_leaf());
+    assert!(!HighlightKind::EnumMember.is_leaf());
+    assert!(!HighlightKind::Operator.is_leaf());
+    assert!(!HighlightKind::Tag.is_leaf());
+    assert!(!HighlightKind::TagAttribute.is_leaf());
+}
+
+#[test]
+fn highlight_kind_is_opaque_matches_expected() {
+    assert!(HighlightKind::Comment.is_opaque());
+    assert!(HighlightKind::String.is_opaque());
+    assert!(HighlightKind::Regex.is_opaque());
+
+    assert!(!HighlightKind::Attribute.is_opaque());
+    assert!(!HighlightKind::Keyword.is_opaque());
+    assert!(!HighlightKind::KeywordControl.is_opaque());
+    assert!(!HighlightKind::KeywordOperator.is_opaque());
+    assert!(!HighlightKind::Type.is_opaque());
+    assert!(!HighlightKind::TypeBuiltin.is_opaque());
+    assert!(!HighlightKind::Number.is_opaque());
+    assert!(!HighlightKind::Boolean.is_opaque());
+    assert!(!HighlightKind::Lifetime.is_opaque());
+    assert!(!HighlightKind::Function.is_opaque());
+    assert!(!HighlightKind::Method.is_opaque());
+    assert!(!HighlightKind::Macro.is_opaque());
+    assert!(!HighlightKind::Namespace.is_opaque());
+    assert!(!HighlightKind::Variable.is_opaque());
+    assert!(!HighlightKind::Parameter.is_opaque());
+    assert!(!HighlightKind::Property.is_opaque());
+    assert!(!HighlightKind::Constant.is_opaque());
+    assert!(!HighlightKind::EnumMember.is_opaque());
+    assert!(!HighlightKind::Operator.is_opaque());
+    assert!(!HighlightKind::Tag.is_opaque());
+    assert!(!HighlightKind::TagAttribute.is_opaque());
+}
+
+#[test]
 fn test_highlight_comment_range_rust() {
     let rope = Rope::from_str("fn main() { // hi\n}\n");
     let doc = SyntaxDocument::for_path(Path::new("test.rs"), &rope).expect("rust syntax");
@@ -67,6 +125,56 @@ fn test_highlight_rust_macro_string_prefers_string_over_macro() {
         .map(|span| span.kind);
 
     assert_eq!(chosen_kind, Some(HighlightKind::String));
+}
+
+#[test]
+fn test_highlight_rust_richer_symbols() {
+    let src = r#"struct User { name: String }
+impl User {
+    fn greet(&self, other: &str) -> String {
+        self.name.clone()
+    }
+}
+
+fn main() {
+    let user = User { name: String::from("x") };
+    user.greet("y");
+}
+"#;
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.rs"), &rope).expect("rust syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, 1);
+    let line = "struct User { name: String }";
+    let idx_field_name = line.find("name").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Property && s.start <= idx_field_name && idx_field_name < s.end
+    }));
+
+    let spans = highlight_lines(&doc, &rope, 2, 3);
+    let line = "    fn greet(&self, other: &str) -> String {";
+    let idx_param_other = line.find("other").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Parameter && s.start <= idx_param_other && idx_param_other < s.end
+    }));
+
+    let spans = highlight_lines(&doc, &rope, 3, 4);
+    let line = "        self.name.clone()";
+    let idx_prop_name = line.find("name").unwrap();
+    let idx_method_clone = line.find("clone").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Property && s.start <= idx_prop_name && idx_prop_name < s.end
+    }));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Method && s.start <= idx_method_clone && idx_method_clone < s.end
+    }));
+
+    let spans = highlight_lines(&doc, &rope, 9, 10);
+    let line = "    user.greet(\"y\");";
+    let idx_method_call = line.find("greet").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Method && s.start <= idx_method_call && idx_method_call < s.end
+    }));
 }
 
 #[test]
@@ -124,7 +232,7 @@ fn test_highlight_go_richer_symbols() {
         && s.start <= idx_type_name
         && idx_type_name < s.end));
     assert!(spans[0].iter().any(|s| {
-        s.kind == HighlightKind::Variable && s.start <= idx_field_name && idx_field_name < s.end
+        s.kind == HighlightKind::Property && s.start <= idx_field_name && idx_field_name < s.end
     }));
 
     let spans = highlight_lines(&doc, &rope, 2, 3);
@@ -136,7 +244,7 @@ fn test_highlight_go_richer_symbols() {
             && s.start <= idx_function_name
             && idx_function_name < s.end
     }));
-    assert!(spans[0].iter().any(|s| s.kind == HighlightKind::Variable
+    assert!(spans[0].iter().any(|s| s.kind == HighlightKind::Parameter
         && s.start <= idx_param_x
         && idx_param_x < s.end));
 
@@ -149,10 +257,10 @@ fn test_highlight_go_richer_symbols() {
         s.kind == HighlightKind::Function && s.start <= idx_method_name && idx_method_name < s.end
     }));
     assert!(spans[0].iter().any(|s| {
-        s.kind == HighlightKind::Variable && s.start <= idx_param_delta && idx_param_delta < s.end
+        s.kind == HighlightKind::Parameter && s.start <= idx_param_delta && idx_param_delta < s.end
     }));
     assert!(spans[0].iter().any(|s| {
-        s.kind == HighlightKind::Variable && s.start <= idx_member_value && idx_member_value < s.end
+        s.kind == HighlightKind::Property && s.start <= idx_member_value && idx_member_value < s.end
     }));
 
     let spans = highlight_lines(&doc, &rope, 4, 5);
@@ -166,7 +274,7 @@ fn test_highlight_go_richer_symbols() {
     let line = "    m := c.Inc(n)";
     let idx_call_method = line.find("Inc").unwrap();
     assert!(spans[0].iter().any(|s| {
-        s.kind == HighlightKind::Function && s.start <= idx_call_method && idx_call_method < s.end
+        s.kind == HighlightKind::Method && s.start <= idx_call_method && idx_call_method < s.end
     }));
 
     let spans = highlight_lines(&doc, &rope, 9, 10);
@@ -224,7 +332,9 @@ fn test_highlight_python_comment_string_keyword_and_in_string_or_comment() {
     let idx_str = line.find("\"x\"").unwrap() + 1;
     assert!(spans[0]
         .iter()
-        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_return && idx_return < s.end));
+        .any(|s| s.kind == HighlightKind::KeywordControl
+            && s.start <= idx_return
+            && idx_return < s.end));
     assert!(spans[0]
         .iter()
         .any(|s| s.kind == HighlightKind::String && s.start <= idx_str && idx_str < s.end));
@@ -270,9 +380,9 @@ def use(value):
     }));
     assert!(spans[0]
         .iter()
-        .any(|s| s.kind == HighlightKind::Variable && s.start <= idx_self && idx_self < s.end));
+        .any(|s| s.kind == HighlightKind::Parameter && s.start <= idx_self && idx_self < s.end));
     assert!(spans[0].iter().any(|s| {
-        s.kind == HighlightKind::Variable && s.start <= idx_param_name && idx_param_name < s.end
+        s.kind == HighlightKind::Parameter && s.start <= idx_param_name && idx_param_name < s.end
     }));
 
     let spans = highlight_lines(&doc, &rope, 4, 5);
@@ -285,7 +395,7 @@ def use(value):
             && idx_function_name < s.end
     }));
     assert!(spans[0].iter().any(|s| {
-        s.kind == HighlightKind::Variable && s.start <= idx_param_value && idx_param_value < s.end
+        s.kind == HighlightKind::Parameter && s.start <= idx_param_value && idx_param_value < s.end
     }));
 
     let spans = highlight_lines(&doc, &rope, 5, 6);
@@ -308,7 +418,7 @@ def use(value):
         .iter()
         .any(|s| s.kind == HighlightKind::Variable && s.start <= idx_result && idx_result < s.end));
     assert!(spans[0].iter().any(|s| {
-        s.kind == HighlightKind::Function && s.start <= idx_method_call && idx_method_call < s.end
+        s.kind == HighlightKind::Method && s.start <= idx_method_call && idx_method_call < s.end
     }));
     assert!(spans[0].iter().any(|s| {
         s.kind == HighlightKind::Variable && s.start <= idx_keyword_arg && idx_keyword_arg < s.end
@@ -316,7 +426,11 @@ def use(value):
 
     let spans = highlight_lines(&doc, &rope, 7, 8);
     let line = "    if (alias := result):";
+    let idx_if = line.find("if").unwrap();
     let idx_alias = line.find("alias").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::KeywordControl && s.start <= idx_if && idx_if < s.end
+    }));
     assert!(spans[0]
         .iter()
         .any(|s| s.kind == HighlightKind::Variable && s.start <= idx_alias && idx_alias < s.end));
@@ -364,6 +478,57 @@ found = re.search("[0-9]+", text)
 }
 
 #[test]
+fn test_highlight_python_boolean_keyword_operator_and_builtin_types() {
+    let src = r#"def f(value: int) -> bool:
+    return True and (value in (1, 2)) and (value is not None)
+    return False
+"#;
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.py"), &rope).expect("python syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, 1);
+    let line = "def f(value: int) -> bool:";
+    let idx_int = line.find("int").unwrap();
+    let idx_bool = line.find("bool").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::TypeBuiltin && s.start <= idx_int && idx_int < s.end
+    }));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::TypeBuiltin && s.start <= idx_bool && idx_bool < s.end
+    }));
+
+    let spans = highlight_lines(&doc, &rope, 1, 2);
+    let line = "    return True and (value in (1, 2)) and (value is not None)";
+    let idx_true = line.find("True").unwrap();
+    let idx_and = line.find("and").unwrap();
+    let idx_in = line.find("in").unwrap();
+    let idx_is = line.rfind("is").unwrap();
+    let idx_not = line.rfind("not").unwrap();
+    assert!(spans[0]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Boolean && s.start <= idx_true && idx_true < s.end));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::KeywordOperator && s.start <= idx_and && idx_and < s.end
+    }));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::KeywordOperator && s.start <= idx_in && idx_in < s.end
+    }));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::KeywordOperator && s.start <= idx_is && idx_is < s.end
+    }));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::KeywordOperator && s.start <= idx_not && idx_not < s.end
+    }));
+
+    let spans = highlight_lines(&doc, &rope, 2, 3);
+    let line = "    return False";
+    let idx_false = line.find("False").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Boolean && s.start <= idx_false && idx_false < s.end
+    }));
+}
+
+#[test]
 fn test_highlight_javascript_comment_string_keyword_and_in_string_or_comment() {
     let src = "function f() { return \"x\" } // hi\n";
     let rope = Rope::from_str(src);
@@ -381,7 +546,9 @@ fn test_highlight_javascript_comment_string_keyword_and_in_string_or_comment() {
         .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_func && idx_func < s.end));
     assert!(spans[0]
         .iter()
-        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_return && idx_return < s.end));
+        .any(|s| s.kind == HighlightKind::KeywordControl
+            && s.start <= idx_return
+            && idx_return < s.end));
     assert!(spans[0]
         .iter()
         .any(|s| s.kind == HighlightKind::String && s.start <= idx_str && idx_str < s.end));
@@ -395,6 +562,44 @@ fn test_highlight_javascript_comment_string_keyword_and_in_string_or_comment() {
     assert!(doc.is_in_string_or_comment(in_string));
     let in_code = src.find("function").unwrap();
     assert!(!doc.is_in_string_or_comment(in_code));
+}
+
+#[test]
+fn test_highlight_javascript_richer_symbols() {
+    let src = r#"class Counter {
+  inc(delta) { return this.value + delta; }
+}
+const c = new Counter();
+c.inc(2);
+c.value;
+"#;
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.js"), &rope).expect("js syntax");
+
+    let spans = highlight_lines(&doc, &rope, 1, 2);
+    let line = "  inc(delta) { return this.value + delta; }";
+    let idx_param_delta = line.find("delta").unwrap();
+    let idx_prop_value = line.find("value").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Parameter && s.start <= idx_param_delta && idx_param_delta < s.end
+    }));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Property && s.start <= idx_prop_value && idx_prop_value < s.end
+    }));
+
+    let spans = highlight_lines(&doc, &rope, 4, 5);
+    let line = "c.inc(2);";
+    let idx_method_call = line.find("inc").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Method && s.start <= idx_method_call && idx_method_call < s.end
+    }));
+
+    let spans = highlight_lines(&doc, &rope, 5, 6);
+    let line = "c.value;";
+    let idx_prop_access = line.find("value").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::Property && s.start <= idx_prop_access && idx_prop_access < s.end
+    }));
 }
 
 #[test]
@@ -471,6 +676,29 @@ fn test_highlight_c_comment_string_keyword_and_in_string_or_comment() {
     assert!(doc.is_in_string_or_comment(in_comment));
     let in_string = src.find("\"x\"").unwrap() + 1;
     assert!(doc.is_in_string_or_comment(in_string));
+}
+
+#[test]
+fn test_highlight_c_keyword_control() {
+    let src = "int main() { if (1) { return 0; } goto done; done: return 1; }\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.c"), &rope).expect("c syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, 1);
+    let line = "int main() { if (1) { return 0; } goto done; done: return 1; }";
+    let idx_if = line.find("if").unwrap();
+    let idx_return = line.find("return").unwrap();
+    let idx_goto = line.find("goto").unwrap();
+
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::KeywordControl && s.start <= idx_if && idx_if < s.end
+    }));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::KeywordControl && s.start <= idx_return && idx_return < s.end
+    }));
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::KeywordControl && s.start <= idx_goto && idx_goto < s.end
+    }));
 }
 
 #[test]
@@ -861,12 +1089,14 @@ fn test_highlight_html_tags_and_attributes() {
     let idx_div = src.find("div").unwrap();
     assert!(spans[0]
         .iter()
-        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_div && idx_div < s.end));
+        .any(|s| s.kind == HighlightKind::Tag && s.start <= idx_div && idx_div < s.end));
 
     let idx_class = src.find("class").unwrap();
     assert!(spans[0]
         .iter()
-        .any(|s| s.kind == HighlightKind::Attribute && s.start <= idx_class && idx_class < s.end));
+        .any(|s| s.kind == HighlightKind::TagAttribute
+            && s.start <= idx_class
+            && idx_class < s.end));
 
     let idx_attr_val = src.find("\"main\"").unwrap();
     assert!(spans[0].iter().any(|s| s.kind == HighlightKind::String
@@ -959,11 +1189,15 @@ fn test_highlight_sql_comment_string_number_and_keyword() {
 
     let line = "SELECT name, age FROM users WHERE id = 42 AND status = 'ok';";
     let idx_keyword = line.find("SELECT").unwrap();
+    let idx_where = line.find("WHERE").unwrap();
     let idx_number = line.find("42").unwrap();
     let idx_string = line.find("'ok'").unwrap() + 1;
     assert!(spans[1].iter().any(|s| s.kind == HighlightKind::Keyword
         && s.start <= idx_keyword
         && idx_keyword < s.end));
+    assert!(spans[1].iter().any(|s| {
+        s.kind == HighlightKind::KeywordControl && s.start <= idx_where && idx_where < s.end
+    }));
     assert!(spans[1]
         .iter()
         .any(|s| s.kind == HighlightKind::Number && s.start <= idx_number && idx_number < s.end));

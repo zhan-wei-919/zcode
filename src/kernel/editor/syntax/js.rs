@@ -17,6 +17,10 @@ fn classify_js_node(node: Node<'_>) -> Option<HighlightKind> {
     match node.kind() {
         "identifier" | "shorthand_property_identifier_pattern" => classify_js_identifier(node),
         "property_identifier" => classify_js_property_identifier(node),
+        "if" | "else" | "for" | "while" | "do" | "switch" | "case" | "return" | "break"
+        | "continue" | "throw" | "try" | "catch" | "finally" | "await" => {
+            Some(HighlightKind::KeywordControl)
+        }
         _ => None,
     }
 }
@@ -41,7 +45,7 @@ fn classify_js_identifier(node: Node<'_>) -> Option<HighlightKind> {
         "variable_declarator" if node_is_field(parent, "name", node) => {
             Some(HighlightKind::Variable)
         }
-        "formal_parameters" => Some(HighlightKind::Variable),
+        "formal_parameters" => Some(HighlightKind::Parameter),
         "method_definition" if node_is_field(parent, "name", node) => Some(HighlightKind::Function),
         _ => None,
     }
@@ -53,9 +57,9 @@ fn classify_js_property_identifier(node: Node<'_>) -> Option<HighlightKind> {
         if parent.parent().is_some_and(|grand| {
             grand.kind() == "call_expression" && node_is_field(grand, "function", parent)
         }) {
-            return Some(HighlightKind::Function);
+            return Some(HighlightKind::Method);
         }
-        return Some(HighlightKind::Variable);
+        return Some(HighlightKind::Property);
     }
     None
 }

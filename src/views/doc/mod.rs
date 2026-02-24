@@ -289,7 +289,8 @@ fn style_for_doc_spans_at(
                 }
                 DocSpanKind::Syntax(kind) => {
                     if !selected {
-                        style = style.patch(style_for_syntax_highlight(kind, theme));
+                        style =
+                            style.patch(Style::default().fg(theme.syntax_fg(kind.color_group())));
                     }
                 }
                 DocSpanKind::Markdown(kind) => {
@@ -303,25 +304,6 @@ fn style_for_doc_spans_at(
     }
 
     style
-}
-
-fn style_for_syntax_highlight(kind: HighlightKind, theme: &Theme) -> Style {
-    match kind {
-        HighlightKind::Comment => Style::default().fg(theme.syntax_comment_fg),
-        HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
-        HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
-        HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
-        HighlightKind::KeywordControl => Style::default().fg(theme.syntax_keyword_control_fg),
-        HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
-        HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
-        HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),
-        HighlightKind::Lifetime => Style::default().fg(theme.syntax_keyword_fg),
-        HighlightKind::Function => Style::default().fg(theme.syntax_function_fg),
-        HighlightKind::Macro => Style::default().fg(theme.syntax_macro_fg),
-        HighlightKind::Namespace => Style::default().fg(theme.syntax_namespace_fg),
-        HighlightKind::Variable => Style::default().fg(theme.syntax_variable_fg),
-        HighlightKind::Constant => Style::default().fg(theme.syntax_constant_fg),
-    }
 }
 
 fn style_for_markdown_span(kind: MdSpanKind, theme: &Theme) -> Style {

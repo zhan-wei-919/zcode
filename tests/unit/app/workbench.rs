@@ -1,7 +1,7 @@
 use super::*;
 use crate::core::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
-use crate::kernel::editor::{ReloadCause, ReloadRequest};
+use crate::kernel::editor::{ReloadCause, ReloadRequest, SyntaxColorGroup};
 use crate::models::NodeId;
 use crate::ui::backend::test::TestBackend;
 use crate::ui::core::geom::Rect;
@@ -1890,13 +1890,15 @@ fn test_theme_editor_sync_hsl_supports_indexed_colors() {
     let (runtime, _rx) = create_test_runtime();
     let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
 
-    workbench.theme.syntax_comment_fg = Color::Indexed(65);
+    workbench.theme.syntax_colors[SyntaxColorGroup::Comment as usize] = Color::Indexed(65);
     assert_eq!(
         workbench.store.state().ui.theme_editor.selected_token,
         crate::kernel::state::ThemeEditorToken::Comment
     );
     assert_eq!(
-        crate::ui::core::theme_adapter::color_to_rgb(workbench.theme.syntax_comment_fg),
+        crate::ui::core::theme_adapter::color_to_rgb(
+            workbench.theme.syntax_colors[SyntaxColorGroup::Comment as usize],
+        ),
         crate::ui::core::theme_adapter::color_to_rgb(Color::Indexed(65))
     );
 
@@ -1941,9 +1943,12 @@ fn test_theme_editor_ui_theme_uses_ansi_fallback_when_not_truecolor() {
 
     workbench.apply_theme_editor_color();
 
-    assert!(matches!(workbench.theme.syntax_comment_fg, Color::Rgb(..)));
     assert!(matches!(
-        workbench.ui_theme.syntax_comment_fg,
+        workbench.theme.syntax_colors[SyntaxColorGroup::Comment as usize],
+        Color::Rgb(..)
+    ));
+    assert!(matches!(
+        workbench.ui_theme.syntax_fg(SyntaxColorGroup::Comment),
         Color::Indexed(_)
     ));
 }
@@ -1962,7 +1967,10 @@ fn test_theme_editor_apply_color_updates_preview_in_ansi256_mode() {
 
     workbench.apply_theme_editor_color();
 
-    assert_eq!(workbench.ui_theme.syntax_comment_fg, Color::Indexed(196));
+    assert_eq!(
+        workbench.ui_theme.syntax_fg(SyntaxColorGroup::Comment),
+        Color::Indexed(196)
+    );
 }
 
 #[test]

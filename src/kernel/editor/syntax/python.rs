@@ -23,11 +23,22 @@ pub(super) fn is_keyword(kind: &str) -> bool {
 fn classify_python_node(node: Node<'_>, rope: &Rope) -> Option<HighlightKind> {
     match node.kind() {
         "identifier" => classify_python_identifier(node, rope),
+        "True" | "False" | "true" | "false" => Some(HighlightKind::Boolean),
+        "if" | "elif" | "else" | "for" | "while" | "return" | "break" | "continue" | "pass"
+        | "raise" | "try" | "except" | "finally" | "with" | "yield" | "async" | "await"
+        | "match" | "case" => Some(HighlightKind::KeywordControl),
+        "and" | "or" | "not" | "in" | "is" | "is_not" | "is not" | "not_in" | "not in" => {
+            Some(HighlightKind::KeywordOperator)
+        }
         _ => None,
     }
 }
 
 fn classify_python_identifier(node: Node<'_>, rope: &Rope) -> Option<HighlightKind> {
+    if let Some(kind) = classify_python_type_annotation_identifier(node, rope) {
+        return Some(kind);
+    }
+
     let parent = node.parent()?;
     match parent.kind() {
         "function_definition" if node_is_field(parent, "name", node) => {
@@ -41,17 +52,17 @@ fn classify_python_identifier(node: Node<'_>, rope: &Rope) -> Option<HighlightKi
             if parent.parent().is_some_and(|grand| {
                 grand.kind() == "call" && node_is_field(grand, "function", parent)
             }) {
-                Some(classify_python_callable_identifier(node, rope))
+                Some(HighlightKind::Method)
             } else {
-                Some(HighlightKind::Variable)
+                Some(HighlightKind::Property)
             }
         }
-        "parameters" | "lambda_parameters" => Some(HighlightKind::Variable),
+        "parameters" | "lambda_parameters" => Some(HighlightKind::Parameter),
         "typed_parameter"
         | "default_parameter"
         | "typed_default_parameter"
         | "list_splat_pattern"
-        | "dictionary_splat_pattern" => Some(HighlightKind::Variable),
+        | "dictionary_splat_pattern" => Some(HighlightKind::Parameter),
         "assignment" | "augmented_assignment" => {
             if node_in_field_subtree(parent, "left", node) {
                 if is_python_constant_identifier(node, rope) {
@@ -76,6 +87,56 @@ fn classify_python_identifier(node: Node<'_>, rope: &Rope) -> Option<HighlightKi
         "aliased_import" if node_is_field(parent, "alias", node) => Some(HighlightKind::Attribute),
         _ => None,
     }
+}
+
+fn classify_python_type_identifier(node: Node<'_>, rope: &Rope) -> HighlightKind {
+    if node_text_trimmed(rope, node).is_some_and(|name| is_python_builtin_type_name(name.as_str()))
+    {
+        HighlightKind::TypeBuiltin
+    } else {
+        HighlightKind::Type
+    }
+}
+
+fn classify_python_type_annotation_identifier(
+    node: Node<'_>,
+    rope: &Rope,
+) -> Option<HighlightKind> {
+    let mut current = Some(node);
+    while let Some(cursor) = current {
+        let parent = cursor.parent()?;
+
+        if matches!(parent.kind(), "typed_parameter" | "typed_default_parameter")
+            && node_in_field_subtree(parent, "type", node)
+        {
+            return Some(classify_python_type_identifier(node, rope));
+        }
+
+        if parent.kind() == "function_definition"
+            && node_in_field_subtree(parent, "return_type", node)
+        {
+            return Some(classify_python_type_identifier(node, rope));
+        }
+
+        current = Some(parent);
+    }
+    None
+}
+
+fn is_python_builtin_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "int"
+            | "str"
+            | "bool"
+            | "float"
+            | "bytes"
+            | "list"
+            | "dict"
+            | "set"
+            | "tuple"
+            | "frozenset"
+    )
 }
 
 fn classify_python_string(node: Node<'_>, rope: &Rope) -> Option<HighlightKind> {

@@ -15,6 +15,9 @@ pub(super) fn is_keyword(kind: &str) -> bool {
 
 fn classify_rust_node(node: Node<'_>) -> Option<HighlightKind> {
     match node.kind() {
+        "if" | "else" | "for" | "while" | "loop" | "match" | "return" | "break" | "continue" => {
+            Some(HighlightKind::KeywordControl)
+        }
         "identifier" => classify_rust_identifier(node),
         "field_identifier" => classify_rust_field_identifier(node),
         "macro_invocation" => Some(HighlightKind::Macro),
@@ -37,7 +40,7 @@ fn classify_rust_identifier(node: Node<'_>) -> Option<HighlightKind> {
         "let_declaration" if node_is_field(parent, "pattern", node) => {
             Some(HighlightKind::Variable)
         }
-        "parameter" | "closure_parameters" => Some(HighlightKind::Variable),
+        "parameter" | "closure_parameters" => Some(HighlightKind::Parameter),
         "scoped_identifier" => {
             if parent.parent().is_some_and(|grand| {
                 grand.kind() == "call_expression" && node_is_field(grand, "function", parent)
@@ -63,12 +66,12 @@ fn classify_rust_field_identifier(node: Node<'_>) -> Option<HighlightKind> {
         if parent.parent().is_some_and(|grand| {
             grand.kind() == "call_expression" && node_is_field(grand, "function", parent)
         }) {
-            return Some(HighlightKind::Function);
+            return Some(HighlightKind::Method);
         }
-        return Some(HighlightKind::Variable);
+        return Some(HighlightKind::Property);
     }
     if parent.kind() == "field_declaration" {
-        return Some(HighlightKind::Variable);
+        return Some(HighlightKind::Property);
     }
     None
 }

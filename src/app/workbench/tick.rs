@@ -705,26 +705,27 @@ impl Workbench {
     }
 
     fn build_theme_settings(&self) -> crate::kernel::services::ports::ThemeSettings {
+        use crate::kernel::editor::SyntaxColorGroup;
         use crate::ui::core::theme_adapter::color_to_hex;
         let t = &self.theme;
-        crate::kernel::services::ports::ThemeSettings {
+        let mut settings = crate::kernel::services::ports::ThemeSettings {
             focus_border: color_to_hex(t.focus_border),
             inactive_border: color_to_hex(t.inactive_border),
             separator: color_to_hex(t.separator),
             accent_fg: color_to_hex(t.accent_fg),
-            syntax_comment_fg: color_to_hex(t.syntax_comment_fg),
-            syntax_keyword_fg: color_to_hex(t.syntax_keyword_fg),
-            syntax_keyword_control_fg: color_to_hex(t.syntax_keyword_control_fg),
-            syntax_string_fg: color_to_hex(t.syntax_string_fg),
-            syntax_number_fg: color_to_hex(t.syntax_number_fg),
-            syntax_type_fg: color_to_hex(t.syntax_type_fg),
-            syntax_attribute_fg: color_to_hex(t.syntax_attribute_fg),
-            syntax_namespace_fg: color_to_hex(t.syntax_namespace_fg),
-            syntax_macro_fg: color_to_hex(t.syntax_macro_fg),
-            syntax_function_fg: color_to_hex(t.syntax_function_fg),
-            syntax_variable_fg: color_to_hex(t.syntax_variable_fg),
-            syntax_constant_fg: color_to_hex(t.syntax_constant_fg),
-            syntax_regex_fg: color_to_hex(t.syntax_regex_fg),
+            syntax_comment_fg: None,
+            syntax_keyword_fg: None,
+            syntax_keyword_control_fg: None,
+            syntax_string_fg: None,
+            syntax_number_fg: None,
+            syntax_type_fg: None,
+            syntax_attribute_fg: None,
+            syntax_namespace_fg: None,
+            syntax_macro_fg: None,
+            syntax_function_fg: None,
+            syntax_variable_fg: None,
+            syntax_constant_fg: None,
+            syntax_regex_fg: None,
             error_fg: color_to_hex(t.error_fg),
             warning_fg: color_to_hex(t.warning_fg),
             activity_bg: color_to_hex(t.activity_bg),
@@ -748,7 +749,13 @@ impl Workbench {
             statusbar_bg: color_to_hex(t.statusbar_bg),
             search_match_bg: color_to_hex(t.search_match_bg),
             search_current_match_bg: color_to_hex(t.search_current_match_bg),
+        };
+
+        for group in SyntaxColorGroup::CONFIGURABLE {
+            settings.set_syntax_color(group, color_to_hex(t.syntax_colors[group as usize]));
         }
+
+        settings
     }
 }
 

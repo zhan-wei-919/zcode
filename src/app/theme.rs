@@ -1,5 +1,6 @@
 //! UI 主题：把可配置的颜色集中管理，避免散落在渲染代码里。
 
+use crate::kernel::editor::{SyntaxColorGroup, DEFAULT_CONFIGURABLE_SYNTAX_RGB_HEX};
 use crate::kernel::services::ports::ThemeSettings;
 use crate::ui::core::style::Color;
 use crate::ui::core::theme::Theme as CoreTheme;
@@ -10,19 +11,7 @@ pub struct UiTheme {
     pub inactive_border: Color,
     pub separator: Color,
     pub accent_fg: Color,
-    pub syntax_comment_fg: Color,
-    pub syntax_keyword_fg: Color,
-    pub syntax_keyword_control_fg: Color,
-    pub syntax_string_fg: Color,
-    pub syntax_number_fg: Color,
-    pub syntax_type_fg: Color,
-    pub syntax_attribute_fg: Color,
-    pub syntax_namespace_fg: Color,
-    pub syntax_macro_fg: Color,
-    pub syntax_function_fg: Color,
-    pub syntax_variable_fg: Color,
-    pub syntax_constant_fg: Color,
-    pub syntax_regex_fg: Color,
+    pub syntax_colors: [Color; SyntaxColorGroup::COUNT],
     pub error_fg: Color,
     pub warning_fg: Color,
     pub activity_bg: Color,
@@ -63,24 +52,25 @@ pub struct UiTheme {
 
 impl Default for UiTheme {
     fn default() -> Self {
+        let palette_fg = Color::Indexed(15); // White
+        let mut syntax_colors = [palette_fg; SyntaxColorGroup::COUNT];
+        for (idx, group) in SyntaxColorGroup::CONFIGURABLE.iter().copied().enumerate() {
+            let rgb = DEFAULT_CONFIGURABLE_SYNTAX_RGB_HEX[idx];
+            let r = ((rgb >> 16) & 0xFF) as u8;
+            let g = ((rgb >> 8) & 0xFF) as u8;
+            let b = (rgb & 0xFF) as u8;
+            syntax_colors[group as usize] = Color::Rgb(r, g, b);
+        }
+
+        syntax_colors[SyntaxColorGroup::Operator as usize] = palette_fg;
+        syntax_colors[SyntaxColorGroup::Tag as usize] =
+            syntax_colors[SyntaxColorGroup::Keyword as usize];
         Self {
             focus_border: Color::Indexed(6),    // Cyan
             inactive_border: Color::Indexed(8), // DarkGray
             separator: Color::Indexed(8),       // DarkGray
             accent_fg: Color::Indexed(3),
-            syntax_comment_fg: Color::Rgb(0x6A, 0x99, 0x55),
-            syntax_keyword_fg: Color::Rgb(0x56, 0x9C, 0xD6),
-            syntax_keyword_control_fg: Color::Rgb(0xC5, 0x86, 0xC0),
-            syntax_string_fg: Color::Rgb(0xCE, 0x91, 0x78),
-            syntax_number_fg: Color::Rgb(0xB5, 0xCE, 0xA8),
-            syntax_type_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
-            syntax_attribute_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
-            syntax_namespace_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
-            syntax_macro_fg: Color::Rgb(0x56, 0x9C, 0xD6),
-            syntax_function_fg: Color::Rgb(0xDC, 0xDC, 0xAA),
-            syntax_variable_fg: Color::Rgb(0x9C, 0xDC, 0xFE),
-            syntax_constant_fg: Color::Rgb(0x4F, 0xC1, 0xFF),
-            syntax_regex_fg: Color::Rgb(0xD1, 0x69, 0x69),
+            syntax_colors,
             error_fg: Color::Indexed(1),   // Red
             warning_fg: Color::Indexed(3), // Yellow
             activity_bg: Color::Reset,
@@ -93,11 +83,11 @@ impl Default for UiTheme {
             header_fg: Color::Indexed(6),               // Cyan
             palette_border: Color::Indexed(6),          // Cyan
             palette_bg: Color::Reset,
-            palette_fg: Color::Indexed(15),          // White
-            palette_selected_bg: Color::Indexed(8),  // DarkGray
+            palette_fg,
+            palette_selected_bg: Color::Indexed(8), // DarkGray
             palette_selected_fg: Color::Indexed(15), // White
-            palette_muted_fg: Color::Indexed(8),     // DarkGray
-            indent_guide_fg: Color::Indexed(8),      // DarkGray
+            palette_muted_fg: Color::Indexed(8),    // DarkGray
+            indent_guide_fg: Color::Indexed(8),     // DarkGray
             editor_bg: Color::Reset,
             sidebar_bg: Color::Reset,
             popup_bg: Color::Reset,
@@ -143,69 +133,11 @@ impl UiTheme {
                 self.accent_fg = c;
             }
         }
-        if let Some(v) = &settings.syntax_comment_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_comment_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_keyword_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_keyword_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_keyword_control_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_keyword_control_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_string_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_string_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_number_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_number_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_type_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_type_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_attribute_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_attribute_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_namespace_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_namespace_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_macro_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_macro_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_function_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_function_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_variable_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_variable_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_constant_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_constant_fg = c;
-            }
-        }
-        if let Some(v) = &settings.syntax_regex_fg {
-            if let Some(c) = parse_color(v) {
-                self.syntax_regex_fg = c;
+        for group in SyntaxColorGroup::CONFIGURABLE {
+            if let Some(v) = settings.syntax_color_for(group) {
+                if let Some(c) = parse_color(v) {
+                    self.syntax_colors[group as usize] = c;
+                }
             }
         }
         if let Some(v) = &settings.error_fg {
@@ -323,6 +255,19 @@ impl UiTheme {
                 self.search_current_match_bg = c;
             }
         }
+
+        self.recompute_syntax_derived_groups();
+    }
+
+    pub(crate) fn set_syntax_color(&mut self, group: SyntaxColorGroup, color: Color) {
+        self.syntax_colors[group as usize] = color;
+        self.recompute_syntax_derived_groups();
+    }
+
+    fn recompute_syntax_derived_groups(&mut self) {
+        self.syntax_colors[SyntaxColorGroup::Operator as usize] = self.palette_fg;
+        self.syntax_colors[SyntaxColorGroup::Tag as usize] =
+            self.syntax_colors[SyntaxColorGroup::Keyword as usize];
     }
 }
 
@@ -374,19 +319,7 @@ pub(crate) fn to_core_theme(theme: &UiTheme) -> CoreTheme {
         inactive_border: theme.inactive_border,
         separator: theme.separator,
         accent_fg: theme.accent_fg,
-        syntax_comment_fg: theme.syntax_comment_fg,
-        syntax_keyword_fg: theme.syntax_keyword_fg,
-        syntax_keyword_control_fg: theme.syntax_keyword_control_fg,
-        syntax_string_fg: theme.syntax_string_fg,
-        syntax_number_fg: theme.syntax_number_fg,
-        syntax_type_fg: theme.syntax_type_fg,
-        syntax_attribute_fg: theme.syntax_attribute_fg,
-        syntax_namespace_fg: theme.syntax_namespace_fg,
-        syntax_macro_fg: theme.syntax_macro_fg,
-        syntax_function_fg: theme.syntax_function_fg,
-        syntax_variable_fg: theme.syntax_variable_fg,
-        syntax_constant_fg: theme.syntax_constant_fg,
-        syntax_regex_fg: theme.syntax_regex_fg,
+        syntax_colors: theme.syntax_colors,
         error_fg: theme.error_fg,
         warning_fg: theme.warning_fg,
         activity_bg: theme.activity_bg,
@@ -425,3 +358,7 @@ pub(crate) fn to_core_theme(theme: &UiTheme) -> CoreTheme {
         search_current_match_bg: theme.search_current_match_bg,
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/unit/app/theme.rs"]
+mod tests;

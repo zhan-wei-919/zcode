@@ -174,10 +174,18 @@ fn map_semantic_token_type(token_type: &str) -> (Option<HighlightKind>, bool) {
         "type" | "struct" | "enum" | "interface" | "trait" | "typeParameter" | "class" => {
             (Some(HighlightKind::Type), false)
         }
-        "function" | "method" | "member" => (Some(HighlightKind::Function), false),
+        "function" => (Some(HighlightKind::Function), false),
+        "method" => (Some(HighlightKind::Method), false),
+        // Non-standard token type (not in the LSP spec): some servers use "member" for object
+        // members without distinguishing fields vs methods. Keep it mapped to `Function` to
+        // preserve legacy visuals; prefer "property"/"method" when provided.
+        "member" => (Some(HighlightKind::Function), false),
         "macro" => (Some(HighlightKind::Macro), false),
-        "enumMember" => (Some(HighlightKind::Constant), false),
-        "variable" | "parameter" | "property" | "event" => (Some(HighlightKind::Variable), true),
+        "enumMember" => (Some(HighlightKind::EnumMember), false),
+        "variable" => (Some(HighlightKind::Variable), true),
+        "parameter" => (Some(HighlightKind::Parameter), true),
+        "property" => (Some(HighlightKind::Property), true),
+        "event" => (Some(HighlightKind::Variable), true),
         "namespace" | "module" => (Some(HighlightKind::Namespace), false),
         "label" | "decorator" => (Some(HighlightKind::Attribute), false),
         _ => (None, false),
@@ -293,6 +301,30 @@ mod tests {
     }
 
     #[test]
+    fn semantic_token_method_maps_to_method() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("method", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Method)
+        );
+    }
+
+    #[test]
+    fn semantic_token_parameter_maps_to_parameter() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("parameter", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Parameter)
+        );
+    }
+
+    #[test]
+    fn semantic_token_property_maps_to_property() {
+        assert_eq!(
+            highlight_kind_for_semantic_token("property", 0, &LspSemanticTokensLegend::default()),
+            Some(HighlightKind::Property)
+        );
+    }
+
+    #[test]
     fn semantic_token_label_maps_to_attribute() {
         assert_eq!(
             highlight_kind_for_semantic_token("label", 0, &LspSemanticTokensLegend::default()),
@@ -317,10 +349,10 @@ mod tests {
     }
 
     #[test]
-    fn semantic_token_enum_member_maps_to_constant() {
+    fn semantic_token_enum_member_maps_to_enum_member() {
         assert_eq!(
             highlight_kind_for_semantic_token("enumMember", 0, &LspSemanticTokensLegend::default()),
-            Some(HighlightKind::Constant)
+            Some(HighlightKind::EnumMember)
         );
     }
 

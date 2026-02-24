@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::core::Command;
+use crate::kernel::editor::SyntaxColorGroup;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::LspClientKey;
@@ -120,6 +121,29 @@ impl ThemeEditorToken {
 
     pub fn from_index(i: usize) -> Self {
         Self::ALL[i % Self::ALL.len()]
+    }
+
+    pub const fn syntax_color_group(self) -> Option<SyntaxColorGroup> {
+        match self {
+            Self::Comment => Some(SyntaxColorGroup::Comment),
+            Self::Keyword => Some(SyntaxColorGroup::Keyword),
+            Self::KeywordControl => Some(SyntaxColorGroup::KeywordControl),
+            Self::String => Some(SyntaxColorGroup::String),
+            Self::Number => Some(SyntaxColorGroup::Number),
+            Self::Type => Some(SyntaxColorGroup::Type),
+            Self::Attribute => Some(SyntaxColorGroup::Attribute),
+            Self::Namespace => Some(SyntaxColorGroup::Namespace),
+            Self::Macro => Some(SyntaxColorGroup::Macro),
+            Self::Function => Some(SyntaxColorGroup::Function),
+            Self::Variable => Some(SyntaxColorGroup::Variable),
+            Self::Constant => Some(SyntaxColorGroup::Constant),
+            Self::Regex => Some(SyntaxColorGroup::Regex),
+            Self::EditorBg
+            | Self::SidebarBg
+            | Self::ActivityBg
+            | Self::PopupBg
+            | Self::StatusbarBg => None,
+        }
     }
 }
 

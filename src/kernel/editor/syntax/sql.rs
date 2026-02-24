@@ -2,6 +2,16 @@ use ropey::Rope;
 
 use super::{AbsHighlightSpan, HighlightKind};
 
+pub(super) fn classify(kind: &str) -> Option<HighlightKind> {
+    let word = kind.strip_prefix("keyword_").unwrap_or(kind);
+    let upper = word.to_ascii_uppercase();
+    if is_sql_control_word(upper.as_str()) {
+        Some(HighlightKind::KeywordControl)
+    } else {
+        None
+    }
+}
+
 pub(super) fn collect_fallback_spans(
     rope: &Rope,
     start_byte: usize,
@@ -158,6 +168,9 @@ fn classify_sql_word(word: &str) -> Option<HighlightKind> {
     if is_sql_type_name(upper.as_str()) {
         return Some(HighlightKind::Type);
     }
+    if is_sql_control_word(upper.as_str()) {
+        return Some(HighlightKind::KeywordControl);
+    }
     if is_sql_reserved_word(upper.as_str()) {
         return Some(HighlightKind::Keyword);
     }
@@ -265,6 +278,13 @@ fn is_sql_reserved_word(upper: &str) -> bool {
             | "WHEN"
             | "WHERE"
             | "WITH"
+    )
+}
+
+fn is_sql_control_word(upper: &str) -> bool {
+    matches!(
+        upper,
+        "WHERE" | "HAVING" | "CASE" | "WHEN" | "THEN" | "ELSE" | "END"
     )
 }
 

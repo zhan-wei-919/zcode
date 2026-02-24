@@ -18,6 +18,9 @@ pub use state::{
     ReloadCause, ReloadRequest, SearchBarField, SearchBarMode, SearchBarState, TabId,
 };
 pub(crate) use syntax::compute_highlight_patches;
-pub use syntax::{highlight_snippet, HighlightKind, HighlightSpan, SyntaxHighlightPatch};
+pub use syntax::{
+    highlight_snippet, HighlightKind, HighlightSpan, SyntaxColorGroup, SyntaxHighlightPatch,
+    DEFAULT_CONFIGURABLE_SYNTAX_RGB_HEX,
+};
 pub(crate) use viewport::clamp_and_follow;
 pub use viewport::cursor_display_x_abs;

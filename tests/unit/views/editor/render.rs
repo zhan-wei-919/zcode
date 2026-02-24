@@ -651,7 +651,8 @@ fn style_for_highlight_respects_span_boundaries() {
         kind: HighlightKind::Comment,
     }];
     let mut idx = 0usize;
-    let expected = crate::ui::core::style::Style::default().fg(theme.syntax_comment_fg);
+    let expected =
+        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::Comment));
 
     assert_eq!(style_for_highlight(Some(&spans), &mut idx, 0, &theme), None);
     assert_eq!(
@@ -681,8 +682,10 @@ fn style_for_highlight_advances_across_gaps() {
         },
     ];
     let mut idx = 0usize;
-    let keyword_style = crate::ui::core::style::Style::default().fg(theme.syntax_keyword_fg);
-    let string_style = crate::ui::core::style::Style::default().fg(theme.syntax_string_fg);
+    let keyword_style =
+        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::Keyword));
+    let string_style =
+        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::String));
 
     assert_eq!(
         style_for_highlight(Some(&spans), &mut idx, 0, &theme),
@@ -706,6 +709,42 @@ fn style_for_highlight_advances_across_gaps() {
 }
 
 #[test]
+fn style_for_highlight_distinguishes_keyword_control_from_keyword() {
+    let theme = Theme::default();
+    assert_ne!(
+        theme.syntax_fg(SyntaxColorGroup::Keyword),
+        theme.syntax_fg(SyntaxColorGroup::KeywordControl)
+    );
+
+    let spans = vec![
+        HighlightSpan {
+            start: 0,
+            end: 1,
+            kind: HighlightKind::Keyword,
+        },
+        HighlightSpan {
+            start: 1,
+            end: 2,
+            kind: HighlightKind::KeywordControl,
+        },
+    ];
+    let mut idx = 0usize;
+    let keyword_style =
+        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::Keyword));
+    let keyword_control_style = crate::ui::core::style::Style::default()
+        .fg(theme.syntax_fg(SyntaxColorGroup::KeywordControl));
+
+    assert_eq!(
+        style_for_highlight(Some(&spans), &mut idx, 0, &theme),
+        Some(keyword_style)
+    );
+    assert_eq!(
+        style_for_highlight(Some(&spans), &mut idx, 1, &theme),
+        Some(keyword_control_style)
+    );
+}
+
+#[test]
 fn style_for_highlight_cached_matches_non_cached_lookup() {
     let theme = Theme::default();
     let spans = vec![
@@ -725,8 +764,9 @@ fn style_for_highlight_cached_matches_non_cached_lookup() {
     let mut state = HighlightCacheState::default();
     for byte in 0..8 {
         let expected = style_for_highlight(Some(&spans), &mut idx, byte, &theme);
-        let actual = highlight_kind_cached(Some(&spans), &mut state, byte)
-            .map(|kind| style_for_highlight_kind(kind, &theme));
+        let actual = highlight_kind_cached(Some(&spans), &mut state, byte).map(|kind| {
+            crate::ui::core::style::Style::default().fg(theme.syntax_fg(kind.color_group()))
+        });
         assert_eq!(actual, expected, "byte offset {byte}");
     }
 }

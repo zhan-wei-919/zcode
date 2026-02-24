@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::config::EditorConfig;
+use crate::kernel::editor::{SyntaxColorGroup, DEFAULT_CONFIGURABLE_SYNTAX_RGB_HEX};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -157,24 +158,24 @@ pub struct ThemeSettings {
 
 impl Default for ThemeSettings {
     fn default() -> Self {
-        Self {
+        let mut settings = Self {
             focus_border: Some("cyan".to_string()),
             inactive_border: Some("dark_gray".to_string()),
             separator: Some("dark_gray".to_string()),
             accent_fg: Some("yellow".to_string()),
-            syntax_comment_fg: Some("#6A9955".to_string()),
-            syntax_keyword_fg: Some("#569CD6".to_string()),
-            syntax_keyword_control_fg: Some("#C586C0".to_string()),
-            syntax_string_fg: Some("#CE9178".to_string()),
-            syntax_number_fg: Some("#B5CEA8".to_string()),
-            syntax_type_fg: Some("#4EC9B0".to_string()),
-            syntax_attribute_fg: Some("#4EC9B0".to_string()),
-            syntax_namespace_fg: Some("#4EC9B0".to_string()),
-            syntax_macro_fg: Some("#569CD6".to_string()),
-            syntax_function_fg: Some("#DCDCAA".to_string()),
-            syntax_variable_fg: Some("#9CDCFE".to_string()),
-            syntax_constant_fg: Some("#4FC1FF".to_string()),
-            syntax_regex_fg: Some("#D16969".to_string()),
+            syntax_comment_fg: None,
+            syntax_keyword_fg: None,
+            syntax_keyword_control_fg: None,
+            syntax_string_fg: None,
+            syntax_number_fg: None,
+            syntax_type_fg: None,
+            syntax_attribute_fg: None,
+            syntax_namespace_fg: None,
+            syntax_macro_fg: None,
+            syntax_function_fg: None,
+            syntax_variable_fg: None,
+            syntax_constant_fg: None,
+            syntax_regex_fg: None,
             error_fg: Some("red".to_string()),
             warning_fg: Some("yellow".to_string()),
             activity_bg: None,
@@ -198,6 +199,59 @@ impl Default for ThemeSettings {
             statusbar_bg: None,
             search_match_bg: None,
             search_current_match_bg: None,
+        };
+
+        for (idx, group) in SyntaxColorGroup::CONFIGURABLE.iter().copied().enumerate() {
+            settings.set_syntax_color(
+                group,
+                Some(format!("#{:06X}", DEFAULT_CONFIGURABLE_SYNTAX_RGB_HEX[idx])),
+            );
+        }
+
+        settings
+    }
+}
+
+impl ThemeSettings {
+    pub fn syntax_color_for(&self, group: SyntaxColorGroup) -> Option<&str> {
+        match group {
+            SyntaxColorGroup::Comment => self.syntax_comment_fg.as_deref(),
+            SyntaxColorGroup::String => self.syntax_string_fg.as_deref(),
+            SyntaxColorGroup::Regex => self.syntax_regex_fg.as_deref(),
+            SyntaxColorGroup::Keyword => self.syntax_keyword_fg.as_deref(),
+            SyntaxColorGroup::KeywordControl => self.syntax_keyword_control_fg.as_deref(),
+            SyntaxColorGroup::Type => self.syntax_type_fg.as_deref(),
+            SyntaxColorGroup::Number => self.syntax_number_fg.as_deref(),
+            SyntaxColorGroup::Function => self.syntax_function_fg.as_deref(),
+            SyntaxColorGroup::Macro => self.syntax_macro_fg.as_deref(),
+            SyntaxColorGroup::Namespace => self.syntax_namespace_fg.as_deref(),
+            SyntaxColorGroup::Variable => self.syntax_variable_fg.as_deref(),
+            SyntaxColorGroup::Constant => self.syntax_constant_fg.as_deref(),
+            SyntaxColorGroup::Attribute => self.syntax_attribute_fg.as_deref(),
+            SyntaxColorGroup::Operator | SyntaxColorGroup::Tag => None,
+        }
+    }
+
+    pub fn set_syntax_color(&mut self, group: SyntaxColorGroup, value: Option<String>) {
+        match group {
+            SyntaxColorGroup::Comment => self.syntax_comment_fg = value,
+            SyntaxColorGroup::String => self.syntax_string_fg = value,
+            SyntaxColorGroup::Regex => self.syntax_regex_fg = value,
+            SyntaxColorGroup::Keyword => self.syntax_keyword_fg = value,
+            SyntaxColorGroup::KeywordControl => self.syntax_keyword_control_fg = value,
+            SyntaxColorGroup::Type => self.syntax_type_fg = value,
+            SyntaxColorGroup::Number => self.syntax_number_fg = value,
+            SyntaxColorGroup::Function => self.syntax_function_fg = value,
+            SyntaxColorGroup::Macro => self.syntax_macro_fg = value,
+            SyntaxColorGroup::Namespace => self.syntax_namespace_fg = value,
+            SyntaxColorGroup::Variable => self.syntax_variable_fg = value,
+            SyntaxColorGroup::Constant => self.syntax_constant_fg = value,
+            SyntaxColorGroup::Attribute => self.syntax_attribute_fg = value,
+            SyntaxColorGroup::Operator | SyntaxColorGroup::Tag => {}
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/kernel/services/ports/settings.rs"]
+mod tests;

@@ -20,23 +20,145 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HighlightKind {
-    Comment,
-    String,
-    Regex,
-    Keyword,
-    KeywordControl,
-    Type,
-    Number,
-    Attribute,
-    Lifetime,
-    Function,
-    Macro,
-    Namespace,
-    Variable,
-    Constant,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum SyntaxColorGroup {
+    Comment = 0,
+    String = 1,
+    Regex = 2,
+    Keyword = 3,
+    KeywordControl = 4,
+    Type = 5,
+    Number = 6,
+    Function = 7,
+    Macro = 8,
+    Namespace = 9,
+    Variable = 10,
+    Constant = 11,
+    Attribute = 12,
+    Operator = 13,
+    Tag = 14,
 }
+
+impl SyntaxColorGroup {
+    pub const COUNT: usize = 15;
+
+    pub const CONFIGURABLE: [Self; 13] = [
+        Self::Comment,
+        Self::Keyword,
+        Self::KeywordControl,
+        Self::String,
+        Self::Number,
+        Self::Type,
+        Self::Attribute,
+        Self::Namespace,
+        Self::Macro,
+        Self::Function,
+        Self::Variable,
+        Self::Constant,
+        Self::Regex,
+    ];
+}
+
+pub const DEFAULT_CONFIGURABLE_SYNTAX_RGB_HEX: [u32; SyntaxColorGroup::CONFIGURABLE.len()] = [
+    0x6A9955, // Comment
+    0x569CD6, // Keyword
+    0xC586C0, // KeywordControl
+    0xCE9178, // String
+    0xB5CEA8, // Number
+    0x4EC9B0, // Type
+    0x4EC9B0, // Attribute
+    0x4EC9B0, // Namespace
+    0x569CD6, // Macro
+    0xDCDCAA, // Function
+    0x9CDCFE, // Variable
+    0x4FC1FF, // Constant
+    0xD16969, // Regex
+];
+
+const _: () = assert!(SyntaxColorGroup::COUNT == 15);
+const _: () = assert!(SyntaxColorGroup::Tag as usize == SyntaxColorGroup::COUNT - 1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum HighlightKind {
+    Comment = 0,
+    String = 1,
+    Regex = 2,
+    Keyword = 3,
+    KeywordControl = 4,
+    KeywordOperator = 5,
+    Type = 6,
+    TypeBuiltin = 7,
+    Number = 8,
+    Boolean = 9,
+    Function = 10,
+    Method = 11,
+    Macro = 12,
+    Namespace = 13,
+    Variable = 14,
+    Parameter = 15,
+    Property = 16,
+    Constant = 17,
+    EnumMember = 18,
+    Attribute = 19,
+    Lifetime = 20,
+    Operator = 21,
+    Tag = 22,
+    TagAttribute = 23,
+}
+
+impl HighlightKind {
+    pub const COUNT: usize = 24;
+
+    /// Tree traversal should skip the node's children when a highlight kind is a "leaf".
+    pub const fn is_leaf(self) -> bool {
+        matches!(
+            self,
+            Self::Comment | Self::String | Self::Regex | Self::Attribute
+        )
+    }
+
+    /// Rendering merge: avoid semantic token overrides when a highlight kind is "opaque".
+    ///
+    /// Tree-sitter is treated as authoritative for comments/strings/regex, which tend to be more
+    /// reliable than LSP semantic tokens for these categories.
+    pub const fn is_opaque(self) -> bool {
+        matches!(self, Self::Comment | Self::String | Self::Regex)
+    }
+
+    pub const fn color_group(self) -> SyntaxColorGroup {
+        match self {
+            Self::Comment => SyntaxColorGroup::Comment,
+            Self::String => SyntaxColorGroup::String,
+            Self::Regex => SyntaxColorGroup::Regex,
+            Self::Keyword => SyntaxColorGroup::Keyword,
+            Self::KeywordControl => SyntaxColorGroup::KeywordControl,
+            Self::KeywordOperator => SyntaxColorGroup::Keyword,
+            Self::Type => SyntaxColorGroup::Type,
+            Self::TypeBuiltin => SyntaxColorGroup::Type,
+            Self::Number => SyntaxColorGroup::Number,
+            Self::Boolean => SyntaxColorGroup::Keyword,
+            Self::Attribute => SyntaxColorGroup::Attribute,
+            Self::Lifetime => SyntaxColorGroup::Keyword,
+            Self::Function => SyntaxColorGroup::Function,
+            Self::Method => SyntaxColorGroup::Function,
+            Self::Macro => SyntaxColorGroup::Macro,
+            Self::Namespace => SyntaxColorGroup::Namespace,
+            Self::Variable => SyntaxColorGroup::Variable,
+            Self::Parameter => SyntaxColorGroup::Variable,
+            Self::Property => SyntaxColorGroup::Variable,
+            Self::Constant => SyntaxColorGroup::Constant,
+            Self::EnumMember => SyntaxColorGroup::Constant,
+            Self::Operator => SyntaxColorGroup::Operator,
+            Self::Tag => SyntaxColorGroup::Tag,
+            Self::TagAttribute => SyntaxColorGroup::Attribute,
+        }
+    }
+}
+
+const _: () = assert!(HighlightKind::COUNT == 24);
+const _: () = assert!(HighlightKind::TagAttribute as usize == HighlightKind::COUNT - 1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HighlightSpan {
@@ -471,13 +593,7 @@ fn collect_highlights(
                 depth,
             });
 
-            if matches!(
-                kind,
-                HighlightKind::Comment
-                    | HighlightKind::String
-                    | HighlightKind::Regex
-                    | HighlightKind::Attribute
-            ) {
+            if kind.is_leaf() {
                 continue;
             }
         }
@@ -675,10 +791,10 @@ fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<Hi
     if kind.ends_with("_literal") && (kind.contains("int") || kind.contains("imaginary")) {
         return Some(HighlightKind::Number);
     }
-    if matches!(
-        kind,
-        "type_identifier" | "primitive_type" | "predefined_type"
-    ) {
+    if matches!(kind, "primitive_type" | "predefined_type") {
+        return Some(HighlightKind::TypeBuiltin);
+    }
+    if kind == "type_identifier" {
         return Some(HighlightKind::Type);
     }
     if matches!(
@@ -706,7 +822,17 @@ fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<Hi
                 return Some(kind);
             }
         }
-        LanguageId::C | LanguageId::Cpp | LanguageId::Java | LanguageId::Sql => {}
+        LanguageId::C => {
+            if let Some(kind) = c::classify(kind) {
+                return Some(kind);
+            }
+        }
+        LanguageId::Cpp | LanguageId::Java => {}
+        LanguageId::Sql => {
+            if let Some(kind) = sql::classify(kind) {
+                return Some(kind);
+            }
+        }
         LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Jsx | LanguageId::Tsx => {
             if let Some(kind) = js::classify(node, rope, language) {
                 return Some(kind);

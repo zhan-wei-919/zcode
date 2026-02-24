@@ -42,10 +42,10 @@ fn classify_go_identifier(node: Node<'_>) -> Option<HighlightKind> {
             {
                 Some(HighlightKind::Type)
             } else {
-                Some(HighlightKind::Variable)
+                Some(HighlightKind::Parameter)
             }
         }
-        "variadic_parameter_declaration" => Some(HighlightKind::Variable),
+        "variadic_parameter_declaration" => Some(HighlightKind::Parameter),
         "const_spec" | "var_spec" if node_is_field(parent, "name", node) => {
             Some(HighlightKind::Variable)
         }
@@ -74,14 +74,14 @@ fn classify_go_field_identifier(node: Node<'_>) -> Option<HighlightKind> {
         "method_declaration" | "method_spec" if node_is_field(parent, "name", node) => {
             Some(HighlightKind::Function)
         }
-        "field_declaration" => Some(HighlightKind::Variable),
+        "field_declaration" => Some(HighlightKind::Property),
         "selector_expression" if node_is_field(parent, "field", node) => {
             if parent.parent().is_some_and(|grand| {
                 grand.kind() == "call_expression" && node_is_field(grand, "function", parent)
             }) {
-                Some(HighlightKind::Function)
+                Some(HighlightKind::Method)
             } else {
-                Some(HighlightKind::Variable)
+                Some(HighlightKind::Property)
             }
         }
         _ => None,

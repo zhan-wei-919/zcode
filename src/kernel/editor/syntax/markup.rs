@@ -57,8 +57,8 @@ pub(super) fn is_bash_keyword(kind: &str) -> bool {
 
 fn classify_markup_node(node: Node<'_>) -> Option<HighlightKind> {
     match node.kind() {
-        "tag_name" => Some(HighlightKind::Keyword),
-        "attribute_name" => Some(HighlightKind::Attribute),
+        "tag_name" => Some(HighlightKind::Tag),
+        "attribute_name" => Some(HighlightKind::TagAttribute),
         "attribute_value" | "quoted_attribute_value" | "AttValue" | "PseudoAttValue" => {
             Some(HighlightKind::String)
         }
@@ -71,9 +71,9 @@ fn classify_xml_name_node(node: Node<'_>) -> Option<HighlightKind> {
     let parent = node.parent()?;
     match parent.kind() {
         // XML tag names inside start/end/empty tags.
-        "STag" | "ETag" | "EmptyElemTag" => Some(HighlightKind::Keyword),
+        "STag" | "ETag" | "EmptyElemTag" => Some(HighlightKind::Tag),
         // XML attribute names.
-        "Attribute" | "AttDef" | "PseudoAtt" => Some(HighlightKind::Attribute),
+        "Attribute" | "AttDef" | "PseudoAtt" => Some(HighlightKind::TagAttribute),
         _ => None,
     }
 }

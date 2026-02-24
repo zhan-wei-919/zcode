@@ -1,3 +1,4 @@
+use crate::kernel::editor::SyntaxColorGroup;
 use crate::ui::core::color_support::TerminalColorSupport;
 use crate::ui::core::style::Color;
 use crate::ui::core::theme::Theme;
@@ -12,19 +13,9 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
         inactive_border: map_color_for_support(theme.inactive_border, support),
         separator: map_color_for_support(theme.separator, support),
         accent_fg: map_color_for_support(theme.accent_fg, support),
-        syntax_comment_fg: map_color_for_support(theme.syntax_comment_fg, support),
-        syntax_keyword_fg: map_color_for_support(theme.syntax_keyword_fg, support),
-        syntax_keyword_control_fg: map_color_for_support(theme.syntax_keyword_control_fg, support),
-        syntax_string_fg: map_color_for_support(theme.syntax_string_fg, support),
-        syntax_number_fg: map_color_for_support(theme.syntax_number_fg, support),
-        syntax_type_fg: map_color_for_support(theme.syntax_type_fg, support),
-        syntax_attribute_fg: map_color_for_support(theme.syntax_attribute_fg, support),
-        syntax_namespace_fg: map_color_for_support(theme.syntax_namespace_fg, support),
-        syntax_macro_fg: map_color_for_support(theme.syntax_macro_fg, support),
-        syntax_function_fg: map_color_for_support(theme.syntax_function_fg, support),
-        syntax_variable_fg: map_color_for_support(theme.syntax_variable_fg, support),
-        syntax_constant_fg: map_color_for_support(theme.syntax_constant_fg, support),
-        syntax_regex_fg: map_color_for_support(theme.syntax_regex_fg, support),
+        syntax_colors: theme
+            .syntax_colors
+            .map(|c| map_color_for_support(c, support)),
         error_fg: map_color_for_support(theme.error_fg, support),
         warning_fg: map_color_for_support(theme.warning_fg, support),
         activity_bg: map_color_for_support(theme.activity_bg, support),
@@ -90,102 +81,33 @@ fn apply_non_truecolor_syntax_palette(
 ) {
     let defaults = Theme::default();
 
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_comment_fg,
-        original.syntax_comment_fg,
-        defaults.syntax_comment_fg,
-        support,
-        65,
-        2,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_keyword_fg,
-        original.syntax_keyword_fg,
-        defaults.syntax_keyword_fg,
-        support,
-        33,
-        4,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_string_fg,
-        original.syntax_string_fg,
-        defaults.syntax_string_fg,
-        support,
-        114,
-        10,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_number_fg,
-        original.syntax_number_fg,
-        defaults.syntax_number_fg,
-        support,
-        108,
-        10,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_type_fg,
-        original.syntax_type_fg,
-        defaults.syntax_type_fg,
-        support,
-        44,
-        6,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_attribute_fg,
-        original.syntax_attribute_fg,
-        defaults.syntax_attribute_fg,
-        support,
-        44,
-        6,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_namespace_fg,
-        original.syntax_namespace_fg,
-        defaults.syntax_namespace_fg,
-        support,
-        44,
-        6,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_macro_fg,
-        original.syntax_macro_fg,
-        defaults.syntax_macro_fg,
-        support,
-        68,
-        4,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_function_fg,
-        original.syntax_function_fg,
-        defaults.syntax_function_fg,
-        support,
-        179,
-        11,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_variable_fg,
-        original.syntax_variable_fg,
-        defaults.syntax_variable_fg,
-        support,
-        81,
-        6,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_constant_fg,
-        original.syntax_constant_fg,
-        defaults.syntax_constant_fg,
-        support,
-        39,
-        12,
-    );
-    maybe_apply_syntax_fallback(
-        &mut adapted.syntax_regex_fg,
-        original.syntax_regex_fg,
-        defaults.syntax_regex_fg,
-        support,
-        167,
-        9,
-    );
+    const FALLBACKS: &[(SyntaxColorGroup, u8, u8)] = &[
+        (SyntaxColorGroup::Comment, 65, 2),
+        (SyntaxColorGroup::Keyword, 33, 4),
+        (SyntaxColorGroup::KeywordControl, 5, 5),
+        (SyntaxColorGroup::String, 114, 10),
+        (SyntaxColorGroup::Number, 108, 10),
+        (SyntaxColorGroup::Type, 44, 6),
+        (SyntaxColorGroup::Attribute, 44, 6),
+        (SyntaxColorGroup::Namespace, 44, 6),
+        (SyntaxColorGroup::Macro, 68, 4),
+        (SyntaxColorGroup::Function, 179, 11),
+        (SyntaxColorGroup::Variable, 81, 6),
+        (SyntaxColorGroup::Constant, 39, 12),
+        (SyntaxColorGroup::Regex, 167, 9),
+        (SyntaxColorGroup::Tag, 33, 4),
+    ];
+
+    for &(group, ansi256, ansi16) in FALLBACKS {
+        maybe_apply_syntax_fallback(
+            &mut adapted.syntax_colors[group as usize],
+            original.syntax_colors[group as usize],
+            defaults.syntax_colors[group as usize],
+            support,
+            ansi256,
+            ansi16,
+        );
+    }
 }
 
 fn maybe_apply_syntax_fallback(

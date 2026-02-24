@@ -1,6 +1,7 @@
 //! 文件浏览器视图（纯渲染 + 命中测试）
 
 use crate::core::text_window;
+use crate::kernel::editor::SyntaxColorGroup;
 use crate::kernel::{GitFileStatus, GitFileStatusKind};
 use crate::models::{FileTreeRow, NodeId};
 use crate::ui::core::geom::{Pos, Rect};
@@ -95,7 +96,9 @@ impl ExplorerView {
         let marker_style = match kind {
             Some(GitFileStatusKind::Conflict) => row_style.fg(theme.error_fg),
             Some(GitFileStatusKind::Untracked) => row_style.fg(theme.palette_muted_fg),
-            Some(GitFileStatusKind::Added) => row_style.fg(theme.syntax_string_fg),
+            Some(GitFileStatusKind::Added) => {
+                row_style.fg(theme.syntax_fg(SyntaxColorGroup::String))
+            }
             Some(GitFileStatusKind::Modified) => row_style.fg(theme.header_fg),
             None => row_style,
         };

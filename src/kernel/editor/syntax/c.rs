@@ -1,3 +1,13 @@
+use super::HighlightKind;
+
+pub(super) fn classify(kind: &str) -> Option<HighlightKind> {
+    match kind {
+        "if" | "else" | "for" | "while" | "do" | "switch" | "case" | "return" | "break"
+        | "continue" | "goto" => Some(HighlightKind::KeywordControl),
+        _ => None,
+    }
+}
+
 pub(super) fn is_c_keyword(kind: &str) -> bool {
     matches!(
         kind,

@@ -1,7 +1,7 @@
 use crate::core::text_window;
 use crate::kernel::editor::{
     cursor_display_x_abs, EditorPaneState, EditorTabState, HighlightKind, HighlightSpan,
-    SearchBarField, SearchBarMode, SearchBarState,
+    SearchBarField, SearchBarMode, SearchBarState, SyntaxColorGroup,
 };
 use crate::kernel::services::ports::{EditorConfig, Match};
 use crate::models::{cursor_set, slice_to_cow};
@@ -614,7 +614,7 @@ fn paint_gutter(
             let git_x = right.saturating_sub(1);
             if let Some(marker) = tab.git_gutter_marker(line) {
                 let marker_style = match marker {
-                    '+' => style.fg(theme.syntax_string_fg),
+                    '+' => style.fg(theme.syntax_fg(SyntaxColorGroup::String)),
                     '~' => style.fg(theme.warning_fg),
                     '-' => style.fg(theme.error_fg),
                     _ => style,
@@ -897,22 +897,15 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                 } else {
                     None
                 };
-                let syntax_is_leaf = matches!(
-                    syntax_kind,
-                    Some(
-                        HighlightKind::Comment
-                            | HighlightKind::String
-                            | HighlightKind::Regex
-                            | HighlightKind::KeywordControl
-                    )
-                );
-                if has_semantic_spans && !syntax_is_leaf {
+                let opaque = syntax_kind.is_some_and(|kind| kind.is_opaque());
+                if has_semantic_spans && !opaque {
                     highlight_style =
                         style_for_highlight(semantic_spans, &mut semantic_idx, g_start, theme);
                 }
                 if highlight_style.is_none() {
                     if let Some(kind) = syntax_kind {
-                        highlight_style = Some(style_for_highlight_kind(kind, theme));
+                        highlight_style =
+                            Some(Style::default().fg(theme.syntax_fg(kind.color_group())));
                     }
                 }
                 if let Some(hl) = highlight_style {
@@ -1311,26 +1304,6 @@ fn highlight_kind_cached(
     Some(span.kind)
 }
 
-#[inline]
-fn style_for_highlight_kind(kind: HighlightKind, theme: &Theme) -> Style {
-    match kind {
-        HighlightKind::Comment => Style::default().fg(theme.syntax_comment_fg),
-        HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
-        HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
-        HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
-        HighlightKind::KeywordControl => Style::default().fg(theme.syntax_keyword_control_fg),
-        HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
-        HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
-        HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),
-        HighlightKind::Lifetime => Style::default().fg(theme.syntax_keyword_fg),
-        HighlightKind::Function => Style::default().fg(theme.syntax_function_fg),
-        HighlightKind::Macro => Style::default().fg(theme.syntax_macro_fg),
-        HighlightKind::Namespace => Style::default().fg(theme.syntax_namespace_fg),
-        HighlightKind::Variable => Style::default().fg(theme.syntax_variable_fg),
-        HighlightKind::Constant => Style::default().fg(theme.syntax_constant_fg),
-    }
-}
-
 fn style_for_highlight(
     highlight_spans: Option<&[HighlightSpan]>,
     highlight_idx: &mut usize,
@@ -1348,7 +1321,7 @@ fn style_for_highlight(
         return None;
     }
 
-    Some(style_for_highlight_kind(span.kind, theme))
+    Some(Style::default().fg(theme.syntax_fg(span.kind.color_group())))
 }
 
 fn search_match_bg(

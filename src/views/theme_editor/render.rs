@@ -1,4 +1,4 @@
-use crate::kernel::editor::{highlight_snippet, HighlightKind, HighlightSpan, LanguageId};
+use crate::kernel::editor::{highlight_snippet, HighlightSpan, LanguageId};
 use crate::kernel::state::{PreviewLanguage, ThemeEditorFocus, ThemeEditorState, ThemeEditorToken};
 use crate::ui::core::color::hsl_to_rgb;
 use crate::ui::core::color_support::TerminalColorSupport;
@@ -201,25 +201,17 @@ fn paint_left_panel(
 }
 
 fn token_color(token: ThemeEditorToken, theme: &Theme) -> Color {
-    match token {
-        ThemeEditorToken::Comment => theme.syntax_comment_fg,
-        ThemeEditorToken::Keyword => theme.syntax_keyword_fg,
-        ThemeEditorToken::KeywordControl => theme.syntax_keyword_control_fg,
-        ThemeEditorToken::String => theme.syntax_string_fg,
-        ThemeEditorToken::Number => theme.syntax_number_fg,
-        ThemeEditorToken::Type => theme.syntax_type_fg,
-        ThemeEditorToken::Attribute => theme.syntax_attribute_fg,
-        ThemeEditorToken::Namespace => theme.syntax_namespace_fg,
-        ThemeEditorToken::Macro => theme.syntax_macro_fg,
-        ThemeEditorToken::Function => theme.syntax_function_fg,
-        ThemeEditorToken::Variable => theme.syntax_variable_fg,
-        ThemeEditorToken::Constant => theme.syntax_constant_fg,
-        ThemeEditorToken::Regex => theme.syntax_regex_fg,
-        ThemeEditorToken::EditorBg => theme.editor_bg,
-        ThemeEditorToken::SidebarBg => theme.sidebar_bg,
-        ThemeEditorToken::ActivityBg => theme.activity_bg,
-        ThemeEditorToken::PopupBg => theme.popup_bg,
-        ThemeEditorToken::StatusbarBg => theme.statusbar_bg,
+    if let Some(group) = token.syntax_color_group() {
+        theme.syntax_fg(group)
+    } else {
+        match token {
+            ThemeEditorToken::EditorBg => theme.editor_bg,
+            ThemeEditorToken::SidebarBg => theme.sidebar_bg,
+            ThemeEditorToken::ActivityBg => theme.activity_bg,
+            ThemeEditorToken::PopupBg => theme.popup_bg,
+            ThemeEditorToken::StatusbarBg => theme.statusbar_bg,
+            _ => theme.editor_bg,
+        }
     }
 }
 
@@ -823,25 +815,6 @@ fn preview_language_snippet(language: PreviewLanguage) -> (LanguageId, &'static 
     }
 }
 
-fn style_for_highlight(kind: HighlightKind, theme: &Theme) -> Style {
-    match kind {
-        HighlightKind::Comment => Style::default().fg(theme.syntax_comment_fg),
-        HighlightKind::String => Style::default().fg(theme.syntax_string_fg),
-        HighlightKind::Regex => Style::default().fg(theme.syntax_regex_fg),
-        HighlightKind::Keyword => Style::default().fg(theme.syntax_keyword_fg),
-        HighlightKind::KeywordControl => Style::default().fg(theme.syntax_keyword_control_fg),
-        HighlightKind::Type => Style::default().fg(theme.syntax_type_fg),
-        HighlightKind::Number => Style::default().fg(theme.syntax_number_fg),
-        HighlightKind::Attribute => Style::default().fg(theme.syntax_attribute_fg),
-        HighlightKind::Lifetime => Style::default().fg(theme.syntax_keyword_fg),
-        HighlightKind::Function => Style::default().fg(theme.syntax_function_fg),
-        HighlightKind::Macro => Style::default().fg(theme.syntax_macro_fg),
-        HighlightKind::Namespace => Style::default().fg(theme.syntax_namespace_fg),
-        HighlightKind::Variable => Style::default().fg(theme.syntax_variable_fg),
-        HighlightKind::Constant => Style::default().fg(theme.syntax_constant_fg),
-    }
-}
-
 fn paint_highlighted_line(
     painter: &mut Painter,
     clip: Rect,
@@ -879,7 +852,7 @@ fn paint_highlighted_line(
             let span = &spans[span_idx];
             let end = span.end.min(line.len());
             let seg = &line[byte_pos..end];
-            let style = style_for_highlight(span.kind, theme);
+            let style = Style::default().fg(theme.syntax_fg(span.kind.color_group()));
             painter.text_clipped(Pos::new(x, clip.y), seg, style, clip);
             let seg_w = unicode_width::UnicodeWidthStr::width(seg) as u16;
             x = x.saturating_add(seg_w);

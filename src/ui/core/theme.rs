@@ -1,3 +1,4 @@
+use crate::kernel::editor::{SyntaxColorGroup, DEFAULT_CONFIGURABLE_SYNTAX_RGB_HEX};
 use crate::ui::core::style::Color;
 
 /// Semantic theme tokens for the UI layer.
@@ -38,6 +39,8 @@ pub enum Token {
     SyntaxVariableFg,
     SyntaxConstantFg,
     SyntaxRegexFg,
+    SyntaxOperatorFg,
+    SyntaxTagFg,
     EditorBg,
     SidebarBg,
     PopupBg,
@@ -65,19 +68,7 @@ pub struct Theme {
     pub inactive_border: Color,
     pub separator: Color,
     pub accent_fg: Color,
-    pub syntax_comment_fg: Color,
-    pub syntax_keyword_fg: Color,
-    pub syntax_keyword_control_fg: Color,
-    pub syntax_string_fg: Color,
-    pub syntax_number_fg: Color,
-    pub syntax_type_fg: Color,
-    pub syntax_attribute_fg: Color,
-    pub syntax_namespace_fg: Color,
-    pub syntax_macro_fg: Color,
-    pub syntax_function_fg: Color,
-    pub syntax_variable_fg: Color,
-    pub syntax_constant_fg: Color,
-    pub syntax_regex_fg: Color,
+    pub syntax_colors: [Color; SyntaxColorGroup::COUNT],
     pub error_fg: Color,
     pub warning_fg: Color,
     pub activity_bg: Color,
@@ -117,6 +108,10 @@ pub struct Theme {
 }
 
 impl Theme {
+    pub fn syntax_fg(&self, group: SyntaxColorGroup) -> Color {
+        self.syntax_colors[group as usize]
+    }
+
     pub fn color(&self, token: Token) -> Color {
         match token {
             Token::FocusBorder => self.focus_border,
@@ -139,19 +134,21 @@ impl Theme {
             Token::SidebarTabActiveBg => self.sidebar_tab_active_bg,
             Token::SidebarTabActiveFg => self.sidebar_tab_active_fg,
             Token::SidebarTabInactiveFg => self.sidebar_tab_inactive_fg,
-            Token::SyntaxCommentFg => self.syntax_comment_fg,
-            Token::SyntaxKeywordFg => self.syntax_keyword_fg,
-            Token::SyntaxKeywordControlFg => self.syntax_keyword_control_fg,
-            Token::SyntaxStringFg => self.syntax_string_fg,
-            Token::SyntaxNumberFg => self.syntax_number_fg,
-            Token::SyntaxTypeFg => self.syntax_type_fg,
-            Token::SyntaxAttributeFg => self.syntax_attribute_fg,
-            Token::SyntaxNamespaceFg => self.syntax_namespace_fg,
-            Token::SyntaxMacroFg => self.syntax_macro_fg,
-            Token::SyntaxFunctionFg => self.syntax_function_fg,
-            Token::SyntaxVariableFg => self.syntax_variable_fg,
-            Token::SyntaxConstantFg => self.syntax_constant_fg,
-            Token::SyntaxRegexFg => self.syntax_regex_fg,
+            Token::SyntaxCommentFg => self.syntax_fg(SyntaxColorGroup::Comment),
+            Token::SyntaxKeywordFg => self.syntax_fg(SyntaxColorGroup::Keyword),
+            Token::SyntaxKeywordControlFg => self.syntax_fg(SyntaxColorGroup::KeywordControl),
+            Token::SyntaxStringFg => self.syntax_fg(SyntaxColorGroup::String),
+            Token::SyntaxNumberFg => self.syntax_fg(SyntaxColorGroup::Number),
+            Token::SyntaxTypeFg => self.syntax_fg(SyntaxColorGroup::Type),
+            Token::SyntaxAttributeFg => self.syntax_fg(SyntaxColorGroup::Attribute),
+            Token::SyntaxNamespaceFg => self.syntax_fg(SyntaxColorGroup::Namespace),
+            Token::SyntaxMacroFg => self.syntax_fg(SyntaxColorGroup::Macro),
+            Token::SyntaxFunctionFg => self.syntax_fg(SyntaxColorGroup::Function),
+            Token::SyntaxVariableFg => self.syntax_fg(SyntaxColorGroup::Variable),
+            Token::SyntaxConstantFg => self.syntax_fg(SyntaxColorGroup::Constant),
+            Token::SyntaxRegexFg => self.syntax_fg(SyntaxColorGroup::Regex),
+            Token::SyntaxOperatorFg => self.syntax_fg(SyntaxColorGroup::Operator),
+            Token::SyntaxTagFg => self.syntax_fg(SyntaxColorGroup::Tag),
             Token::EditorBg => self.editor_bg,
             Token::SidebarBg => self.sidebar_bg,
             Token::PopupBg => self.popup_bg,
@@ -177,24 +174,25 @@ impl Theme {
 
 impl Default for Theme {
     fn default() -> Self {
+        let palette_fg = Color::Indexed(15); // White
+        let mut syntax_colors = [palette_fg; SyntaxColorGroup::COUNT];
+        for (idx, group) in SyntaxColorGroup::CONFIGURABLE.iter().copied().enumerate() {
+            let rgb = DEFAULT_CONFIGURABLE_SYNTAX_RGB_HEX[idx];
+            let r = ((rgb >> 16) & 0xFF) as u8;
+            let g = ((rgb >> 8) & 0xFF) as u8;
+            let b = (rgb & 0xFF) as u8;
+            syntax_colors[group as usize] = Color::Rgb(r, g, b);
+        }
+
+        syntax_colors[SyntaxColorGroup::Operator as usize] = palette_fg;
+        syntax_colors[SyntaxColorGroup::Tag as usize] =
+            syntax_colors[SyntaxColorGroup::Keyword as usize];
         Self {
             focus_border: Color::Indexed(6),    // Cyan
             inactive_border: Color::Indexed(8), // DarkGray
             separator: Color::Indexed(8),       // DarkGray
             accent_fg: Color::Indexed(3),
-            syntax_comment_fg: Color::Rgb(0x6A, 0x99, 0x55),
-            syntax_keyword_fg: Color::Rgb(0x56, 0x9C, 0xD6),
-            syntax_keyword_control_fg: Color::Rgb(0xC5, 0x86, 0xC0),
-            syntax_string_fg: Color::Rgb(0xCE, 0x91, 0x78),
-            syntax_number_fg: Color::Rgb(0xB5, 0xCE, 0xA8),
-            syntax_type_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
-            syntax_attribute_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
-            syntax_namespace_fg: Color::Rgb(0x4E, 0xC9, 0xB0),
-            syntax_macro_fg: Color::Rgb(0x56, 0x9C, 0xD6),
-            syntax_function_fg: Color::Rgb(0xDC, 0xDC, 0xAA),
-            syntax_variable_fg: Color::Rgb(0x9C, 0xDC, 0xFE),
-            syntax_constant_fg: Color::Rgb(0x4F, 0xC1, 0xFF),
-            syntax_regex_fg: Color::Rgb(0xD1, 0x69, 0x69),
+            syntax_colors,
             error_fg: Color::Indexed(1),   // Red
             warning_fg: Color::Indexed(3), // Yellow
             activity_bg: Color::Reset,
@@ -207,11 +205,11 @@ impl Default for Theme {
             header_fg: Color::Indexed(6),               // Cyan
             palette_border: Color::Indexed(6),          // Cyan
             palette_bg: Color::Reset,
-            palette_fg: Color::Indexed(15),          // White
-            palette_selected_bg: Color::Indexed(8),  // DarkGray
+            palette_fg,
+            palette_selected_bg: Color::Indexed(8), // DarkGray
             palette_selected_fg: Color::Indexed(15), // White
-            palette_muted_fg: Color::Indexed(8),     // DarkGray
-            indent_guide_fg: Color::Indexed(8),      // DarkGray
+            palette_muted_fg: Color::Indexed(8),    // DarkGray
+            indent_guide_fg: Color::Indexed(8),     // DarkGray
             editor_bg: Color::Reset,
             sidebar_bg: Color::Reset,
             popup_bg: Color::Reset,

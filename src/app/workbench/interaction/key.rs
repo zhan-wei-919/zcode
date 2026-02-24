@@ -752,60 +752,26 @@ impl Workbench {
         };
         let color = crate::ui::core::style::Color::Rgb(r, g, b);
 
-        match token {
-            crate::kernel::state::ThemeEditorToken::Comment => {
-                self.theme.syntax_comment_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::Keyword => {
-                self.theme.syntax_keyword_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::KeywordControl => {
-                self.theme.syntax_keyword_control_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::String => {
-                self.theme.syntax_string_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::Number => {
-                self.theme.syntax_number_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::Type => {
-                self.theme.syntax_type_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::Attribute => {
-                self.theme.syntax_attribute_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::Namespace => {
-                self.theme.syntax_namespace_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::Macro => {
-                self.theme.syntax_macro_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::Function => {
-                self.theme.syntax_function_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::Variable => {
-                self.theme.syntax_variable_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::Constant => {
-                self.theme.syntax_constant_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::Regex => {
-                self.theme.syntax_regex_fg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::EditorBg => {
-                self.theme.editor_bg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::SidebarBg => {
-                self.theme.sidebar_bg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::ActivityBg => {
-                self.theme.activity_bg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::PopupBg => {
-                self.theme.popup_bg = color;
-            }
-            crate::kernel::state::ThemeEditorToken::StatusbarBg => {
-                self.theme.statusbar_bg = color;
+        if let Some(group) = token.syntax_color_group() {
+            self.theme.set_syntax_color(group, color);
+        } else {
+            match token {
+                crate::kernel::state::ThemeEditorToken::EditorBg => {
+                    self.theme.editor_bg = color;
+                }
+                crate::kernel::state::ThemeEditorToken::SidebarBg => {
+                    self.theme.sidebar_bg = color;
+                }
+                crate::kernel::state::ThemeEditorToken::ActivityBg => {
+                    self.theme.activity_bg = color;
+                }
+                crate::kernel::state::ThemeEditorToken::PopupBg => {
+                    self.theme.popup_bg = color;
+                }
+                crate::kernel::state::ThemeEditorToken::StatusbarBg => {
+                    self.theme.statusbar_bg = color;
+                }
+                _ => {}
             }
         }
         let core_theme = crate::app::theme::to_core_theme(&self.theme);
@@ -820,27 +786,17 @@ impl Workbench {
     fn reset_theme_editor_token_to_default(&mut self) {
         let token = self.store.state().ui.theme_editor.selected_token;
         let defaults = crate::app::theme::UiTheme::default();
-        let color = match token {
-            crate::kernel::state::ThemeEditorToken::Comment => defaults.syntax_comment_fg,
-            crate::kernel::state::ThemeEditorToken::Keyword => defaults.syntax_keyword_fg,
-            crate::kernel::state::ThemeEditorToken::KeywordControl => {
-                defaults.syntax_keyword_control_fg
+        let color = if let Some(group) = token.syntax_color_group() {
+            defaults.syntax_colors[group as usize]
+        } else {
+            match token {
+                crate::kernel::state::ThemeEditorToken::EditorBg => defaults.editor_bg,
+                crate::kernel::state::ThemeEditorToken::SidebarBg => defaults.sidebar_bg,
+                crate::kernel::state::ThemeEditorToken::ActivityBg => defaults.activity_bg,
+                crate::kernel::state::ThemeEditorToken::PopupBg => defaults.popup_bg,
+                crate::kernel::state::ThemeEditorToken::StatusbarBg => defaults.statusbar_bg,
+                _ => defaults.editor_bg,
             }
-            crate::kernel::state::ThemeEditorToken::String => defaults.syntax_string_fg,
-            crate::kernel::state::ThemeEditorToken::Number => defaults.syntax_number_fg,
-            crate::kernel::state::ThemeEditorToken::Type => defaults.syntax_type_fg,
-            crate::kernel::state::ThemeEditorToken::Attribute => defaults.syntax_attribute_fg,
-            crate::kernel::state::ThemeEditorToken::Namespace => defaults.syntax_namespace_fg,
-            crate::kernel::state::ThemeEditorToken::Macro => defaults.syntax_macro_fg,
-            crate::kernel::state::ThemeEditorToken::Function => defaults.syntax_function_fg,
-            crate::kernel::state::ThemeEditorToken::Variable => defaults.syntax_variable_fg,
-            crate::kernel::state::ThemeEditorToken::Constant => defaults.syntax_constant_fg,
-            crate::kernel::state::ThemeEditorToken::Regex => defaults.syntax_regex_fg,
-            crate::kernel::state::ThemeEditorToken::EditorBg => defaults.editor_bg,
-            crate::kernel::state::ThemeEditorToken::SidebarBg => defaults.sidebar_bg,
-            crate::kernel::state::ThemeEditorToken::ActivityBg => defaults.activity_bg,
-            crate::kernel::state::ThemeEditorToken::PopupBg => defaults.popup_bg,
-            crate::kernel::state::ThemeEditorToken::StatusbarBg => defaults.statusbar_bg,
         };
 
         if let Some((r, g, b)) = crate::ui::core::theme_adapter::color_to_rgb(color) {
@@ -868,27 +824,17 @@ impl Workbench {
 
     pub(in super::super) fn sync_theme_editor_hsl(&mut self) {
         let token = self.store.state().ui.theme_editor.selected_token;
-        let color = match token {
-            crate::kernel::state::ThemeEditorToken::Comment => self.theme.syntax_comment_fg,
-            crate::kernel::state::ThemeEditorToken::Keyword => self.theme.syntax_keyword_fg,
-            crate::kernel::state::ThemeEditorToken::KeywordControl => {
-                self.theme.syntax_keyword_control_fg
+        let color = if let Some(group) = token.syntax_color_group() {
+            self.theme.syntax_colors[group as usize]
+        } else {
+            match token {
+                crate::kernel::state::ThemeEditorToken::EditorBg => self.theme.editor_bg,
+                crate::kernel::state::ThemeEditorToken::SidebarBg => self.theme.sidebar_bg,
+                crate::kernel::state::ThemeEditorToken::ActivityBg => self.theme.activity_bg,
+                crate::kernel::state::ThemeEditorToken::PopupBg => self.theme.popup_bg,
+                crate::kernel::state::ThemeEditorToken::StatusbarBg => self.theme.statusbar_bg,
+                _ => self.theme.editor_bg,
             }
-            crate::kernel::state::ThemeEditorToken::String => self.theme.syntax_string_fg,
-            crate::kernel::state::ThemeEditorToken::Number => self.theme.syntax_number_fg,
-            crate::kernel::state::ThemeEditorToken::Type => self.theme.syntax_type_fg,
-            crate::kernel::state::ThemeEditorToken::Attribute => self.theme.syntax_attribute_fg,
-            crate::kernel::state::ThemeEditorToken::Namespace => self.theme.syntax_namespace_fg,
-            crate::kernel::state::ThemeEditorToken::Macro => self.theme.syntax_macro_fg,
-            crate::kernel::state::ThemeEditorToken::Function => self.theme.syntax_function_fg,
-            crate::kernel::state::ThemeEditorToken::Variable => self.theme.syntax_variable_fg,
-            crate::kernel::state::ThemeEditorToken::Constant => self.theme.syntax_constant_fg,
-            crate::kernel::state::ThemeEditorToken::Regex => self.theme.syntax_regex_fg,
-            crate::kernel::state::ThemeEditorToken::EditorBg => self.theme.editor_bg,
-            crate::kernel::state::ThemeEditorToken::SidebarBg => self.theme.sidebar_bg,
-            crate::kernel::state::ThemeEditorToken::ActivityBg => self.theme.activity_bg,
-            crate::kernel::state::ThemeEditorToken::PopupBg => self.theme.popup_bg,
-            crate::kernel::state::ThemeEditorToken::StatusbarBg => self.theme.statusbar_bg,
         };
 
         if let Some((r, g, b)) = crate::ui::core::theme_adapter::color_to_rgb(color) {
