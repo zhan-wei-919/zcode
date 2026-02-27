@@ -1,3 +1,4 @@
+use super::super::dnd_rules::{drop_intent, DropIntent};
 use super::super::util;
 use super::super::Workbench;
 use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
@@ -110,14 +111,17 @@ impl Workbench {
                             let Some(target_node) = self.ui_tree.node(*target) else {
                                 continue;
                             };
+                            let Some(intent) = drop_intent(payload, target_node.kind) else {
+                                continue;
+                            };
 
                             let DragPayload::ExplorerNode { node_id } = *payload else {
                                 continue;
                             };
                             let node_id = NodeId::from_raw(node_id);
 
-                            match target_node.kind {
-                                NodeKind::EditorArea { pane } => {
+                            match intent {
+                                DropIntent::ExplorerToEditorArea { pane } => {
                                     let Some((path, is_dir)) =
                                         self.store.state().explorer.path_and_kind_for(node_id)
                                     else {
@@ -134,7 +138,7 @@ impl Workbench {
                                     let _ = self.dispatch_kernel(KernelAction::OpenPath(path));
                                     handled = true;
                                 }
-                                NodeKind::ExplorerFolderDrop { node_id: to_dir_id } => {
+                                DropIntent::ExplorerToExplorerFolder { to_dir_id } => {
                                     let to_dir_id = NodeId::from_raw(to_dir_id);
                                     let Some((from_path, from_is_dir)) =
                                         self.store.state().explorer.path_and_kind_for(node_id)
@@ -165,7 +169,7 @@ impl Workbench {
                                     });
                                     handled = true;
                                 }
-                                NodeKind::ExplorerRow { node_id: to_row_id } => {
+                                DropIntent::ExplorerToExplorerRow { to_row_id } => {
                                     let to_row_id = NodeId::from_raw(to_row_id);
                                     let state = self.store.state();
                                     let explorer = &state.explorer;

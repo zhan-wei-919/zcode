@@ -25,13 +25,55 @@ fn mouse(kind: MouseEventKind, x: u16, y: u16) -> InputEvent {
     })
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct TestRules;
+
+impl DragDropRules for TestRules {
+    fn payload_for_source(&self, source: &Node) -> Option<DragPayload> {
+        match source.kind {
+            NodeKind::Tab { pane, tab_id } => Some(DragPayload::Tab {
+                from_pane: pane,
+                tab_id,
+            }),
+            NodeKind::ExplorerRow { node_id } => Some(DragPayload::ExplorerNode { node_id }),
+            _ => None,
+        }
+    }
+
+    fn can_drop(&self, payload: &DragPayload, target: &Node) -> bool {
+        matches!(
+            (payload, target.kind),
+            (DragPayload::Tab { .. }, NodeKind::TabBar { .. })
+                | (DragPayload::Tab { .. }, NodeKind::EditorSplitDrop { .. })
+                | (
+                    DragPayload::ExplorerNode { .. },
+                    NodeKind::EditorArea { .. }
+                )
+                | (
+                    DragPayload::ExplorerNode { .. },
+                    NodeKind::ExplorerRow { .. }
+                )
+                | (
+                    DragPayload::ExplorerNode { .. },
+                    NodeKind::ExplorerFolderDrop { .. }
+                )
+        )
+    }
+}
+
+const TEST_RULES: TestRules = TestRules;
+
+fn on_input(rt: &mut UiRuntime, input: &InputEvent, tree: &UiTree) -> UiRuntimeOutput {
+    rt.on_input(input, tree, &TEST_RULES)
+}
+
 #[test]
 fn hover_change_triggers_redraw() {
     let mut tree = UiTree::new();
     tree.push(node(1, Rect::new(0, 0, 10, 10), Sense::HOVER));
 
     let mut rt = UiRuntime::new();
-    let out = rt.on_input(&mouse(MouseEventKind::Moved, 5, 5), &tree);
+    let out = on_input(&mut rt, &mouse(MouseEventKind::Moved, 5, 5), &tree);
 
     assert!(out.needs_redraw);
     assert!(matches!(
@@ -55,8 +97,16 @@ fn left_click_emits_click() {
     ));
 
     let mut rt = UiRuntime::new();
-    let _ = rt.on_input(&mouse(MouseEventKind::Down(MouseButton::Left), 1, 1), &tree);
-    let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Left), 1, 1), &tree);
+    let _ = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Down(MouseButton::Left), 1, 1),
+        &tree,
+    );
+    let out = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Up(MouseButton::Left), 1, 1),
+        &tree,
+    );
 
     assert!(out.events.iter().any(|e| matches!(
         e,
@@ -78,11 +128,16 @@ fn right_click_emits_context_menu_when_supported() {
     ));
 
     let mut rt = UiRuntime::new();
-    let _ = rt.on_input(
+    let _ = on_input(
+        &mut rt,
         &mouse(MouseEventKind::Down(MouseButton::Right), 2, 2),
         &tree,
     );
-    let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Right), 2, 2), &tree);
+    let out = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Up(MouseButton::Right), 2, 2),
+        &tree,
+    );
 
     assert!(out.needs_redraw);
     assert!(out.events.iter().any(|e| matches!(
@@ -101,17 +156,29 @@ fn drag_threshold_prevents_accidental_drag() {
     ));
 
     let mut rt = UiRuntime::new();
-    let _ = rt.on_input(&mouse(MouseEventKind::Down(MouseButton::Left), 0, 0), &tree);
+    let _ = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Down(MouseButton::Left), 0, 0),
+        &tree,
+    );
 
     // Small move: dist == 1 -> no drag.
-    let out = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 1, 0), &tree);
+    let out = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 1, 0),
+        &tree,
+    );
     assert!(!out
         .events
         .iter()
         .any(|e| matches!(e, UiEvent::DragStart { .. })));
 
     // Move >= threshold: dist == 2 -> drag start.
-    let out = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 2, 0), &tree);
+    let out = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 2, 0),
+        &tree,
+    );
     assert!(out
         .events
         .iter()
@@ -123,7 +190,11 @@ fn drag_threshold_prevents_accidental_drag() {
     assert_eq!(rt.capture(), Some(Id::raw(1)));
 
     // Release ends drag and clears capture.
-    let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Left), 2, 0), &tree);
+    let out = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Up(MouseButton::Left), 2, 0),
+        &tree,
+    );
     assert!(out
         .events
         .iter()
@@ -158,17 +229,30 @@ fn drag_drop_emits_drop_for_supported_targets() {
     tree.push(editor);
 
     let mut rt = UiRuntime::new();
-    let _ = rt.on_input(&mouse(MouseEventKind::Down(MouseButton::Left), 1, 1), &tree);
+    let _ = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Down(MouseButton::Left), 1, 1),
+        &tree,
+    );
 
     // Start drag.
-    let _ = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 3, 1), &tree);
+    let _ = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 3, 1),
+        &tree,
+    );
     // Move over editor drop target.
-    let _ = rt.on_input(
+    let _ = on_input(
+        &mut rt,
         &mouse(MouseEventKind::Drag(MouseButton::Left), 12, 1),
         &tree,
     );
 
-    let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Left), 12, 1), &tree);
+    let out = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Up(MouseButton::Left), 12, 1),
+        &tree,
+    );
     assert!(out.events.iter().any(|e| matches!(
         e,
         UiEvent::Drop { target, payload, .. }
@@ -219,17 +303,30 @@ fn drag_drop_prefers_topmost_compatible_target_when_overlapping() {
     tree.push(tabbar);
 
     let mut rt = UiRuntime::new();
-    let _ = rt.on_input(&mouse(MouseEventKind::Down(MouseButton::Left), 1, 1), &tree);
+    let _ = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Down(MouseButton::Left), 1, 1),
+        &tree,
+    );
 
     // Start drag.
-    let _ = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 3, 1), &tree);
+    let _ = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 3, 1),
+        &tree,
+    );
     // Move over the overlapping drop targets.
-    let _ = rt.on_input(
+    let _ = on_input(
+        &mut rt,
         &mouse(MouseEventKind::Drag(MouseButton::Left), 12, 1),
         &tree,
     );
 
-    let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Left), 12, 1), &tree);
+    let out = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Up(MouseButton::Left), 12, 1),
+        &tree,
+    );
     assert!(out.events.iter().any(|e| matches!(
         e,
         UiEvent::Drop { target, payload, .. }
@@ -268,17 +365,30 @@ fn drag_drop_emits_drop_for_tab_split_targets() {
     tree.push(split);
 
     let mut rt = UiRuntime::new();
-    let _ = rt.on_input(&mouse(MouseEventKind::Down(MouseButton::Left), 1, 1), &tree);
+    let _ = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Down(MouseButton::Left), 1, 1),
+        &tree,
+    );
 
     // Start drag.
-    let _ = rt.on_input(&mouse(MouseEventKind::Drag(MouseButton::Left), 3, 1), &tree);
+    let _ = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Drag(MouseButton::Left), 3, 1),
+        &tree,
+    );
     // Move over editor split drop target.
-    let _ = rt.on_input(
+    let _ = on_input(
+        &mut rt,
         &mouse(MouseEventKind::Drag(MouseButton::Left), 12, 1),
         &tree,
     );
 
-    let out = rt.on_input(&mouse(MouseEventKind::Up(MouseButton::Left), 12, 1), &tree);
+    let out = on_input(
+        &mut rt,
+        &mouse(MouseEventKind::Up(MouseButton::Left), 12, 1),
+        &tree,
+    );
     assert!(out.events.iter().any(|e| matches!(
         e,
         UiEvent::Drop { target, payload, .. }

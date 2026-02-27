@@ -78,5 +78,5 @@ impl Style {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/ui/core/style.rs"]
+#[path = "../../../../tests/unit/ui/core/style.rs"]
 mod tests;

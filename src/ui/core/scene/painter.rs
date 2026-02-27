@@ -114,5 +114,5 @@ impl Painter {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/ui/core/painter.rs"]
+#[path = "../../../../tests/unit/ui/core/painter.rs"]
 mod tests;

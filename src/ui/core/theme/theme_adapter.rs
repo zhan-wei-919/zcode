@@ -235,5 +235,5 @@ const ANSI16_RGB: [(u8, u8, u8); 16] = [
 ];
 
 #[cfg(test)]
-#[path = "../../../tests/unit/ui/core/theme_adapter.rs"]
+#[path = "../../../../tests/unit/ui/core/theme_adapter.rs"]
 mod tests;

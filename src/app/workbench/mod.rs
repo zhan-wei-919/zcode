@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 mod bridge;
+mod dnd_rules;
 mod input;
 mod interaction;
 mod mouse;

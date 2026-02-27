@@ -135,5 +135,5 @@ impl UiTree {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/ui/core/tree.rs"]
+#[path = "../../../../tests/unit/ui/core/tree.rs"]
 mod tests;

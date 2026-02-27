@@ -41,5 +41,5 @@ pub fn detect_terminal_color_support() -> TerminalColorSupport {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/ui/core/color_support.rs"]
+#[path = "../../../../tests/unit/ui/core/color_support.rs"]
 mod tests;

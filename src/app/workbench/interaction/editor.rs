@@ -1,3 +1,4 @@
+use super::super::dnd_rules::{drop_intent, DropIntent};
 use super::super::{util, Workbench};
 use crate::core::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use crate::core::Command;
@@ -408,13 +409,16 @@ impl Workbench {
                             let Some(target_node) = self.ui_tree.node(*target) else {
                                 continue;
                             };
+                            let Some(intent) = drop_intent(payload, target_node.kind) else {
+                                continue;
+                            };
                             let DragPayload::Tab { from_pane, tab_id } = *payload else {
                                 continue;
                             };
                             let tab_id = TabId::new(tab_id);
 
-                            match target_node.kind {
-                                NodeKind::TabBar { pane: to_pane } => {
+                            match intent {
+                                DropIntent::TabToTabBar { to_pane } => {
                                     let Some(to_pane_state) =
                                         self.store.state().editor.pane(to_pane)
                                     else {
@@ -467,7 +471,7 @@ impl Workbench {
                                         });
                                     handled = true;
                                 }
-                                NodeKind::EditorSplitDrop { drop, .. } => {
+                                DropIntent::TabToSplit { drop } => {
                                     let cmd = match drop {
                                         crate::ui::core::tree::SplitDrop::Right => {
                                             Command::SplitEditorVertical

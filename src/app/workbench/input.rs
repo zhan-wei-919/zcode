@@ -7,6 +7,7 @@ use crate::ui::core::input::UiEvent;
 use crate::ui::core::runtime::UiRuntimeOutput;
 use crate::ui::core::tree::NodeKind;
 
+use super::dnd_rules::WORKBENCH_DND_RULES;
 use super::mouse_route::{mouse_target_from_focus, plan_mouse_dispatch, FocusPlan, MouseTarget};
 use super::util;
 
@@ -102,7 +103,10 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
                 workbench.ui_runtime.reset_pointer_state();
             }
 
-            let ui_out = workbench.ui_runtime.on_input(event, &workbench.ui_tree);
+            let ui_out =
+                workbench
+                    .ui_runtime
+                    .on_input(event, &workbench.ui_tree, &WORKBENCH_DND_RULES);
 
             if plan.target == MouseTarget::ContextMenu {
                 let overlay_id = IdPath::root("workbench")

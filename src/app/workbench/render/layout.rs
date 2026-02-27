@@ -1,3 +1,4 @@
+use super::super::dnd_rules::{drop_intent, DropIntent};
 use super::super::palette;
 use super::super::Workbench;
 use super::dialogs::{
@@ -298,9 +299,57 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
         return;
     };
 
-    match (payload, target.kind) {
-        (DragPayload::Tab { .. }, NodeKind::TabBar { pane }) => {
-            if let Some(pos) = workbench.ui_runtime.last_pos() {
+    if let Some(intent) = drop_intent(payload, target.kind) {
+        match intent {
+            DropIntent::TabToTabBar { to_pane: pane } => {
+                if let Some(pos) = workbench.ui_runtime.last_pos() {
+                    if let Some(pane_state) = workbench.store.state().editor.pane(pane) {
+                        if let Some(to_area) = workbench
+                            .layout_cache
+                            .editor_inner_areas
+                            .get(pane)
+                            .copied()
+                            .or_else(|| workbench.layout_cache.editor_inner_areas.first().copied())
+                        {
+                            let config = &workbench.store.state().editor.config;
+                            let layout = compute_editor_pane_layout(to_area, pane_state, config);
+                            let hovered_to = workbench
+                                .store
+                                .state()
+                                .ui
+                                .hovered_tab
+                                .filter(|(hp, _)| *hp == pane)
+                                .map(|(_, i)| i);
+                            if let Some(insertion_index) =
+                                tab_insertion_index(&layout, pane_state, pos.x, pos.y, hovered_to)
+                            {
+                                if let Some(x) = tab_insertion_x(
+                                    &layout,
+                                    pane_state,
+                                    hovered_to,
+                                    insertion_index,
+                                ) {
+                                    let marker_style = UiStyle::default()
+                                        .bg(workbench.ui_theme.focus_border)
+                                        .fg(workbench.ui_theme.palette_fg);
+                                    painter.style_rect(
+                                        Rect::new(x, layout.tab_area.y, 1, 1),
+                                        marker_style,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            DropIntent::ExplorerToExplorerFolder { .. }
+            | DropIntent::ExplorerToExplorerRow { .. } => {
+                let highlight = UiStyle::default()
+                    .bg(workbench.ui_theme.palette_selected_bg)
+                    .fg(workbench.ui_theme.palette_selected_fg);
+                painter.style_rect(target.rect, highlight);
+            }
+            DropIntent::ExplorerToEditorArea { pane } => {
                 if let Some(pane_state) = workbench.store.state().editor.pane(pane) {
                     if let Some(to_area) = workbench
                         .layout_cache
@@ -311,90 +360,41 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
                     {
                         let config = &workbench.store.state().editor.config;
                         let layout = compute_editor_pane_layout(to_area, pane_state, config);
-                        let hovered_to = workbench
-                            .store
-                            .state()
-                            .ui
-                            .hovered_tab
-                            .filter(|(hp, _)| *hp == pane)
-                            .map(|(_, i)| i);
-                        if let Some(insertion_index) =
-                            tab_insertion_index(&layout, pane_state, pos.x, pos.y, hovered_to)
-                        {
-                            if let Some(x) =
-                                tab_insertion_x(&layout, pane_state, hovered_to, insertion_index)
-                            {
-                                let marker_style = UiStyle::default()
-                                    .bg(workbench.ui_theme.focus_border)
-                                    .fg(workbench.ui_theme.palette_fg);
-                                painter.style_rect(
-                                    Rect::new(x, layout.tab_area.y, 1, 1),
-                                    marker_style,
-                                );
-                            }
+
+                        // Keep the preview subtle: tint only the tab row so we don't override editor content.
+                        let rect = layout.tab_area;
+                        if !rect.is_empty() {
+                            let highlight = UiStyle::default()
+                                .bg(workbench.ui_theme.palette_selected_bg)
+                                .fg(workbench.ui_theme.palette_selected_fg);
+                            painter.style_rect(rect, highlight);
                         }
                     }
                 }
             }
-        }
-        (DragPayload::ExplorerNode { .. }, NodeKind::ExplorerFolderDrop { .. }) => {
-            let highlight = UiStyle::default()
-                .bg(workbench.ui_theme.palette_selected_bg)
-                .fg(workbench.ui_theme.palette_selected_fg);
-            painter.style_rect(target.rect, highlight);
-        }
-        (DragPayload::ExplorerNode { .. }, NodeKind::ExplorerRow { .. }) => {
-            let highlight = UiStyle::default()
-                .bg(workbench.ui_theme.palette_selected_bg)
-                .fg(workbench.ui_theme.palette_selected_fg);
-            painter.style_rect(target.rect, highlight);
-        }
-        (DragPayload::ExplorerNode { .. }, NodeKind::EditorArea { pane }) => {
-            if let Some(pane_state) = workbench.store.state().editor.pane(pane) {
-                if let Some(to_area) = workbench
-                    .layout_cache
-                    .editor_inner_areas
-                    .get(pane)
-                    .copied()
-                    .or_else(|| workbench.layout_cache.editor_inner_areas.first().copied())
-                {
-                    let config = &workbench.store.state().editor.config;
-                    let layout = compute_editor_pane_layout(to_area, pane_state, config);
+            DropIntent::TabToSplit { drop } => {
+                let highlight = UiStyle::default()
+                    .bg(workbench.ui_theme.palette_selected_bg)
+                    .fg(workbench.ui_theme.palette_selected_fg);
+                painter.style_rect(target.rect, highlight);
 
-                    // Keep the preview subtle: tint only the tab row so we don't override editor content.
-                    let rect = layout.tab_area;
-                    if !rect.is_empty() {
-                        let highlight = UiStyle::default()
-                            .bg(workbench.ui_theme.palette_selected_bg)
-                            .fg(workbench.ui_theme.palette_selected_fg);
-                        painter.style_rect(rect, highlight);
-                    }
+                let label = match drop {
+                    crate::ui::core::tree::SplitDrop::Right => "Split Right",
+                    crate::ui::core::tree::SplitDrop::Down => "Split Down",
+                };
+                let label_w =
+                    unicode_width::UnicodeWidthStr::width(label).min(u16::MAX as usize) as u16;
+                let x = target
+                    .rect
+                    .x
+                    .saturating_add(target.rect.w.saturating_sub(label_w) / 2);
+                let y = target.rect.y.saturating_add(target.rect.h / 2);
+                let row = Rect::new(target.rect.x, y, target.rect.w, 1.min(target.rect.h));
+                if !row.is_empty() {
+                    painter.text_clipped(Pos::new(x, y), label, highlight, row);
                 }
             }
         }
-        (DragPayload::Tab { .. }, NodeKind::EditorSplitDrop { drop, .. }) => {
-            let highlight = UiStyle::default()
-                .bg(workbench.ui_theme.palette_selected_bg)
-                .fg(workbench.ui_theme.palette_selected_fg);
-            painter.style_rect(target.rect, highlight);
-
-            let label = match drop {
-                crate::ui::core::tree::SplitDrop::Right => "Split Right",
-                crate::ui::core::tree::SplitDrop::Down => "Split Down",
-            };
-            let label_w =
-                unicode_width::UnicodeWidthStr::width(label).min(u16::MAX as usize) as u16;
-            let x = target
-                .rect
-                .x
-                .saturating_add(target.rect.w.saturating_sub(label_w) / 2);
-            let y = target.rect.y.saturating_add(target.rect.h / 2);
-            let row = Rect::new(target.rect.x, y, target.rect.w, 1.min(target.rect.h));
-            if !row.is_empty() {
-                painter.text_clipped(Pos::new(x, y), label, highlight, row);
-            }
-        }
-        _ => {}
     }
 
     if painter.cmds().is_empty() {

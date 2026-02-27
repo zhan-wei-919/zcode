@@ -19,6 +19,12 @@ impl UiRuntimeOutput {
     }
 }
 
+pub trait DragDropRules {
+    fn payload_for_source(&self, source: &Node) -> Option<DragPayload>;
+
+    fn can_drop(&self, payload: &DragPayload, target: &Node) -> bool;
+}
+
 #[derive(Debug, Clone, Copy)]
 struct PressedState {
     button: MouseButton,
@@ -80,7 +86,12 @@ impl UiRuntime {
         self.drag = None;
     }
 
-    pub fn on_input(&mut self, input: &InputEvent, tree: &UiTree) -> UiRuntimeOutput {
+    pub fn on_input(
+        &mut self,
+        input: &InputEvent,
+        tree: &UiTree,
+        rules: &impl DragDropRules,
+    ) -> UiRuntimeOutput {
         let mut out = UiRuntimeOutput::empty();
 
         let InputEvent::Mouse(me) = input else {
@@ -181,7 +192,7 @@ impl UiRuntime {
                     self.dragging = true;
                     self.capture = Some(source.id);
 
-                    let payload = drag_payload_from_node(&source);
+                    let payload = rules.payload_for_source(&source);
                     self.drag = Some(DragSession {
                         source: source.id,
                         payload,
@@ -199,7 +210,7 @@ impl UiRuntime {
                     if let Some(drag) = &mut self.drag {
                         let over = drag.payload.as_ref().and_then(|payload| {
                             tree.hit_test_with_sense_where(pos, Sense::DROP_TARGET, |n| {
-                                can_drop(payload, n)
+                                rules.can_drop(payload, n)
                             })
                             .map(|n| n.id)
                         });
@@ -229,41 +240,6 @@ impl UiRuntime {
     }
 }
 
-fn drag_payload_from_node(node: &Node) -> Option<DragPayload> {
-    match node.kind {
-        super::tree::NodeKind::Tab { pane, tab_id } => Some(DragPayload::Tab {
-            from_pane: pane,
-            tab_id,
-        }),
-        super::tree::NodeKind::ExplorerRow { node_id } => {
-            Some(DragPayload::ExplorerNode { node_id })
-        }
-        _ => None,
-    }
-}
-
-fn can_drop(payload: &DragPayload, target: &Node) -> bool {
-    matches!(
-        (payload, target.kind),
-        (
-            DragPayload::Tab { .. },
-            super::tree::NodeKind::TabBar { .. }
-        ) | (
-            DragPayload::Tab { .. },
-            super::tree::NodeKind::EditorSplitDrop { .. }
-        ) | (
-            DragPayload::ExplorerNode { .. },
-            super::tree::NodeKind::EditorArea { .. }
-        ) | (
-            DragPayload::ExplorerNode { .. },
-            super::tree::NodeKind::ExplorerRow { .. }
-        ) | (
-            DragPayload::ExplorerNode { .. },
-            super::tree::NodeKind::ExplorerFolderDrop { .. }
-        )
-    )
-}
-
 #[cfg(test)]
-#[path = "../../../tests/unit/ui/core/runtime.rs"]
+#[path = "../../../../tests/unit/ui/core/runtime.rs"]
 mod tests;

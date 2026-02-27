@@ -57,5 +57,5 @@ fn fnv1a64_continue(mut h: u64, bytes: &[u8]) -> u64 {
 }
 
 #[cfg(test)]
-#[path = "../../../tests/unit/ui/core/id.rs"]
+#[path = "../../../../tests/unit/ui/core/id.rs"]
 mod tests;
