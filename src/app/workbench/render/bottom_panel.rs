@@ -1,5 +1,5 @@
 use super::super::Workbench;
-use crate::kernel::{BottomPanelTab, SearchResultItem, SearchViewport};
+use crate::kernel::{BottomPanelTab, ProblemSeverity, SearchResultItem, SearchViewport};
 use crate::ui::core::geom::{Pos, Rect as UiRect};
 use crate::ui::core::painter::{BorderKind, Painter};
 use crate::ui::core::style::{Mod, Style as UiStyle};
@@ -123,18 +123,12 @@ impl Workbench {
                 self.ui_theme.palette_muted_fg
             });
             let severity_style = match item.severity {
-                crate::kernel::problems::ProblemSeverity::Error => {
-                    UiStyle::default().fg(self.ui_theme.error_fg)
-                }
-                crate::kernel::problems::ProblemSeverity::Warning => {
-                    UiStyle::default().fg(self.ui_theme.warning_fg)
-                }
-                crate::kernel::problems::ProblemSeverity::Information => {
+                ProblemSeverity::Error => UiStyle::default().fg(self.ui_theme.error_fg),
+                ProblemSeverity::Warning => UiStyle::default().fg(self.ui_theme.warning_fg),
+                ProblemSeverity::Information => {
                     UiStyle::default().fg(self.ui_theme.palette_muted_fg)
                 }
-                crate::kernel::problems::ProblemSeverity::Hint => {
-                    UiStyle::default().fg(self.ui_theme.palette_muted_fg)
-                }
+                ProblemSeverity::Hint => UiStyle::default().fg(self.ui_theme.palette_muted_fg),
             };
 
             let row_clip = UiRect::new(area.x, y, area.w, 1);

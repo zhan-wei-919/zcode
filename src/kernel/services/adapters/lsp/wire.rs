@@ -6,7 +6,7 @@ use super::convert::{
     symbol_item_from_workspace_symbol, workspace_edit_from_lsp,
 };
 use super::LspClient;
-use crate::kernel::locations::LocationItem;
+use crate::kernel::panel::locations::LocationItem;
 use crate::kernel::services::ports::{
     LspFoldingRange, LspRange, LspServerKind, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };

@@ -38,7 +38,7 @@ pub(super) fn lsp_capability_lookup_perf_counter() -> usize {
 
 pub(super) fn problem_byte_offset(
     tab: &crate::kernel::editor::EditorTabState,
-    range: crate::kernel::problems::ProblemRange,
+    range: crate::kernel::panel::problems::ProblemRange,
     encoding: LspPositionEncoding,
 ) -> usize {
     lsp_position_to_byte_offset(tab, range.start_line, range.start_col, encoding)

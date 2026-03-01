@@ -257,5 +257,5 @@ fn offset_index(index: usize, delta: isize) -> usize {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/kernel/problems.rs"]
+#[path = "../../../tests/unit/kernel/problems.rs"]
 mod tests;

@@ -1,10 +1,10 @@
-use crate::kernel::problems::{ProblemItem, ProblemRange, ProblemSeverity};
+use crate::kernel::panel::problems::{ProblemItem, ProblemRange, ProblemSeverity};
 use crate::kernel::services::ports::{
     LspCodeAction, LspCommand, LspCompletionItem, LspInlayHint, LspInsertTextFormat, LspPosition,
     LspPositionEncoding, LspRange, LspResourceOp, LspSemanticToken, LspSemanticTokensLegend,
     LspServerCapabilities, LspTextChange, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
-use crate::kernel::symbols::SymbolItem;
+use crate::kernel::panel::symbols::SymbolItem;
 use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
