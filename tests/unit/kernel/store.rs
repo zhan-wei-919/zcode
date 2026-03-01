@@ -1,4 +1,4 @@
-use super::completion_strategy;
+use super::intel::completion_strategy;
 use super::*;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::{
@@ -1935,7 +1935,7 @@ fn cpp_insert_gt_in_comparison_closes_and_does_not_trigger_by_default() {
 
 #[test]
 fn experiment_completion_filtering_scale_baseline() {
-    use crate::kernel::store::completion::{
+    use crate::kernel::store::intel::completion::{
         filtered_completion_indices, sync_completion_items_from_cache,
     };
 
@@ -2034,7 +2034,7 @@ fn experiment_cpp_include_context_lookup_counts() {
 
 #[test]
 fn experiment_insert_char_signature_help_capability_lookup_counts() {
-    use crate::kernel::store::lsp::{
+    use crate::kernel::store::intel::lsp::{
         lsp_capability_lookup_perf_counter, reset_lsp_capability_lookup_perf_counter,
     };
 

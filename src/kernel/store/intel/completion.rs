@@ -12,7 +12,9 @@ use rustc_hash::FxHashMap;
 use super::completion_rank::CompletionRanker;
 use super::completion_strategy::CompletionStrategy;
 
-pub(super) fn should_close_completion_on_editor_action(action: &EditorAction) -> bool {
+pub(in crate::kernel::store) fn should_close_completion_on_editor_action(
+    action: &EditorAction,
+) -> bool {
     !matches!(
         action,
         EditorAction::SetViewportSize { .. }
@@ -22,7 +24,7 @@ pub(super) fn should_close_completion_on_editor_action(action: &EditorAction) ->
     )
 }
 
-pub(super) fn sort_completion_items(
+pub(in crate::kernel::store) fn sort_completion_items(
     items: &mut [LspCompletionItem],
     ranker: &CompletionRanker,
     language: Option<LanguageId>,
@@ -50,7 +52,7 @@ pub(super) fn sort_completion_items(
     });
 }
 
-pub(super) fn filtered_completion_indices(
+pub(in crate::kernel::store) fn filtered_completion_indices(
     tab: &EditorTabState,
     items: &[LspCompletionItem],
     strategy: &dyn CompletionStrategy,
@@ -129,7 +131,7 @@ fn debug_assert_monotonic_indices(indices: &[usize]) {
     );
 }
 
-pub(super) fn sync_completion_items_from_cache(
+pub(in crate::kernel::store) fn sync_completion_items_from_cache(
     completion: &mut CompletionPopupState,
     tab: &EditorTabState,
     strategy: &dyn CompletionStrategy,
@@ -220,7 +222,7 @@ fn starts_with_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(needle))
 }
 
-pub(super) fn completion_prefix_at_cursor(
+pub(in crate::kernel::store) fn completion_prefix_at_cursor(
     tab: &EditorTabState,
     strategy: &dyn CompletionStrategy,
 ) -> String {
@@ -230,23 +232,23 @@ pub(super) fn completion_prefix_at_cursor(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct SnippetExpansion {
-    pub(super) text: String,
-    pub(super) cursor: Option<usize>,
-    pub(super) selection: Option<(usize, usize)>,
-    pub(super) tabstops: Vec<SnippetTabstop>,
+pub(in crate::kernel::store) struct SnippetExpansion {
+    pub(in crate::kernel::store) text: String,
+    pub(in crate::kernel::store) cursor: Option<usize>,
+    pub(in crate::kernel::store) selection: Option<(usize, usize)>,
+    pub(in crate::kernel::store) tabstops: Vec<SnippetTabstop>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct CompletionInsertion {
-    pub(super) text: String,
-    pub(super) cursor: Option<usize>,
-    pub(super) selection: Option<(usize, usize)>,
-    pub(super) tabstops: Vec<SnippetTabstop>,
+pub(in crate::kernel::store) struct CompletionInsertion {
+    pub(in crate::kernel::store) text: String,
+    pub(in crate::kernel::store) cursor: Option<usize>,
+    pub(in crate::kernel::store) selection: Option<(usize, usize)>,
+    pub(in crate::kernel::store) tabstops: Vec<SnippetTabstop>,
 }
 
 impl CompletionInsertion {
-    pub(super) fn from_plain_text(text: String) -> Self {
+    pub(in crate::kernel::store) fn from_plain_text(text: String) -> Self {
         let cursor = text
             .strip_suffix("()")
             .map(|prefix| prefix.chars().count().saturating_add(1));
@@ -258,7 +260,7 @@ impl CompletionInsertion {
         }
     }
 
-    pub(super) fn from_snippet(snippet: &str) -> Self {
+    pub(in crate::kernel::store) fn from_snippet(snippet: &str) -> Self {
         let expanded = expand_snippet(snippet);
         Self {
             text: expanded.text,
@@ -268,12 +270,14 @@ impl CompletionInsertion {
         }
     }
 
-    pub(super) fn has_cursor_or_selection(&self) -> bool {
+    pub(in crate::kernel::store) fn has_cursor_or_selection(&self) -> bool {
         self.cursor.is_some() || self.selection.is_some()
     }
 }
 
-pub(super) fn resolve_completion_insertion(item: &LspCompletionItem) -> CompletionInsertion {
+pub(in crate::kernel::store) fn resolve_completion_insertion(
+    item: &LspCompletionItem,
+) -> CompletionInsertion {
     let mut insertion = match item.insert_text_format {
         LspInsertTextFormat::PlainText => {
             let mut insertion = CompletionInsertion::from_plain_text(item.insert_text.clone());
@@ -344,7 +348,7 @@ fn should_append_trailing_space(item: &LspCompletionItem) -> bool {
     text.chars().all(|ch| ch == '_' || ch.is_alphanumeric())
 }
 
-pub(super) fn completion_replace_range(
+pub(in crate::kernel::store) fn completion_replace_range(
     tab: &EditorTabState,
     requested_version: u64,
     item: &LspCompletionItem,
@@ -367,8 +371,8 @@ pub(super) fn completion_replace_range(
         }
 
         LspRange {
-            start: super::lsp_position_from_char_offset(tab, start_char, encoding),
-            end: super::lsp_position_from_char_offset(tab, end_char, encoding),
+            start: super::lsp::lsp_position_from_char_offset(tab, start_char, encoding),
+            end: super::lsp::lsp_position_from_char_offset(tab, end_char, encoding),
         }
     };
 
@@ -379,7 +383,7 @@ pub(super) fn completion_replace_range(
     }
 }
 
-pub(super) fn adjust_completion_multiline_indentation(
+pub(in crate::kernel::store) fn adjust_completion_multiline_indentation(
     tab: &EditorTabState,
     insertion_start_char: usize,
     insertion: CompletionInsertion,
@@ -472,7 +476,7 @@ fn multiline_text_needs_indent_adjustment(text: &str, base_indent: &str) -> bool
     false
 }
 
-pub(super) fn apply_completion_insertion_cursor(
+pub(in crate::kernel::store) fn apply_completion_insertion_cursor(
     tab: &mut EditorTabState,
     insertion: &CompletionInsertion,
     tab_size: u8,
@@ -532,7 +536,7 @@ pub(super) fn apply_completion_insertion_cursor(
     crate::kernel::editor::clamp_and_follow(&mut tab.viewport, &tab.buffer, tab_size);
 }
 
-pub(super) fn expand_snippet(snippet: &str) -> SnippetExpansion {
+pub(in crate::kernel::store) fn expand_snippet(snippet: &str) -> SnippetExpansion {
     let mut out = String::with_capacity(snippet.len());
     let mut out_chars = 0usize;
 
@@ -710,7 +714,7 @@ mod tests {
     use crate::kernel::language::LanguageId;
     use crate::kernel::services::ports::{EditorConfig, LspPosition, LspRange};
     use crate::kernel::state::CompletionPopupState;
-    use crate::kernel::store::completion_strategy;
+    use crate::kernel::store::intel::completion_strategy;
     use std::path::PathBuf;
 
     fn completion_item(id: u64, label: &str) -> LspCompletionItem {

@@ -8,43 +8,41 @@ use std::path::Path;
 #[cfg(test)]
 use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding};
 
-mod completion;
-mod completion_rank;
-mod completion_strategy;
-#[path = "store/reducers/context_menu.rs"]
-mod context_menu;
-#[path = "store/reducers/explorer.rs"]
-mod explorer;
-#[path = "store/reducers/git.rs"]
-mod git;
-#[path = "store/reducers/input_dialog.rs"]
-mod input_dialog;
-mod lsp;
-#[path = "store/reducers/palette.rs"]
-mod palette;
-#[path = "store/reducers/search.rs"]
-mod search;
-mod semantic;
-#[path = "store/reducers/terminal.rs"]
-mod terminal;
-#[path = "store/reducers/theme_editor.rs"]
-mod theme_editor;
+pub(crate) mod intel;
 mod util;
 
-use completion::{
+#[path = "reducers/context_menu.rs"]
+mod context_menu;
+#[path = "reducers/explorer.rs"]
+mod explorer;
+#[path = "reducers/git.rs"]
+mod git;
+#[path = "reducers/input_dialog.rs"]
+mod input_dialog;
+#[path = "reducers/palette.rs"]
+mod palette;
+#[path = "reducers/search.rs"]
+mod search;
+#[path = "reducers/terminal.rs"]
+mod terminal;
+#[path = "reducers/theme_editor.rs"]
+mod theme_editor;
+
+use intel::completion::{
     adjust_completion_multiline_indentation, apply_completion_insertion_cursor,
     completion_replace_range, resolve_completion_insertion,
     should_close_completion_on_editor_action, sync_completion_items_from_cache,
 };
-pub use completion_rank::CompletionRanker;
-pub(crate) use completion_strategy::{strategy_for_tab, CompletionStrategy};
+pub use intel::completion_rank::CompletionRanker;
+pub(crate) use intel::completion_strategy::{strategy_for_tab, CompletionStrategy};
 
 #[cfg(test)]
-use completion::{expand_snippet, CompletionInsertion};
-use lsp::{
+use intel::completion::{expand_snippet, CompletionInsertion};
+use intel::completion_strategy;
+use intel::lsp::{
     lsp_position_encoding, lsp_position_encoding_for_path, lsp_position_from_buffer_pos,
-    lsp_position_from_char_offset, lsp_position_to_byte_offset, lsp_range_for_full_lines,
-    lsp_request_target, lsp_server_capabilities_for_path, problem_byte_offset,
+    lsp_position_to_byte_offset, lsp_range_for_full_lines, lsp_request_target,
+    lsp_server_capabilities_for_path, problem_byte_offset,
 };
 use search::search_open_target;
 use util::{
@@ -3621,9 +3619,9 @@ impl Store {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/kernel/store.rs"]
+#[path = "../../../tests/unit/kernel/store.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "../../tests/unit/kernel/store_lsp_perf.rs"]
+#[path = "../../../tests/unit/kernel/store_lsp_perf.rs"]
 mod tests_lsp_perf;

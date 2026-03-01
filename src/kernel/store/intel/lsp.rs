@@ -16,27 +16,29 @@ use std::time::Instant;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use super::super::util::find_open_tab;
+use super::super::util::{
+    is_lsp_source_path, line_len_chars, open_tabs_for_path, resolve_renamed_path,
+};
 use super::completion::{filtered_completion_indices, sort_completion_items};
 use super::semantic::{
     semantic_highlight_lines_from_tokens, semantic_highlight_lines_from_tokens_range,
 };
-use super::util::find_open_tab;
-use super::util::{is_lsp_source_path, line_len_chars, open_tabs_for_path, resolve_renamed_path};
 
 #[cfg(test)]
 static LSP_CAPABILITY_LOOKUP_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(test)]
-pub(super) fn reset_lsp_capability_lookup_perf_counter() {
+pub(in crate::kernel::store) fn reset_lsp_capability_lookup_perf_counter() {
     LSP_CAPABILITY_LOOKUP_CALLS.store(0, Ordering::Relaxed);
 }
 
 #[cfg(test)]
-pub(super) fn lsp_capability_lookup_perf_counter() -> usize {
+pub(in crate::kernel::store) fn lsp_capability_lookup_perf_counter() -> usize {
     LSP_CAPABILITY_LOOKUP_CALLS.load(Ordering::Relaxed)
 }
 
-pub(super) fn problem_byte_offset(
+pub(in crate::kernel::store) fn problem_byte_offset(
     tab: &crate::kernel::editor::EditorTabState,
     range: crate::kernel::panel::problems::ProblemRange,
     encoding: LspPositionEncoding,
@@ -44,7 +46,7 @@ pub(super) fn problem_byte_offset(
     lsp_position_to_byte_offset(tab, range.start_line, range.start_col, encoding)
 }
 
-pub(super) fn lsp_position_to_byte_offset(
+pub(in crate::kernel::store) fn lsp_position_to_byte_offset(
     tab: &crate::kernel::editor::EditorTabState,
     line: u32,
     column: u32,
@@ -64,7 +66,7 @@ pub(super) fn lsp_position_to_byte_offset(
     rope.char_to_byte(char_offset)
 }
 
-pub(super) fn lsp_col_to_char_offset_in_line(
+pub(in crate::kernel::store) fn lsp_col_to_char_offset_in_line(
     line: ropey::RopeSlice<'_>,
     col: u32,
     encoding: LspPositionEncoding,
@@ -94,7 +96,7 @@ pub(super) fn lsp_col_to_char_offset_in_line(
     chars
 }
 
-pub(super) fn lsp_request_target(
+pub(in crate::kernel::store) fn lsp_request_target(
     state: &crate::kernel::AppState,
 ) -> Option<(usize, std::path::PathBuf, u32, u32, u64)> {
     let pane = state.ui.editor_layout.active_pane;
@@ -108,7 +110,7 @@ pub(super) fn lsp_request_target(
     Some((pane, path, line, column, tab.edit_version))
 }
 
-pub(super) fn lsp_server_capabilities_for_path<'a>(
+pub(in crate::kernel::store) fn lsp_server_capabilities_for_path<'a>(
     state: &'a crate::kernel::AppState,
     path: &Path,
 ) -> Option<&'a LspServerCapabilities> {
@@ -121,7 +123,7 @@ pub(super) fn lsp_server_capabilities_for_path<'a>(
     state.lsp.server_capabilities.get(&key)
 }
 
-pub(super) fn lsp_client_key_for_path(
+pub(in crate::kernel::store) fn lsp_client_key_for_path(
     state: &crate::kernel::AppState,
     path: &Path,
 ) -> Option<LspClientKey> {
@@ -131,7 +133,7 @@ pub(super) fn lsp_client_key_for_path(
     })
 }
 
-pub(super) fn lsp_position_encoding_for_path(
+pub(in crate::kernel::store) fn lsp_position_encoding_for_path(
     state: &crate::kernel::AppState,
     path: &Path,
 ) -> LspPositionEncoding {
@@ -250,7 +252,9 @@ fn hash_folding_ranges_payload(ranges: &[crate::kernel::services::ports::LspFold
     hasher.finish()
 }
 
-pub(super) fn lsp_position_encoding(state: &crate::kernel::AppState) -> LspPositionEncoding {
+pub(in crate::kernel::store) fn lsp_position_encoding(
+    state: &crate::kernel::AppState,
+) -> LspPositionEncoding {
     let pane = state.ui.editor_layout.active_pane;
     let Some(tab) = state.editor.pane(pane).and_then(|pane| pane.active_tab()) else {
         return LspPositionEncoding::Utf16;
@@ -261,14 +265,14 @@ pub(super) fn lsp_position_encoding(state: &crate::kernel::AppState) -> LspPosit
     lsp_position_encoding_for_path(state, path)
 }
 
-pub(super) fn lsp_position_from_cursor(
+pub(in crate::kernel::store) fn lsp_position_from_cursor(
     tab: &crate::kernel::editor::EditorTabState,
     encoding: LspPositionEncoding,
 ) -> (u32, u32) {
     lsp_position_from_buffer_pos(tab, tab.buffer.cursor(), encoding)
 }
 
-pub(super) fn lsp_position_from_buffer_pos(
+pub(in crate::kernel::store) fn lsp_position_from_buffer_pos(
     tab: &crate::kernel::editor::EditorTabState,
     pos: (usize, usize),
     encoding: LspPositionEncoding,
@@ -295,7 +299,7 @@ pub(super) fn lsp_position_from_buffer_pos(
     (row as u32, character)
 }
 
-pub(super) fn lsp_position_from_char_offset(
+pub(in crate::kernel::store) fn lsp_position_from_char_offset(
     tab: &crate::kernel::editor::EditorTabState,
     char_offset: usize,
     encoding: LspPositionEncoding,
@@ -326,7 +330,7 @@ pub(super) fn lsp_position_from_char_offset(
     }
 }
 
-pub(super) fn lsp_range_for_full_lines(
+pub(in crate::kernel::store) fn lsp_range_for_full_lines(
     tab: &crate::kernel::editor::EditorTabState,
     start_line: usize,
     end_line_exclusive: usize,
@@ -381,8 +385,8 @@ fn end_line_exclusive_from_range(range: &LspRange) -> usize {
     }
 }
 
-impl super::Store {
-    pub(super) fn apply_workspace_edit(
+impl super::super::Store {
+    pub(in crate::kernel::store) fn apply_workspace_edit(
         &mut self,
         edit: LspWorkspaceEdit,
         effects: &mut Vec<crate::kernel::Effect>,
@@ -515,9 +519,12 @@ impl super::Store {
         any_changed || open_paths_changed
     }
 
-    pub(super) fn reduce_lsp_action(&mut self, action: Action) -> super::DispatchResult {
+    pub(in crate::kernel::store) fn reduce_lsp_action(
+        &mut self,
+        action: Action,
+    ) -> super::super::DispatchResult {
         match action {
-            Action::LspDiagnostics { path, items } => super::DispatchResult {
+            Action::LspDiagnostics { path, items } => super::super::DispatchResult {
                 effects: Vec::new(),
                 state_changed: self.state.problems.update_path(path, items),
             },
@@ -531,7 +538,7 @@ impl super::Store {
                 } else {
                     false
                 };
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: updated,
                 }
@@ -576,7 +583,7 @@ impl super::Store {
                         || prev_active_pane != self.state.ui.editor_layout.active_pane;
                     let state_changed = ui_changed || changed1 || changed2;
 
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: eff1,
                         state_changed,
                     };
@@ -595,7 +602,7 @@ impl super::Store {
                         },
                     });
 
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: vec![Effect::LoadFile(path)],
                     state_changed: true,
                 }
@@ -611,7 +618,7 @@ impl super::Store {
                     changed = true;
                 }
 
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: changed,
                 }
@@ -627,7 +634,7 @@ impl super::Store {
                     changed = true;
                 }
 
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: changed,
                 }
@@ -648,7 +655,7 @@ impl super::Store {
                     changed = true;
                 }
 
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: changed,
                 }
@@ -672,7 +679,7 @@ impl super::Store {
                 let mut effects = Vec::new();
                 if changed {
                     let Some(caps) = self.state.lsp.server_capabilities.get(&key) else {
-                        return super::DispatchResult {
+                        return super::super::DispatchResult {
                             effects,
                             state_changed: changed,
                         };
@@ -765,7 +772,7 @@ impl super::Store {
                         }
                     }
                 }
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects,
                     state_changed: changed,
                 }
@@ -778,7 +785,7 @@ impl super::Store {
                 let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
                     .and_then(|c| c.semantic_tokens_legend.as_ref())
                 else {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -799,7 +806,7 @@ impl super::Store {
                     .copied()
                     == Some(stamp)
                 {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -814,7 +821,7 @@ impl super::Store {
                     .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
                     .count();
                 if matched_tabs == 0 {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -823,7 +830,7 @@ impl super::Store {
                 let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
                     .and_then(|c| c.semantic_tokens_legend.clone())
                 else {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -868,7 +875,7 @@ impl super::Store {
                     .semantic_full_by_path
                     .insert(path, stamp);
 
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: changed,
                 }
@@ -882,7 +889,7 @@ impl super::Store {
                 let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
                     .and_then(|c| c.semantic_tokens_legend.as_ref())
                 else {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -891,7 +898,7 @@ impl super::Store {
                 let start_line = range.start.line as usize;
                 let end_line_exclusive = end_line_exclusive_from_range(&range);
                 if end_line_exclusive <= start_line {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -914,7 +921,7 @@ impl super::Store {
                     .copied()
                     == Some(stamp)
                 {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -929,7 +936,7 @@ impl super::Store {
                     .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
                     .count();
                 if matched_tabs == 0 {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -938,7 +945,7 @@ impl super::Store {
                 let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
                     .and_then(|c| c.semantic_tokens_legend.clone())
                 else {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -982,7 +989,7 @@ impl super::Store {
                     .semantic_range_by_path
                     .insert(path, stamp);
 
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: changed,
                 }
@@ -996,7 +1003,7 @@ impl super::Store {
                 let start_line = range.start.line as usize;
                 let end_line_exclusive = end_line_exclusive_from_range(&range);
                 if end_line_exclusive <= start_line {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -1019,7 +1026,7 @@ impl super::Store {
                     .copied()
                     == Some(stamp)
                 {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -1042,7 +1049,7 @@ impl super::Store {
                         hint_count,
                         "drop inlay hints (no matching tab/version)"
                     );
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -1081,7 +1088,7 @@ impl super::Store {
                     .inlay_range_by_path
                     .insert(path, stamp);
 
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: changed,
                 }
@@ -1105,7 +1112,7 @@ impl super::Store {
                     .copied()
                     == Some(stamp)
                 {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -1120,7 +1127,7 @@ impl super::Store {
                     .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
                     .count();
                 if matched_tabs == 0 {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -1143,7 +1150,7 @@ impl super::Store {
                     .folding_by_path
                     .insert(path, stamp);
 
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: changed,
                 }
@@ -1153,7 +1160,7 @@ impl super::Store {
                 is_incomplete,
             } => {
                 let Some(req) = self.state.ui.completion.pending_request.clone() else {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -1167,7 +1174,7 @@ impl super::Store {
                 else {
                     let had = self.state.ui.completion.is_active();
                     self.state.ui.completion = CompletionPopupState::default();
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: had,
                     };
@@ -1178,7 +1185,7 @@ impl super::Store {
                 if !valid || items.is_empty() {
                     let had = self.state.ui.completion.is_active();
                     self.state.ui.completion = CompletionPopupState::default();
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: had,
                     };
@@ -1230,7 +1237,7 @@ impl super::Store {
                         });
                     }
                 }
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects,
                     state_changed: true,
                 }
@@ -1332,14 +1339,14 @@ impl super::Store {
                     }
                 }
 
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: changed,
                 }
             }
             Action::LspSignatureHelp { text } => {
                 let Some(req) = self.state.ui.signature_help.request.clone() else {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -1361,7 +1368,7 @@ impl super::Store {
                         || self.state.ui.signature_help.request.is_some()
                         || !self.state.ui.signature_help.text.is_empty();
                     self.state.ui.signature_help = SignatureHelpPopupState::default();
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: had,
                     };
@@ -1371,7 +1378,7 @@ impl super::Store {
                     || self.state.ui.signature_help.text != text;
                 self.state.ui.signature_help.visible = true;
                 self.state.ui.signature_help.text = text;
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: changed,
                 }
@@ -1379,14 +1386,14 @@ impl super::Store {
             Action::LspApplyWorkspaceEdit { edit } => {
                 let mut effects = Vec::new();
                 let changed = self.apply_workspace_edit(edit, &mut effects);
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects,
                     state_changed: changed,
                 }
             }
             Action::LspFormatCompleted { path } => {
                 if self.state.lsp.pending_format_on_save.as_ref() != Some(&path) {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -1397,7 +1404,7 @@ impl super::Store {
                 let Some((pane, tab_index)) =
                     find_open_tab(&self.state.editor, preferred_pane, &path)
                 else {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
@@ -1409,13 +1416,13 @@ impl super::Store {
                     .and_then(|pane_state| pane_state.tabs.get(tab_index))
                     .map(|tab| tab.edit_version)
                 else {
-                    return super::DispatchResult {
+                    return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
                 };
 
-                super::DispatchResult {
+                super::super::DispatchResult {
                     effects: vec![Effect::WriteFile {
                         pane,
                         path,
