@@ -11,15 +11,23 @@ use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding};
 mod completion;
 mod completion_rank;
 mod completion_strategy;
+#[path = "store/reducers/context_menu.rs"]
 mod context_menu;
+#[path = "store/reducers/explorer.rs"]
 mod explorer;
+#[path = "store/reducers/git.rs"]
 mod git;
+#[path = "store/reducers/input_dialog.rs"]
 mod input_dialog;
 mod lsp;
+#[path = "store/reducers/palette.rs"]
 mod palette;
+#[path = "store/reducers/search.rs"]
 mod search;
 mod semantic;
+#[path = "store/reducers/terminal.rs"]
 mod terminal;
+#[path = "store/reducers/theme_editor.rs"]
 mod theme_editor;
 mod util;
 
