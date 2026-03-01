@@ -75,6 +75,8 @@ fn perf_action_label(action: &Action) -> &'static str {
         Action::LspFoldingRanges { .. } => "kernel.action.lsp_folding_ranges",
         Action::LspDiagnostics { .. } => "kernel.action.lsp_diagnostics",
         Action::LspHover { .. } => "kernel.action.lsp_hover",
+        Action::LspHoverResponse { .. } => "kernel.action.lsp_hover_response",
+        Action::LspHoverDefinitionPreview { .. } => "kernel.action.lsp_hover_definition_preview",
         Action::LspDefinition { .. } => "kernel.action.lsp_definition",
         Action::LspReferences { .. } => "kernel.action.lsp_references",
         Action::LspCodeActions { .. } => "kernel.action.lsp_code_actions",
@@ -809,6 +811,8 @@ impl Store {
             | action @ Action::TerminalExited { .. } => self.reduce_terminal_action(action),
             action @ Action::LspDiagnostics { .. }
             | action @ Action::LspHover { .. }
+            | action @ Action::LspHoverResponse { .. }
+            | action @ Action::LspHoverDefinitionPreview { .. }
             | action @ Action::LspDefinition { .. }
             | action @ Action::LspReferences { .. }
             | action @ Action::LspCodeActions { .. }
@@ -1594,6 +1598,9 @@ impl Store {
                         lsp_request_target(&self.state)
                     {
                         self.state.ui.hover_message = None;
+                        self.state.ui.hover_session = 0;
+                        self.state.ui.hover_base_message.clear();
+                        self.state.ui.hover_definition_message.clear();
                         self.state.ui.completion.close();
                         self.state.ui.completion.pending_request =
                             Some(super::state::CompletionRequestContext {
@@ -2775,6 +2782,9 @@ impl Store {
                     }
 
                     self.state.ui.hover_message = None;
+                    self.state.ui.hover_session = 0;
+                    self.state.ui.hover_base_message.clear();
+                    self.state.ui.hover_definition_message.clear();
                     let Some(tab) = self
                         .state
                         .editor

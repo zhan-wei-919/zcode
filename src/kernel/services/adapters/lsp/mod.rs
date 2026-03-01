@@ -31,6 +31,30 @@ pub(crate) struct LspServerCommandOverride {
     pub initialization_options: Option<Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HoverRequestOptions {
+    pub include_definition_source: bool,
+    pub definition_max_lines: usize,
+}
+
+impl HoverRequestOptions {
+    pub(crate) fn sanitized(self) -> Self {
+        Self {
+            include_definition_source: self.include_definition_source,
+            definition_max_lines: self.definition_max_lines.clamp(20, 2000),
+        }
+    }
+}
+
+impl Default for HoverRequestOptions {
+    fn default() -> Self {
+        Self {
+            include_definition_source: true,
+            definition_max_lines: 400,
+        }
+    }
+}
+
 #[cfg(test)]
 use lsp_server::Response;
 #[cfg(test)]
@@ -267,11 +291,16 @@ impl LspService {
         }
     }
 
-    pub fn request_hover(&mut self, path: &Path, position: LspPosition) {
+    pub fn request_hover(
+        &mut self,
+        path: &Path,
+        position: LspPosition,
+        options: HoverRequestOptions,
+    ) {
         let Some(client) = self.client_for_path_mut(path) else {
             return;
         };
-        client.request_hover(path, position);
+        client.request_hover(path, position, options);
     }
 
     pub fn request_definition(&mut self, path: &Path, position: LspPosition) {
@@ -416,6 +445,7 @@ struct LspClient {
     doc_versions: FxHashMap<PathBuf, u64>,
     pending_requests: Arc<Mutex<FxHashMap<RequestId, LspRequestKind>>>,
     latest_hover: Arc<AtomicI32>,
+    latest_hover_definition: Arc<AtomicI32>,
     latest_definition: Arc<AtomicI32>,
     latest_references: Arc<AtomicI32>,
     latest_document_symbols: Arc<AtomicI32>,
@@ -449,6 +479,7 @@ impl LspClient {
             doc_versions: FxHashMap::default(),
             pending_requests: Arc::new(Mutex::new(FxHashMap::default())),
             latest_hover: Arc::new(AtomicI32::new(0)),
+            latest_hover_definition: Arc::new(AtomicI32::new(0)),
             latest_definition: Arc::new(AtomicI32::new(0)),
             latest_references: Arc::new(AtomicI32::new(0)),
             latest_document_symbols: Arc::new(AtomicI32::new(0)),

@@ -68,6 +68,8 @@ fn test_default_config() {
     assert!(config.show_line_numbers);
     assert!(config.show_indent_guides);
     assert!(!config.format_on_save);
+    assert!(config.lsp_hover.show_definition_source);
+    assert_eq!(config.lsp_hover.definition_max_lines, 400);
 }
 
 #[test]
@@ -92,6 +94,38 @@ fn test_show_indent_guides_can_be_configured_from_settings_json() {
     }"#;
     let parsed: Wrapper = serde_json::from_str(camel_case).expect("parse settings camelCase");
     assert!(!parsed.editor.show_indent_guides);
+}
+
+#[test]
+fn test_lsp_hover_config_can_be_configured_from_settings_json() {
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        editor: EditorConfig,
+    }
+
+    let snake_case = r#"{
+      "editor": {
+        "lsp_hover": {
+          "show_definition_source": true,
+          "definition_max_lines": 256
+        }
+      }
+    }"#;
+    let parsed: Wrapper = serde_json::from_str(snake_case).expect("parse settings snake_case");
+    assert!(parsed.editor.lsp_hover.show_definition_source);
+    assert_eq!(parsed.editor.lsp_hover.definition_max_lines, 256);
+
+    let camel_case = r#"{
+      "editor": {
+        "lspHover": {
+          "showDefinitionSource": true,
+          "definitionMaxLines": 128
+        }
+      }
+    }"#;
+    let parsed: Wrapper = serde_json::from_str(camel_case).expect("parse settings camelCase");
+    assert!(parsed.editor.lsp_hover.show_definition_source);
+    assert_eq!(parsed.editor.lsp_hover.definition_max_lines, 128);
 }
 
 #[test]

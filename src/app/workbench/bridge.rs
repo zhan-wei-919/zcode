@@ -379,11 +379,16 @@ impl Workbench {
             KernelEffect::LspHoverRequest { path, line, column } => {
                 let _scope = perf::scope("effect.lsp_hover");
                 if let Some(service) = self.kernel_services.get_mut::<LspService>() {
+                    let hover = &self.store.state().editor.config.lsp_hover;
                     service.request_hover(
                         &path,
                         LspPosition {
                             line,
                             character: column,
+                        },
+                        crate::kernel::services::adapters::lsp::HoverRequestOptions {
+                            include_definition_source: hover.show_definition_source,
+                            definition_max_lines: hover.definition_max_lines_clamped(),
                         },
                     );
                 }

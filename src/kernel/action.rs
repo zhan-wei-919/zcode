@@ -198,6 +198,14 @@ pub enum Action {
     LspHover {
         text: String,
     },
+    LspHoverResponse {
+        session: i32,
+        text: String,
+    },
+    LspHoverDefinitionPreview {
+        session: i32,
+        text: String,
+    },
     LspDefinition {
         path: PathBuf,
         line: u32,

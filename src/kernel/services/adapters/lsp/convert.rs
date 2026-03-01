@@ -490,29 +490,51 @@ fn fenced_code_block(language: &str, value: &str) -> String {
     out
 }
 
-pub(super) fn definition_location(
+#[derive(Debug, Clone)]
+pub(super) struct DefinitionPreviewTarget {
+    pub path: PathBuf,
+    pub anchor_line: u32,
+    pub anchor_column: u32,
+    pub range: Option<LspRange>,
+}
+
+fn preview_from_location(loc: &lsp_types::Location) -> Option<DefinitionPreviewTarget> {
+    let path = loc.uri.to_file_path().ok()?;
+    Some(DefinitionPreviewTarget {
+        path,
+        anchor_line: loc.range.start.line,
+        anchor_column: loc.range.start.character,
+        range: Some(range_from_lsp(loc.range)),
+    })
+}
+
+fn preview_from_link(link: &lsp_types::LocationLink) -> Option<DefinitionPreviewTarget> {
+    let path = link.target_uri.to_file_path().ok()?;
+    Some(DefinitionPreviewTarget {
+        path,
+        anchor_line: link.target_selection_range.start.line,
+        anchor_column: link.target_selection_range.start.character,
+        range: Some(range_from_lsp(link.target_range)),
+    })
+}
+
+pub(super) fn definition_preview_target(
     resp: lsp_types::GotoDefinitionResponse,
-) -> Option<(PathBuf, u32, u32)> {
+) -> Option<DefinitionPreviewTarget> {
     match resp {
-        lsp_types::GotoDefinitionResponse::Scalar(loc) => location_from_location(&loc),
+        lsp_types::GotoDefinitionResponse::Scalar(loc) => preview_from_location(&loc),
         lsp_types::GotoDefinitionResponse::Array(locs) => {
-            locs.first().and_then(location_from_location)
+            locs.first().and_then(preview_from_location)
         }
-        lsp_types::GotoDefinitionResponse::Link(links) => {
-            links.first().and_then(location_from_link)
-        }
+        lsp_types::GotoDefinitionResponse::Link(links) => links.first().and_then(preview_from_link),
     }
 }
 
-pub(super) fn location_from_location(loc: &lsp_types::Location) -> Option<(PathBuf, u32, u32)> {
-    let path = loc.uri.to_file_path().ok()?;
-    Some((path, loc.range.start.line, loc.range.start.character))
-}
-
-pub(super) fn location_from_link(link: &lsp_types::LocationLink) -> Option<(PathBuf, u32, u32)> {
-    let path = link.target_uri.to_file_path().ok()?;
-    let range = &link.target_selection_range;
-    Some((path, range.start.line, range.start.character))
+pub(super) fn definition_location(
+    resp: lsp_types::GotoDefinitionResponse,
+) -> Option<(PathBuf, u32, u32)> {
+    definition_preview_target(resp)
+        .map(|target| (target.path, target.anchor_line, target.anchor_column))
 }
 
 pub(super) fn completion_item_kind_u32(kind: lsp_types::CompletionItemKind) -> u32 {
@@ -1010,6 +1032,10 @@ pub(super) fn client_capabilities() -> lsp_types::ClientCapabilities {
         context_support: Some(true),
         ..Default::default()
     };
+    let definition = lsp_types::GotoCapability {
+        dynamic_registration: Some(false),
+        link_support: Some(true),
+    };
 
     let document_symbol = lsp_types::DocumentSymbolClientCapabilities {
         hierarchical_document_symbol_support: Some(true),
@@ -1088,6 +1114,7 @@ pub(super) fn client_capabilities() -> lsp_types::ClientCapabilities {
         }),
         text_document: Some(lsp_types::TextDocumentClientCapabilities {
             hover: Some(hover),
+            definition: Some(definition),
             completion: Some(completion),
             signature_help: Some(signature_help),
             document_symbol: Some(document_symbol),

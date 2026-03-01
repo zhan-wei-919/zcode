@@ -378,6 +378,14 @@ fn hover_text_array_separates_segments_with_blank_line() {
 }
 
 #[test]
+fn client_capabilities_enable_definition_link_support() {
+    let caps = super::convert::client_capabilities();
+    let text_document = caps.text_document.expect("textDocument capabilities");
+    let definition = text_document.definition.expect("definition capability");
+    assert_eq!(definition.link_support, Some(true));
+}
+
+#[test]
 fn documentation_text_preserves_markup_content_payload() {
     let doc = lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
         kind: lsp_types::MarkupKind::Markdown,
@@ -386,6 +394,30 @@ fn documentation_text_preserves_markup_content_payload() {
 
     let text = super::convert::documentation_text(&doc).expect("documentation");
     assert_eq!(text, "**bold**\n\n`code`");
+}
+
+#[test]
+fn definition_preview_target_uses_location_link_target_range() {
+    let uri = lsp_types::Url::parse("file:///tmp/demo.rs").expect("uri");
+    let response = lsp_types::GotoDefinitionResponse::Link(vec![lsp_types::LocationLink {
+        origin_selection_range: None,
+        target_uri: uri,
+        target_range: lsp_types::Range::new(
+            lsp_types::Position::new(10, 0),
+            lsp_types::Position::new(14, 1),
+        ),
+        target_selection_range: lsp_types::Range::new(
+            lsp_types::Position::new(10, 7),
+            lsp_types::Position::new(10, 13),
+        ),
+    }]);
+
+    let target = super::convert::definition_preview_target(response).expect("target");
+    assert_eq!(target.anchor_line, 10);
+    assert_eq!(target.anchor_column, 7);
+    let range = target.range.expect("range");
+    assert_eq!(range.start.line, 10);
+    assert_eq!(range.end.line, 14);
 }
 
 #[test]
@@ -743,6 +775,75 @@ fn semantic_tokens_requests_for_different_files_do_not_cancel_each_other() {
         .expect("lock pending requests");
     assert!(pending.contains_key(&lsp_server::RequestId::from(1)));
     assert!(pending.contains_key(&lsp_server::RequestId::from(2)));
+}
+
+#[test]
+#[cfg(unix)]
+fn hover_request_without_definition_preview_sends_only_hover_request() {
+    let (mut client, rx) = ready_lsp_client_for_request_tests(LspServerKind::Jdtls);
+    let path = PathBuf::from("/tmp/AuthServiceApplication.java");
+    client.doc_versions.insert(path.clone(), 1);
+
+    client.request_hover(
+        &path,
+        crate::kernel::services::ports::LspPosition {
+            line: 3,
+            character: 5,
+        },
+        super::HoverRequestOptions {
+            include_definition_source: false,
+            definition_max_lines: 400,
+        },
+    );
+
+    let first = rx.recv().expect("first message");
+    match first {
+        Message::Request(req) => {
+            assert_eq!(req.id, lsp_server::RequestId::from(1));
+            assert_eq!(req.method, "textDocument/hover");
+        }
+        other => panic!("expected hover request, got {other:?}"),
+    }
+    assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+}
+
+#[test]
+#[cfg(unix)]
+fn hover_request_with_definition_preview_sends_hover_and_definition_requests() {
+    let (mut client, rx) = ready_lsp_client_for_request_tests(LspServerKind::Jdtls);
+    let path = PathBuf::from("/tmp/AuthServiceApplication.java");
+    client.doc_versions.insert(path.clone(), 1);
+
+    client.request_hover(
+        &path,
+        crate::kernel::services::ports::LspPosition {
+            line: 3,
+            character: 5,
+        },
+        super::HoverRequestOptions {
+            include_definition_source: true,
+            definition_max_lines: 400,
+        },
+    );
+
+    let first = rx.recv().expect("first message");
+    let second = rx.recv().expect("second message");
+
+    match first {
+        Message::Request(req) => {
+            assert_eq!(req.id, lsp_server::RequestId::from(1));
+            assert_eq!(req.method, "textDocument/hover");
+        }
+        other => panic!("expected hover request, got {other:?}"),
+    }
+    match second {
+        Message::Request(req) => {
+            assert_eq!(req.id, lsp_server::RequestId::from(2));
+            assert_eq!(req.method, "textDocument/definition");
+        }
+        other => panic!("expected definition preview request, got {other:?}"),
+    }
+    assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
 }
 
 #[test]

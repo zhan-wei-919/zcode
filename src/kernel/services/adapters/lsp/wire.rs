@@ -1,9 +1,10 @@
 use super::convert::{
     code_actions_from_lsp, command_from_lsp, completion_items, decode_semantic_tokens,
-    definition_location, diagnostics_from_params, documentation_text, hover_text,
-    inlay_hints_from_lsp, insert_text_format, push_document_symbols, range_from_lsp,
-    server_capabilities_from_lsp, signature_help_text, symbol_item_from_symbol_information,
-    symbol_item_from_workspace_symbol, workspace_edit_from_lsp,
+    definition_location, definition_preview_target, diagnostics_from_params, documentation_text,
+    hover_text, inlay_hints_from_lsp, insert_text_format, language_id_for_path,
+    push_document_symbols, range_from_lsp, server_capabilities_from_lsp, signature_help_text,
+    symbol_item_from_symbol_information, symbol_item_from_workspace_symbol,
+    workspace_edit_from_lsp, DefinitionPreviewTarget,
 };
 use super::LspClient;
 use crate::kernel::panel::locations::LocationItem;
@@ -53,7 +54,13 @@ pub(super) struct LspPending {
 
 #[derive(Debug, Clone)]
 pub(super) enum LspRequestKind {
-    Hover,
+    Hover {
+        session: i32,
+    },
+    HoverDefinition {
+        session: i32,
+        max_lines: usize,
+    },
     Definition,
     References,
     DocumentSymbols {
@@ -227,6 +234,7 @@ pub(super) struct ReaderLoopArgs {
     pub(super) pending: Arc<Mutex<LspPending>>,
     pub(super) pending_requests: Arc<Mutex<FxHashMap<RequestId, LspRequestKind>>>,
     pub(super) latest_hover: Arc<AtomicI32>,
+    pub(super) latest_hover_definition: Arc<AtomicI32>,
     pub(super) latest_definition: Arc<AtomicI32>,
     pub(super) latest_references: Arc<AtomicI32>,
     pub(super) latest_document_symbols: Arc<AtomicI32>,
@@ -255,6 +263,7 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
         pending,
         pending_requests,
         latest_hover,
+        latest_hover_definition,
         latest_definition,
         latest_references,
         latest_document_symbols,
@@ -372,8 +381,12 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
                     .and_then(|mut map| map.remove(&resp.id))
                 {
                     let is_latest = match &kind {
-                        LspRequestKind::Hover => {
+                        LspRequestKind::Hover { .. } => {
                             resp.id == RequestId::from(latest_hover.load(Ordering::Relaxed))
+                        }
+                        LspRequestKind::HoverDefinition { .. } => {
+                            resp.id
+                                == RequestId::from(latest_hover_definition.load(Ordering::Relaxed))
                         }
                         LspRequestKind::Definition => {
                             resp.id == RequestId::from(latest_definition.load(Ordering::Relaxed))
@@ -555,10 +568,183 @@ fn handle_server_request(
     }
 }
 
+fn line_window_from_range(
+    range: crate::kernel::services::ports::LspRange,
+    line_count: usize,
+) -> Option<(usize, usize)> {
+    if line_count == 0 {
+        return None;
+    }
+
+    let start = (range.start.line as usize).min(line_count.saturating_sub(1));
+    let mut end = (range.end.line as usize).min(line_count.saturating_sub(1));
+    if range.end.line > range.start.line && range.end.character == 0 {
+        end = end.saturating_sub(1);
+    }
+    if end < start {
+        end = start;
+    }
+    Some((start, end))
+}
+
+fn clamp_window(start: usize, end: usize, max_lines: usize, line_count: usize) -> (usize, usize) {
+    let start = start.min(line_count.saturating_sub(1));
+    let mut end = end.min(line_count.saturating_sub(1));
+    if end < start {
+        end = start;
+    }
+    let max_end = start
+        .saturating_add(max_lines.saturating_sub(1))
+        .min(line_count.saturating_sub(1));
+    if end > max_end {
+        end = max_end;
+    }
+    (start, end)
+}
+
+fn leading_indent(line: &str) -> usize {
+    line.chars().take_while(|ch| ch.is_whitespace()).count()
+}
+
+fn is_decorator_or_comment(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("#[")
+        || trimmed.starts_with('@')
+        || trimmed.starts_with("//")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with('*')
+        || trimmed.starts_with("*/")
+}
+
+fn adjust_start_line(lines: &[&str], mut start: usize) -> usize {
+    while start > 0 {
+        let prev = lines[start - 1];
+        if prev.trim().is_empty() {
+            break;
+        }
+        if !is_decorator_or_comment(prev) {
+            break;
+        }
+        start -= 1;
+    }
+    start
+}
+
+fn brace_scoped_end(lines: &[&str], start: usize, max_lines: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut seen_open = false;
+    let max_end = start.saturating_add(max_lines.saturating_sub(1));
+    let last = lines.len().saturating_sub(1).min(max_end);
+
+    for (idx, line) in lines.iter().enumerate().take(last + 1).skip(start) {
+        for ch in line.chars() {
+            if ch == '{' {
+                depth = depth.saturating_add(1);
+                seen_open = true;
+            } else if ch == '}' && seen_open {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+        }
+    }
+
+    if seen_open {
+        Some(last)
+    } else {
+        None
+    }
+}
+
+fn indentation_end(lines: &[&str], start: usize, max_lines: usize) -> usize {
+    let base_indent = leading_indent(lines[start]);
+    let mut end = start;
+    let max_end = start
+        .saturating_add(max_lines.saturating_sub(1))
+        .min(lines.len().saturating_sub(1));
+
+    for (idx, line) in lines.iter().enumerate().take(max_end + 1).skip(start + 1) {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            end = idx;
+            continue;
+        }
+
+        let indent = leading_indent(line);
+        let continuation = trimmed.starts_with(')')
+            || trimmed.starts_with(']')
+            || trimmed.starts_with("where ")
+            || trimmed.starts_with("->")
+            || trimmed.starts_with(':');
+        if indent > base_indent || continuation {
+            end = idx;
+            continue;
+        }
+        break;
+    }
+
+    end
+}
+
+fn definition_window(
+    target: &DefinitionPreviewTarget,
+    lines: &[&str],
+    max_lines: usize,
+) -> Option<(usize, usize)> {
+    if lines.is_empty() {
+        return None;
+    }
+
+    let line_count = lines.len();
+    let anchor = (target.anchor_line as usize).min(line_count.saturating_sub(1));
+    if let Some(range) = target
+        .range
+        .and_then(|range| line_window_from_range(range, line_count))
+    {
+        if range.1 > range.0 {
+            return Some(clamp_window(range.0, range.1, max_lines, line_count));
+        }
+    }
+
+    let seed = target
+        .range
+        .and_then(|range| line_window_from_range(range, line_count))
+        .map(|(start, _)| start)
+        .unwrap_or(anchor);
+    let start = adjust_start_line(lines, seed);
+
+    if let Some(end) = brace_scoped_end(lines, start, max_lines) {
+        return Some((start, end));
+    }
+
+    let end = indentation_end(lines, start, max_lines);
+    Some((start, end))
+}
+
+fn render_definition_preview_text(
+    target: &DefinitionPreviewTarget,
+    max_lines: usize,
+) -> Option<String> {
+    let max_lines = max_lines.clamp(20, 2000);
+    let content = std::fs::read_to_string(&target.path).ok()?;
+    let lines = content.lines().collect::<Vec<_>>();
+    let (start, end) = definition_window(target, lines.as_slice(), max_lines)?;
+    let snippet = lines[start..=end].join("\n").trim_end().to_string();
+    if snippet.trim().is_empty() {
+        return None;
+    }
+
+    let language = language_id_for_path(target.path.as_path());
+    let header = format!("Definition: {}:{}", target.path.display(), start + 1);
+    Some(format!("{header}\n\n```{language}\n{snippet}\n```"))
+}
+
 pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceContext) {
     let response_start = Instant::now();
     let kind_label = match &kind {
-        LspRequestKind::Hover => "hover",
+        LspRequestKind::Hover { .. } => "hover",
+        LspRequestKind::HoverDefinition { .. } => "hoverDefinition",
         LspRequestKind::Definition => "definition",
         LspRequestKind::References => "references",
         LspRequestKind::DocumentSymbols { .. } => "documentSymbols",
@@ -579,7 +765,7 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
 
     if let Some(err) = resp.error {
         let is_optional_method = matches!(
-            kind,
+            &kind,
             LspRequestKind::SemanticTokens { .. }
                 | LspRequestKind::SemanticTokensRange { .. }
                 | LspRequestKind::InlayHints { .. }
@@ -591,9 +777,16 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
             tracing::warn!(code = err.code, error = %err.message, "lsp request failed");
         }
         match &kind {
-            LspRequestKind::Hover => ctx.dispatch(Action::LspHover {
+            LspRequestKind::Hover { session } => ctx.dispatch(Action::LspHoverResponse {
+                session: *session,
                 text: String::new(),
             }),
+            LspRequestKind::HoverDefinition { session, .. } => {
+                ctx.dispatch(Action::LspHoverDefinitionPreview {
+                    session: *session,
+                    text: String::new(),
+                })
+            }
             LspRequestKind::References => ctx.dispatch(Action::LspReferences { items: Vec::new() }),
             LspRequestKind::DocumentSymbols { .. } | LspRequestKind::WorkspaceSymbols => {
                 ctx.dispatch(Action::LspSymbols { items: Vec::new() })
@@ -627,9 +820,16 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
 
     let Some(result) = resp.result else {
         match &kind {
-            LspRequestKind::Hover => ctx.dispatch(Action::LspHover {
+            LspRequestKind::Hover { session } => ctx.dispatch(Action::LspHoverResponse {
+                session: *session,
                 text: String::new(),
             }),
+            LspRequestKind::HoverDefinition { session, .. } => {
+                ctx.dispatch(Action::LspHoverDefinitionPreview {
+                    session: *session,
+                    text: String::new(),
+                })
+            }
             LspRequestKind::References => ctx.dispatch(Action::LspReferences { items: Vec::new() }),
             LspRequestKind::DocumentSymbols { .. } | LspRequestKind::WorkspaceSymbols => {
                 ctx.dispatch(Action::LspSymbols { items: Vec::new() })
@@ -662,13 +862,23 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
     };
 
     match kind {
-        LspRequestKind::Hover => {
+        LspRequestKind::Hover { session } => {
             let hover = serde_json::from_value::<Option<lsp_types::Hover>>(result)
                 .ok()
                 .flatten();
             let text = hover.and_then(|h| hover_text(&h)).unwrap_or_default();
             tracing::debug!(text_len = text.len(), "lsp hover response");
-            ctx.dispatch(Action::LspHover { text });
+            ctx.dispatch(Action::LspHoverResponse { session, text });
+        }
+        LspRequestKind::HoverDefinition { session, max_lines } => {
+            let resp = serde_json::from_value::<Option<lsp_types::GotoDefinitionResponse>>(result)
+                .ok()
+                .flatten();
+            let text = resp
+                .and_then(definition_preview_target)
+                .and_then(|target| render_definition_preview_text(&target, max_lines))
+                .unwrap_or_default();
+            ctx.dispatch(Action::LspHoverDefinitionPreview { session, text });
         }
         LspRequestKind::Definition => {
             let resp = serde_json::from_value::<Option<lsp_types::GotoDefinitionResponse>>(result)

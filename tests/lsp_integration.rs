@@ -24,6 +24,10 @@ struct EnvGuard {
 }
 
 impl EnvGuard {
+    fn new() -> Self {
+        Self { saved: Vec::new() }
+    }
+
     fn set_str(key: &'static str, value: &str) -> Self {
         let saved = vec![(key, std::env::var_os(key))];
         std::env::set_var(key, value);
@@ -250,6 +254,147 @@ fn test_lsp_spawn_sync_requests_and_diagnostics_are_wired() {
             .and_then(|p| std::fs::canonicalize(p).ok())
             .is_some_and(|p| p == def_path_canon)
     });
+}
+
+#[test]
+fn test_hover_requests_definition_preview_by_default() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "fn main() {}\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    let hover = KeyEvent {
+        code: KeyCode::F(2),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(hover));
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state()
+            .ui
+            .hover_message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("stub hover @"))
+    });
+
+    let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+    assert!(
+        trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/hover"),
+        "expected hover request in trace:\n{trace}"
+    );
+    assert!(
+        trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/definition"),
+        "expected definition preview request by default:\n{trace}"
+    );
+}
+
+#[test]
+fn test_hover_appends_definition_preview_when_enabled_by_settings() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let cache_root = dir.path().join("cache");
+    let settings_dir = cache_root.join(".zcode");
+    let settings_path = settings_dir.join("setting.json");
+    let a_path = dir.path().join("a.rs");
+    let def_path = dir.path().join("definition_target.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    std::fs::create_dir_all(&settings_dir).unwrap();
+    std::fs::write(
+        &settings_path,
+        r#"{
+  "editor": {
+    "lspHover": {
+      "showDefinitionSource": true,
+      "definitionMaxLines": 400
+    }
+  }
+}"#,
+    )
+    .unwrap();
+
+    let _env = EnvGuard::new()
+        .set("XDG_CACHE_HOME", cache_root.as_os_str())
+        .remove("ZCODE_DISABLE_SETTINGS")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "fn main() { target(); }\n").unwrap();
+    std::fs::write(
+        &def_path,
+        "pub fn target() {\n    let value = 1;\n    println!(\"{}\", value);\n}\n",
+    )
+    .unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    let hover = KeyEvent {
+        code: KeyCode::F(2),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    };
+    let _ = workbench.handle_input(&InputEvent::Key(hover));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().ui.hover_message.as_deref().is_some_and(|m| {
+            m.contains("stub hover @")
+                && m.contains("Definition:")
+                && m.contains("```rust")
+                && m.contains("pub fn target()")
+        })
+    });
+
+    let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+    assert!(
+        trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/definition"),
+        "expected definition preview request in trace:\n{trace}"
+    );
 }
 
 #[test]

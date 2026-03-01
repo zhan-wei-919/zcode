@@ -18,6 +18,8 @@ pub struct EditorConfig {
     pub show_indent_guides: bool,
     #[serde(default, alias = "lspInputTiming")]
     pub lsp_input_timing: LspInputTimingConfig,
+    #[serde(default, alias = "lspHover")]
+    pub lsp_hover: LspHoverConfig,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -51,6 +53,15 @@ pub struct LspDeleteDebounceMs {
     pub folding_range: u64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct LspHoverConfig {
+    #[serde(default, alias = "showDefinitionSource")]
+    pub show_definition_source: bool,
+    #[serde(default = "default_definition_max_lines", alias = "definitionMaxLines")]
+    pub definition_max_lines: usize,
+}
+
 fn default_show_indent_guides() -> bool {
     true
 }
@@ -61,6 +72,10 @@ fn default_boundary_chars() -> String {
 
 fn default_boundary_immediate() -> bool {
     true
+}
+
+fn default_definition_max_lines() -> usize {
+    400
 }
 
 impl Default for LspIdentifierDebounceMs {
@@ -96,6 +111,21 @@ impl Default for LspInputTimingConfig {
     }
 }
 
+impl Default for LspHoverConfig {
+    fn default() -> Self {
+        Self {
+            show_definition_source: true,
+            definition_max_lines: default_definition_max_lines(),
+        }
+    }
+}
+
+impl LspHoverConfig {
+    pub fn definition_max_lines_clamped(&self) -> usize {
+        self.definition_max_lines.clamp(20, 2000)
+    }
+}
+
 impl Default for EditorConfig {
     fn default() -> Self {
         Self {
@@ -111,6 +141,7 @@ impl Default for EditorConfig {
             format_on_save: false,
             show_indent_guides: default_show_indent_guides(),
             lsp_input_timing: LspInputTimingConfig::default(),
+            lsp_hover: LspHoverConfig::default(),
         }
     }
 }

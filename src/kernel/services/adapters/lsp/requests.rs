@@ -1,5 +1,5 @@
 use super::convert::{completion_item_to_lsp, path_to_url};
-use super::{LspClient, LspRequestKind};
+use super::{HoverRequestOptions, LspClient, LspRequestKind};
 use crate::kernel::services::ports::{
     LspCompletionItem, LspCompletionTriggerContext, LspCompletionTriggerKind, LspPosition, LspRange,
 };
@@ -11,7 +11,12 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 
 impl LspClient {
-    pub fn request_hover(&mut self, path: &Path, position: LspPosition) {
+    pub fn request_hover(
+        &mut self,
+        path: &Path,
+        position: LspPosition,
+        options: HoverRequestOptions,
+    ) {
         if !self.ensure_started() {
             return;
         }
@@ -25,9 +30,11 @@ impl LspClient {
             return;
         };
 
+        let options = options.sanitized();
+
         let id = self.next_id();
         let prev = self.latest_hover.swap(id, Ordering::Relaxed);
-        self.track_request(id, LspRequestKind::Hover);
+        self.track_request(id, LspRequestKind::Hover { session: id });
         if prev != 0 && prev != id {
             self.cancel_request(prev);
             self.untrack_request(prev);
@@ -35,7 +42,7 @@ impl LspClient {
 
         let params = lsp_types::HoverParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri },
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
                 position: lsp_types::Position {
                     line: position.line,
                     character: position.character,
@@ -58,10 +65,56 @@ impl LspClient {
             "lsp request hover"
         );
         self.send_message(msg, true);
+
+        if options.include_definition_source {
+            let def_id = self.next_id();
+            let prev = self.latest_hover_definition.swap(def_id, Ordering::Relaxed);
+            self.track_request(
+                def_id,
+                LspRequestKind::HoverDefinition {
+                    session: id,
+                    max_lines: options.definition_max_lines,
+                },
+            );
+            if prev != 0 && prev != def_id {
+                self.cancel_request(prev);
+                self.untrack_request(prev);
+            }
+
+            let def_params = lsp_types::GotoDefinitionParams {
+                text_document_position_params: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri },
+                    position: lsp_types::Position {
+                        line: position.line,
+                        character: position.character,
+                    },
+                },
+                work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+                partial_result_params: lsp_types::PartialResultParams::default(),
+            };
+
+            let msg = Message::Request(Request::new(
+                RequestId::from(def_id),
+                lsp_types::request::GotoDefinition::METHOD.to_string(),
+                def_params,
+            ));
+            self.send_message(msg, true);
+        } else {
+            let prev = self.latest_hover_definition.swap(0, Ordering::Relaxed);
+            if prev != 0 {
+                self.cancel_request(prev);
+                self.untrack_request(prev);
+            }
+        }
     }
 
     pub fn cancel_hover(&mut self) {
         let prev = self.latest_hover.swap(0, Ordering::Relaxed);
+        if prev != 0 {
+            self.cancel_request(prev);
+            self.untrack_request(prev);
+        }
+        let prev = self.latest_hover_definition.swap(0, Ordering::Relaxed);
         if prev != 0 {
             self.cancel_request(prev);
             self.untrack_request(prev);
