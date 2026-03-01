@@ -5,6 +5,7 @@ use crate::core::Command;
 use crate::kernel::editor::EditorAction;
 use crate::kernel::panel::locations::LocationItem;
 use crate::kernel::panel::problems::ProblemItem;
+use crate::kernel::panel::symbols::SymbolItem;
 use crate::kernel::search::SearchViewport;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
@@ -20,7 +21,6 @@ use crate::kernel::services::ports::LspServerKind;
 use crate::kernel::services::ports::LspTextEdit;
 use crate::kernel::services::ports::LspWorkspaceEdit;
 use crate::kernel::state::{BottomPanelTab, PreviewLanguage, ThemeEditorFocus};
-use crate::kernel::panel::symbols::SymbolItem;
 use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem, TerminalId};
 
 #[derive(Debug, Clone)]
