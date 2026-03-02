@@ -76,6 +76,9 @@ fn perf_action_label(action: &Action) -> &'static str {
         Action::LspDiagnostics { .. } => "kernel.action.lsp_diagnostics",
         Action::LspHover { .. } => "kernel.action.lsp_hover",
         Action::LspHoverResponse { .. } => "kernel.action.lsp_hover_response",
+        Action::LspHoverImplementationPreview { .. } => {
+            "kernel.action.lsp_hover_implementation_preview"
+        }
         Action::LspHoverDefinitionPreview { .. } => "kernel.action.lsp_hover_definition_preview",
         Action::LspDefinition { .. } => "kernel.action.lsp_definition",
         Action::LspReferences { .. } => "kernel.action.lsp_references",
@@ -812,6 +815,7 @@ impl Store {
             action @ Action::LspDiagnostics { .. }
             | action @ Action::LspHover { .. }
             | action @ Action::LspHoverResponse { .. }
+            | action @ Action::LspHoverImplementationPreview { .. }
             | action @ Action::LspHoverDefinitionPreview { .. }
             | action @ Action::LspDefinition { .. }
             | action @ Action::LspReferences { .. }
@@ -1600,6 +1604,7 @@ impl Store {
                         self.state.ui.hover_message = None;
                         self.state.ui.hover_session = 0;
                         self.state.ui.hover_base_message.clear();
+                        self.state.ui.hover_implementation_message.clear();
                         self.state.ui.hover_definition_message.clear();
                         self.state.ui.completion.close();
                         self.state.ui.completion.pending_request =
@@ -2784,6 +2789,7 @@ impl Store {
                     self.state.ui.hover_message = None;
                     self.state.ui.hover_session = 0;
                     self.state.ui.hover_base_message.clear();
+                    self.state.ui.hover_implementation_message.clear();
                     self.state.ui.hover_definition_message.clear();
                     let Some(tab) = self
                         .state

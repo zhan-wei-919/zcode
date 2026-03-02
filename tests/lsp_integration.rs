@@ -311,6 +311,12 @@ fn test_hover_requests_definition_preview_by_default() {
     assert!(
         trace
             .lines()
+            .any(|line| line.trim() == "request textDocument/implementation"),
+        "expected implementation preview request by default:\n{trace}"
+    );
+    assert!(
+        trace
+            .lines()
             .any(|line| line.trim() == "request textDocument/definition"),
         "expected definition preview request by default:\n{trace}"
     );
@@ -332,6 +338,7 @@ fn test_hover_appends_definition_preview_when_enabled_by_settings() {
     let settings_path = settings_dir.join("setting.json");
     let a_path = dir.path().join("a.rs");
     let def_path = dir.path().join("definition_target.rs");
+    let impl_path = dir.path().join("implementation_target.rs");
     let trace_path = dir.path().join("lsp_trace.txt");
 
     std::fs::create_dir_all(&settings_dir).unwrap();
@@ -362,6 +369,7 @@ fn test_hover_appends_definition_preview_when_enabled_by_settings() {
         "pub fn target() {\n    let value = 1;\n    println!(\"{}\", value);\n}\n",
     )
     .unwrap();
+    std::fs::write(&impl_path, "pub fn impl_target() { println!(\"impl\"); }\n").unwrap();
 
     let (runtime, rx) = create_runtime();
     let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
@@ -384,11 +392,17 @@ fn test_hover_appends_definition_preview_when_enabled_by_settings() {
             m.contains("stub hover @")
                 && m.contains("Definition:")
                 && m.contains("```rust")
-                && m.contains("pub fn target()")
+                && m.contains("pub fn impl_target()")
         })
     });
 
     let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+    assert!(
+        trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/implementation"),
+        "expected implementation preview request in trace:\n{trace}"
+    );
     assert!(
         trace
             .lines()

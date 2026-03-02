@@ -38,14 +38,21 @@ pub(in crate::kernel::store) fn lsp_capability_lookup_perf_counter() -> usize {
     LSP_CAPABILITY_LOOKUP_CALLS.load(Ordering::Relaxed)
 }
 
-fn compose_hover_message(base: &str, definition: &str) -> Option<String> {
+fn compose_hover_message(base: &str, implementation: &str, definition: &str) -> Option<String> {
     let base = base.trim();
+    let implementation = implementation.trim();
     let definition = definition.trim();
-    match (base.is_empty(), definition.is_empty()) {
+    let preview = if implementation.is_empty() {
+        definition
+    } else {
+        implementation
+    };
+
+    match (base.is_empty(), preview.is_empty()) {
         (true, true) => None,
         (false, true) => Some(base.to_string()),
-        (true, false) => Some(definition.to_string()),
-        (false, false) => Some(format!("{base}\n\n---\n\n{definition}")),
+        (true, false) => Some(preview.to_string()),
+        (false, false) => Some(format!("{base}\n\n---\n\n{preview}")),
     }
 }
 
@@ -544,14 +551,17 @@ impl super::super::Store {
                 let next = if text.is_empty() {
                     self.state.ui.hover_session = 0;
                     self.state.ui.hover_base_message.clear();
+                    self.state.ui.hover_implementation_message.clear();
                     self.state.ui.hover_definition_message.clear();
                     None
                 } else {
                     self.state.ui.hover_session = 0;
                     self.state.ui.hover_base_message = text;
+                    self.state.ui.hover_implementation_message.clear();
                     self.state.ui.hover_definition_message.clear();
                     compose_hover_message(
                         self.state.ui.hover_base_message.as_str(),
+                        self.state.ui.hover_implementation_message.as_str(),
                         self.state.ui.hover_definition_message.as_str(),
                     )
                 };
@@ -572,12 +582,41 @@ impl super::super::Store {
 
                 if session != self.state.ui.hover_session {
                     self.state.ui.hover_session = session;
+                    self.state.ui.hover_implementation_message.clear();
                     self.state.ui.hover_definition_message.clear();
                 }
                 self.state.ui.hover_base_message = text.trim().to_string();
 
                 let next = compose_hover_message(
                     self.state.ui.hover_base_message.as_str(),
+                    self.state.ui.hover_implementation_message.as_str(),
+                    self.state.ui.hover_definition_message.as_str(),
+                );
+                let updated = self.state.ui.hover_message != next;
+                self.state.ui.hover_message = next;
+                super::super::DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: updated,
+                }
+            }
+            Action::LspHoverImplementationPreview { session, text } => {
+                if session < self.state.ui.hover_session {
+                    return super::super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                if session != self.state.ui.hover_session {
+                    self.state.ui.hover_session = session;
+                    self.state.ui.hover_base_message.clear();
+                    self.state.ui.hover_definition_message.clear();
+                }
+                self.state.ui.hover_implementation_message = text.trim().to_string();
+
+                let next = compose_hover_message(
+                    self.state.ui.hover_base_message.as_str(),
+                    self.state.ui.hover_implementation_message.as_str(),
                     self.state.ui.hover_definition_message.as_str(),
                 );
                 let updated = self.state.ui.hover_message != next;
@@ -598,11 +637,13 @@ impl super::super::Store {
                 if session != self.state.ui.hover_session {
                     self.state.ui.hover_session = session;
                     self.state.ui.hover_base_message.clear();
+                    self.state.ui.hover_implementation_message.clear();
                 }
                 self.state.ui.hover_definition_message = text.trim().to_string();
 
                 let next = compose_hover_message(
                     self.state.ui.hover_base_message.as_str(),
+                    self.state.ui.hover_implementation_message.as_str(),
                     self.state.ui.hover_definition_message.as_str(),
                 );
                 let updated = self.state.ui.hover_message != next;
@@ -1263,6 +1304,7 @@ impl super::super::Store {
                 self.state.ui.hover_message = None;
                 self.state.ui.hover_session = 0;
                 self.state.ui.hover_base_message.clear();
+                self.state.ui.hover_implementation_message.clear();
                 self.state.ui.hover_definition_message.clear();
                 self.state.ui.completion.visible = true;
                 let prev_selected = self.state.ui.completion.selected_item().map(|item| item.id);

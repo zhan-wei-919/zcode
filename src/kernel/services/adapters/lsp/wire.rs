@@ -57,6 +57,10 @@ pub(super) enum LspRequestKind {
     Hover {
         session: i32,
     },
+    HoverImplementation {
+        session: i32,
+        max_lines: usize,
+    },
     HoverDefinition {
         session: i32,
         max_lines: usize,
@@ -234,6 +238,7 @@ pub(super) struct ReaderLoopArgs {
     pub(super) pending: Arc<Mutex<LspPending>>,
     pub(super) pending_requests: Arc<Mutex<FxHashMap<RequestId, LspRequestKind>>>,
     pub(super) latest_hover: Arc<AtomicI32>,
+    pub(super) latest_hover_implementation: Arc<AtomicI32>,
     pub(super) latest_hover_definition: Arc<AtomicI32>,
     pub(super) latest_definition: Arc<AtomicI32>,
     pub(super) latest_references: Arc<AtomicI32>,
@@ -263,6 +268,7 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
         pending,
         pending_requests,
         latest_hover,
+        latest_hover_implementation,
         latest_hover_definition,
         latest_definition,
         latest_references,
@@ -383,6 +389,12 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
                     let is_latest = match &kind {
                         LspRequestKind::Hover { .. } => {
                             resp.id == RequestId::from(latest_hover.load(Ordering::Relaxed))
+                        }
+                        LspRequestKind::HoverImplementation { .. } => {
+                            resp.id
+                                == RequestId::from(
+                                    latest_hover_implementation.load(Ordering::Relaxed),
+                                )
                         }
                         LspRequestKind::HoverDefinition { .. } => {
                             resp.id
@@ -630,13 +642,34 @@ fn adjust_start_line(lines: &[&str], mut start: usize) -> usize {
     start
 }
 
+fn is_definition_continuation_line(trimmed: &str) -> bool {
+    trimmed.starts_with(')')
+        || trimmed.starts_with(']')
+        || trimmed.starts_with("where ")
+        || trimmed.starts_with("->")
+        || trimmed.starts_with(':')
+}
+
 fn brace_scoped_end(lines: &[&str], start: usize, max_lines: usize) -> Option<usize> {
     let mut depth = 0i32;
     let mut seen_open = false;
+    let base_indent = leading_indent(lines[start]);
     let max_end = start.saturating_add(max_lines.saturating_sub(1));
     let last = lines.len().saturating_sub(1).min(max_end);
 
     for (idx, line) in lines.iter().enumerate().take(last + 1).skip(start) {
+        let trimmed = line.trim_start();
+        if !seen_open && idx > start && !trimmed.is_empty() {
+            let indent = leading_indent(line);
+            if indent <= base_indent
+                && !is_definition_continuation_line(trimmed)
+                && !is_decorator_or_comment(line)
+                && !line.contains('{')
+            {
+                return None;
+            }
+        }
+
         for ch in line.chars() {
             if ch == '{' {
                 depth = depth.saturating_add(1);
@@ -672,11 +705,7 @@ fn indentation_end(lines: &[&str], start: usize, max_lines: usize) -> usize {
         }
 
         let indent = leading_indent(line);
-        let continuation = trimmed.starts_with(')')
-            || trimmed.starts_with(']')
-            || trimmed.starts_with("where ")
-            || trimmed.starts_with("->")
-            || trimmed.starts_with(':');
+        let continuation = is_definition_continuation_line(trimmed);
         if indent > base_indent || continuation {
             end = idx;
             continue;
@@ -744,6 +773,7 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
     let response_start = Instant::now();
     let kind_label = match &kind {
         LspRequestKind::Hover { .. } => "hover",
+        LspRequestKind::HoverImplementation { .. } => "hoverImplementation",
         LspRequestKind::HoverDefinition { .. } => "hoverDefinition",
         LspRequestKind::Definition => "definition",
         LspRequestKind::References => "references",
@@ -781,6 +811,12 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                 session: *session,
                 text: String::new(),
             }),
+            LspRequestKind::HoverImplementation { session, .. } => {
+                ctx.dispatch(Action::LspHoverImplementationPreview {
+                    session: *session,
+                    text: String::new(),
+                })
+            }
             LspRequestKind::HoverDefinition { session, .. } => {
                 ctx.dispatch(Action::LspHoverDefinitionPreview {
                     session: *session,
@@ -824,6 +860,12 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                 session: *session,
                 text: String::new(),
             }),
+            LspRequestKind::HoverImplementation { session, .. } => {
+                ctx.dispatch(Action::LspHoverImplementationPreview {
+                    session: *session,
+                    text: String::new(),
+                })
+            }
             LspRequestKind::HoverDefinition { session, .. } => {
                 ctx.dispatch(Action::LspHoverDefinitionPreview {
                     session: *session,
@@ -869,6 +911,16 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
             let text = hover.and_then(|h| hover_text(&h)).unwrap_or_default();
             tracing::debug!(text_len = text.len(), "lsp hover response");
             ctx.dispatch(Action::LspHoverResponse { session, text });
+        }
+        LspRequestKind::HoverImplementation { session, max_lines } => {
+            let resp = serde_json::from_value::<Option<lsp_types::GotoDefinitionResponse>>(result)
+                .ok()
+                .flatten();
+            let text = resp
+                .and_then(definition_preview_target)
+                .and_then(|target| render_definition_preview_text(&target, max_lines))
+                .unwrap_or_default();
+            ctx.dispatch(Action::LspHoverImplementationPreview { session, text });
         }
         LspRequestKind::HoverDefinition { session, max_lines } => {
             let resp = serde_json::from_value::<Option<lsp_types::GotoDefinitionResponse>>(result)

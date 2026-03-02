@@ -147,6 +147,7 @@ impl LspClient {
                 let pending = pending.clone();
                 let pending_requests = self.pending_requests.clone();
                 let latest_hover = self.latest_hover.clone();
+                let latest_hover_implementation = self.latest_hover_implementation.clone();
                 let latest_hover_definition = self.latest_hover_definition.clone();
                 let latest_definition = self.latest_definition.clone();
                 let latest_references = self.latest_references.clone();
@@ -176,6 +177,7 @@ impl LspClient {
                         pending,
                         pending_requests,
                         latest_hover,
+                        latest_hover_implementation,
                         latest_hover_definition,
                         latest_definition,
                         latest_references,

@@ -67,6 +67,41 @@ impl LspClient {
         self.send_message(msg, true);
 
         if options.include_definition_source {
+            let impl_id = self.next_id();
+            let prev = self
+                .latest_hover_implementation
+                .swap(impl_id, Ordering::Relaxed);
+            self.track_request(
+                impl_id,
+                LspRequestKind::HoverImplementation {
+                    session: id,
+                    max_lines: options.definition_max_lines,
+                },
+            );
+            if prev != 0 && prev != impl_id {
+                self.cancel_request(prev);
+                self.untrack_request(prev);
+            }
+
+            let impl_params = lsp_types::GotoDefinitionParams {
+                text_document_position_params: lsp_types::TextDocumentPositionParams {
+                    text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                    position: lsp_types::Position {
+                        line: position.line,
+                        character: position.character,
+                    },
+                },
+                work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+                partial_result_params: lsp_types::PartialResultParams::default(),
+            };
+
+            let msg = Message::Request(Request::new(
+                RequestId::from(impl_id),
+                lsp_types::request::GotoImplementation::METHOD.to_string(),
+                impl_params,
+            ));
+            self.send_message(msg, true);
+
             let def_id = self.next_id();
             let prev = self.latest_hover_definition.swap(def_id, Ordering::Relaxed);
             self.track_request(
@@ -100,6 +135,11 @@ impl LspClient {
             ));
             self.send_message(msg, true);
         } else {
+            let prev = self.latest_hover_implementation.swap(0, Ordering::Relaxed);
+            if prev != 0 {
+                self.cancel_request(prev);
+                self.untrack_request(prev);
+            }
             let prev = self.latest_hover_definition.swap(0, Ordering::Relaxed);
             if prev != 0 {
                 self.cancel_request(prev);
@@ -110,6 +150,11 @@ impl LspClient {
 
     pub fn cancel_hover(&mut self) {
         let prev = self.latest_hover.swap(0, Ordering::Relaxed);
+        if prev != 0 {
+            self.cancel_request(prev);
+            self.untrack_request(prev);
+        }
+        let prev = self.latest_hover_implementation.swap(0, Ordering::Relaxed);
         if prev != 0 {
             self.cancel_request(prev);
             self.untrack_request(prev);

@@ -1036,6 +1036,10 @@ pub(super) fn client_capabilities() -> lsp_types::ClientCapabilities {
         dynamic_registration: Some(false),
         link_support: Some(true),
     };
+    let implementation = lsp_types::GotoCapability {
+        dynamic_registration: Some(false),
+        link_support: Some(true),
+    };
 
     let document_symbol = lsp_types::DocumentSymbolClientCapabilities {
         hierarchical_document_symbol_support: Some(true),
@@ -1115,6 +1119,7 @@ pub(super) fn client_capabilities() -> lsp_types::ClientCapabilities {
         text_document: Some(lsp_types::TextDocumentClientCapabilities {
             hover: Some(hover),
             definition: Some(definition),
+            implementation: Some(implementation),
             completion: Some(completion),
             signature_help: Some(signature_help),
             document_symbol: Some(document_symbol),

@@ -202,6 +202,10 @@ pub enum Action {
         session: i32,
         text: String,
     },
+    LspHoverImplementationPreview {
+        session: i32,
+        text: String,
+    },
     LspHoverDefinitionPreview {
         session: i32,
         text: String,

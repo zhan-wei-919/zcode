@@ -251,6 +251,9 @@ fn handle_request(
                 )),
                 hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
                 definition_provider: Some(lsp_types::OneOf::Left(true)),
+                implementation_provider: Some(lsp_types::ImplementationProviderCapability::Simple(
+                    true,
+                )),
                 references_provider: Some(lsp_types::OneOf::Left(true)),
                 document_symbol_provider: Some(lsp_types::OneOf::Left(true)),
                 workspace_symbol_provider: Some(lsp_types::OneOf::Left(true)),
@@ -336,6 +339,24 @@ fn handle_request(
             };
 
             (Response::new_ok(req.id, Some(hover)), None, Vec::new())
+        }
+        m if m == lsp_types::request::GotoImplementation::METHOD => {
+            let target = root
+                .cloned()
+                .map(|root| root.join("implementation_target.rs"))
+                .and_then(|path| lsp_types::Url::from_file_path(path).ok());
+
+            let resp = target.map(|uri| {
+                lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
+                    uri,
+                    range: lsp_types::Range::new(
+                        lsp_types::Position::new(0, 0),
+                        lsp_types::Position::new(0, 0),
+                    ),
+                })
+            });
+
+            (Response::new_ok(req.id, resp), None, Vec::new())
         }
         m if m == lsp_types::request::GotoDefinition::METHOD => {
             let target = root

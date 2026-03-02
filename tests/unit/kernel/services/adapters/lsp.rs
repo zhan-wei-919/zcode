@@ -383,6 +383,10 @@ fn client_capabilities_enable_definition_link_support() {
     let text_document = caps.text_document.expect("textDocument capabilities");
     let definition = text_document.definition.expect("definition capability");
     assert_eq!(definition.link_support, Some(true));
+    let implementation = text_document
+        .implementation
+        .expect("implementation capability");
+    assert_eq!(implementation.link_support, Some(true));
 }
 
 #[test]
@@ -418,6 +422,83 @@ fn definition_preview_target_uses_location_link_target_range() {
     let range = target.range.expect("range");
     assert_eq!(range.start.line, 10);
     assert_eq!(range.end.line, 14);
+}
+
+#[test]
+fn hover_definition_preview_for_trait_method_stops_before_next_top_level_item() {
+    struct NoopExecutor;
+
+    impl AsyncExecutor for NoopExecutor {
+        fn spawn(&self, _task: BoxFuture) {}
+    }
+
+    let mut host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let ctx = host.context();
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("runtime.rs");
+    std::fs::write(
+        &path,
+        r#"pub trait DragDropRules {
+    fn payload_for_source(&self, source: &Node) -> Option<DragPayload>;
+
+    fn can_drop(&self, payload: &DragPayload, target: &Node) -> bool;
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PressedState {
+    button: MouseButton,
+}
+"#,
+    )
+    .expect("write runtime source");
+
+    let uri = lsp_types::Url::from_file_path(&path).expect("file url");
+    let response = lsp_types::GotoDefinitionResponse::Link(vec![lsp_types::LocationLink {
+        origin_selection_range: None,
+        target_uri: uri,
+        target_range: lsp_types::Range::new(
+            lsp_types::Position::new(3, 4),
+            lsp_types::Position::new(3, 66),
+        ),
+        target_selection_range: lsp_types::Range::new(
+            lsp_types::Position::new(3, 7),
+            lsp_types::Position::new(3, 15),
+        ),
+    }]);
+
+    handle_response(
+        LspRequestKind::HoverDefinition {
+            session: 42,
+            max_lines: 400,
+        },
+        lsp_server::Response {
+            id: lsp_server::RequestId::from(99),
+            result: Some(serde_json::to_value(response).expect("serialize definition response")),
+            error: None,
+        },
+        &ctx,
+    );
+
+    let msg = host.try_recv().expect("hover definition action");
+    match msg.payload {
+        crate::kernel::services::KernelMessagePayload::Action(
+            crate::kernel::Action::LspHoverDefinitionPreview { session, text },
+        ) => {
+            assert_eq!(session, 42);
+            assert!(
+                text.contains("fn can_drop"),
+                "missing method signature:\n{text}"
+            );
+            assert!(
+                !text.contains("struct PressedState"),
+                "preview should stop at trait method declaration:\n{text}"
+            );
+        }
+        other => panic!("expected hover definition preview action, got {other:?}"),
+    }
+
+    assert!(matches!(host.try_recv(), Err(TryRecvError::Empty)));
 }
 
 #[test]
@@ -828,6 +909,7 @@ fn hover_request_with_definition_preview_sends_hover_and_definition_requests() {
 
     let first = rx.recv().expect("first message");
     let second = rx.recv().expect("second message");
+    let third = rx.recv().expect("third message");
 
     match first {
         Message::Request(req) => {
@@ -839,6 +921,13 @@ fn hover_request_with_definition_preview_sends_hover_and_definition_requests() {
     match second {
         Message::Request(req) => {
             assert_eq!(req.id, lsp_server::RequestId::from(2));
+            assert_eq!(req.method, "textDocument/implementation");
+        }
+        other => panic!("expected implementation preview request, got {other:?}"),
+    }
+    match third {
+        Message::Request(req) => {
+            assert_eq!(req.id, lsp_server::RequestId::from(3));
             assert_eq!(req.method, "textDocument/definition");
         }
         other => panic!("expected definition preview request, got {other:?}"),

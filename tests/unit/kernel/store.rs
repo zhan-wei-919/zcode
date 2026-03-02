@@ -21,6 +21,62 @@ fn new_store() -> Store {
 }
 
 #[test]
+fn hover_preview_prefers_implementation_over_definition() {
+    let mut store = new_store();
+    let session = 10;
+
+    let _ = store.dispatch(Action::LspHoverResponse {
+        session,
+        text: "stub hover".to_string(),
+    });
+    let _ = store.dispatch(Action::LspHoverDefinitionPreview {
+        session,
+        text: "Definition: trait".to_string(),
+    });
+
+    let _ = store.dispatch(Action::LspHoverImplementationPreview {
+        session,
+        text: "Definition: impl".to_string(),
+    });
+
+    let hover = store
+        .state
+        .ui
+        .hover_message
+        .as_deref()
+        .expect("hover message");
+    assert!(hover.contains("Definition: impl"));
+    assert!(!hover.contains("Definition: trait"));
+}
+
+#[test]
+fn hover_preview_falls_back_to_definition_when_implementation_empty() {
+    let mut store = new_store();
+    let session = 11;
+
+    let _ = store.dispatch(Action::LspHoverResponse {
+        session,
+        text: "stub hover".to_string(),
+    });
+    let _ = store.dispatch(Action::LspHoverImplementationPreview {
+        session,
+        text: String::new(),
+    });
+    let _ = store.dispatch(Action::LspHoverDefinitionPreview {
+        session,
+        text: "Definition: trait".to_string(),
+    });
+
+    let hover = store
+        .state
+        .ui
+        .hover_message
+        .as_deref()
+        .expect("hover message");
+    assert!(hover.contains("Definition: trait"));
+}
+
+#[test]
 fn explorer_dir_changed_triggers_dir_reload_when_loaded() {
     use crate::kernel::services::ports::DirEntryInfo;
 
