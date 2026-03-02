@@ -21,7 +21,7 @@ fn new_store() -> Store {
 }
 
 #[test]
-fn hover_preview_prefers_implementation_over_definition() {
+fn hover_preview_includes_definition_and_implementation() {
     let mut store = new_store();
     let session = 10;
 
@@ -31,12 +31,12 @@ fn hover_preview_prefers_implementation_over_definition() {
     });
     let _ = store.dispatch(Action::LspHoverDefinitionPreview {
         session,
-        text: "Definition: trait".to_string(),
+        text: "Definition preview: trait".to_string(),
     });
 
     let _ = store.dispatch(Action::LspHoverImplementationPreview {
         session,
-        text: "Definition: impl".to_string(),
+        text: "Implementation preview: impl".to_string(),
     });
 
     let hover = store
@@ -45,8 +45,19 @@ fn hover_preview_prefers_implementation_over_definition() {
         .hover_message
         .as_deref()
         .expect("hover message");
-    assert!(hover.contains("Definition: impl"));
-    assert!(!hover.contains("Definition: trait"));
+    assert!(hover.contains("stub hover"));
+    assert!(hover.contains("Definition preview: trait"));
+    assert!(hover.contains("Implementation preview: impl"));
+    let def_idx = hover
+        .find("Definition preview: trait")
+        .expect("definition preview present");
+    let impl_idx = hover
+        .find("Implementation preview: impl")
+        .expect("implementation preview present");
+    assert!(
+        def_idx < impl_idx,
+        "expected definition preview before implementation preview:\n{hover}"
+    );
 }
 
 #[test]
@@ -64,7 +75,7 @@ fn hover_preview_falls_back_to_definition_when_implementation_empty() {
     });
     let _ = store.dispatch(Action::LspHoverDefinitionPreview {
         session,
-        text: "Definition: trait".to_string(),
+        text: "Definition preview: trait".to_string(),
     });
 
     let hover = store
@@ -73,7 +84,8 @@ fn hover_preview_falls_back_to_definition_when_implementation_empty() {
         .hover_message
         .as_deref()
         .expect("hover message");
-    assert!(hover.contains("Definition: trait"));
+    assert!(hover.contains("Definition preview: trait"));
+    assert!(!hover.contains("Implementation preview:"));
 }
 
 #[test]

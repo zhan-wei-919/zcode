@@ -751,7 +751,8 @@ fn definition_window(
     Some((start, end))
 }
 
-fn render_definition_preview_text(
+fn render_source_preview_text(
+    label: &str,
     target: &DefinitionPreviewTarget,
     max_lines: usize,
 ) -> Option<String> {
@@ -765,7 +766,7 @@ fn render_definition_preview_text(
     }
 
     let language = language_id_for_path(target.path.as_path());
-    let header = format!("Definition: {}:{}", target.path.display(), start + 1);
+    let header = format!("{}: {}:{}", label, target.path.display(), start + 1);
     Some(format!("{header}\n\n```{language}\n{snippet}\n```"))
 }
 
@@ -918,7 +919,7 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                 .flatten();
             let text = resp
                 .and_then(definition_preview_target)
-                .and_then(|target| render_definition_preview_text(&target, max_lines))
+                .and_then(|target| render_source_preview_text("Implementation", &target, max_lines))
                 .unwrap_or_default();
             ctx.dispatch(Action::LspHoverImplementationPreview { session, text });
         }
@@ -928,7 +929,7 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                 .flatten();
             let text = resp
                 .and_then(definition_preview_target)
-                .and_then(|target| render_definition_preview_text(&target, max_lines))
+                .and_then(|target| render_source_preview_text("Definition", &target, max_lines))
                 .unwrap_or_default();
             ctx.dispatch(Action::LspHoverDefinitionPreview { session, text });
         }

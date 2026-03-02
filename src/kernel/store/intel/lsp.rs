@@ -42,17 +42,22 @@ fn compose_hover_message(base: &str, implementation: &str, definition: &str) -> 
     let base = base.trim();
     let implementation = implementation.trim();
     let definition = definition.trim();
-    let preview = if implementation.is_empty() {
-        definition
-    } else {
-        implementation
-    };
 
-    match (base.is_empty(), preview.is_empty()) {
-        (true, true) => None,
-        (false, true) => Some(base.to_string()),
-        (true, false) => Some(preview.to_string()),
-        (false, false) => Some(format!("{base}\n\n---\n\n{preview}")),
+    let mut sections = Vec::with_capacity(3);
+    if !base.is_empty() {
+        sections.push(base);
+    }
+    if !definition.is_empty() {
+        sections.push(definition);
+    }
+    if !implementation.is_empty() {
+        sections.push(implementation);
+    }
+
+    match sections.as_slice() {
+        [] => None,
+        [only] => Some((*only).to_string()),
+        _ => Some(sections.join("\n\n---\n\n")),
     }
 }
 

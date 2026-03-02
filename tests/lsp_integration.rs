@@ -391,7 +391,9 @@ fn test_hover_appends_definition_preview_when_enabled_by_settings() {
         w.state().ui.hover_message.as_deref().is_some_and(|m| {
             m.contains("stub hover @")
                 && m.contains("Definition:")
+                && m.contains("Implementation:")
                 && m.contains("```rust")
+                && m.contains("pub fn target()")
                 && m.contains("pub fn impl_target()")
         })
     });
