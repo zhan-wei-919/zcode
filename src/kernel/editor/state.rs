@@ -929,7 +929,7 @@ impl EditorTabState {
         let is_single_line_edit = inserted_newlines == 0 && deleted_newlines == 0;
         let is_pure_insert = !inserted_text.is_empty() && deleted_text.is_empty();
         let is_pure_delete = inserted_text.is_empty() && !deleted_text.is_empty();
-        let is_incremental = is_pure_insert || is_pure_delete;
+        let is_incremental = is_single_line_edit || is_pure_insert || is_pure_delete;
 
         let delta_lines = inserted_newlines as isize - deleted_newlines as isize;
         let deleted_line_span = affected_line_span(deleted_text);

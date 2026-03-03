@@ -341,6 +341,39 @@ fn invalidate_semantic_highlight_keeps_on_single_line_pure_insert() {
 }
 
 #[test]
+fn invalidate_semantic_highlight_keeps_on_single_line_replace_without_newline() {
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "let con = 1;\n",
+        &config,
+    );
+
+    let mut lines = vec![Vec::new(); tab.buffer.len_lines().max(1)];
+    lines[0] = vec![span(4, 7, HighlightKind::Namespace)];
+    tab.set_semantic_highlight(0, lines);
+    assert!(tab.semantic_highlight.is_some());
+
+    let start = tab.buffer.rope().line_to_char(0) + 4;
+    let end = start + 3;
+    let op = tab
+        .buffer
+        .replace_range_op_adjust_cursor(start, end, "context", OpId::root());
+
+    tab.invalidate_semantic_highlight_on_edit(&op);
+    assert!(tab.semantic_highlight.is_some());
+    assert_eq!(
+        tab.semantic_highlight_line(0).unwrap_or_default(),
+        &[span(4, 11, HighlightKind::Namespace)]
+    );
+    assert!(tab.pending_semantic_highlight.is_none());
+}
+
+#[test]
 fn syntax_cache_keeps_stale_go_string_span_until_async_patch() {
     use crate::kernel::services::ports::EditorConfig;
     use std::path::PathBuf;
