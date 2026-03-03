@@ -2,7 +2,7 @@ use ropey::Rope;
 use std::sync::Arc;
 use tree_sitter::InputEdit;
 
-use super::syntax::HighlightSpan;
+use super::syntax::{merge_adjacent_highlight_spans, HighlightSpan};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AsyncSyntaxHighlightCache {
@@ -132,50 +132,20 @@ impl AsyncSyntaxHighlightCache {
             return;
         }
 
-        let del_end = local_start_byte.saturating_add(deleted_len);
-        let delta = inserted_len as isize - deleted_len as isize;
-
-        fn shift(value: usize, delta: isize) -> Option<usize> {
-            if delta >= 0 {
-                value.checked_add(delta as usize)
-            } else {
-                value.checked_sub(delta.wrapping_abs() as usize)
-            }
-        }
-
         let mut next: Vec<HighlightSpan> = Vec::with_capacity(existing.len());
-        for mut span in existing.iter().copied() {
-            if deleted_len == 0 {
-                if span.start >= local_start_byte {
-                    span.start = span.start.saturating_add(inserted_len);
-                }
-                if span.end > local_start_byte {
-                    span.end = span.end.saturating_add(inserted_len);
-                }
-            } else {
-                if span.start >= del_end {
-                    let Some(new_start) = shift(span.start, delta) else {
-                        continue;
-                    };
-                    span.start = new_start;
-                } else if span.start >= local_start_byte {
-                    span.start = local_start_byte;
-                }
-
-                if span.end >= del_end {
-                    let Some(new_end) = shift(span.end, delta) else {
-                        continue;
-                    };
-                    span.end = new_end;
-                } else if span.end > local_start_byte {
-                    span.end = local_start_byte;
-                }
-            }
-
-            if span.end <= span.start {
-                continue;
-            }
-            next.push(span);
+        if deleted_len == 0 {
+            next.extend(
+                existing
+                    .iter()
+                    .copied()
+                    .filter_map(|span| shift_span_for_insert(span, local_start_byte, inserted_len)),
+            );
+        } else {
+            let deleted_end = local_start_byte.saturating_add(deleted_len);
+            let delta = inserted_len as isize - deleted_len as isize;
+            next.extend(existing.iter().copied().filter_map(|span| {
+                shift_span_for_delete_or_replace(span, local_start_byte, deleted_end, delta)
+            }));
         }
 
         next.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
@@ -321,23 +291,47 @@ impl AsyncSyntaxHighlightCache {
     }
 }
 
-fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
-    if spans.len() < 2 {
-        return;
+fn shift_span_for_insert(
+    mut span: HighlightSpan,
+    local_start_byte: usize,
+    inserted_len: usize,
+) -> Option<HighlightSpan> {
+    if span.start >= local_start_byte {
+        span.start = span.start.saturating_add(inserted_len);
+    }
+    if span.end > local_start_byte {
+        span.end = span.end.saturating_add(inserted_len);
+    }
+    (span.end > span.start).then_some(span)
+}
+
+fn shift_span_for_delete_or_replace(
+    mut span: HighlightSpan,
+    local_start_byte: usize,
+    deleted_end: usize,
+    delta: isize,
+) -> Option<HighlightSpan> {
+    if span.start >= deleted_end {
+        span.start = shift_with_delta(span.start, delta)?;
+    } else if span.start >= local_start_byte {
+        span.start = local_start_byte;
     }
 
-    let mut write = 1usize;
-    for read in 1..spans.len() {
-        let span = spans[read];
-        let prev = &mut spans[write - 1];
-        if prev.kind == span.kind && prev.end >= span.start {
-            prev.end = prev.end.max(span.end);
-        } else {
-            spans[write] = span;
-            write += 1;
-        }
+    if span.end >= deleted_end {
+        span.end = shift_with_delta(span.end, delta)?;
+    } else if span.end > local_start_byte {
+        span.end = local_start_byte;
     }
-    spans.truncate(write);
+
+    (span.end > span.start).then_some(span)
+}
+
+fn shift_with_delta(value: usize, delta: isize) -> Option<usize> {
+    if delta >= 0 {
+        value.checked_add(delta as usize)
+    } else {
+        value.checked_sub(delta.unsigned_abs())
+    }
 }
 
 #[cfg(test)]

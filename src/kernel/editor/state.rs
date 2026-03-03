@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 use unicode_xid::UnicodeXID;
 
-use super::syntax::SyntaxDocument;
+use super::syntax::{merge_adjacent_highlight_spans, SyntaxDocument};
 use super::syntax_highlight_cache::AsyncSyntaxHighlightCache;
 use super::{viewport, HighlightKind, HighlightSpan, LanguageId};
 
@@ -1758,25 +1758,6 @@ impl SemanticHighlightState {
             self.segments[idx].lines.append(&mut next.lines);
         }
     }
-}
-
-fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
-    if spans.len() < 2 {
-        return;
-    }
-
-    let mut write = 1usize;
-    for read in 1..spans.len() {
-        let span = spans[read];
-        let prev = &mut spans[write - 1];
-        if prev.kind == span.kind && prev.end >= span.start {
-            prev.end = prev.end.max(span.end);
-        } else {
-            spans[write] = span;
-            write += 1;
-        }
-    }
-    spans.truncate(write);
 }
 
 #[cfg(test)]

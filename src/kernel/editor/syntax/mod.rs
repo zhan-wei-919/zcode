@@ -569,7 +569,7 @@ fn advance_point(start: Point, text: &str) -> Point {
     Point { row, column: col }
 }
 
-fn merge_adjacent_spans(spans: &mut Vec<HighlightSpan>) {
+pub(super) fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
     if spans.len() <= 1 {
         return;
     }
@@ -639,7 +639,7 @@ fn project_abs_spans_to_lines(
     }
 
     for line_spans in &mut per_line {
-        merge_adjacent_spans(line_spans);
+        merge_adjacent_highlight_spans(line_spans);
     }
 
     per_line
