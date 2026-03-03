@@ -1007,8 +1007,7 @@ impl EditorState {
         tab.viewport.follow_cursor = false;
         let prev = tab.viewport.line_offset;
         let total_lines = tab.buffer.len_lines();
-        let height = tab.viewport.height.max(1);
-        let max_offset = total_lines.saturating_sub(height);
+        let max_offset = total_lines.saturating_sub(1);
 
         if delta_lines > 0 {
             tab.viewport.line_offset =

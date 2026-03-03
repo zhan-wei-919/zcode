@@ -92,7 +92,7 @@ pub fn clamp_and_follow(viewport: &mut EditorViewportState, buffer: &TextBuffer,
     let total_lines = buffer.len_lines().max(1);
     let height = viewport.height.max(1);
 
-    let max_offset = total_lines.saturating_sub(height);
+    let max_offset = total_lines.saturating_sub(1);
     viewport.line_offset = viewport.line_offset.min(max_offset);
 
     if !viewport.follow_cursor {

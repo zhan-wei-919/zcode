@@ -555,3 +555,39 @@ fn test_scroll_horizontal_clamps_to_zero_and_visible_max_width() {
         .expect("active tab");
     assert_eq!(tab.viewport.horiz_offset, 0);
 }
+
+#[test]
+fn test_scroll_vertical_allows_scrolling_beyond_last_visible_line() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("many.txt");
+    let content = (0..100).map(|i| format!("line {i}\n")).collect::<String>();
+
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content,
+    });
+    let _ = editor.dispatch_action(EditorAction::SetViewportSize {
+        pane: 0,
+        width: 80,
+        height: 30,
+    });
+
+    let (changed, effects) = editor.dispatch_action(EditorAction::Scroll {
+        pane: 0,
+        delta_lines: 10_000,
+    });
+    assert!(changed);
+    assert!(effects.is_empty());
+
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert_eq!(
+        tab.viewport.line_offset,
+        tab.buffer.len_lines().saturating_sub(1)
+    );
+    assert!(!tab.viewport.follow_cursor);
+}
