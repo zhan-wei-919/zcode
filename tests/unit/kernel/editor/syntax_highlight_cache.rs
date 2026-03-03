@@ -141,3 +141,28 @@ fn apply_patch_clears_dirty_and_replaces_lines() {
         }]
     );
 }
+
+#[test]
+fn dirty_segments_with_budget_centers_around_line() {
+    let rope = Rope::from_str("a\nb\nc\nd\ne\nf\ng\nh\ni\nj");
+    let cache = AsyncSyntaxHighlightCache::new_for_rope(&rope);
+
+    let segments = cache.dirty_segments_with_budget(5, 3);
+    assert_eq!(segments.len(), 1);
+    let (start, end) = segments[0];
+    assert_eq!(end - start, 3);
+    assert!(start <= 5 && 5 < end);
+}
+
+#[test]
+fn dirty_segments_with_budget_advances_after_patch() {
+    let rope = Rope::from_str("a\nb\nc\nd\ne\nf\ng\nh\ni\nj");
+    let mut cache = AsyncSyntaxHighlightCache::new_for_rope(&rope);
+
+    let first = cache.dirty_segments_with_budget(0, 3);
+    assert_eq!(first, vec![(0, 3)]);
+    cache.apply_patch(0, vec![dummy_span(), dummy_span(), dummy_span()]);
+
+    let second = cache.dirty_segments_with_budget(0, 3);
+    assert_eq!(second, vec![(3, 6)]);
+}

@@ -156,6 +156,61 @@ impl AsyncSyntaxHighlightCache {
         out
     }
 
+    pub(crate) fn dirty_segments_with_budget(
+        &self,
+        center_line: usize,
+        max_total_lines: usize,
+    ) -> Vec<(usize, usize)> {
+        let max_total_lines = max_total_lines.max(1);
+        let segments = self.dirty_segments();
+        if segments.is_empty() {
+            return Vec::new();
+        }
+
+        let center_line = center_line.min(self.dirty.len().saturating_sub(1));
+
+        let mut best_idx = 0usize;
+        let mut best_dist = usize::MAX;
+        for (idx, &(start, end)) in segments.iter().enumerate() {
+            let dist = if center_line < start {
+                start.saturating_sub(center_line)
+            } else if center_line >= end {
+                center_line.saturating_sub(end.saturating_sub(1))
+            } else {
+                0
+            };
+
+            if dist < best_dist {
+                best_idx = idx;
+                best_dist = dist;
+                if dist == 0 {
+                    break;
+                }
+            }
+        }
+
+        let (start, end) = segments[best_idx];
+        let seg_len = end.saturating_sub(start);
+        if seg_len <= max_total_lines {
+            return vec![(start, end)];
+        }
+
+        let chunk_len = max_total_lines;
+        let mut chunk_start = if center_line <= start {
+            start
+        } else if center_line >= end {
+            end.saturating_sub(chunk_len)
+        } else {
+            let half = chunk_len / 2;
+            center_line.saturating_sub(half)
+        };
+
+        chunk_start = chunk_start.max(start);
+        chunk_start = chunk_start.min(end.saturating_sub(chunk_len));
+
+        vec![(chunk_start, chunk_start.saturating_add(chunk_len).min(end))]
+    }
+
     pub(crate) fn line(&self, line: usize) -> Option<&Arc<Vec<HighlightSpan>>> {
         self.lines.get(line).and_then(|v| v.as_ref())
     }
