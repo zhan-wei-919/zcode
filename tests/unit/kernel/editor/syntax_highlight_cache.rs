@@ -45,27 +45,32 @@ fn apply_edit_shape_shift_splice_keeps_alignment() {
 }
 
 #[test]
-fn apply_edit_shape_shift_same_line_keeps_spans_marks_dirty() {
+fn apply_edit_shape_shift_same_line_shifts_spans_marks_dirty() {
     let rope_old = Rope::from_str("a\nbc\nd");
-    let rope_new = Rope::from_str("a\nbxc\nd");
+    let rope_new = Rope::from_str("a\nxbc\nd");
 
     let mut cache = AsyncSyntaxHighlightCache::new_for_rope(&rope_old);
     cache.apply_patch(0, vec![dummy_span(), dummy_span(), dummy_span()]);
 
-    let before = cache.line(1).cloned().expect("line 1 spans");
-
     let edit = InputEdit {
-        start_byte: 0,
-        old_end_byte: 0,
-        new_end_byte: 0,
-        start_position: Point { row: 1, column: 1 },
-        old_end_position: Point { row: 1, column: 1 },
-        new_end_position: Point { row: 1, column: 2 },
+        start_byte: rope_old.line_to_byte(1),
+        old_end_byte: rope_old.line_to_byte(1),
+        new_end_byte: rope_old.line_to_byte(1) + 1,
+        start_position: Point { row: 1, column: 0 },
+        old_end_position: Point { row: 1, column: 0 },
+        new_end_position: Point { row: 1, column: 1 },
     };
     cache.apply_edit_shape_shift(&rope_new, &edit);
 
     let after = cache.line(1).expect("line 1 spans");
-    assert!(Arc::ptr_eq(after, &before));
+    assert_eq!(
+        after.as_slice(),
+        &[HighlightSpan {
+            start: 1,
+            end: 2,
+            kind: HighlightKind::Keyword,
+        }]
+    );
     assert!(cache.dirty[1]);
 }
 

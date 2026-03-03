@@ -55,6 +55,8 @@ impl AsyncSyntaxHighlightCache {
         let old_end_row = edit.old_end_position.row;
         let new_end_row = edit.new_end_position.row;
 
+        let is_single_line_edit = old_end_row == start_row && new_end_row == start_row;
+
         let Some(old_len) = old_end_row
             .checked_sub(start_row)
             .and_then(|n| n.checked_add(1))
@@ -81,6 +83,25 @@ impl AsyncSyntaxHighlightCache {
                     *d = true;
                 }
             }
+
+            if is_single_line_edit && old_len == 1 {
+                let local_start_byte = edit.start_position.column;
+                let deleted_len = edit.old_end_byte.saturating_sub(edit.start_byte);
+                let inserted_len = edit.new_end_byte.saturating_sub(edit.start_byte);
+                self.apply_byte_edit_to_line_spans(
+                    start_row,
+                    local_start_byte,
+                    deleted_len,
+                    inserted_len,
+                );
+            } else {
+                for line in start_row..start_row.saturating_add(old_len) {
+                    if let Some(slot) = self.lines.get_mut(line) {
+                        *slot = None;
+                    }
+                }
+            }
+
             self.ensure_shape_for_rope(rope);
             return;
         }
@@ -95,6 +116,71 @@ impl AsyncSyntaxHighlightCache {
         );
 
         self.ensure_shape_for_rope(rope);
+    }
+
+    fn apply_byte_edit_to_line_spans(
+        &mut self,
+        line: usize,
+        local_start_byte: usize,
+        deleted_len: usize,
+        inserted_len: usize,
+    ) {
+        let Some(existing) = self.lines.get(line).and_then(|spans| spans.as_ref()) else {
+            return;
+        };
+        if existing.is_empty() {
+            return;
+        }
+
+        let del_end = local_start_byte.saturating_add(deleted_len);
+        let delta = inserted_len as isize - deleted_len as isize;
+
+        fn shift(value: usize, delta: isize) -> Option<usize> {
+            if delta >= 0 {
+                value.checked_add(delta as usize)
+            } else {
+                value.checked_sub(delta.wrapping_abs() as usize)
+            }
+        }
+
+        let mut next: Vec<HighlightSpan> = Vec::with_capacity(existing.len());
+        for mut span in existing.iter().copied() {
+            if deleted_len == 0 {
+                if span.start >= local_start_byte {
+                    span.start = span.start.saturating_add(inserted_len);
+                }
+                if span.end > local_start_byte {
+                    span.end = span.end.saturating_add(inserted_len);
+                }
+            } else {
+                if span.start >= del_end {
+                    let Some(new_start) = shift(span.start, delta) else {
+                        continue;
+                    };
+                    span.start = new_start;
+                } else if span.start >= local_start_byte {
+                    span.start = local_start_byte;
+                }
+
+                if span.end >= del_end {
+                    let Some(new_end) = shift(span.end, delta) else {
+                        continue;
+                    };
+                    span.end = new_end;
+                } else if span.end > local_start_byte {
+                    span.end = local_start_byte;
+                }
+            }
+
+            if span.end <= span.start {
+                continue;
+            }
+            next.push(span);
+        }
+
+        next.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+        merge_adjacent_highlight_spans(&mut next);
+        self.lines[line] = Some(Arc::new(next));
     }
 
     pub(crate) fn mark_dirty_from_changed_ranges(
@@ -233,6 +319,25 @@ impl AsyncSyntaxHighlightCache {
             self.dirty[line] = false;
         }
     }
+}
+
+fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
+    if spans.len() < 2 {
+        return;
+    }
+
+    let mut write = 1usize;
+    for read in 1..spans.len() {
+        let span = spans[read];
+        let prev = &mut spans[write - 1];
+        if prev.kind == span.kind && prev.end >= span.start {
+            prev.end = prev.end.max(span.end);
+        } else {
+            spans[write] = span;
+            write += 1;
+        }
+    }
+    spans.truncate(write);
 }
 
 #[cfg(test)]

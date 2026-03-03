@@ -374,7 +374,7 @@ fn invalidate_semantic_highlight_keeps_on_single_line_replace_without_newline() 
 }
 
 #[test]
-fn syntax_cache_keeps_stale_go_string_span_until_async_patch() {
+fn syntax_cache_clears_multiline_edit_spans_until_async_patch() {
     use crate::kernel::services::ports::EditorConfig;
     use std::path::PathBuf;
 
@@ -416,16 +416,8 @@ fn syntax_cache_keeps_stale_go_string_span_until_async_patch() {
         .iter()
         .any(|(start, end)| *start <= 3 && 3 < *end));
 
-    // Cache still holds old offsets until patch arrives.
-    assert_eq!(
-        cache.line(3).expect("line cached").as_ref(),
-        &[span(5, 14, HighlightKind::String)]
-    );
-    // New text is `\t\"context\"`, so correct span would start at 2.
-    assert_ne!(
-        cache.line(3).expect("line cached").as_ref(),
-        &[span(2, 11, HighlightKind::String)]
-    );
+    // Cache drops potentially-misaligned spans for multiline edits until patch arrives.
+    assert!(cache.line(3).is_none());
 }
 
 #[test]
@@ -463,11 +455,53 @@ fn highlight_lines_shared_overlays_opaque_spans_on_dirty_lines() {
         .syntax_highlight_cache
         .as_ref()
         .expect("syntax cache remains present");
-    assert_eq!(
-        cache.line(3).expect("line cached").as_ref(),
-        &[span(4, 13, HighlightKind::String)]
-    );
+    assert!(cache.line(3).is_none());
 
     let rendered = tab.highlight_lines_shared(3, 4).expect("syntax available");
     assert_eq!(rendered[0].as_ref(), &[span(1, 10, HighlightKind::String)]);
+}
+
+#[test]
+fn highlight_lines_shared_drops_cached_spans_on_multiline_same_line_count_edit() {
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.go"),
+        "package p\n\nfunc f() {\n    if true {\n        return\n    }\n}\n",
+        &config,
+    );
+
+    let total_lines = tab.buffer.len_lines().max(1);
+    let mut lines = vec![Vec::new(); total_lines];
+    // "    if" → keyword span for `if` at [4,6).
+    lines[3] = vec![span(4, 6, HighlightKind::Keyword)];
+    tab.syntax_highlight_cache
+        .as_mut()
+        .expect("go file has syntax cache")
+        .apply_patch(0, lines);
+
+    // Simulate formatter output: same line count but indentation changes across multiple lines.
+    let start_char = tab.buffer.rope().line_to_char(2);
+    let end_char = tab.buffer.rope().len_chars();
+    let op = tab.buffer.replace_range_op_adjust_cursor(
+        start_char,
+        end_char,
+        "func f() {\n\tif true {\n\t\treturn\n\t}\n}\n",
+        OpId::root(),
+    );
+    tab.apply_syntax_edit(&op);
+
+    let cache = tab
+        .syntax_highlight_cache
+        .as_ref()
+        .expect("syntax cache remains present");
+    assert!(cache.is_line_dirty(3));
+
+    // Cached spans for dirty lines must not be reused when the edit spans multiple lines.
+    assert!(cache.line(3).is_none());
+    let rendered = tab.highlight_lines_shared(3, 4).expect("syntax available");
+    assert!(rendered[0].is_empty());
 }
