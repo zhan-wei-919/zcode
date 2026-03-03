@@ -210,6 +210,62 @@ fn test_highlight_go_comment_string_keyword_and_in_string_or_comment() {
 }
 
 #[test]
+fn test_highlight_go_import_string_updates_after_incremental_edit_single_line() {
+    let src = "package main\nimport()\nfunc main() {}\n";
+    let mut rope = Rope::from_str(src);
+    let mut doc = SyntaxDocument::for_path(Path::new("test.go"), &rope).expect("go syntax");
+
+    let before = highlight_lines(&doc, &rope, 1, 2);
+    assert_eq!(before.len(), 1);
+    assert!(!before[0].iter().any(|s| s.kind == HighlightKind::String));
+
+    let insert_at = src.find("import(").unwrap() + "import(".len();
+    let op = EditOp::insert(
+        OpId::root(),
+        insert_at,
+        CompactString::new("\"fmt\""),
+        (0, 0),
+        (0, 0),
+    );
+    op.apply(&mut rope);
+    let delta = doc.apply_edit(&rope, &op);
+    assert!(!delta.reparsed);
+
+    let after = highlight_lines(&doc, &rope, 1, 2);
+    let line = rope.line(1).to_string();
+    let idx = line.find("fmt").unwrap();
+    assert!(after[0].iter().any(|s| {
+        s.kind == HighlightKind::String && s.start <= idx && idx < s.end
+    }));
+}
+
+#[test]
+fn test_highlight_go_import_string_updates_after_incremental_edit_multiline_block() {
+    let src = "package main\nimport(\n)\nfunc main() {}\n";
+    let mut rope = Rope::from_str(src);
+    let mut doc = SyntaxDocument::for_path(Path::new("test.go"), &rope).expect("go syntax");
+
+    let insert_at = src.find("import(\n").unwrap() + "import(\n".len();
+    let op = EditOp::insert(
+        OpId::root(),
+        insert_at,
+        CompactString::new("\t\"fmt\"\n"),
+        (0, 0),
+        (0, 0),
+    );
+    op.apply(&mut rope);
+    let delta = doc.apply_edit(&rope, &op);
+    assert!(!delta.reparsed);
+
+    let spans = highlight_lines(&doc, &rope, 2, 3);
+    let line = rope.line(2).to_string();
+    let idx = line.find("fmt").unwrap();
+    assert!(spans[0].iter().any(|s| {
+        s.kind == HighlightKind::String && s.start <= idx && idx < s.end
+    }));
+}
+
+#[test]
 fn test_highlight_go_richer_symbols() {
     let src = "package main\ntype Counter struct { value int }\nfunc add(x int, y int) int { return x + y }\nfunc (c *Counter) Inc(delta int) int { return c.value + delta }\nfunc Map[T any](x T) T { return x }\nfunc main() {\n    c := &Counter{value: 1}\n    n := add(1, 2)\n    m := c.Inc(n)\n    println(m)\n}\n";
     let rope = Rope::from_str(src);

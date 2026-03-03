@@ -171,3 +171,47 @@ fn apply_byte_edit_insert_mid_token_expands_span() {
     let spans = &state.segments[0].lines[0];
     assert_eq!(spans[0], span(4, 12, HighlightKind::Variable));
 }
+
+#[test]
+fn invalidate_semantic_highlight_shifts_on_line_start_newline_edits() {
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.go"),
+        "package main\nfunc main() {}\n",
+        &config,
+    );
+
+    tab.set_semantic_highlight(
+        0,
+        vec![
+            vec![span(0, 7, HighlightKind::Keyword)], // package
+            vec![span(0, 4, HighlightKind::Keyword)], // func
+        ],
+    );
+    assert!(tab.semantic_highlight.is_some());
+
+    let insert_at = tab.buffer.rope().line_to_char(1);
+    let op = tab.buffer.replace_range_op_adjust_cursor(
+        insert_at,
+        insert_at,
+        "import \"fmt\"\n",
+        OpId::root(),
+    );
+
+    tab.invalidate_semantic_highlight_on_edit(&op);
+    assert_eq!(
+        tab.semantic_highlight_line(0).unwrap_or_default(),
+        &[span(0, 7, HighlightKind::Keyword)]
+    );
+    assert!(tab
+        .semantic_highlight_line(1)
+        .is_some_and(|spans| spans.is_empty()));
+    assert_eq!(
+        tab.semantic_highlight_line(2).unwrap_or_default(),
+        &[span(0, 4, HighlightKind::Keyword)]
+    );
+}

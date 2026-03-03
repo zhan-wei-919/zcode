@@ -907,7 +907,7 @@ impl EditorTabState {
                 edit.inserted_len,
             );
         } else {
-            semantic.apply_newline_edit(edit.start_line, edit.delta_lines);
+            semantic.apply_newline_edit(edit.start_line, edit.local_start_byte, edit.delta_lines);
         }
 
         semantic.version = edit.next_version;
@@ -1591,7 +1591,7 @@ impl SemanticHighlightState {
         *spans = next;
     }
 
-    fn apply_newline_edit(&mut self, line: usize, delta_lines: isize) {
+    fn apply_newline_edit(&mut self, line: usize, local_start_byte: usize, delta_lines: isize) {
         if delta_lines == 0 {
             return;
         }
@@ -1617,7 +1617,8 @@ impl SemanticHighlightState {
             }
 
             let rel = line.saturating_sub(seg_start);
-            let insert_at = rel.saturating_add(1).min(self.segments[idx].lines.len());
+            let insert_at = if local_start_byte == 0 { rel } else { rel.saturating_add(1) }
+                .min(self.segments[idx].lines.len());
             if inserted > 0 {
                 self.segments[idx].lines.splice(
                     insert_at..insert_at,
