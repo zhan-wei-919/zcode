@@ -2,8 +2,8 @@ use super::intel::completion_strategy;
 use super::*;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::{
-    LspCompletionTriggerKind, LspPosition, LspRange, LspTextEdit, LspWorkspaceEdit,
-    LspWorkspaceFileEdit,
+    LspCompletionTriggerKind, LspPosition, LspRange, LspServerCapabilities, LspServerKind,
+    LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{
     CompletionRequestContext, ContextMenuRequest, PendingAction, PendingEditorNavigation,
@@ -2241,6 +2241,67 @@ fn lsp_workspace_edit_schedules_file_edits_when_not_open() {
                 && edits.len() == 1
                 && edits[0].path == path
     ));
+}
+
+#[test]
+fn lsp_workspace_edit_requests_semantic_tokens_for_changed_open_tab() {
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("test.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "hello\nworld\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::LspServerCapabilities {
+        server: LspServerKind::RustAnalyzer,
+        root: store.state.workspace_root.clone(),
+        capabilities: LspServerCapabilities {
+            semantic_tokens: true,
+            semantic_tokens_full: true,
+            semantic_tokens_range: false,
+            ..Default::default()
+        },
+    });
+
+    let edit = LspWorkspaceEdit {
+        changes: vec![LspWorkspaceFileEdit {
+            path: path.clone(),
+            edits: vec![LspTextEdit {
+                range: LspRange {
+                    start: LspPosition {
+                        line: 1,
+                        character: 0,
+                    },
+                    end: LspPosition {
+                        line: 1,
+                        character: 5,
+                    },
+                },
+                new_text: "rust".to_string(),
+            }],
+        }],
+        ..Default::default()
+    };
+
+    let result = store.dispatch(Action::LspApplyWorkspaceEdit { edit });
+    let version = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+
+    assert!(result.state_changed);
+    assert!(result.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::LspSemanticTokensRequest {
+                path: effect_path,
+                version: effect_version,
+            } if effect_path == &path && *effect_version == version
+        )
+    }));
 }
 
 #[test]

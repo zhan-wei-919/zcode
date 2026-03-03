@@ -11,7 +11,7 @@ use unicode_xid::UnicodeXID;
 
 use super::syntax::SyntaxDocument;
 use super::syntax_highlight_cache::AsyncSyntaxHighlightCache;
-use super::{viewport, HighlightSpan, LanguageId};
+use super::{viewport, HighlightKind, HighlightSpan, LanguageId};
 
 type SharedSyntaxHighlightLines = Arc<Vec<Arc<Vec<HighlightSpan>>>>;
 
@@ -654,7 +654,7 @@ impl EditorTabState {
         start_line: usize,
         end_line_exclusive: usize,
     ) -> Option<SharedSyntaxHighlightLines> {
-        let _syntax = self.syntax.as_ref()?;
+        let syntax = self.syntax.as_ref()?;
         let cache = self.syntax_highlight_cache.as_ref()?;
 
         if start_line >= end_line_exclusive {
@@ -668,14 +668,68 @@ impl EditorTabState {
             return Some(Arc::new(Vec::new()));
         }
 
+        let any_dirty = (start_line..end_line_exclusive).any(|line| cache.is_line_dirty(line));
+        let opaque_lines = any_dirty.then(|| {
+            super::syntax::opaque_highlight_lines_for_range(
+                syntax.language(),
+                syntax.tree(),
+                self.buffer.rope(),
+                start_line,
+                end_line_exclusive,
+            )
+        });
+
+        let empty: Arc<Vec<HighlightSpan>> = Arc::new(Vec::new());
         let mut out: Vec<Arc<Vec<HighlightSpan>>> =
             Vec::with_capacity(end_line_exclusive - start_line);
-        for line in start_line..end_line_exclusive {
-            if let Some(spans) = cache.line(line) {
-                out.push(Arc::clone(spans));
-            } else {
-                out.push(Arc::new(Vec::new()));
+        for (idx, line) in (start_line..end_line_exclusive).enumerate() {
+            let cached = cache
+                .line(line)
+                .map(Arc::clone)
+                .unwrap_or_else(|| Arc::clone(&empty));
+            if !cache.is_line_dirty(line) {
+                out.push(cached);
+                continue;
             }
+
+            let opaque = opaque_lines
+                .as_ref()
+                .and_then(|lines| lines.get(idx))
+                .map(|line| line.as_slice())
+                .unwrap_or(&[]);
+
+            if opaque.is_empty()
+                && cached.iter().all(|span| {
+                    !matches!(
+                        span.kind,
+                        HighlightKind::Comment | HighlightKind::String | HighlightKind::Regex
+                    )
+                })
+            {
+                out.push(cached);
+                continue;
+            }
+
+            let mut combined: Vec<HighlightSpan> = cached.as_ref().clone();
+            combined.retain(|span| {
+                !matches!(
+                    span.kind,
+                    HighlightKind::Comment | HighlightKind::String | HighlightKind::Regex
+                )
+            });
+
+            if !opaque.is_empty() {
+                combined.retain(|span| {
+                    !opaque
+                        .iter()
+                        .any(|o| o.start < span.end && o.end > span.start)
+                });
+                combined.extend(opaque.iter().copied());
+            }
+
+            combined.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+            merge_adjacent_highlight_spans(&mut combined);
+            out.push(Arc::new(combined));
         }
         Some(Arc::new(out))
     }
@@ -869,18 +923,28 @@ impl EditorTabState {
             (start_line, local_start_byte)
         };
 
-        let inserted_lines = inserted_text.matches('\n').count();
-        let deleted_lines = deleted_text.matches('\n').count();
-        let delta_lines = inserted_lines as isize - deleted_lines as isize;
-        let is_single_line_edit = inserted_lines == 0 && deleted_lines == 0;
+        let inserted_newlines = inserted_text.matches('\n').count();
+        let deleted_newlines = deleted_text.matches('\n').count();
+
+        let is_single_line_edit = inserted_newlines == 0 && deleted_newlines == 0;
+        let is_pure_insert = !inserted_text.is_empty() && deleted_text.is_empty();
+        let is_pure_delete = inserted_text.is_empty() && !deleted_text.is_empty();
+        let is_incremental = is_pure_insert || is_pure_delete;
+
+        let delta_lines = inserted_newlines as isize - deleted_newlines as isize;
+        let deleted_line_span = affected_line_span(deleted_text);
+        let inserted_line_span = affected_line_span(inserted_text);
         let edit = SemanticHighlightEdit {
             next_version: self.edit_version.saturating_add(1),
             start_line,
             local_start_byte,
             deleted_len: deleted_text.len(),
             inserted_len: inserted_text.len(),
+            deleted_line_span,
+            inserted_line_span,
             delta_lines,
             is_single_line_edit,
+            is_incremental,
         };
 
         Self::apply_semantic_highlight_edit(&mut self.semantic_highlight, edit);
@@ -899,15 +963,27 @@ impl EditorTabState {
             return;
         }
 
-        if edit.is_single_line_edit {
-            semantic.apply_byte_edit(
-                edit.start_line,
-                edit.local_start_byte,
-                edit.deleted_len,
-                edit.inserted_len,
-            );
+        if edit.is_incremental {
+            if edit.is_single_line_edit {
+                semantic.apply_byte_edit(
+                    edit.start_line,
+                    edit.local_start_byte,
+                    edit.deleted_len,
+                    edit.inserted_len,
+                );
+            } else {
+                semantic.apply_newline_edit(
+                    edit.start_line,
+                    edit.local_start_byte,
+                    edit.delta_lines,
+                );
+            }
         } else {
-            semantic.apply_newline_edit(edit.start_line, edit.local_start_byte, edit.delta_lines);
+            semantic.apply_non_incremental_edit(
+                edit.start_line,
+                edit.deleted_line_span,
+                edit.inserted_line_span,
+            );
         }
 
         semantic.version = edit.next_version;
@@ -1328,8 +1404,23 @@ struct SemanticHighlightEdit {
     local_start_byte: usize,
     deleted_len: usize,
     inserted_len: usize,
+    deleted_line_span: usize,
+    inserted_line_span: usize,
     delta_lines: isize,
     is_single_line_edit: bool,
+    is_incremental: bool,
+}
+
+fn affected_line_span(text: &str) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    let newline_count = text.matches('\n').count();
+    if text.ends_with('\n') {
+        newline_count.max(1)
+    } else {
+        newline_count.saturating_add(1)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1639,6 +1730,17 @@ impl SemanticHighlightState {
         self.segments.retain(|seg| !seg.lines.is_empty());
         self.segments
             .sort_by(|a, b| a.start_line.cmp(&b.start_line));
+    }
+
+    fn apply_non_incremental_edit(
+        &mut self,
+        start_line: usize,
+        deleted_line_span: usize,
+        inserted_line_span: usize,
+    ) {
+        let old_end_exclusive = start_line.saturating_add(deleted_line_span.max(1));
+        let replacement = vec![Vec::new(); inserted_line_span.max(1)];
+        self.replace_range(start_line, old_end_exclusive, replacement);
     }
 
     fn merge_adjacent_segments(&mut self, idx: usize) {

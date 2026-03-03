@@ -8,7 +8,7 @@ use crate::kernel::state::{
 use crate::kernel::EditorAction;
 use crate::kernel::{Action, BottomPanelTab, Effect, FocusTarget};
 use rustc_hash::FxHasher;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::Instant;
@@ -421,6 +421,7 @@ impl super::super::Store {
         let mut pending_file_edits: Vec<LspWorkspaceFileEdit> = Vec::new();
         let mut any_changed = false;
         let mut open_paths_changed = false;
+        let mut changed_open_paths: HashSet<std::path::PathBuf> = HashSet::new();
         let encoding = lsp_position_encoding(&self.state);
 
         let mut rename_forward: HashMap<std::path::PathBuf, std::path::PathBuf> = HashMap::new();
@@ -503,7 +504,18 @@ impl super::super::Store {
                                 end_byte,
                                 text: edit.new_text.clone(),
                             });
-                    any_changed |= changed;
+                    if changed {
+                        any_changed = true;
+                        if let Some(path) = self
+                            .state
+                            .editor
+                            .pane(pane)
+                            .and_then(|pane_state| pane_state.tabs.get(tab_index))
+                            .and_then(|tab| tab.path.clone())
+                        {
+                            changed_open_paths.insert(path);
+                        }
+                    }
                 }
             }
         }
@@ -529,6 +541,62 @@ impl super::super::Store {
         if open_paths_changed {
             self.state.editor.open_paths_version =
                 self.state.editor.open_paths_version.saturating_add(1);
+        }
+
+        let preferred_pane = self.state.ui.editor_layout.active_pane;
+        for path in changed_open_paths {
+            if !is_lsp_source_path(&path) {
+                continue;
+            }
+
+            let Some(caps) = lsp_server_capabilities_for_path(&self.state, &path).cloned() else {
+                continue;
+            };
+            if !(caps.semantic_tokens && (caps.semantic_tokens_full || caps.semantic_tokens_range))
+            {
+                continue;
+            }
+
+            let Some((pane, tab_index)) = find_open_tab(&self.state.editor, preferred_pane, &path)
+            else {
+                continue;
+            };
+            let Some(tab) = self
+                .state
+                .editor
+                .pane(pane)
+                .and_then(|pane_state| pane_state.tabs.get(tab_index))
+            else {
+                continue;
+            };
+
+            let version = tab.edit_version;
+            let total_lines = tab.buffer.len_lines().max(1);
+            let can_range = caps.semantic_tokens_range;
+            let can_full = caps.semantic_tokens_full;
+            let prefer_range = can_range && (total_lines >= 2000 || !can_full);
+
+            if prefer_range {
+                let viewport_top = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
+                let height = tab.viewport.height.max(1);
+                let overscan = 40usize.min(total_lines);
+                let start_line = viewport_top.saturating_sub(overscan);
+                let end_line_exclusive = (viewport_top + height + overscan).min(total_lines);
+                if let Some(range) = lsp_range_for_full_lines(
+                    tab,
+                    start_line,
+                    end_line_exclusive,
+                    caps.position_encoding,
+                ) {
+                    effects.push(Effect::LspSemanticTokensRangeRequest {
+                        path: path.clone(),
+                        version,
+                        range,
+                    });
+                }
+            } else if can_full {
+                effects.push(Effect::LspSemanticTokensRequest { path, version });
+            }
         }
 
         if !resource_ops.is_empty() || !pending_file_edits.is_empty() {

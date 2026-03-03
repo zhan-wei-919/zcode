@@ -338,6 +338,81 @@ pub(crate) fn compute_highlight_patches(
     patches
 }
 
+pub(super) fn opaque_highlight_lines_for_range(
+    language: LanguageId,
+    tree: &Tree,
+    rope: &Rope,
+    start_line: usize,
+    end_line_exclusive: usize,
+) -> Vec<Vec<HighlightSpan>> {
+    if start_line >= end_line_exclusive {
+        return Vec::new();
+    }
+
+    let total_lines = rope.len_lines().max(1);
+    let start_line = start_line.min(total_lines);
+    let end_line_exclusive = end_line_exclusive.min(total_lines);
+    if start_line >= end_line_exclusive {
+        return Vec::new();
+    }
+
+    let start_byte = rope.line_to_byte(start_line);
+    let end_byte = rope.line_to_byte(end_line_exclusive);
+    let spans = collect_opaque_highlights(language, tree, rope, start_byte, end_byte);
+    project_abs_spans_to_lines(rope, start_line, end_line_exclusive, &spans)
+}
+
+fn collect_opaque_highlights(
+    _language: LanguageId,
+    tree: &Tree,
+    _rope: &Rope,
+    start_byte: usize,
+    end_byte: usize,
+) -> Vec<AbsHighlightSpan> {
+    let root = tree.root_node();
+    let mut stack = vec![(root, 0usize)];
+    let mut spans = Vec::new();
+
+    while let Some((node, depth)) = stack.pop() {
+        let node_start = node.start_byte();
+        let node_end = node.end_byte();
+
+        if node_end <= start_byte || node_start >= end_byte {
+            continue;
+        }
+
+        let kind = node.kind();
+        let hl_kind = if is_comment_kind(kind) {
+            Some(HighlightKind::Comment)
+        } else if is_regex_kind(kind) {
+            Some(HighlightKind::Regex)
+        } else if is_string_kind(kind) {
+            Some(HighlightKind::String)
+        } else {
+            None
+        };
+
+        if let Some(kind) = hl_kind {
+            spans.push(AbsHighlightSpan {
+                start: node_start,
+                end: node_end,
+                kind,
+                depth,
+            });
+            continue;
+        }
+
+        let child_count = node.child_count();
+        for i in (0..child_count).rev() {
+            if let Some(child) = node.child(i) {
+                stack.push((child, depth.saturating_add(1)));
+            }
+        }
+    }
+
+    normalize_overlapping_highlight_spans(spans, start_byte, end_byte)
+}
+
 /// Highlight an arbitrary snippet (e.g. LSP hover / completion documentation code fences).
 ///
 /// Returns per-line highlight spans with offsets relative to each line start.
