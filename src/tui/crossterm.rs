@@ -51,7 +51,14 @@ fn into_key_modifiers(mods: crossterm::event::KeyModifiers) -> KeyModifiers {
 
 fn into_key_code(code: crossterm::event::KeyCode, modifiers: &mut KeyModifiers) -> KeyCode {
     match code {
-        crossterm::event::KeyCode::Char(ch) => KeyCode::Char(ch),
+        crossterm::event::KeyCode::Char(ch) => {
+            if let Some(normalized) = normalize_control_char(ch) {
+                *modifiers |= KeyModifiers::CONTROL;
+                KeyCode::Char(normalized)
+            } else {
+                KeyCode::Char(ch)
+            }
+        }
         crossterm::event::KeyCode::Enter => KeyCode::Enter,
         crossterm::event::KeyCode::Tab => KeyCode::Tab,
         crossterm::event::KeyCode::BackTab => KeyCode::BackTab,
@@ -72,6 +79,20 @@ fn into_key_code(code: crossterm::event::KeyCode, modifiers: &mut KeyModifiers) 
             KeyCode::Char(' ')
         }
         _ => KeyCode::Unknown,
+    }
+}
+
+fn normalize_control_char(ch: char) -> Option<char> {
+    if !ch.is_ascii() {
+        return None;
+    }
+
+    let code = ch as u8;
+    match code {
+        0x00 => Some(' '),
+        0x01..=0x1A => Some((b'a' + (code - 1)) as char),
+        0x1C..=0x1F => Some((b'4' + (code - 0x1C)) as char),
+        _ => None,
     }
 }
 
