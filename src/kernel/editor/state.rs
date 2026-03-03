@@ -1617,8 +1617,12 @@ impl SemanticHighlightState {
             }
 
             let rel = line.saturating_sub(seg_start);
-            let insert_at = if local_start_byte == 0 { rel } else { rel.saturating_add(1) }
-                .min(self.segments[idx].lines.len());
+            let insert_at = if local_start_byte == 0 {
+                rel
+            } else {
+                rel.saturating_add(1)
+            }
+            .min(self.segments[idx].lines.len());
             if inserted > 0 {
                 self.segments[idx].lines.splice(
                     insert_at..insert_at,

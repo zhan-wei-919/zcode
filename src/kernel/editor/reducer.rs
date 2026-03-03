@@ -1455,7 +1455,8 @@ impl EditorState {
         };
         const MAX_SYNTAX_HIGHLIGHT_LINES_PER_REQUEST: usize = 400;
         let cursor_row = tab.buffer.cursor().0;
-        let segments = cache.dirty_segments_with_budget(cursor_row, MAX_SYNTAX_HIGHLIGHT_LINES_PER_REQUEST);
+        let segments =
+            cache.dirty_segments_with_budget(cursor_row, MAX_SYNTAX_HIGHLIGHT_LINES_PER_REQUEST);
         if segments.is_empty() {
             return false;
         }

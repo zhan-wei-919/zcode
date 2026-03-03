@@ -234,9 +234,9 @@ fn test_highlight_go_import_string_updates_after_incremental_edit_single_line() 
     let after = highlight_lines(&doc, &rope, 1, 2);
     let line = rope.line(1).to_string();
     let idx = line.find("fmt").unwrap();
-    assert!(after[0].iter().any(|s| {
-        s.kind == HighlightKind::String && s.start <= idx && idx < s.end
-    }));
+    assert!(after[0]
+        .iter()
+        .any(|s| { s.kind == HighlightKind::String && s.start <= idx && idx < s.end }));
 }
 
 #[test]
@@ -260,9 +260,9 @@ fn test_highlight_go_import_string_updates_after_incremental_edit_multiline_bloc
     let spans = highlight_lines(&doc, &rope, 2, 3);
     let line = rope.line(2).to_string();
     let idx = line.find("fmt").unwrap();
-    assert!(spans[0].iter().any(|s| {
-        s.kind == HighlightKind::String && s.start <= idx && idx < s.end
-    }));
+    assert!(spans[0]
+        .iter()
+        .any(|s| { s.kind == HighlightKind::String && s.start <= idx && idx < s.end }));
 }
 
 #[test]
