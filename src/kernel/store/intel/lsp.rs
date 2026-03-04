@@ -21,9 +21,7 @@ use super::super::util::{
     is_lsp_source_path, line_len_chars, open_tabs_for_path, resolve_renamed_path,
 };
 use super::completion::{filtered_completion_indices, sort_completion_items};
-use super::semantic::{
-    semantic_highlight_lines_from_tokens, semantic_highlight_lines_from_tokens_range,
-};
+use super::semantic::{semantic_token_lines_from_tokens, semantic_token_lines_from_tokens_range};
 
 #[cfg(test)]
 static LSP_CAPABILITY_LOOKUP_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -1019,7 +1017,7 @@ impl super::super::Store {
                     };
                 };
 
-                let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::HighlightSpan>>> =
+                let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticToken>>> =
                     None;
                 let mut changed = false;
 
@@ -1033,7 +1031,7 @@ impl super::super::Store {
                             let _ = tab.set_pending_semantic_highlight_from_slice(version, &[]);
                         } else {
                             if snapshot_lines.is_none() {
-                                snapshot_lines = Some(semantic_highlight_lines_from_tokens(
+                                snapshot_lines = Some(semantic_token_lines_from_tokens(
                                     tab.buffer.rope(),
                                     &tokens,
                                     &legend,
@@ -1134,7 +1132,7 @@ impl super::super::Store {
                     };
                 };
 
-                let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::HighlightSpan>>> =
+                let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticToken>>> =
                     None;
                 let mut changed = false;
 
@@ -1145,7 +1143,7 @@ impl super::super::Store {
                         }
 
                         if snapshot_lines.is_none() {
-                            snapshot_lines = Some(semantic_highlight_lines_from_tokens_range(
+                            snapshot_lines = Some(semantic_token_lines_from_tokens_range(
                                 tab.buffer.rope(),
                                 &tokens,
                                 &legend,

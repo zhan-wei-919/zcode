@@ -222,7 +222,7 @@ fn experiment_semantic_tokens_fanout_scale_baseline() {
             .and_then(|p| p.active_tab())
             .expect("tab exists");
         let line = tab
-            .semantic_highlight_lines(0, 1)
+            .semantic_tokens_lines(0, 1)
             .and_then(|slice| slice.first())
             .expect("semantic line exists");
         assert!(!line.is_empty());
@@ -578,10 +578,9 @@ fn lsp_semantic_tokens_legend_change_misses_fast_path() {
         .and_then(|p| p.active_tab())
         .expect("tab exists");
     let first_kind = tab
-        .semantic_highlight_lines(0, 1)
+        .semantic_tokens_lines(0, 1)
         .and_then(|rows| rows.first())
-        .and_then(|line| line.first())
-        .map(|span| span.kind);
+        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
     assert_eq!(first_kind, Some(HighlightKind::Variable));
 
     let _ = store.dispatch(Action::LspServerCapabilities {
@@ -618,10 +617,9 @@ fn lsp_semantic_tokens_legend_change_misses_fast_path() {
         .and_then(|p| p.active_tab())
         .expect("tab exists");
     let second_kind = tab
-        .semantic_highlight_lines(0, 1)
+        .semantic_tokens_lines(0, 1)
         .and_then(|rows| rows.first())
-        .and_then(|line| line.first())
-        .map(|span| span.kind);
+        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
     assert_eq!(second_kind, Some(HighlightKind::Variable));
 
     let _ = store.dispatch(Action::RunCommand(Command::InsertChar(' ')));
@@ -633,10 +631,9 @@ fn lsp_semantic_tokens_legend_change_misses_fast_path() {
         .and_then(|p| p.active_tab())
         .expect("tab exists");
     let second_kind = tab
-        .semantic_highlight_lines(0, 1)
+        .semantic_tokens_lines(0, 1)
         .and_then(|rows| rows.first())
-        .and_then(|line| line.first())
-        .map(|span| span.kind);
+        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
     assert_eq!(second_kind, Some(HighlightKind::Keyword));
 }
 
@@ -670,10 +667,9 @@ fn semantic_tokens_are_deferred_until_boundary_flush() {
         .and_then(|p| p.active_tab())
         .expect("tab exists");
     let first_kind = tab
-        .semantic_highlight_lines(0, 1)
+        .semantic_tokens_lines(0, 1)
         .and_then(|rows| rows.first())
-        .and_then(|line| line.first())
-        .map(|span| span.kind);
+        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
     assert_eq!(first_kind, Some(HighlightKind::Variable));
 
     let _ = store.dispatch(Action::LspServerCapabilities {
@@ -710,10 +706,9 @@ fn semantic_tokens_are_deferred_until_boundary_flush() {
         .and_then(|p| p.active_tab())
         .expect("tab exists");
     let second_kind = tab
-        .semantic_highlight_lines(0, 1)
+        .semantic_tokens_lines(0, 1)
         .and_then(|rows| rows.first())
-        .and_then(|line| line.first())
-        .map(|span| span.kind);
+        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
     assert_eq!(second_kind, Some(HighlightKind::Variable));
 
     let _ = store.dispatch(Action::RunCommand(Command::InsertChar(' ')));
@@ -725,10 +720,9 @@ fn semantic_tokens_are_deferred_until_boundary_flush() {
         .and_then(|p| p.active_tab())
         .expect("tab exists");
     let second_kind = tab
-        .semantic_highlight_lines(0, 1)
+        .semantic_tokens_lines(0, 1)
         .and_then(|rows| rows.first())
-        .and_then(|line| line.first())
-        .map(|span| span.kind);
+        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
     assert_eq!(second_kind, Some(HighlightKind::Keyword));
 }
 

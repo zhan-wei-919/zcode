@@ -1,6 +1,17 @@
 use super::*;
-use crate::kernel::editor::{HighlightKind, HighlightSpan, TabId};
+use crate::kernel::editor::{HighlightKind, SemanticToken, TabId};
 use std::path::PathBuf;
+
+fn sem_tok(text: &str, kind: Option<HighlightKind>) -> SemanticToken {
+    SemanticToken {
+        text: text.into(),
+        semantic_kind: kind,
+    }
+}
+
+fn has_semantic_kind(tokens: &[SemanticToken]) -> bool {
+    tokens.iter().any(|t| t.semantic_kind.is_some())
+}
 
 #[test]
 fn test_rust_brace_pair_and_electric_enter() {
@@ -650,20 +661,19 @@ fn semantic_highlight_and_inlay_hints_do_not_flicker_on_edit() {
 
     tab.set_semantic_highlight(
         0,
-        vec![vec![HighlightSpan {
-            start: 0,
-            end: 2,
-            kind: HighlightKind::Keyword,
-        }]],
+        vec![vec![
+            sem_tok("fn", Some(HighlightKind::Keyword)),
+            sem_tok(" main() {}", None),
+        ]],
     );
     tab.set_inlay_hints(0, 0, 1, vec![vec![": hint".to_string()]]);
 
-    assert!(tab.semantic_highlight_line(0).is_some());
+    assert!(tab.semantic_tokens_line(0).is_some_and(has_semantic_kind));
     assert!(tab.inlay_hint_line(0).is_some());
 
     let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
 
-    assert!(tab.semantic_highlight_line(0).is_some());
+    assert!(tab.semantic_tokens_line(0).is_some_and(has_semantic_kind));
     assert!(tab.inlay_hint_line(0).is_some());
 }
 
@@ -675,16 +685,8 @@ fn semantic_highlight_is_shifted_on_line_edit() {
     tab.set_semantic_highlight(
         0,
         vec![
-            vec![HighlightSpan {
-                start: 0,
-                end: 3,
-                kind: HighlightKind::Function,
-            }],
-            vec![HighlightSpan {
-                start: 0,
-                end: 3,
-                kind: HighlightKind::Macro,
-            }],
+            vec![sem_tok("foo", Some(HighlightKind::Function))],
+            vec![sem_tok("bar", Some(HighlightKind::Macro))],
         ],
     );
 
@@ -692,16 +694,16 @@ fn semantic_highlight_is_shifted_on_line_edit() {
     let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
 
     assert_eq!(
-        tab.semantic_highlight_line(0).unwrap_or_default(),
-        &[HighlightSpan {
-            start: 0,
-            end: 3,
-            kind: HighlightKind::Function
-        }]
+        tab.semantic_tokens_line(0).unwrap_or_default(),
+        &[
+            sem_tok("foo", Some(HighlightKind::Function)),
+            sem_tok("x", None)
+        ]
     );
-    assert!(tab
-        .semantic_highlight_line(1)
-        .is_some_and(|spans| !spans.is_empty()));
+    assert_eq!(
+        tab.semantic_tokens_line(1).unwrap_or_default(),
+        &[sem_tok("bar", Some(HighlightKind::Macro))]
+    );
 }
 
 #[test]
@@ -716,36 +718,26 @@ fn semantic_highlight_keeps_existing_lines_on_newline_edit() {
     tab.set_semantic_highlight(
         0,
         vec![
-            vec![HighlightSpan {
-                start: 0,
-                end: 3,
-                kind: HighlightKind::Function,
-            }],
-            vec![HighlightSpan {
-                start: 0,
-                end: 3,
-                kind: HighlightKind::Macro,
-            }],
-            vec![HighlightSpan {
-                start: 0,
-                end: 3,
-                kind: HighlightKind::Type,
-            }],
+            vec![sem_tok("foo", Some(HighlightKind::Function))],
+            vec![sem_tok("bar", Some(HighlightKind::Macro))],
+            vec![sem_tok("baz", Some(HighlightKind::Type))],
         ],
     );
 
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
 
+    assert_eq!(
+        tab.semantic_tokens_line(0).unwrap_or_default(),
+        &[sem_tok("foo", Some(HighlightKind::Function))]
+    );
     assert!(tab
-        .semantic_highlight_line(0)
-        .is_some_and(|spans| !spans.is_empty()));
-    assert!(tab
-        .semantic_highlight_line(1)
-        .is_some_and(|spans| spans.is_empty()));
-    assert!(tab
-        .semantic_highlight_line(2)
-        .is_some_and(|spans| !spans.is_empty()));
+        .semantic_tokens_line(1)
+        .is_some_and(|tokens| !has_semantic_kind(tokens)));
+    assert_eq!(
+        tab.semantic_tokens_line(2).unwrap_or_default(),
+        &[sem_tok("bar", Some(HighlightKind::Macro))]
+    );
 }
 
 #[test]
@@ -753,25 +745,17 @@ fn semantic_highlight_is_not_invalidated_when_appending_punctuation() {
     let config = EditorConfig::default();
     let mut tab =
         EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "String", &config);
-    tab.set_semantic_highlight(
-        0,
-        vec![vec![HighlightSpan {
-            start: 0,
-            end: 6,
-            kind: HighlightKind::Type,
-        }]],
-    );
+    tab.set_semantic_highlight(0, vec![vec![sem_tok("String", Some(HighlightKind::Type))]]);
 
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertChar(':'), 0, &config);
 
     assert_eq!(
-        tab.semantic_highlight_line(0).unwrap_or_default(),
-        &[HighlightSpan {
-            start: 0,
-            end: 6,
-            kind: HighlightKind::Type
-        }]
+        tab.semantic_tokens_line(0).unwrap_or_default(),
+        &[
+            sem_tok("String", Some(HighlightKind::Type)),
+            sem_tok(":", None)
+        ]
     );
 }
 

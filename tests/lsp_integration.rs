@@ -11,7 +11,7 @@ use zcode::app::Workbench;
 use zcode::core::event::{
     InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
-use zcode::kernel::editor::{HighlightKind, HighlightSpan};
+use zcode::kernel::editor::HighlightKind;
 use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use zcode::kernel::services::ports::{LspPositionEncoding, LspServerKind};
 use zcode::kernel::{BottomPanelTab, FocusTarget};
@@ -2568,19 +2568,16 @@ fn test_semantic_tokens_apply_expected_highlight_kinds() {
         let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
             return false;
         };
-        let Some(lines) = tab.semantic_highlight_lines(0, 1) else {
+        let Some(lines) = tab.semantic_tokens_lines(0, 1) else {
             return false;
         };
-        lines.first().is_some_and(|spans| {
-            spans.contains(&HighlightSpan {
-                start: 0,
-                end: 2,
-                kind: HighlightKind::Keyword,
-            }) && spans.contains(&HighlightSpan {
-                start: 3,
-                end: 7,
-                kind: HighlightKind::Function,
-            })
+        lines.first().is_some_and(|tokens| {
+            tokens
+                .iter()
+                .any(|t| t.semantic_kind == Some(HighlightKind::Keyword) && t.text.as_str() == "fn")
+                && tokens.iter().any(|t| {
+                    t.semantic_kind == Some(HighlightKind::Function) && t.text.as_str() == "main"
+                })
         })
     });
 }
@@ -2847,19 +2844,16 @@ fn test_semantic_tokens_range_is_used_for_large_files() {
         let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
             return false;
         };
-        let Some(lines) = tab.semantic_highlight_lines(0, 1) else {
+        let Some(lines) = tab.semantic_tokens_lines(0, 1) else {
             return false;
         };
-        lines.first().is_some_and(|spans| {
-            spans.contains(&HighlightSpan {
-                start: 0,
-                end: 2,
-                kind: HighlightKind::Keyword,
-            }) && spans.contains(&HighlightSpan {
-                start: 3,
-                end: 7,
-                kind: HighlightKind::Function,
-            })
+        lines.first().is_some_and(|tokens| {
+            tokens
+                .iter()
+                .any(|t| t.semantic_kind == Some(HighlightKind::Keyword) && t.text.as_str() == "fn")
+                && tokens.iter().any(|t| {
+                    t.semantic_kind == Some(HighlightKind::Function) && t.text.as_str() == "main"
+                })
         })
     });
 
@@ -2874,7 +2868,7 @@ fn test_semantic_tokens_range_is_used_for_large_files() {
             .editor
             .pane(0)
             .and_then(|pane| pane.active_tab())
-            .and_then(|tab| tab.semantic_highlight_lines(0, 1))
+            .and_then(|tab| tab.semantic_tokens_lines(0, 1))
             .is_some(),
         "semantic highlight unexpectedly cleared after edit"
     );

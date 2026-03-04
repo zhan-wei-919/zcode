@@ -1,18 +1,24 @@
-use super::super::syntax::{HighlightKind, HighlightSpan};
+use super::super::syntax::{HighlightKind, HighlightSpan, SemanticToken};
 use super::*;
 
 fn span(start: usize, end: usize, kind: HighlightKind) -> HighlightSpan {
     HighlightSpan { start, end, kind }
 }
 
-fn make_lines(start: usize, len: usize) -> Vec<Vec<HighlightSpan>> {
+fn sem_tok(text: &str, kind: Option<HighlightKind>) -> SemanticToken {
+    SemanticToken {
+        text: text.into(),
+        semantic_kind: kind,
+    }
+}
+
+fn make_lines(start: usize, len: usize) -> Vec<Vec<SemanticToken>> {
     (0..len)
         .map(|i| {
-            vec![HighlightSpan {
-                start: start + i,
-                end: start + i + 1,
-                kind: HighlightKind::Keyword,
-            }]
+            vec![sem_tok(
+                &format!("L{}", start.saturating_add(i)),
+                Some(HighlightKind::Keyword),
+            )]
         })
         .collect()
 }
@@ -41,7 +47,7 @@ fn replace_range_updates_inside_single_segment() {
 
     state.replace_range(3, 5, make_lines(100, 2));
 
-    let mut expected: Vec<Vec<HighlightSpan>> = Vec::new();
+    let mut expected: Vec<Vec<SemanticToken>> = Vec::new();
     expected.extend(make_lines(0, 3));
     expected.extend(make_lines(100, 2));
     expected.extend(make_lines(5, 5));
@@ -63,7 +69,7 @@ fn replace_range_bridges_gap_and_merges_segments() {
 
     state.replace_range(1, 6, make_lines(100, 5));
 
-    let mut expected: Vec<Vec<HighlightSpan>> = Vec::new();
+    let mut expected: Vec<Vec<SemanticToken>> = Vec::new();
     expected.extend(make_lines(0, 1));
     expected.extend(make_lines(100, 5));
     expected.extend(make_lines(6, 2));
@@ -85,7 +91,7 @@ fn replace_range_inserts_in_gap_and_merges_with_neighbors() {
 
     state.replace_range(2, 5, make_lines(100, 3));
 
-    let mut expected: Vec<Vec<HighlightSpan>> = Vec::new();
+    let mut expected: Vec<Vec<SemanticToken>> = Vec::new();
     expected.extend(make_lines(0, 2));
     expected.extend(make_lines(100, 3));
     expected.extend(make_lines(5, 2));
@@ -95,81 +101,8 @@ fn replace_range_inserts_in_gap_and_merges_with_neighbors() {
     assert_eq!(state.segments[0].lines, expected);
 }
 
-// ── apply_byte_edit tests ──────────────────────────────────────────
-
-/// Simulate: `let result = compute();`
-/// Semantic spans on line 0:
-///   "result"  [4,10) = Variable
-///   "compute" [13,20) = Function
-///
-/// User appends "_value" right after "result" (insert 6 bytes at offset 10).
-/// Line becomes: `let result_value = compute();`
-///
-/// Expected: "result" span stays [4,10), "compute" shifts to [19,26).
-/// The "_value" portion [10,16) has NO semantic coverage → falls back to tree-sitter.
-/// This means the single token "result_value" is split across two highlight systems.
-#[test]
-fn apply_byte_edit_insert_at_token_end_causes_split() {
-    let mut state = SemanticHighlightState {
-        version: 0,
-        segments: vec![SemanticHighlightSegment::new(
-            0,
-            vec![vec![
-                span(4, 10, HighlightKind::Variable),
-                span(13, 20, HighlightKind::Function),
-            ]],
-        )],
-    };
-
-    // Insert "_value" (6 bytes) at offset 10 (right after "result")
-    state.apply_byte_edit(0, 10, 0, 6);
-
-    let spans = &state.segments[0].lines[0];
-    // "result" span: start < insert point → unchanged
-    assert_eq!(spans[0], span(4, 10, HighlightKind::Variable));
-    // "compute" span: shifted right by 6
-    assert_eq!(spans[1], span(19, 26, HighlightKind::Function));
-    // Gap [10,19) has no semantic coverage — "result_value" is color-split
-}
-
-/// Insert at the START of a token.
-/// "HashMap" [4,11) = Type
-/// Insert "XX" at offset 4 → "XXHashMap"
-/// Expected: span shifts to [6,13), "XX" at [4,6) has no coverage.
-#[test]
-fn apply_byte_edit_insert_at_token_start_shifts_span() {
-    let mut state = SemanticHighlightState {
-        version: 0,
-        segments: vec![SemanticHighlightSegment::new(
-            0,
-            vec![vec![span(4, 11, HighlightKind::Type)]],
-        )],
-    };
-
-    state.apply_byte_edit(0, 4, 0, 2);
-
-    let spans = &state.segments[0].lines[0];
-    assert_eq!(spans[0], span(6, 13, HighlightKind::Type));
-}
-
-/// Insert in the MIDDLE of a token.
-/// "result" [4,10) = Variable
-/// Insert "XX" at offset 7 → "resXXult"
-/// Expected: span expands to [4,12) — start unchanged, end shifted.
-#[test]
-fn apply_byte_edit_insert_mid_token_expands_span() {
-    let mut state = SemanticHighlightState {
-        version: 0,
-        segments: vec![SemanticHighlightSegment::new(
-            0,
-            vec![vec![span(4, 10, HighlightKind::Variable)]],
-        )],
-    };
-
-    state.apply_byte_edit(0, 7, 0, 2);
-
-    let spans = &state.segments[0].lines[0];
-    assert_eq!(spans[0], span(4, 12, HighlightKind::Variable));
+fn has_semantic_kind(tokens: &[SemanticToken]) -> bool {
+    tokens.iter().any(|t| t.semantic_kind.is_some())
 }
 
 #[test]
@@ -188,8 +121,14 @@ fn invalidate_semantic_highlight_shifts_on_line_start_newline_edits() {
     tab.set_semantic_highlight(
         0,
         vec![
-            vec![span(0, 7, HighlightKind::Keyword)], // package
-            vec![span(0, 4, HighlightKind::Keyword)], // func
+            vec![
+                sem_tok("package", Some(HighlightKind::Keyword)),
+                sem_tok(" main", None),
+            ],
+            vec![
+                sem_tok("func", Some(HighlightKind::Keyword)),
+                sem_tok(" main() {}", None),
+            ],
         ],
     );
     assert!(tab.semantic_highlight.is_some());
@@ -204,15 +143,21 @@ fn invalidate_semantic_highlight_shifts_on_line_start_newline_edits() {
 
     tab.invalidate_semantic_highlight_on_edit(&op);
     assert_eq!(
-        tab.semantic_highlight_line(0).unwrap_or_default(),
-        &[span(0, 7, HighlightKind::Keyword)]
+        tab.semantic_tokens_line(0).unwrap_or_default(),
+        &[
+            sem_tok("package", Some(HighlightKind::Keyword)),
+            sem_tok(" main", None)
+        ]
     );
     assert!(tab
-        .semantic_highlight_line(1)
-        .is_some_and(|spans| spans.is_empty()));
+        .semantic_tokens_line(1)
+        .is_some_and(|tokens| !has_semantic_kind(tokens)));
     assert_eq!(
-        tab.semantic_highlight_line(2).unwrap_or_default(),
-        &[span(0, 4, HighlightKind::Keyword)]
+        tab.semantic_tokens_line(2).unwrap_or_default(),
+        &[
+            sem_tok("func", Some(HighlightKind::Keyword)),
+            sem_tok(" main() {}", None)
+        ]
     );
     assert!(tab.pending_semantic_highlight.is_none());
 }
@@ -233,8 +178,20 @@ fn invalidate_semantic_highlight_clears_only_replaced_block_on_multiline_replace
     // Simulate a semantic token span for the import path `context` (without quotes).
     // Before formatting, the line uses spaces for indentation.
     let mut lines = vec![Vec::new(); tab.buffer.len_lines().max(1)];
-    lines[0] = vec![span(0, 7, HighlightKind::Keyword)];
-    lines[3] = vec![span(5, 12, HighlightKind::Namespace)];
+    lines[0] = vec![
+        sem_tok("package", Some(HighlightKind::Keyword)),
+        sem_tok(" tools", None),
+    ];
+    lines[1] = Vec::new();
+    lines[2] = vec![sem_tok("import (", None)];
+    lines[3] = vec![
+        sem_tok("    \"", None),
+        sem_tok("context", Some(HighlightKind::Namespace)),
+        sem_tok("\"", None),
+    ];
+    lines[4] = vec![sem_tok("    \"\"", None)];
+    lines[5] = vec![sem_tok(")", None)];
+    lines[6] = Vec::new();
     tab.set_semantic_highlight(0, lines);
     assert!(tab.semantic_highlight.is_some());
 
@@ -251,15 +208,18 @@ fn invalidate_semantic_highlight_clears_only_replaced_block_on_multiline_replace
     tab.invalidate_semantic_highlight_on_edit(&op);
     assert!(tab.semantic_highlight.is_some());
     assert_eq!(
-        tab.semantic_highlight_line(0).unwrap_or_default(),
-        &[span(0, 7, HighlightKind::Keyword)]
+        tab.semantic_tokens_line(0).unwrap_or_default(),
+        &[
+            sem_tok("package", Some(HighlightKind::Keyword)),
+            sem_tok(" tools", None)
+        ]
     );
     assert!(tab
-        .semantic_highlight_line(3)
-        .is_some_and(|spans| spans.is_empty()));
+        .semantic_tokens_line(3)
+        .is_some_and(|tokens| !has_semantic_kind(tokens)));
     assert!(tab
-        .semantic_highlight_line(4)
-        .is_some_and(|spans| spans.is_empty()));
+        .semantic_tokens_line(4)
+        .is_some_and(|tokens| !has_semantic_kind(tokens)));
     assert!(tab.pending_semantic_highlight.is_none());
 }
 
@@ -277,9 +237,19 @@ fn invalidate_semantic_highlight_clears_only_replaced_line_on_single_line_replac
     );
 
     let mut lines = vec![Vec::new(); tab.buffer.len_lines().max(1)];
-    lines[0] = vec![span(0, 7, HighlightKind::Keyword)];
-    lines[3] = vec![span(2, 9, HighlightKind::Namespace)];
-    lines[4] = vec![span(0, 1, HighlightKind::Keyword)];
+    lines[0] = vec![
+        sem_tok("package", Some(HighlightKind::Keyword)),
+        sem_tok(" test", None),
+    ];
+    lines[1] = Vec::new();
+    lines[2] = vec![sem_tok("import (", None)];
+    lines[3] = vec![
+        sem_tok("\t\"", None),
+        sem_tok("context", Some(HighlightKind::Namespace)),
+        sem_tok("\"", None),
+    ];
+    lines[4] = vec![sem_tok(")", Some(HighlightKind::Keyword))];
+    lines[5] = Vec::new();
     tab.set_semantic_highlight(0, lines);
     assert!(tab.semantic_highlight.is_some());
 
@@ -295,15 +265,18 @@ fn invalidate_semantic_highlight_clears_only_replaced_line_on_single_line_replac
     tab.invalidate_semantic_highlight_on_edit(&op);
     assert!(tab.semantic_highlight.is_some());
     assert_eq!(
-        tab.semantic_highlight_line(0).unwrap_or_default(),
-        &[span(0, 7, HighlightKind::Keyword)]
+        tab.semantic_tokens_line(0).unwrap_or_default(),
+        &[
+            sem_tok("package", Some(HighlightKind::Keyword)),
+            sem_tok(" test", None)
+        ]
     );
     assert!(tab
-        .semantic_highlight_line(3)
-        .is_some_and(|spans| spans.is_empty()));
+        .semantic_tokens_line(3)
+        .is_some_and(|tokens| !has_semantic_kind(tokens)));
     assert_eq!(
-        tab.semantic_highlight_line(4).unwrap_or_default(),
-        &[span(0, 1, HighlightKind::Keyword)]
+        tab.semantic_tokens_line(4).unwrap_or_default(),
+        &[sem_tok(")", Some(HighlightKind::Keyword))]
     );
     assert!(tab.pending_semantic_highlight.is_none());
 }
@@ -324,8 +297,14 @@ fn invalidate_semantic_highlight_keeps_on_single_line_pure_insert() {
     tab.set_semantic_highlight(
         0,
         vec![
-            vec![span(0, 7, HighlightKind::Keyword)],
-            vec![span(0, 4, HighlightKind::Keyword)],
+            vec![
+                sem_tok("package", Some(HighlightKind::Keyword)),
+                sem_tok(" main", None),
+            ],
+            vec![
+                sem_tok("func", Some(HighlightKind::Keyword)),
+                sem_tok(" main() {}", None),
+            ],
         ],
     );
     assert!(tab.semantic_highlight.is_some());
@@ -337,11 +316,12 @@ fn invalidate_semantic_highlight_keeps_on_single_line_pure_insert() {
 
     tab.invalidate_semantic_highlight_on_edit(&op);
     assert!(tab.semantic_highlight.is_some());
+    assert!(tab.semantic_tokens_line(1).is_some_and(has_semantic_kind));
     assert!(tab.pending_semantic_highlight.is_none());
 }
 
 #[test]
-fn invalidate_semantic_highlight_keeps_on_single_line_replace_without_newline() {
+fn invalidate_semantic_highlight_clears_touched_token_on_single_line_replace_without_newline() {
     use crate::kernel::services::ports::EditorConfig;
     use std::path::PathBuf;
 
@@ -354,7 +334,11 @@ fn invalidate_semantic_highlight_keeps_on_single_line_replace_without_newline() 
     );
 
     let mut lines = vec![Vec::new(); tab.buffer.len_lines().max(1)];
-    lines[0] = vec![span(4, 7, HighlightKind::Namespace)];
+    lines[0] = vec![
+        sem_tok("let ", None),
+        sem_tok("con", Some(HighlightKind::Namespace)),
+        sem_tok(" = 1;", None),
+    ];
     tab.set_semantic_highlight(0, lines);
     assert!(tab.semantic_highlight.is_some());
 
@@ -366,11 +350,65 @@ fn invalidate_semantic_highlight_keeps_on_single_line_replace_without_newline() 
 
     tab.invalidate_semantic_highlight_on_edit(&op);
     assert!(tab.semantic_highlight.is_some());
-    assert_eq!(
-        tab.semantic_highlight_line(0).unwrap_or_default(),
-        &[span(4, 11, HighlightKind::Namespace)]
-    );
+    assert!(tab
+        .semantic_tokens_line(0)
+        .is_some_and(|tokens| !has_semantic_kind(tokens)));
     assert!(tab.pending_semantic_highlight.is_none());
+}
+
+#[test]
+fn invalidate_semantic_highlight_clears_touched_token_on_mid_token_inserts() {
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    let config = EditorConfig::default();
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "String\n", &config);
+
+    tab.set_semantic_highlight(0, vec![vec![sem_tok("String", Some(HighlightKind::Type))]]);
+
+    let insert_at = tab.buffer.rope().line_to_char(0) + 3;
+    let op = tab
+        .buffer
+        .replace_range_op_adjust_cursor(insert_at, insert_at, "_", OpId::root());
+
+    tab.invalidate_semantic_highlight_on_edit(&op);
+    assert!(tab.semantic_highlight.is_some());
+    assert_eq!(
+        tab.semantic_tokens_line(0).unwrap_or_default(),
+        &[sem_tok("Str_ing", None)]
+    );
+}
+
+#[test]
+fn invalidate_semantic_highlight_clears_touched_token_on_mid_token_newline_inserts() {
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    let config = EditorConfig::default();
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "foobar\n", &config);
+
+    tab.set_semantic_highlight(
+        0,
+        vec![vec![sem_tok("foobar", Some(HighlightKind::Function))]],
+    );
+
+    let insert_at = tab.buffer.rope().line_to_char(0) + 3;
+    let op = tab
+        .buffer
+        .replace_range_op_adjust_cursor(insert_at, insert_at, "\n", OpId::root());
+
+    tab.invalidate_semantic_highlight_on_edit(&op);
+    assert!(tab.semantic_highlight.is_some());
+    assert_eq!(
+        tab.semantic_tokens_line(0).unwrap_or_default(),
+        &[sem_tok("foo", None)]
+    );
+    assert_eq!(
+        tab.semantic_tokens_line(1).unwrap_or_default(),
+        &[sem_tok("bar", None)]
+    );
 }
 
 #[test]

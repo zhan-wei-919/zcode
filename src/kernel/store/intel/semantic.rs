@@ -1,16 +1,16 @@
-use crate::kernel::editor::{HighlightKind, HighlightSpan};
+use crate::kernel::editor::{HighlightKind, HighlightSpan, SemanticToken};
 use crate::kernel::services::ports::{
     LspPositionEncoding, LspSemanticToken, LspSemanticTokensLegend,
 };
 
 use super::lsp::lsp_col_to_char_offset_in_line;
 
-pub(super) fn semantic_highlight_lines_from_tokens(
+pub(super) fn semantic_token_lines_from_tokens(
     rope: &ropey::Rope,
     tokens: &[LspSemanticToken],
     legend: &LspSemanticTokensLegend,
     encoding: LspPositionEncoding,
-) -> Vec<Vec<HighlightSpan>> {
+) -> Vec<Vec<SemanticToken>> {
     let total_lines = rope.len_lines().max(1);
     let mut lines: Vec<Vec<HighlightSpan>> = vec![Vec::new(); total_lines];
     let mut needs_sort = vec![false; total_lines];
@@ -66,6 +66,7 @@ pub(super) fn semantic_highlight_lines_from_tokens(
         line.push(HighlightSpan { start, end, kind });
     }
 
+    // Ensure spans are sorted/merged before tokenization.
     for (idx, line_spans) in lines.iter_mut().enumerate() {
         if needs_sort[idx] {
             line_spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
@@ -73,17 +74,17 @@ pub(super) fn semantic_highlight_lines_from_tokens(
         merge_adjacent_highlight_spans(line_spans);
     }
 
-    lines
+    spans_to_semantic_tokens_full(rope, &lines)
 }
 
-pub(super) fn semantic_highlight_lines_from_tokens_range(
+pub(super) fn semantic_token_lines_from_tokens_range(
     rope: &ropey::Rope,
     tokens: &[LspSemanticToken],
     legend: &LspSemanticTokensLegend,
     encoding: LspPositionEncoding,
     start_line: usize,
     end_line_exclusive: usize,
-) -> Vec<Vec<HighlightSpan>> {
+) -> Vec<Vec<SemanticToken>> {
     if start_line >= end_line_exclusive {
         return Vec::new();
     }
@@ -158,7 +159,7 @@ pub(super) fn semantic_highlight_lines_from_tokens_range(
         merge_adjacent_highlight_spans(line_spans);
     }
 
-    lines
+    spans_to_semantic_tokens_range(rope, start_line, &lines)
 }
 
 fn map_semantic_token_type(token_type: &str) -> (Option<HighlightKind>, bool) {
@@ -278,6 +279,133 @@ fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
         }
     }
     spans.truncate(write);
+}
+
+fn spans_to_semantic_tokens_full(
+    rope: &ropey::Rope,
+    spans_by_line: &[Vec<HighlightSpan>],
+) -> Vec<Vec<SemanticToken>> {
+    let total_lines = rope.len_lines().max(1);
+    let mut out: Vec<Vec<SemanticToken>> = Vec::with_capacity(total_lines);
+    for line_index in 0..total_lines {
+        let slice = rope.line(line_index);
+        let line_cow = slice.as_str().map_or_else(
+            || std::borrow::Cow::Owned(slice.to_string()),
+            std::borrow::Cow::Borrowed,
+        );
+        let line = line_cow.strip_suffix('\n').unwrap_or(&line_cow);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let spans = spans_by_line
+            .get(line_index)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let tokens = semantic_tokens_for_line(line, spans);
+        debug_assert_eq!(tokens_concat_len(&tokens), line.len());
+        out.push(tokens);
+    }
+    out
+}
+
+fn spans_to_semantic_tokens_range(
+    rope: &ropey::Rope,
+    start_line: usize,
+    spans_by_row: &[Vec<HighlightSpan>],
+) -> Vec<Vec<SemanticToken>> {
+    let mut out: Vec<Vec<SemanticToken>> = Vec::with_capacity(spans_by_row.len());
+    for (row_idx, spans) in spans_by_row.iter().enumerate() {
+        let line_index = start_line.saturating_add(row_idx);
+        let slice = rope.line(line_index);
+        let line_cow = slice.as_str().map_or_else(
+            || std::borrow::Cow::Owned(slice.to_string()),
+            std::borrow::Cow::Borrowed,
+        );
+        let line = line_cow.strip_suffix('\n').unwrap_or(&line_cow);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let tokens = semantic_tokens_for_line(line, spans);
+        debug_assert_eq!(tokens_concat_len(&tokens), line.len());
+        out.push(tokens);
+    }
+    out
+}
+
+fn semantic_tokens_for_line(line: &str, spans: &[HighlightSpan]) -> Vec<SemanticToken> {
+    if line.is_empty() {
+        return Vec::new();
+    }
+
+    let mut tokens: Vec<SemanticToken> = Vec::new();
+    let mut cursor = 0usize;
+    let len = line.len();
+
+    for span in spans {
+        if cursor >= len {
+            break;
+        }
+
+        let start = span.start.min(len);
+        let end = span.end.min(len);
+        if end <= cursor {
+            continue;
+        }
+
+        let start = start.max(cursor);
+        if start > cursor {
+            let gap = &line[cursor..start];
+            if !gap.is_empty() {
+                tokens.push(SemanticToken {
+                    text: gap.into(),
+                    semantic_kind: None,
+                });
+            }
+        }
+
+        if end > start {
+            let text = &line[start..end];
+            if !text.is_empty() {
+                tokens.push(SemanticToken {
+                    text: text.into(),
+                    semantic_kind: Some(span.kind),
+                });
+            }
+            cursor = end;
+        }
+    }
+
+    if cursor < len {
+        let tail = &line[cursor..];
+        if !tail.is_empty() {
+            tokens.push(SemanticToken {
+                text: tail.into(),
+                semantic_kind: None,
+            });
+        }
+    }
+
+    merge_adjacent_semantic_tokens(&mut tokens);
+    tokens
+}
+
+fn merge_adjacent_semantic_tokens(tokens: &mut Vec<SemanticToken>) {
+    if tokens.len() < 2 {
+        return;
+    }
+
+    let mut write = 1usize;
+    for read in 1..tokens.len() {
+        let tok = tokens[read].clone();
+        let prev = &mut tokens[write - 1];
+        if prev.semantic_kind == tok.semantic_kind {
+            prev.text.push_str(tok.text.as_str());
+        } else {
+            tokens[write] = tok;
+            write += 1;
+        }
+    }
+    tokens.truncate(write);
+}
+
+fn tokens_concat_len(tokens: &[SemanticToken]) -> usize {
+    tokens.iter().map(|t| t.text.len()).sum()
 }
 
 #[cfg(test)]

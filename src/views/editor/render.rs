@@ -1,7 +1,7 @@
 use crate::core::text_window;
 use crate::kernel::editor::{
     cursor_display_x_abs, EditorPaneState, EditorTabState, HighlightKind, HighlightSpan,
-    SearchBarField, SearchBarMode, SearchBarState, SyntaxColorGroup,
+    SearchBarField, SearchBarMode, SearchBarState, SemanticToken, SyntaxColorGroup,
 };
 use crate::kernel::services::ports::{EditorConfig, Match};
 use crate::models::{cursor_set, slice_to_cow};
@@ -804,8 +804,6 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             highlight_spans
         };
 
-        let semantic_spans = tab.semantic_highlight_line(row);
-        let has_semantic_spans = semantic_spans.is_some_and(|spans| !spans.is_empty());
         let inlay_hints = tab.inlay_hint_line(row);
 
         let line = tab
@@ -816,6 +814,23 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         let line = line.strip_suffix('\n').unwrap_or(&line);
         let line = line.strip_suffix('\r').unwrap_or(line);
 
+        let mut semantic_tokens_fallback: Vec<SemanticToken> = Vec::new();
+        let semantic_tokens: &[SemanticToken] = match tab.semantic_tokens_line(row) {
+            Some(tokens) => tokens,
+            None => {
+                if !line.is_empty() {
+                    semantic_tokens_fallback.push(SemanticToken {
+                        text: line.into(),
+                        semantic_kind: None,
+                    });
+                }
+                semantic_tokens_fallback.as_slice()
+            }
+        };
+        let has_semantic_kinds = semantic_tokens
+            .iter()
+            .any(|t| t.semantic_kind.is_some() && !t.text.is_empty());
+
         let mut x = area.x;
         let right = area.right();
         let row_clip = Rect::new(area.x, y, area.w, 1);
@@ -825,7 +840,6 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         let mut display_col: u32 = 0;
         let mut byte_offset: usize = 0;
         let has_syntax_spans = highlight_spans.is_some_and(|spans| !spans.is_empty());
-        let mut semantic_idx: usize = 0;
         let mut highlight_state = HighlightCacheState::default();
         let mut line_match_cursor: usize = 0;
         let has_line_matches = !line_matches.is_empty();
@@ -841,6 +855,8 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                 byte_offset = start;
             }
         }
+
+        let mut semantic_state = SemanticTokenCacheState::default();
 
         let mut seg: Option<TextSegment> = None;
 
@@ -898,9 +914,13 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                     None
                 };
                 let opaque = syntax_kind.is_some_and(|kind| kind.is_opaque());
-                if has_semantic_spans && !opaque {
-                    highlight_style =
-                        style_for_highlight(semantic_spans, &mut semantic_idx, g_start, theme);
+                if has_semantic_kinds && !opaque {
+                    if let Some(kind) =
+                        semantic_kind_cached(semantic_tokens, &mut semantic_state, g_start)
+                    {
+                        highlight_style =
+                            Some(Style::default().fg(theme.syntax_fg(kind.color_group())));
+                    }
                 }
                 if highlight_style.is_none() {
                     if let Some(kind) = syntax_kind {
@@ -1304,24 +1324,45 @@ fn highlight_kind_cached(
     Some(span.kind)
 }
 
-fn style_for_highlight(
-    highlight_spans: Option<&[HighlightSpan]>,
-    highlight_idx: &mut usize,
+#[derive(Clone, Copy, Debug, Default)]
+struct SemanticTokenCacheState {
+    idx: usize,
+    active_end: usize,
+}
+
+#[inline]
+fn semantic_kind_cached(
+    semantic_tokens: &[SemanticToken],
+    state: &mut SemanticTokenCacheState,
     byte_offset: usize,
-    theme: &Theme,
-) -> Option<Style> {
-    let spans = highlight_spans?;
-
-    while *highlight_idx < spans.len() && spans[*highlight_idx].end <= byte_offset {
-        *highlight_idx += 1;
-    }
-
-    let span = spans.get(*highlight_idx)?;
-    if byte_offset < span.start || byte_offset >= span.end {
+) -> Option<HighlightKind> {
+    if semantic_tokens.is_empty() {
         return None;
     }
 
-    Some(Style::default().fg(theme.syntax_fg(span.kind.color_group())))
+    if byte_offset < state.active_end {
+        return semantic_tokens
+            .get(state.idx)
+            .and_then(|tok| tok.semantic_kind);
+    }
+
+    if state.active_end == 0 && state.idx == 0 {
+        state.active_end = semantic_tokens
+            .first()
+            .map(|tok| tok.text.len())
+            .unwrap_or(0);
+    }
+
+    while state.idx < semantic_tokens.len() && state.active_end <= byte_offset {
+        state.idx += 1;
+        if let Some(tok) = semantic_tokens.get(state.idx) {
+            state.active_end = state.active_end.saturating_add(tok.text.len());
+        }
+    }
+
+    semantic_tokens
+        .get(state.idx)
+        .and_then(|tok| tok.semantic_kind)
 }
 
 fn search_match_bg(

@@ -14,6 +14,7 @@ use self::util::{is_comment_kind, is_regex_kind, is_string_kind};
 use crate::kernel::language::LanguageId;
 use crate::kernel::services::adapters::perf;
 use crate::models::EditOp;
+use compact_str::CompactString;
 use ropey::Rope;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -169,6 +170,12 @@ pub struct HighlightSpan {
     pub start: usize,
     pub end: usize,
     pub kind: HighlightKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticToken {
+    pub text: CompactString,
+    pub semantic_kind: Option<HighlightKind>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

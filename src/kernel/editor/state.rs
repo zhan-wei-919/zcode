@@ -11,7 +11,7 @@ use unicode_xid::UnicodeXID;
 
 use super::syntax::{merge_adjacent_highlight_spans, SyntaxDocument};
 use super::syntax_highlight_cache::AsyncSyntaxHighlightCache;
-use super::{viewport, HighlightKind, HighlightSpan, LanguageId};
+use super::{viewport, HighlightKind, HighlightSpan, LanguageId, SemanticToken};
 
 type SharedSyntaxHighlightLines = Arc<Vec<Arc<Vec<HighlightSpan>>>>;
 
@@ -734,11 +734,11 @@ impl EditorTabState {
         Some(Arc::new(out))
     }
 
-    pub fn semantic_highlight_lines(
+    pub fn semantic_tokens_lines(
         &self,
         start_line: usize,
         end_line_exclusive: usize,
-    ) -> Option<&[Vec<HighlightSpan>]> {
+    ) -> Option<&[Vec<SemanticToken>]> {
         let semantic = self.semantic_highlight.as_ref()?;
         semantic.lines(start_line, end_line_exclusive)
     }
@@ -746,10 +746,10 @@ impl EditorTabState {
     pub(crate) fn has_semantic_highlight(&self) -> bool {
         self.semantic_highlight
             .as_ref()
-            .is_some_and(|semantic| semantic.has_any_spans())
+            .is_some_and(|semantic| semantic.has_any_semantic_kinds())
     }
 
-    pub fn set_semantic_highlight(&mut self, version: u64, lines: Vec<Vec<HighlightSpan>>) -> bool {
+    pub fn set_semantic_highlight(&mut self, version: u64, lines: Vec<Vec<SemanticToken>>) -> bool {
         let same = self
             .semantic_highlight
             .as_ref()
@@ -765,7 +765,7 @@ impl EditorTabState {
     pub fn set_semantic_highlight_from_slice(
         &mut self,
         version: u64,
-        lines: &[Vec<HighlightSpan>],
+        lines: &[Vec<SemanticToken>],
     ) -> bool {
         let same = self
             .semantic_highlight
@@ -782,7 +782,7 @@ impl EditorTabState {
     pub(crate) fn set_pending_semantic_highlight_from_slice(
         &mut self,
         version: u64,
-        lines: &[Vec<HighlightSpan>],
+        lines: &[Vec<SemanticToken>],
     ) -> bool {
         let same = self
             .pending_semantic_highlight
@@ -801,7 +801,7 @@ impl EditorTabState {
         &mut self,
         version: u64,
         start_line: usize,
-        lines: Vec<Vec<HighlightSpan>>,
+        lines: Vec<Vec<SemanticToken>>,
     ) -> bool {
         self.set_semantic_highlight_range_from_slice(version, start_line, &lines)
     }
@@ -810,7 +810,7 @@ impl EditorTabState {
         &mut self,
         version: u64,
         start_line: usize,
-        lines: &[Vec<HighlightSpan>],
+        lines: &[Vec<SemanticToken>],
     ) -> bool {
         if lines.is_empty() {
             return false;
@@ -846,7 +846,7 @@ impl EditorTabState {
         &mut self,
         version: u64,
         start_line: usize,
-        lines: &[Vec<HighlightSpan>],
+        lines: &[Vec<SemanticToken>],
     ) -> bool {
         if lines.is_empty() {
             return false;
@@ -889,7 +889,7 @@ impl EditorTabState {
 
         let changed = match self.semantic_highlight.as_ref() {
             Some(current) => !current.visually_eq(&pending),
-            None => pending.has_any_spans(),
+            None => pending.has_any_semantic_kinds(),
         };
 
         self.semantic_highlight = Some(pending);
@@ -923,73 +923,48 @@ impl EditorTabState {
             (start_line, local_start_byte)
         };
 
-        let inserted_newlines = inserted_text.matches('\n').count();
         let deleted_newlines = deleted_text.matches('\n').count();
-
-        let is_single_line_edit = inserted_newlines == 0 && deleted_newlines == 0;
-        let is_pure_insert = !inserted_text.is_empty() && deleted_text.is_empty();
-        let is_pure_delete = inserted_text.is_empty() && !deleted_text.is_empty();
-        let is_incremental = is_single_line_edit || is_pure_insert || is_pure_delete;
-
+        let inserted_newlines = inserted_text.matches('\n').count();
         let delta_lines = inserted_newlines as isize - deleted_newlines as isize;
-        let deleted_line_span = affected_line_span(deleted_text);
-        let inserted_line_span = affected_line_span(inserted_text);
-        let edit = SemanticHighlightEdit {
-            next_version: self.edit_version.saturating_add(1),
-            start_line,
-            local_start_byte,
-            deleted_len: deleted_text.len(),
-            inserted_len: inserted_text.len(),
-            deleted_line_span,
-            inserted_line_span,
-            delta_lines,
-            is_single_line_edit,
-            is_incremental,
-        };
 
-        Self::apply_semantic_highlight_edit(&mut self.semantic_highlight, edit);
-        Self::apply_semantic_highlight_edit(&mut self.pending_semantic_highlight, edit);
-    }
-
-    fn apply_semantic_highlight_edit(
-        semantic_highlight: &mut Option<SemanticHighlightState>,
-        edit: SemanticHighlightEdit,
-    ) {
-        let Some(semantic) = semantic_highlight.as_mut() else {
-            return;
-        };
-
-        if semantic.segments.is_empty() {
-            return;
-        }
-
-        if edit.is_incremental {
-            if edit.is_single_line_edit {
-                semantic.apply_byte_edit(
-                    edit.start_line,
-                    edit.local_start_byte,
-                    edit.deleted_len,
-                    edit.inserted_len,
-                );
-            } else {
-                semantic.apply_newline_edit(
-                    edit.start_line,
-                    edit.local_start_byte,
-                    edit.delta_lines,
-                );
-            }
+        // Derive the end position from the deleted text. `EditOp` is applied before this is
+        // called, so we cannot use the current rope to locate the old end directly.
+        let (end_line, local_end_byte) = if deleted_newlines == 0 {
+            (
+                start_line,
+                local_start_byte.saturating_add(deleted_text.len()),
+            )
         } else {
-            semantic.apply_non_incremental_edit(
-                edit.start_line,
-                edit.deleted_line_span,
-                edit.inserted_line_span,
-            );
-        }
+            let tail = deleted_text.rsplit('\n').next().unwrap_or("");
+            (start_line.saturating_add(deleted_newlines), tail.len())
+        };
 
-        semantic.version = edit.next_version;
+        let next_version = self.edit_version.saturating_add(1);
+        if let Some(semantic) = self.semantic_highlight.as_mut() {
+            semantic.apply_text_edit(
+                start_line,
+                local_start_byte,
+                end_line,
+                local_end_byte,
+                inserted_text,
+                delta_lines,
+            );
+            semantic.version = next_version;
+        }
+        if let Some(pending) = self.pending_semantic_highlight.as_mut() {
+            pending.apply_text_edit(
+                start_line,
+                local_start_byte,
+                end_line,
+                local_end_byte,
+                inserted_text,
+                delta_lines,
+            );
+            pending.version = next_version;
+        }
     }
 
-    pub(crate) fn semantic_highlight_line(&self, line: usize) -> Option<&[HighlightSpan]> {
+    pub(crate) fn semantic_tokens_line(&self, line: usize) -> Option<&[SemanticToken]> {
         let semantic = self.semantic_highlight.as_ref()?;
         semantic.line(line)
     }
@@ -1397,30 +1372,170 @@ impl EditorTabState {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct SemanticHighlightEdit {
-    next_version: u64,
-    start_line: usize,
-    local_start_byte: usize,
-    deleted_len: usize,
-    inserted_len: usize,
-    deleted_line_span: usize,
-    inserted_line_span: usize,
-    delta_lines: isize,
-    is_single_line_edit: bool,
-    is_incremental: bool,
+fn shift_line(line: usize, delta_lines: isize) -> usize {
+    if delta_lines >= 0 {
+        line.saturating_add(delta_lines as usize)
+    } else {
+        line.saturating_sub(delta_lines.unsigned_abs())
+    }
 }
 
-fn affected_line_span(text: &str) -> usize {
-    if text.is_empty() {
-        return 0;
+fn merge_adjacent_semantic_tokens(tokens: &mut Vec<SemanticToken>) {
+    if tokens.len() < 2 {
+        return;
     }
-    let newline_count = text.matches('\n').count();
-    if text.ends_with('\n') {
-        newline_count.max(1)
+
+    let mut write = 1usize;
+    for read in 1..tokens.len() {
+        let tok = tokens[read].clone();
+        let prev = &mut tokens[write - 1];
+        if prev.semantic_kind == tok.semantic_kind {
+            prev.text.push_str(tok.text.as_str());
+        } else {
+            tokens[write] = tok;
+            write += 1;
+        }
+    }
+    tokens.truncate(write);
+}
+
+fn tokens_concat_len(tokens: &[SemanticToken]) -> usize {
+    tokens.iter().map(|t| t.text.len()).sum()
+}
+
+fn plain_semantic_tokens_for_line(line: &str) -> Vec<SemanticToken> {
+    if line.is_empty() {
+        Vec::new()
     } else {
-        newline_count.saturating_add(1)
+        vec![SemanticToken {
+            text: line.into(),
+            semantic_kind: None,
+        }]
     }
+}
+
+fn split_semantic_tokens_at(
+    tokens: &[SemanticToken],
+    byte: usize,
+) -> (Vec<SemanticToken>, Vec<SemanticToken>) {
+    if tokens.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let total = tokens_concat_len(tokens);
+    let byte = byte.min(total);
+
+    let mut left: Vec<SemanticToken> = Vec::new();
+    let mut right: Vec<SemanticToken> = Vec::new();
+
+    let mut cursor = 0usize;
+    for (idx, tok) in tokens.iter().enumerate() {
+        let tok_start = cursor;
+        let tok_end = cursor.saturating_add(tok.text.len());
+
+        if byte >= tok_end {
+            left.push(tok.clone());
+            cursor = tok_end;
+            continue;
+        }
+
+        // `byte` is within this token's range or at its start.
+        if byte <= tok_start {
+            right.extend(tokens[idx..].iter().cloned());
+            break;
+        }
+
+        // Split within token: clear semantic kind for both pieces (touched token policy).
+        let split_at = byte.saturating_sub(tok_start);
+        let text = tok.text.as_str();
+        let left_text = &text[..split_at];
+        let right_text = &text[split_at..];
+
+        if !left_text.is_empty() {
+            left.push(SemanticToken {
+                text: left_text.into(),
+                semantic_kind: None,
+            });
+        }
+        if !right_text.is_empty() {
+            right.push(SemanticToken {
+                text: right_text.into(),
+                semantic_kind: None,
+            });
+        }
+        if idx + 1 < tokens.len() {
+            right.extend(tokens[idx + 1..].iter().cloned());
+        }
+        break;
+    }
+
+    merge_adjacent_semantic_tokens(&mut left);
+    merge_adjacent_semantic_tokens(&mut right);
+    (left, right)
+}
+
+fn apply_text_edit_within_segment(
+    seg: &mut SemanticHighlightSegment,
+    start_line: usize,
+    local_start_byte: usize,
+    end_line: usize,
+    local_end_byte: usize,
+    inserted_text: &str,
+) {
+    let start_row = start_line.saturating_sub(seg.start_line);
+    let end_row = end_line.saturating_sub(seg.start_line);
+    if start_row >= seg.lines.len() || end_row >= seg.lines.len() || start_row > end_row {
+        return;
+    }
+
+    let start_len = tokens_concat_len(&seg.lines[start_row]);
+    let end_len = tokens_concat_len(&seg.lines[end_row]);
+    let start_byte = local_start_byte.min(start_len);
+    let end_byte = local_end_byte.min(end_len);
+
+    let start_tokens = seg.lines[start_row].clone();
+    let (mut prefix, _) = split_semantic_tokens_at(&start_tokens, start_byte);
+
+    let end_tokens = seg.lines[end_row].clone();
+    let (_, mut suffix) = split_semantic_tokens_at(&end_tokens, end_byte);
+
+    let inserted_lines: Vec<&str> = inserted_text.split('\n').collect();
+    let mut replacement: Vec<Vec<SemanticToken>> = Vec::with_capacity(inserted_lines.len().max(1));
+
+    for (idx, inserted_line) in inserted_lines.iter().enumerate() {
+        let mut line_tokens = plain_semantic_tokens_for_line(inserted_line);
+        if idx == 0 {
+            let mut first = Vec::new();
+            first.append(&mut prefix);
+            first.append(&mut line_tokens);
+            if inserted_lines.len() == 1 {
+                first.append(&mut suffix);
+            }
+            merge_adjacent_semantic_tokens(&mut first);
+            replacement.push(first);
+            continue;
+        }
+
+        if idx + 1 == inserted_lines.len() {
+            line_tokens.append(&mut suffix);
+            merge_adjacent_semantic_tokens(&mut line_tokens);
+            replacement.push(line_tokens);
+            continue;
+        }
+
+        merge_adjacent_semantic_tokens(&mut line_tokens);
+        replacement.push(line_tokens);
+    }
+
+    if inserted_lines.is_empty() {
+        let mut only = Vec::new();
+        only.append(&mut prefix);
+        only.append(&mut suffix);
+        merge_adjacent_semantic_tokens(&mut only);
+        replacement.push(only);
+    }
+
+    let _ = seg.lines.splice(start_row..=end_row, replacement);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1432,11 +1547,11 @@ pub struct SemanticHighlightState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SemanticHighlightSegment {
     start_line: usize,
-    lines: Vec<Vec<HighlightSpan>>,
+    lines: Vec<Vec<SemanticToken>>,
 }
 
 impl SemanticHighlightSegment {
-    fn new(start_line: usize, lines: Vec<Vec<HighlightSpan>>) -> Self {
+    fn new(start_line: usize, lines: Vec<Vec<SemanticToken>>) -> Self {
         Self { start_line, lines }
     }
 
@@ -1446,14 +1561,14 @@ impl SemanticHighlightSegment {
 }
 
 impl SemanticHighlightState {
-    fn from_full(version: u64, lines: Vec<Vec<HighlightSpan>>) -> Self {
+    fn from_full(version: u64, lines: Vec<Vec<SemanticToken>>) -> Self {
         Self {
             version,
             segments: vec![SemanticHighlightSegment::new(0, lines)],
         }
     }
 
-    fn matches_full(&self, version: u64, lines: &[Vec<HighlightSpan>]) -> bool {
+    fn matches_full(&self, version: u64, lines: &[Vec<SemanticToken>]) -> bool {
         self.version == version
             && self.segments.len() == 1
             && self.segments[0].start_line == 0
@@ -1464,17 +1579,19 @@ impl SemanticHighlightState {
         self.segments == other.segments
     }
 
-    fn has_any_spans(&self) -> bool {
-        self.segments
-            .iter()
-            .any(|seg| seg.lines.iter().any(|line| !line.is_empty()))
+    fn has_any_semantic_kinds(&self) -> bool {
+        self.segments.iter().any(|seg| {
+            seg.lines
+                .iter()
+                .any(|line| line.iter().any(|t| t.semantic_kind.is_some()))
+        })
     }
 
     fn replace_range(
         &mut self,
         start_line: usize,
         end_line_exclusive: usize,
-        mut lines: Vec<Vec<HighlightSpan>>,
+        mut lines: Vec<Vec<SemanticToken>>,
     ) {
         if start_line >= end_line_exclusive || lines.is_empty() {
             return;
@@ -1493,8 +1610,8 @@ impl SemanticHighlightState {
             .partition_point(|seg| seg.start_line < end_line_exclusive);
 
         let mut prefix_start: Option<usize> = None;
-        let mut prefix_lines: Vec<Vec<HighlightSpan>> = Vec::new();
-        let mut suffix_lines: Vec<Vec<HighlightSpan>> = Vec::new();
+        let mut prefix_lines: Vec<Vec<SemanticToken>> = Vec::new();
+        let mut suffix_lines: Vec<Vec<SemanticToken>> = Vec::new();
 
         {
             let placeholder = SemanticHighlightSegment::new(start_line, Vec::new());
@@ -1570,19 +1687,19 @@ impl SemanticHighlightState {
         self.merge_adjacent_segments(start_idx);
     }
 
-    fn line(&self, line: usize) -> Option<&[HighlightSpan]> {
+    fn line(&self, line: usize) -> Option<&[SemanticToken]> {
         let idx = self.segments.partition_point(|seg| seg.start_line <= line);
         let seg = self.segments.get(idx.checked_sub(1)?)?;
         if line < seg.end_line_exclusive() {
             seg.lines
                 .get(line.saturating_sub(seg.start_line))
-                .map(|spans| spans.as_slice())
+                .map(|tokens| tokens.as_slice())
         } else {
             None
         }
     }
 
-    fn lines(&self, start_line: usize, end_line_exclusive: usize) -> Option<&[Vec<HighlightSpan>]> {
+    fn lines(&self, start_line: usize, end_line_exclusive: usize) -> Option<&[Vec<SemanticToken>]> {
         if start_line >= end_line_exclusive {
             return None;
         }
@@ -1606,141 +1723,56 @@ impl SemanticHighlightState {
         Some(&seg.lines[start..end])
     }
 
-    fn apply_byte_edit(
-        &mut self,
-        line: usize,
-        local_start_byte: usize,
-        deleted_len: usize,
-        inserted_len: usize,
-    ) {
-        let idx = self.segments.partition_point(|seg| seg.start_line <= line);
-        let Some(seg) = idx
-            .checked_sub(1)
-            .and_then(|idx| self.segments.get_mut(idx))
-        else {
-            return;
-        };
-        if line >= seg.end_line_exclusive() {
-            return;
-        }
-
-        let Some(spans) = seg.lines.get_mut(line.saturating_sub(seg.start_line)) else {
-            return;
-        };
-        if spans.is_empty() {
-            return;
-        }
-
-        let del_end = local_start_byte.saturating_add(deleted_len);
-        let delta = inserted_len as isize - deleted_len as isize;
-
-        fn shift(value: usize, delta: isize) -> Option<usize> {
-            if delta >= 0 {
-                value.checked_add(delta as usize)
-            } else {
-                value.checked_sub(delta.wrapping_abs() as usize)
-            }
-        }
-
-        let mut next: Vec<HighlightSpan> = Vec::with_capacity(spans.len());
-        for mut span in spans.iter().copied() {
-            if deleted_len == 0 {
-                if span.start >= local_start_byte {
-                    span.start = span.start.saturating_add(inserted_len);
-                }
-                if span.end > local_start_byte {
-                    span.end = span.end.saturating_add(inserted_len);
-                }
-            } else {
-                if span.start >= del_end {
-                    let Some(new_start) = shift(span.start, delta) else {
-                        continue;
-                    };
-                    span.start = new_start;
-                } else if span.start >= local_start_byte {
-                    span.start = local_start_byte;
-                }
-
-                if span.end >= del_end {
-                    let Some(new_end) = shift(span.end, delta) else {
-                        continue;
-                    };
-                    span.end = new_end;
-                } else if span.end > local_start_byte {
-                    span.end = local_start_byte;
-                }
-            }
-
-            if span.end <= span.start {
-                continue;
-            }
-            next.push(span);
-        }
-
-        next.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
-        merge_adjacent_highlight_spans(&mut next);
-        *spans = next;
-    }
-
-    fn apply_newline_edit(&mut self, line: usize, local_start_byte: usize, delta_lines: isize) {
-        if delta_lines == 0 {
-            return;
-        }
-
-        let inserted = delta_lines.max(0) as usize;
-        let deleted = delta_lines.min(0).wrapping_abs() as usize;
-
-        for idx in 0..self.segments.len() {
-            let seg_start = self.segments[idx].start_line;
-            let seg_end = self.segments[idx].end_line_exclusive();
-
-            if seg_start > line {
-                self.segments[idx].start_line = if delta_lines >= 0 {
-                    seg_start.saturating_add(inserted)
-                } else {
-                    seg_start.saturating_sub(deleted)
-                };
-                continue;
-            }
-
-            if line < seg_start || line >= seg_end {
-                continue;
-            }
-
-            let rel = line.saturating_sub(seg_start);
-            let insert_at = if local_start_byte == 0 {
-                rel
-            } else {
-                rel.saturating_add(1)
-            }
-            .min(self.segments[idx].lines.len());
-            if inserted > 0 {
-                self.segments[idx].lines.splice(
-                    insert_at..insert_at,
-                    std::iter::repeat_with(Vec::new).take(inserted),
-                );
-            } else if deleted > 0 {
-                let remove_end = insert_at
-                    .saturating_add(deleted)
-                    .min(self.segments[idx].lines.len());
-                self.segments[idx].lines.drain(insert_at..remove_end);
-            }
-        }
-
-        self.segments.retain(|seg| !seg.lines.is_empty());
-        self.segments
-            .sort_by(|a, b| a.start_line.cmp(&b.start_line));
-    }
-
-    fn apply_non_incremental_edit(
+    fn apply_text_edit(
         &mut self,
         start_line: usize,
-        deleted_line_span: usize,
-        inserted_line_span: usize,
+        local_start_byte: usize,
+        end_line: usize,
+        local_end_byte: usize,
+        inserted_text: &str,
+        delta_lines: isize,
     ) {
-        let old_end_exclusive = start_line.saturating_add(deleted_line_span.max(1));
-        let replacement = vec![Vec::new(); inserted_line_span.max(1)];
-        self.replace_range(start_line, old_end_exclusive, replacement);
+        if self.segments.is_empty() {
+            return;
+        }
+
+        let mut next: Vec<SemanticHighlightSegment> = Vec::with_capacity(self.segments.len());
+        for mut seg in std::mem::take(&mut self.segments) {
+            let seg_start = seg.start_line;
+            let seg_end = seg.end_line_exclusive();
+
+            if seg_end <= start_line {
+                next.push(seg);
+                continue;
+            }
+
+            if seg_start > end_line {
+                seg.start_line = shift_line(seg_start, delta_lines);
+                next.push(seg);
+                continue;
+            }
+
+            // Edit overlaps this segment.
+            if !(seg_start <= start_line && end_line < seg_end) {
+                // We don't have a full token view of the edited range; drop to avoid producing
+                // mismatched text → style binding.
+                continue;
+            }
+
+            apply_text_edit_within_segment(
+                &mut seg,
+                start_line,
+                local_start_byte,
+                end_line,
+                local_end_byte,
+                inserted_text,
+            );
+            next.push(seg);
+        }
+
+        next.sort_by(|a, b| a.start_line.cmp(&b.start_line));
+        self.segments = next;
+        self.merge_all_adjacent_segments();
     }
 
     fn merge_adjacent_segments(&mut self, idx: usize) {
@@ -1756,6 +1788,24 @@ impl SemanticHighlightState {
         {
             let mut next = self.segments.remove(idx + 1);
             self.segments[idx].lines.append(&mut next.lines);
+        }
+    }
+
+    fn merge_all_adjacent_segments(&mut self) {
+        if self.segments.len() < 2 {
+            return;
+        }
+        self.segments
+            .sort_by(|a, b| a.start_line.cmp(&b.start_line));
+
+        let mut idx = 0usize;
+        while idx + 1 < self.segments.len() {
+            if self.segments[idx].end_line_exclusive() == self.segments[idx + 1].start_line {
+                let mut next = self.segments.remove(idx + 1);
+                self.segments[idx].lines.append(&mut next.lines);
+            } else {
+                idx += 1;
+            }
         }
     }
 }

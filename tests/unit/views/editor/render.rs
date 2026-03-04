@@ -643,122 +643,120 @@ fn paint_editor_tabs_truncate_titles_with_ellipsis_in_narrow_width() {
 }
 
 #[test]
-fn style_for_highlight_respects_span_boundaries() {
-    let theme = Theme::default();
-    let spans = vec![HighlightSpan {
-        start: 2,
-        end: 5,
-        kind: HighlightKind::Comment,
-    }];
-    let mut idx = 0usize;
-    let expected =
-        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::Comment));
-
-    assert_eq!(style_for_highlight(Some(&spans), &mut idx, 0, &theme), None);
-    assert_eq!(
-        style_for_highlight(Some(&spans), &mut idx, 2, &theme),
-        Some(expected)
-    );
-    assert_eq!(
-        style_for_highlight(Some(&spans), &mut idx, 4, &theme),
-        Some(expected)
-    );
-    assert_eq!(style_for_highlight(Some(&spans), &mut idx, 5, &theme), None);
-}
-
-#[test]
-fn style_for_highlight_advances_across_gaps() {
-    let theme = Theme::default();
-    let spans = vec![
-        HighlightSpan {
-            start: 0,
-            end: 2,
-            kind: HighlightKind::Keyword,
+fn semantic_kind_cached_respects_token_boundaries() {
+    let tokens = vec![
+        SemanticToken {
+            text: "ab".into(),
+            semantic_kind: None,
         },
-        HighlightSpan {
-            start: 4,
-            end: 7,
-            kind: HighlightKind::String,
+        SemanticToken {
+            text: "cde".into(),
+            semantic_kind: Some(HighlightKind::Comment),
+        },
+        SemanticToken {
+            text: "f".into(),
+            semantic_kind: None,
         },
     ];
-    let mut idx = 0usize;
-    let keyword_style =
-        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::Keyword));
-    let string_style =
-        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::String));
 
+    let mut state = SemanticTokenCacheState::default();
+    assert_eq!(semantic_kind_cached(&tokens, &mut state, 0), None);
     assert_eq!(
-        style_for_highlight(Some(&spans), &mut idx, 0, &theme),
-        Some(keyword_style)
+        semantic_kind_cached(&tokens, &mut state, 2),
+        Some(HighlightKind::Comment)
     );
     assert_eq!(
-        style_for_highlight(Some(&spans), &mut idx, 1, &theme),
-        Some(keyword_style)
+        semantic_kind_cached(&tokens, &mut state, 4),
+        Some(HighlightKind::Comment)
     );
-    assert_eq!(style_for_highlight(Some(&spans), &mut idx, 2, &theme), None);
-    assert_eq!(style_for_highlight(Some(&spans), &mut idx, 3, &theme), None);
-    assert_eq!(
-        style_for_highlight(Some(&spans), &mut idx, 4, &theme),
-        Some(string_style)
-    );
-    assert_eq!(
-        style_for_highlight(Some(&spans), &mut idx, 6, &theme),
-        Some(string_style)
-    );
-    assert_eq!(style_for_highlight(Some(&spans), &mut idx, 7, &theme), None);
+    assert_eq!(semantic_kind_cached(&tokens, &mut state, 5), None);
 }
 
 #[test]
-fn style_for_highlight_distinguishes_keyword_control_from_keyword() {
+fn semantic_kind_cached_advances_across_gaps() {
+    let tokens = vec![
+        SemanticToken {
+            text: "ab".into(),
+            semantic_kind: Some(HighlightKind::Keyword),
+        },
+        SemanticToken {
+            text: "cd".into(),
+            semantic_kind: None,
+        },
+        SemanticToken {
+            text: "efg".into(),
+            semantic_kind: Some(HighlightKind::String),
+        },
+    ];
+
+    let mut state = SemanticTokenCacheState::default();
+    assert_eq!(
+        semantic_kind_cached(&tokens, &mut state, 0),
+        Some(HighlightKind::Keyword)
+    );
+    assert_eq!(
+        semantic_kind_cached(&tokens, &mut state, 1),
+        Some(HighlightKind::Keyword)
+    );
+    assert_eq!(semantic_kind_cached(&tokens, &mut state, 2), None);
+    assert_eq!(semantic_kind_cached(&tokens, &mut state, 3), None);
+    assert_eq!(
+        semantic_kind_cached(&tokens, &mut state, 4),
+        Some(HighlightKind::String)
+    );
+    assert_eq!(
+        semantic_kind_cached(&tokens, &mut state, 6),
+        Some(HighlightKind::String)
+    );
+    assert_eq!(semantic_kind_cached(&tokens, &mut state, 7), None);
+}
+
+#[test]
+fn semantic_kind_cached_distinguishes_keyword_control_from_keyword() {
     let theme = Theme::default();
     assert_ne!(
         theme.syntax_fg(SyntaxColorGroup::Keyword),
         theme.syntax_fg(SyntaxColorGroup::KeywordControl)
     );
 
-    let spans = vec![
-        HighlightSpan {
-            start: 0,
-            end: 1,
-            kind: HighlightKind::Keyword,
+    let tokens = vec![
+        SemanticToken {
+            text: "a".into(),
+            semantic_kind: Some(HighlightKind::Keyword),
         },
-        HighlightSpan {
-            start: 1,
-            end: 2,
-            kind: HighlightKind::KeywordControl,
+        SemanticToken {
+            text: "b".into(),
+            semantic_kind: Some(HighlightKind::KeywordControl),
         },
     ];
-    let mut idx = 0usize;
-    let keyword_style =
-        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::Keyword));
-    let keyword_control_style = crate::ui::core::style::Style::default()
-        .fg(theme.syntax_fg(SyntaxColorGroup::KeywordControl));
-
+    let mut state = SemanticTokenCacheState::default();
     assert_eq!(
-        style_for_highlight(Some(&spans), &mut idx, 0, &theme),
-        Some(keyword_style)
+        semantic_kind_cached(&tokens, &mut state, 0),
+        Some(HighlightKind::Keyword)
     );
     assert_eq!(
-        style_for_highlight(Some(&spans), &mut idx, 1, &theme),
-        Some(keyword_control_style)
+        semantic_kind_cached(&tokens, &mut state, 1),
+        Some(HighlightKind::KeywordControl)
     );
 }
 
 #[test]
 fn semantic_keyword_should_not_override_keyword_control() {
     let theme = Theme::default();
-    let semantic_spans = vec![HighlightSpan {
-        start: 0,
-        end: 2,
-        kind: HighlightKind::Keyword,
+    let semantic_tokens = vec![SemanticToken {
+        text: "if".into(),
+        semantic_kind: Some(HighlightKind::Keyword),
     }];
 
     let syntax_kind = Some(HighlightKind::KeywordControl);
-    let mut semantic_idx = 0usize;
+    let mut semantic_state = SemanticTokenCacheState::default();
     let mut highlight_style = None;
     let opaque = syntax_kind.is_some_and(|kind| kind.is_opaque());
     if !opaque {
-        highlight_style = style_for_highlight(Some(&semantic_spans), &mut semantic_idx, 0, &theme);
+        highlight_style =
+            semantic_kind_cached(&semantic_tokens, &mut semantic_state, 0).map(|kind| {
+                crate::ui::core::style::Style::default().fg(theme.syntax_fg(kind.color_group()))
+            });
     }
     if highlight_style.is_none() {
         if let Some(kind) = syntax_kind {
@@ -774,20 +772,22 @@ fn semantic_keyword_should_not_override_keyword_control() {
 }
 
 #[test]
-fn semantic_keyword_can_override_keyword() {
+fn semantic_can_override_non_opaque_syntax() {
     let theme = Theme::default();
-    let semantic_spans = vec![HighlightSpan {
-        start: 0,
-        end: 2,
-        kind: HighlightKind::Keyword,
+    let semantic_tokens = vec![SemanticToken {
+        text: "if".into(),
+        semantic_kind: Some(HighlightKind::Function),
     }];
 
     let syntax_kind = Some(HighlightKind::Keyword);
-    let mut semantic_idx = 0usize;
+    let mut semantic_state = SemanticTokenCacheState::default();
     let mut highlight_style = None;
     let opaque = syntax_kind.is_some_and(|kind| kind.is_opaque());
     if !opaque {
-        highlight_style = style_for_highlight(Some(&semantic_spans), &mut semantic_idx, 0, &theme);
+        highlight_style =
+            semantic_kind_cached(&semantic_tokens, &mut semantic_state, 0).map(|kind| {
+                crate::ui::core::style::Style::default().fg(theme.syntax_fg(kind.color_group()))
+            });
     }
     if highlight_style.is_none() {
         if let Some(kind) = syntax_kind {
@@ -798,13 +798,12 @@ fn semantic_keyword_can_override_keyword() {
     }
 
     let expected =
-        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::Keyword));
+        crate::ui::core::style::Style::default().fg(theme.syntax_fg(SyntaxColorGroup::Function));
     assert_eq!(highlight_style, Some(expected));
 }
 
 #[test]
-fn style_for_highlight_cached_matches_non_cached_lookup() {
-    let theme = Theme::default();
+fn highlight_kind_cached_matches_uncached_lookup() {
     let spans = vec![
         HighlightSpan {
             start: 0,
@@ -818,13 +817,13 @@ fn style_for_highlight_cached_matches_non_cached_lookup() {
         },
     ];
 
-    let mut idx = 0usize;
     let mut state = HighlightCacheState::default();
     for byte in 0..8 {
-        let expected = style_for_highlight(Some(&spans), &mut idx, byte, &theme);
-        let actual = highlight_kind_cached(Some(&spans), &mut state, byte).map(|kind| {
-            crate::ui::core::style::Style::default().fg(theme.syntax_fg(kind.color_group()))
-        });
+        let expected = spans
+            .iter()
+            .find(|span| span.start <= byte && byte < span.end)
+            .map(|span| span.kind);
+        let actual = highlight_kind_cached(Some(&spans), &mut state, byte);
         assert_eq!(actual, expected, "byte offset {byte}");
     }
 }
