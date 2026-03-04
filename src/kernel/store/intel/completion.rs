@@ -147,7 +147,11 @@ pub(in crate::kernel::store) fn sync_completion_items_from_cache(
         completion.rebuild_index_by_id();
     }
 
-    let selected_id = completion.selected_item().map(|item| item.id);
+    let selected_id = if completion.selection_locked {
+        completion.selected_item().map(|item| item.id)
+    } else {
+        None
+    };
 
     let prefix = completion_prefix_at_cursor(tab, strategy);
     if completion.filter_cache_valid
@@ -885,6 +889,7 @@ mod tests {
             strategy
         ));
         completion.selected = 2;
+        completion.selection_locked = true;
         let selected_id = completion
             .selected_item()
             .map(|item| item.id)
@@ -927,6 +932,7 @@ mod tests {
 
         let _ = sync_completion_items_from_cache(&mut completion, &tab, strategy);
         completion.selected = 3_200;
+        completion.selection_locked = true;
         let selected_id = completion
             .selected_item()
             .map(|item| item.id)
@@ -960,6 +966,7 @@ mod tests {
             visible: true,
             visible_indices: vec![2, 0, 1],
             selected: 1,
+            selection_locked: true,
             filter_cache_prefix: String::new(),
             filter_cache_indices: vec![2, 0, 1],
             filter_cache_source_len: 3,

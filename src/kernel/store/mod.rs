@@ -857,6 +857,7 @@ impl Store {
 
                 let mut effects = Vec::new();
                 if next != prev {
+                    self.state.ui.completion.selection_locked = true;
                     if let Some(item) = self.state.ui.completion.visible_item(next).cloned() {
                         let supports_resolve = self
                             .state

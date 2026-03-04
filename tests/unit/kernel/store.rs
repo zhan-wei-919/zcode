@@ -1465,6 +1465,7 @@ fn completion_selected_id_stays_stable_when_visible_indices_change() {
         .position(|idx| store.state.ui.completion.all_items[*idx].id == 1)
         .expect("print should be visible");
     store.state.ui.completion.selected = selected;
+    store.state.ui.completion.selection_locked = true;
     let before_id = store
         .state
         .ui
@@ -1485,6 +1486,43 @@ fn completion_selected_id_stays_stable_when_visible_indices_change() {
         Some(1)
     );
     assert_eq!(store.state.ui.completion.visible_len(), 2);
+}
+
+#[test]
+fn completion_defaults_to_first_item_when_selection_unlocked() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "pri\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::RunCommand(Command::CursorLineEnd));
+    let _ = store.dispatch(Action::RunCommand(Command::LspCompletion));
+
+    // Seed an existing completion popup with a non-zero selection, but keep it unlocked.
+    store.state.ui.completion.visible = true;
+    store.state.ui.completion.all_items = vec![
+        test_completion_item(1, "print"),
+        test_completion_item(2, "probe"),
+    ];
+    store.state.ui.completion.visible_indices = vec![0, 1];
+    store.state.ui.completion.selected = 1;
+    store.state.ui.completion.selection_locked = false;
+
+    let items = vec![
+        test_completion_item(11, "print"),
+        test_completion_item(12, "println!"),
+        test_completion_item(13, "private"),
+    ];
+    let _ = store.dispatch(Action::LspCompletion {
+        items,
+        is_incomplete: false,
+    });
+
+    assert!(store.state.ui.completion.visible);
+    assert_eq!(store.state.ui.completion.selected, 0);
 }
 
 #[test]

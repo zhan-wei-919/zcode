@@ -1380,7 +1380,11 @@ impl super::super::Store {
                 self.state.ui.hover_implementation_message.clear();
                 self.state.ui.hover_definition_message.clear();
                 self.state.ui.completion.visible = true;
-                let prev_selected = self.state.ui.completion.selected_item().map(|item| item.id);
+                let prev_selected = if self.state.ui.completion.selection_locked {
+                    self.state.ui.completion.selected_item().map(|item| item.id)
+                } else {
+                    None
+                };
 
                 let mut all_items = items;
                 let language = tab.language();

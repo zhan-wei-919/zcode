@@ -396,6 +396,7 @@ pub struct CompletionPopupState {
     pub index_by_id: FxHashMap<u64, usize>,
     pub visible_indices: Vec<usize>,
     pub selected: usize,
+    pub selection_locked: bool,
     pub filter_cache_prefix: String,
     pub filter_cache_indices: Vec<usize>,
     pub filter_cache_source_len: usize,
