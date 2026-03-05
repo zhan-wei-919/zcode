@@ -10,6 +10,42 @@ use crate::kernel::Effect;
 use ropey::Rope;
 use std::path::PathBuf;
 
+fn first_compute_syntax_effect(
+    effects: &[Effect],
+) -> Option<(
+    TabId,
+    u64,
+    crate::kernel::language::LanguageId,
+    Rope,
+    tree_sitter::Tree,
+    Vec<(usize, usize)>,
+)> {
+    effects.iter().find_map(|effect| match effect {
+        Effect::ComputeSyntaxHighlights {
+            tab_id,
+            version,
+            language,
+            rope,
+            tree,
+            segments,
+        } => Some((
+            *tab_id,
+            *version,
+            *language,
+            rope.clone(),
+            tree.clone(),
+            segments.clone(),
+        )),
+        _ => None,
+    })
+}
+
+fn has_compute_syntax_effect(effects: &[Effect]) -> bool {
+    effects
+        .iter()
+        .any(|effect| matches!(effect, Effect::ComputeSyntaxHighlights { .. }))
+}
+
 #[test]
 fn test_goto_byte_offset_eof_multibyte() {
     let config = EditorConfig::default();
@@ -351,6 +387,136 @@ fn test_file_reloaded_ignores_mismatched_pane_or_path() {
         .and_then(|pane| pane.active_tab())
         .expect("tab exists");
     assert_eq!(tab.buffer.text(), "base");
+}
+
+#[test]
+fn test_syntax_highlight_stale_inflight_immediately_requests_latest_version() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("main.rs");
+
+    let (_, open_effects) = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "u\n".to_string(),
+    });
+    let (tab_id, stale_version, stale_language, stale_rope, stale_tree, stale_segments) =
+        first_compute_syntax_effect(&open_effects).expect("open should schedule syntax highlight");
+
+    let (changed, edit_effects) = editor.apply_command(0, Command::InsertChar('s'));
+    assert!(changed);
+    let (_, latest_version, latest_language, latest_rope, latest_tree, latest_segments) =
+        first_compute_syntax_effect(&edit_effects)
+            .expect("edit should schedule latest syntax highlight even when stale inflight exists");
+
+    let current_version = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab")
+        .edit_version;
+    assert_eq!(latest_version, current_version);
+
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert_eq!(tab.syntax_highlight_inflight_version, Some(current_version));
+    assert_eq!(tab.syntax_highlight_pending_version, None);
+
+    let stale_patches = crate::kernel::editor::compute_highlight_patches(
+        stale_language,
+        &stale_tree,
+        &stale_rope,
+        &stale_segments,
+    );
+    let (changed, stale_reply_effects) =
+        editor.dispatch_action(EditorAction::ApplySyntaxHighlightPatches {
+            tab_id,
+            version: stale_version,
+            patches: stale_patches,
+        });
+    assert!(
+        !changed,
+        "stale reply should be ignored once latest request is already inflight"
+    );
+    assert!(
+        !has_compute_syntax_effect(&stale_reply_effects),
+        "stale reply should not enqueue extra work for current version"
+    );
+
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert_eq!(tab.syntax_highlight_inflight_version, Some(current_version));
+    assert_eq!(tab.syntax_highlight_pending_version, None);
+
+    let latest_patches = crate::kernel::editor::compute_highlight_patches(
+        latest_language,
+        &latest_tree,
+        &latest_rope,
+        &latest_segments,
+    );
+    let (changed, latest_reply_effects) =
+        editor.dispatch_action(EditorAction::ApplySyntaxHighlightPatches {
+            tab_id,
+            version: latest_version,
+            patches: latest_patches,
+        });
+    assert!(changed);
+    assert!(latest_reply_effects.is_empty());
+
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert_eq!(tab.syntax_highlight_inflight_version, None);
+}
+
+#[test]
+fn test_syntax_highlight_inflight_without_reply_still_requests_latest_version() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("main.rs");
+
+    let (_, open_effects) = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "u\n".to_string(),
+    });
+    let (_, inflight_version, _, _, _, _) =
+        first_compute_syntax_effect(&open_effects).expect("open should schedule syntax highlight");
+
+    let (changed, effects_v1) = editor.apply_command(0, Command::InsertChar('s'));
+    assert!(changed);
+    let (_, requested_v1, _, _, _, _) = first_compute_syntax_effect(&effects_v1)
+        .expect("first edit should schedule latest syntax highlight");
+    let version_v1 = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab")
+        .edit_version;
+    assert_eq!(requested_v1, version_v1);
+
+    let (changed, effects_v2) = editor.apply_command(0, Command::InsertChar('e'));
+    assert!(changed);
+    let (_, requested_v2, _, _, _, _) = first_compute_syntax_effect(&effects_v2)
+        .expect("second edit should schedule a newer syntax highlight request");
+    let version_v2 = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab")
+        .edit_version;
+    assert!(version_v2 > version_v1);
+    assert!(requested_v2 > requested_v1);
+    assert!(requested_v1 > inflight_version);
+
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    assert_eq!(tab.syntax_highlight_inflight_version, Some(version_v2));
+    assert_eq!(tab.syntax_highlight_pending_version, None);
 }
 
 #[test]

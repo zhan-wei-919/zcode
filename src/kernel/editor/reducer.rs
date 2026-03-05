@@ -1434,15 +1434,9 @@ impl EditorState {
         }
 
         let version = tab.edit_version;
-
-        if let Some(inflight) = tab.syntax_highlight_inflight_version {
-            if inflight == version {
-                return false;
-            }
-            if tab.syntax_highlight_pending_version != Some(version) {
-                tab.syntax_highlight_pending_version = Some(version);
-                return true;
-            }
+        if tab.syntax_highlight_inflight_version == Some(version)
+            || tab.syntax_highlight_last_requested_version == version
+        {
             return false;
         }
 

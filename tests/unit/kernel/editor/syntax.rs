@@ -987,6 +987,47 @@ fn test_apply_edit_invalidates_highlight_cache_and_updates_result() {
 }
 
 #[test]
+fn test_rust_incremental_parse_recognizes_use_keyword_without_full_reparse() {
+    let mut rope = Rope::from_str("");
+    let mut doc =
+        SyntaxDocument::for_path(Path::new("incremental_use.rs"), &rope).expect("rust syntax");
+
+    let mut cursor = 0usize;
+    for ch in "use crossterm".chars() {
+        let op = EditOp::insert(
+            OpId::root(),
+            cursor,
+            CompactString::new(ch.to_string()),
+            (0, 0),
+            (0, 0),
+        );
+        op.apply(&mut rope);
+        let delta = doc.apply_edit(&rope, &op);
+        assert!(!delta.reparsed);
+        cursor += 1;
+    }
+
+    let src = rope.to_string();
+    let use_start = src.find("use").expect("use token byte start");
+    let use_end = use_start + "use".len();
+
+    let spans_incremental = highlight_lines(&doc, &rope, 0, 1);
+    assert!(
+        spans_incremental[0]
+            .iter()
+            .any(|s| s.kind == HighlightKind::Keyword && s.start <= use_start && use_start < s.end),
+        "incremental parse should highlight `use` as Keyword"
+    );
+
+    let use_node_incremental = doc
+        .tree()
+        .root_node()
+        .descendant_for_byte_range(use_start, use_end)
+        .expect("use node after incremental parse");
+    assert_eq!(use_node_incremental.kind(), "use");
+}
+
+#[test]
 fn test_apply_edit_batch_falls_back_to_reparse() {
     let src = "fn main() { let value = 1; }\n";
     let mut rope = Rope::from_str(src);

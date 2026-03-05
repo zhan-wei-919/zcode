@@ -543,3 +543,62 @@ fn highlight_lines_shared_drops_cached_spans_on_multiline_same_line_count_edit()
     let rendered = tab.highlight_lines_shared(3, 4).expect("syntax available");
     assert!(rendered[0].is_empty());
 }
+
+#[test]
+fn highlight_lines_shared_keeps_stale_non_opaque_spans_until_syntax_patch_applied() {
+    use crate::kernel::editor::compute_highlight_patches;
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    let config = EditorConfig::default();
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "u\n", &config);
+
+    let total_lines = tab.buffer.len_lines().max(1);
+    let mut lines = vec![Vec::new(); total_lines];
+    lines[0] = vec![span(0, 1, HighlightKind::Variable)];
+    tab.syntax_highlight_cache
+        .as_mut()
+        .expect("rust file has syntax cache")
+        .apply_patch(0, lines);
+
+    let line_start = tab.buffer.rope().line_to_char(0);
+    let line_end = tab.buffer.rope().line_to_char(1);
+    let op = tab.buffer.replace_range_op_adjust_cursor(
+        line_start,
+        line_end,
+        "use crossterm\n",
+        OpId::root(),
+    );
+    tab.apply_syntax_edit(&op);
+
+    let stale = tab.highlight_lines_shared(0, 1).expect("syntax available");
+    assert!(
+        stale[0]
+            .iter()
+            .all(|span| span.kind != HighlightKind::Keyword),
+        "dirty line should still use cached non-opaque spans before async patch"
+    );
+
+    let syntax = tab.syntax().expect("rust syntax available");
+    let patches = compute_highlight_patches(
+        syntax.language(),
+        syntax.tree(),
+        tab.buffer.rope(),
+        &[(0, 1)],
+    );
+    let cache = tab
+        .syntax_highlight_cache
+        .as_mut()
+        .expect("syntax cache remains present");
+    for patch in patches {
+        cache.apply_patch(patch.start_line, patch.lines);
+    }
+
+    let refreshed = tab.highlight_lines_shared(0, 1).expect("syntax available");
+    let line = tab.buffer.rope().line(0).to_string();
+    let use_idx = line.find("use").expect("use token");
+    assert!(refreshed[0].iter().any(|span| {
+        span.kind == HighlightKind::Keyword && span.start <= use_idx && use_idx < span.end
+    }));
+}
