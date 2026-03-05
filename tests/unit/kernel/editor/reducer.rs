@@ -10,16 +10,18 @@ use crate::kernel::Effect;
 use ropey::Rope;
 use std::path::PathBuf;
 
-fn first_compute_syntax_effect(
-    effects: &[Effect],
-) -> Option<(
+type ComputeSyntaxEffect = (
     TabId,
     u64,
     crate::kernel::language::LanguageId,
     Rope,
     tree_sitter::Tree,
     Vec<(usize, usize)>,
-)> {
+);
+
+fn first_compute_syntax_effect(
+    effects: &[Effect],
+) -> Option<ComputeSyntaxEffect> {
     effects.iter().find_map(|effect| match effect {
         Effect::ComputeSyntaxHighlights {
             tab_id,

@@ -992,8 +992,7 @@ fn test_rust_incremental_parse_recognizes_use_keyword_without_full_reparse() {
     let mut doc =
         SyntaxDocument::for_path(Path::new("incremental_use.rs"), &rope).expect("rust syntax");
 
-    let mut cursor = 0usize;
-    for ch in "use crossterm".chars() {
+    for (cursor, ch) in "use crossterm".chars().enumerate() {
         let op = EditOp::insert(
             OpId::root(),
             cursor,
@@ -1004,7 +1003,6 @@ fn test_rust_incremental_parse_recognizes_use_keyword_without_full_reparse() {
         op.apply(&mut rope);
         let delta = doc.apply_edit(&rope, &op);
         assert!(!delta.reparsed);
-        cursor += 1;
     }
 
     let src = rope.to_string();
