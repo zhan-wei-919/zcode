@@ -1560,6 +1560,48 @@ fn completion_index_map_matches_visible_indices_after_lsp_completion() {
 }
 
 #[test]
+fn completion_no_match_hides_popup_instead_of_falling_back_to_full_list() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "struct Abc {\n    p\n}\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::RunCommand(Command::CursorDown));
+    let _ = store.dispatch(Action::RunCommand(Command::CursorLineEnd));
+    let _ = store.dispatch(Action::RunCommand(Command::LspCompletion));
+
+    let items = vec![
+        test_completion_item(11, "pub"),
+        test_completion_item(12, "pub(crate)"),
+        test_completion_item(13, "pub(super)"),
+    ];
+    let _ = store.dispatch(Action::LspCompletion {
+        items,
+        is_incomplete: false,
+    });
+
+    let labels = (0..store.state.ui.completion.visible_len())
+        .filter_map(|i| store.state.ui.completion.visible_item(i))
+        .map(|item| item.label.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(labels, ["pub", "pub(crate)", "pub(super)"]);
+    assert_eq!(store.state.ui.completion.all_items.len(), 3);
+    assert!(store.state.ui.completion.visible);
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('x')));
+    assert!(!store.state.ui.completion.visible);
+    assert_eq!(store.state.ui.completion.visible_len(), 0);
+    assert_eq!(store.state.ui.completion.all_items.len(), 3);
+
+    let _ = store.dispatch(Action::RunCommand(Command::DeleteBackward));
+    assert!(store.state.ui.completion.visible);
+    assert_eq!(store.state.ui.completion.visible_len(), 3);
+}
+
+#[test]
 fn lsp_completion_resolved_repairs_stale_index_map_via_fallback() {
     let mut store = new_store();
     store.state.ui.focus = FocusTarget::Editor;

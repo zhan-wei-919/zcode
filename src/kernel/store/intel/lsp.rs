@@ -1438,7 +1438,6 @@ impl super::super::Store {
                 self.state.ui.hover_base_message.clear();
                 self.state.ui.hover_implementation_message.clear();
                 self.state.ui.hover_definition_message.clear();
-                self.state.ui.completion.visible = true;
                 let prev_selected = if self.state.ui.completion.selection_locked {
                     self.state.ui.completion.selected_item().map(|item| item.id)
                 } else {
@@ -1454,6 +1453,7 @@ impl super::super::Store {
                 let strategy = super::completion_strategy::strategy_for_tab(tab);
                 self.state.ui.completion.visible_indices =
                     filtered_completion_indices(tab, &self.state.ui.completion.all_items, strategy);
+                self.state.ui.completion.visible = self.state.ui.completion.visible_len() > 0;
                 self.state.ui.completion.selected = prev_selected
                     .and_then(|id| {
                         self.state

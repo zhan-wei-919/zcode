@@ -73,11 +73,7 @@ pub(in crate::kernel::store) fn filtered_completion_indices(
         }
     }
 
-    if filtered.is_empty() {
-        (0..items.len()).collect()
-    } else {
-        filtered
-    }
+    filtered
 }
 
 fn collect_matching_indices(
@@ -172,7 +168,7 @@ pub(in crate::kernel::store) fn sync_completion_items_from_cache(
 
         completion.selected = selected_visible_index(completion, cached_indices, selected_id)
             .min(cached_indices.len().saturating_sub(1));
-        completion.visible = true;
+        completion.visible = !cached_indices.is_empty();
         return items_changed;
     }
 
@@ -180,7 +176,7 @@ pub(in crate::kernel::store) fn sync_completion_items_from_cache(
         && completion.filter_cache_source_len == source_len
         && prefix.starts_with(&completion.filter_cache_prefix);
 
-    let mut new_indices = if prefix.is_empty() {
+    let new_indices = if prefix.is_empty() {
         (0..source_len).collect()
     } else if can_use_cached_base {
         collect_matching_indices(
@@ -192,9 +188,6 @@ pub(in crate::kernel::store) fn sync_completion_items_from_cache(
         collect_matching_indices(&completion.all_items, &prefix, 0..source_len)
     };
 
-    if new_indices.is_empty() {
-        new_indices.extend(0..source_len);
-    }
     debug_assert_monotonic_indices(&new_indices);
 
     let items_changed = source_changed || completion.visible_indices != new_indices;
@@ -211,7 +204,7 @@ pub(in crate::kernel::store) fn sync_completion_items_from_cache(
     completion.filter_cache_indices = new_indices;
     completion.filter_cache_source_len = source_len;
     completion.filter_cache_valid = true;
-    completion.visible = true;
+    completion.visible = completion.visible_len() > 0;
     items_changed
 }
 
@@ -872,7 +865,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_completion_items_no_match_falls_back_to_full_list() {
+    fn sync_completion_items_no_match_hides_popup() {
         let tab = tab_with_cursor("zzz", 3);
         let strategy = completion_strategy::strategy_for_tab(&tab);
         let mut completion = CompletionPopupState {
@@ -890,11 +883,9 @@ mod tests {
             &tab,
             strategy
         ));
-        assert_eq!(
-            completion_labels(&completion),
-            ["piano", "print", "private"]
-        );
-        assert_eq!(completion.filter_cache_indices, vec![0, 1, 2]);
+        assert_eq!(completion_labels(&completion), Vec::<String>::new());
+        assert_eq!(completion.filter_cache_indices, Vec::<usize>::new());
+        assert!(!completion.visible);
     }
 
     #[test]

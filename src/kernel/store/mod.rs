@@ -1662,7 +1662,6 @@ impl Store {
                     }
                 }
                 if !should_complete
-                    && self.state.ui.completion.visible
                     && !self.state.ui.completion.all_items.is_empty()
                 {
                     if let Some((tab, strategy)) = tab_with_strategy {
@@ -2841,14 +2840,13 @@ impl Store {
                         };
                     };
 
-                    let can_reuse = self.state.ui.completion.visible
-                        && self
-                            .state
-                            .ui
-                            .completion
-                            .request
-                            .as_ref()
-                            .is_some_and(|session| session.pane == pane && session.path == path)
+                    let can_reuse = self
+                        .state
+                        .ui
+                        .completion
+                        .request
+                        .as_ref()
+                        .is_some_and(|session| session.pane == pane && session.path == path)
                         && self.state.ui.completion.pending_request.is_none()
                         && !self.state.ui.completion.all_items.is_empty()
                         && !self.state.ui.completion.is_incomplete
@@ -3513,7 +3511,6 @@ impl Store {
                     }
 
                     if session_ok
-                        && self.state.ui.completion.visible
                         && !self.state.ui.completion.all_items.is_empty()
                     {
                         let mut changed = sync_completion_items_from_cache(

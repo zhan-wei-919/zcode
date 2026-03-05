@@ -224,6 +224,14 @@ fn test_lsp_spawn_sync_requests_and_diagnostics_are_wired() {
                 .any(|item| item.message == "didSave")
     });
 
+    // Completion filtering is prefix-based; move before the inserted identifier so the
+    // empty prefix keeps stub completion items visible.
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Left,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
     let completion = KeyEvent {
         code: KeyCode::Char(' '),
         modifiers: KeyModifiers::CONTROL,
@@ -689,7 +697,7 @@ fn test_completion_debounce_triggers_for_python() {
     });
 
     let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
-        code: KeyCode::Char('p'),
+        code: KeyCode::Char('s'),
         modifiers: KeyModifiers::NONE,
         kind: KeyEventKind::Press,
     }));
