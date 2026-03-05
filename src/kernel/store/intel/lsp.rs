@@ -1066,6 +1066,7 @@ impl super::super::Store {
                 let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticToken>>> =
                     None;
                 let mut changed = false;
+                let defer_flush = self.is_semantic_flush_deferred(&path, version);
 
                 for pane in &mut self.state.editor.panes {
                     for tab in &mut pane.tabs {
@@ -1091,7 +1092,7 @@ impl super::super::Store {
                             }
                         }
 
-                        if !tab.has_semantic_highlight() {
+                        if !defer_flush {
                             changed |= tab.flush_pending_semantic_highlight();
                         }
                     }
@@ -1194,6 +1195,7 @@ impl super::super::Store {
                 let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticToken>>> =
                     None;
                 let mut changed = false;
+                let defer_flush = self.is_semantic_flush_deferred(&path, version);
 
                 for pane in &mut self.state.editor.panes {
                     for tab in &mut pane.tabs {
@@ -1218,7 +1220,7 @@ impl super::super::Store {
                             );
                         }
 
-                        if !tab.has_semantic_highlight() {
+                        if !defer_flush {
                             changed |= tab.flush_pending_semantic_highlight();
                         }
                     }

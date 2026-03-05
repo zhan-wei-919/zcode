@@ -743,12 +743,6 @@ impl EditorTabState {
         semantic.lines(start_line, end_line_exclusive)
     }
 
-    pub(crate) fn has_semantic_highlight(&self) -> bool {
-        self.semantic_highlight
-            .as_ref()
-            .is_some_and(|semantic| semantic.has_any_semantic_kinds())
-    }
-
     pub fn set_semantic_highlight(&mut self, version: u64, lines: Vec<Vec<SemanticToken>>) -> bool {
         let same = self
             .semantic_highlight
@@ -897,7 +891,7 @@ impl EditorTabState {
     }
 
     pub(super) fn invalidate_semantic_highlight_on_edit(&mut self, _op: &EditOp) {
-        self.semantic_highlight = None;
+        // Keep the last visible semantic snapshot to avoid white-flash while typing.
         self.pending_semantic_highlight = None;
     }
 

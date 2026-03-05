@@ -2435,6 +2435,98 @@ fn semantic_tokens_response_triggers_second_pass_after_format_workspace_edit() {
 }
 
 #[test]
+fn semantic_tokens_response_is_deferred_until_boundary_after_identifier_input() {
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("timing.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: String::new(),
+    }));
+    let _ = store.dispatch(Action::LspServerCapabilities {
+        server: LspServerKind::RustAnalyzer,
+        root: store.state.workspace_root.clone(),
+        capabilities: LspServerCapabilities {
+            semantic_tokens: true,
+            semantic_tokens_full: true,
+            semantic_tokens_range: false,
+            semantic_tokens_legend: Some(LspSemanticTokensLegend {
+                token_types: vec!["keyword".to_string()],
+                token_modifiers: Vec::new(),
+            }),
+            ..Default::default()
+        },
+    });
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('u')));
+    let version_after_identifier = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+
+    let deferred = store.dispatch(Action::LspSemanticTokens {
+        path: path.clone(),
+        version: version_after_identifier,
+        tokens: vec![LspSemanticToken {
+            line: 0,
+            start: 0,
+            length: 1,
+            token_type: 0,
+            modifiers: 0,
+        }],
+    });
+    assert!(
+        !deferred.state_changed,
+        "identifier输入期间语义响应应只缓存，不应立即落屏"
+    );
+    assert!(
+        store
+            .state
+            .editor
+            .pane(0)
+            .and_then(|pane| pane.active_tab())
+            .and_then(|tab| tab.semantic_tokens_lines(0, 1))
+            .is_none(),
+        "非边界输入后不应出现语义高亮"
+    );
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar(' ')));
+    let version_after_boundary = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+
+    let flushed = store.dispatch(Action::LspSemanticTokens {
+        path: path.clone(),
+        version: version_after_boundary,
+        tokens: vec![LspSemanticToken {
+            line: 0,
+            start: 0,
+            length: 1,
+            token_type: 0,
+            modifiers: 0,
+        }],
+    });
+    assert!(flushed.state_changed);
+    assert!(
+        store
+            .state
+            .editor
+            .pane(0)
+            .and_then(|pane| pane.active_tab())
+            .and_then(|tab| tab.semantic_tokens_lines(0, 1))
+            .is_some(),
+        "边界输入后新的语义响应应可见"
+    );
+}
+
+#[test]
 fn expand_snippet_strips_tabstops_and_keeps_placeholder_text() {
     let out = expand_snippet("foo$1bar$0");
     assert_eq!(out.text, "foobar");

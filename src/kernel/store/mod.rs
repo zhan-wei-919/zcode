@@ -313,7 +313,42 @@ impl Store {
             .and_then(|tab| tab.path.clone())
     }
 
+    fn active_editor_lsp_path_and_version(&self) -> Option<(std::path::PathBuf, u64)> {
+        let active_pane = self.state.ui.editor_layout.active_pane;
+        let tab = self
+            .state
+            .editor
+            .pane(active_pane)
+            .and_then(|pane_state| pane_state.active_tab())?;
+        let path = tab.path.as_ref()?.clone();
+        if !is_lsp_source_path(&path) {
+            return None;
+        }
+        Some((path, tab.edit_version))
+    }
+
+    fn arm_semantic_flush_defer_for_path(&mut self, path: std::path::PathBuf, version: u64) {
+        self.state
+            .lsp
+            .defer_semantic_flush_by_path
+            .insert(path, version);
+    }
+
+    fn clear_semantic_flush_defer_for_path(&mut self, path: &Path) {
+        self.state.lsp.defer_semantic_flush_by_path.remove(path);
+    }
+
+    fn is_semantic_flush_deferred(&self, path: &Path, version: u64) -> bool {
+        self.state
+            .lsp
+            .defer_semantic_flush_by_path
+            .get(path)
+            .is_some_and(|deferred_version| *deferred_version == version)
+    }
+
     fn flush_pending_semantic_highlights_for_path(&mut self, path: &Path) -> bool {
+        self.clear_semantic_flush_defer_for_path(path);
+
         let mut changed = false;
         for pane in &mut self.state.editor.panes {
             for tab in &mut pane.tabs {
@@ -1530,9 +1565,11 @@ impl Store {
                     .lsp_input_timing
                     .boundary_chars
                     .as_str();
-                if boundary_chars.contains(ch) {
-                    if let Some(path) = self.active_editor_file_path() {
+                if let Some((path, version)) = self.active_editor_lsp_path_and_version() {
+                    if boundary_chars.contains(ch) {
                         state_changed |= self.flush_pending_semantic_highlights_for_path(&path);
+                    } else if changed {
+                        self.arm_semantic_flush_defer_for_path(path, version);
                     }
                 }
 
@@ -3560,6 +3597,18 @@ impl Store {
                 let should_flush_newline = matches!(other, Command::InsertNewline);
                 let should_flush_tab = matches!(other, Command::InsertTab);
                 let should_flush_cursor_move = other.is_cursor_command();
+                let should_defer_semantic_after_edit = matches!(
+                    other,
+                    Command::DeleteBackward
+                        | Command::DeleteForward
+                        | Command::DeleteLine
+                        | Command::DeleteToLineEnd
+                        | Command::DeleteSelection
+                        | Command::Undo
+                        | Command::Redo
+                        | Command::Paste
+                        | Command::Cut
+                );
                 let (changed, cmd_effects) = self.state.editor.apply_command(pane, other);
                 if changed {
                     state_changed = true;
@@ -3582,12 +3631,22 @@ impl Store {
                         if let Some(path) = self.active_editor_file_path() {
                             state_changed |= self.flush_pending_semantic_highlights_for_path(&path);
                         }
+                    } else if changed {
+                        if let Some((path, version)) = self.active_editor_lsp_path_and_version() {
+                            self.arm_semantic_flush_defer_for_path(path, version);
+                        }
                     }
                 }
 
                 if should_flush_cursor_move {
                     if let Some(path) = self.active_editor_file_path() {
                         state_changed |= self.flush_pending_semantic_highlights_for_path(&path);
+                    }
+                }
+
+                if should_defer_semantic_after_edit && changed {
+                    if let Some((path, version)) = self.active_editor_lsp_path_and_version() {
+                        self.arm_semantic_flush_defer_for_path(path, version);
                     }
                 }
 

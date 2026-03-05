@@ -692,6 +692,7 @@ pub struct LspState {
     pub payload_fingerprints: LspPayloadFingerprints,
     pub pending_format_on_save: Option<PathBuf>,
     pub pending_second_semantic_pass_by_path: FxHashMap<PathBuf, u64>,
+    pub defer_semantic_flush_by_path: FxHashMap<PathBuf, u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -608,7 +608,7 @@ fn lsp_semantic_tokens_legend_change_misses_fast_path() {
         version,
         tokens,
     });
-    assert!(!second.state_changed);
+    assert!(second.state_changed);
 
     let tab = store
         .state
@@ -620,21 +620,7 @@ fn lsp_semantic_tokens_legend_change_misses_fast_path() {
         .semantic_tokens_lines(0, 1)
         .and_then(|rows| rows.first())
         .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
-    assert_eq!(second_kind, Some(HighlightKind::Variable));
-
-    let _ = store.dispatch(Action::RunCommand(Command::InsertChar(' ')));
-
-    let tab = store
-        .state
-        .editor
-        .pane(0)
-        .and_then(|p| p.active_tab())
-        .expect("tab exists");
-    let second_kind = tab
-        .semantic_tokens_lines(0, 1)
-        .and_then(|rows| rows.first())
-        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
-    assert_eq!(second_kind, None);
+    assert_eq!(second_kind, Some(HighlightKind::Keyword));
 }
 
 #[test]
@@ -672,30 +658,25 @@ fn semantic_tokens_are_deferred_until_boundary_flush() {
         .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
     assert_eq!(first_kind, Some(HighlightKind::Variable));
 
-    let _ = store.dispatch(Action::LspServerCapabilities {
-        server: LspServerKind::RustAnalyzer,
-        root: store.state.workspace_root.clone(),
-        capabilities: LspServerCapabilities {
-            semantic_tokens: true,
-            semantic_tokens_full: true,
-            semantic_tokens_range: true,
-            semantic_tokens_legend: Some(LspSemanticTokensLegend {
-                token_types: vec!["function".to_string(), "keyword".to_string()],
-                token_modifiers: vec![],
-            }),
-            completion: true,
-            completion_resolve: true,
-            signature_help: true,
-            inlay_hints: true,
-            folding_range: true,
-            ..Default::default()
-        },
-    });
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('x')));
+    let version_after_identifier = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|p| p.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("tab exists");
 
     let second = store.dispatch(Action::LspSemanticTokens {
-        path,
-        version,
-        tokens,
+        path: path.clone(),
+        version: version_after_identifier,
+        tokens: vec![LspSemanticToken {
+            line: 0,
+            start: 0,
+            length: 1,
+            token_type: 0,
+            modifiers: 0,
+        }],
     });
     assert!(!second.state_changed);
 
@@ -712,6 +693,26 @@ fn semantic_tokens_are_deferred_until_boundary_flush() {
     assert_eq!(second_kind, Some(HighlightKind::Variable));
 
     let _ = store.dispatch(Action::RunCommand(Command::InsertChar(' ')));
+    let version_after_boundary = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|p| p.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("tab exists");
+
+    let third = store.dispatch(Action::LspSemanticTokens {
+        path,
+        version: version_after_boundary,
+        tokens: vec![LspSemanticToken {
+            line: 0,
+            start: 0,
+            length: 1,
+            token_type: 0,
+            modifiers: 0,
+        }],
+    });
+    assert!(third.state_changed);
 
     let tab = store
         .state
@@ -723,7 +724,7 @@ fn semantic_tokens_are_deferred_until_boundary_flush() {
         .semantic_tokens_lines(0, 1)
         .and_then(|rows| rows.first())
         .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
-    assert_eq!(second_kind, None);
+    assert_eq!(second_kind, Some(HighlightKind::Function));
 }
 
 #[test]

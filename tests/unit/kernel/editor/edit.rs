@@ -669,12 +669,12 @@ fn semantic_highlight_and_inlay_hints_do_not_flicker_on_edit() {
 
     let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
 
-    assert!(tab.semantic_tokens_line(0).is_none());
+    assert!(tab.semantic_tokens_line(0).is_some());
     assert!(tab.inlay_hint_line(0).is_some());
 }
 
 #[test]
-fn semantic_highlight_is_cleared_on_line_edit() {
+fn semantic_highlight_keeps_visible_snapshot_on_line_edit() {
     let config = EditorConfig::default();
     let mut tab =
         EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "foo\nbar", &config);
@@ -689,12 +689,12 @@ fn semantic_highlight_is_cleared_on_line_edit() {
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
 
-    assert!(tab.semantic_tokens_line(0).is_none());
-    assert!(tab.semantic_tokens_line(1).is_none());
+    assert!(tab.semantic_tokens_line(0).is_some());
+    assert!(tab.semantic_tokens_line(1).is_some());
 }
 
 #[test]
-fn semantic_highlight_is_cleared_on_newline_edit() {
+fn semantic_highlight_keeps_visible_snapshot_on_newline_edit() {
     let config = EditorConfig::default();
     let mut tab = EditorTabState::from_file(
         TabId::new(1),
@@ -714,13 +714,15 @@ fn semantic_highlight_is_cleared_on_newline_edit() {
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
 
-    assert!(tab.semantic_tokens_line(0).is_none());
-    assert!(tab.semantic_tokens_line(1).is_none());
-    assert!(tab.semantic_tokens_line(2).is_none());
+    assert!(
+        tab.semantic_tokens_line(0).is_some()
+            || tab.semantic_tokens_line(1).is_some()
+            || tab.semantic_tokens_line(2).is_some()
+    );
 }
 
 #[test]
-fn semantic_highlight_is_cleared_when_appending_punctuation() {
+fn semantic_highlight_keeps_visible_snapshot_when_appending_punctuation() {
     let config = EditorConfig::default();
     let mut tab =
         EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "String", &config);
@@ -729,7 +731,7 @@ fn semantic_highlight_is_cleared_when_appending_punctuation() {
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertChar(':'), 0, &config);
 
-    assert!(tab.semantic_tokens_line(0).is_none());
+    assert!(tab.semantic_tokens_line(0).is_some());
 }
 
 struct Rng(u64);

@@ -102,7 +102,7 @@ fn replace_range_inserts_in_gap_and_merges_with_neighbors() {
 }
 
 #[test]
-fn invalidate_semantic_highlight_clears_full_and_pending_state_on_edit() {
+fn invalidate_semantic_highlight_keeps_visible_and_clears_pending_on_edit() {
     use crate::kernel::services::ports::EditorConfig;
     use std::path::PathBuf;
 
@@ -122,9 +122,9 @@ fn invalidate_semantic_highlight_clears_full_and_pending_state_on_edit() {
         .replace_range_op_adjust_cursor(insert_at, insert_at, "_", OpId::root());
 
     tab.invalidate_semantic_highlight_on_edit(&op);
-    assert!(tab.semantic_highlight.is_none());
+    assert!(tab.semantic_highlight.is_some());
     assert!(tab.pending_semantic_highlight.is_none());
-    assert!(tab.semantic_tokens_line(0).is_none());
+    assert!(tab.semantic_tokens_line(0).is_some());
 }
 
 #[test]
