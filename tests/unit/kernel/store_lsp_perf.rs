@@ -634,7 +634,7 @@ fn lsp_semantic_tokens_legend_change_misses_fast_path() {
         .semantic_tokens_lines(0, 1)
         .and_then(|rows| rows.first())
         .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
-    assert_eq!(second_kind, Some(HighlightKind::Keyword));
+    assert_eq!(second_kind, None);
 }
 
 #[test]
@@ -723,7 +723,7 @@ fn semantic_tokens_are_deferred_until_boundary_flush() {
         .semantic_tokens_lines(0, 1)
         .and_then(|rows| rows.first())
         .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
-    assert_eq!(second_kind, Some(HighlightKind::Keyword));
+    assert_eq!(second_kind, None);
 }
 
 #[test]

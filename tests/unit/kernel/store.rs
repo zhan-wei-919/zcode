@@ -2,8 +2,8 @@ use super::intel::completion_strategy;
 use super::*;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::{
-    LspCompletionTriggerKind, LspPosition, LspRange, LspServerCapabilities, LspServerKind,
-    LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspCompletionTriggerKind, LspPosition, LspRange, LspSemanticToken, LspSemanticTokensLegend,
+    LspServerCapabilities, LspServerKind, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{
     CompletionRequestContext, ContextMenuRequest, PendingAction, PendingEditorNavigation,
@@ -2340,6 +2340,98 @@ fn lsp_workspace_edit_requests_semantic_tokens_for_changed_open_tab() {
             } if effect_path == &path && *effect_version == version
         )
     }));
+}
+
+#[test]
+fn semantic_tokens_response_triggers_second_pass_after_format_workspace_edit() {
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("test.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "fn main() {}\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::LspServerCapabilities {
+        server: LspServerKind::RustAnalyzer,
+        root: store.state.workspace_root.clone(),
+        capabilities: LspServerCapabilities {
+            semantic_tokens: true,
+            semantic_tokens_full: true,
+            semantic_tokens_range: false,
+            semantic_tokens_legend: Some(LspSemanticTokensLegend {
+                token_types: vec!["keyword".to_string()],
+                token_modifiers: Vec::new(),
+            }),
+            ..Default::default()
+        },
+    });
+
+    store.state.lsp.pending_format_on_save = Some(path.clone());
+    let _ = store.dispatch(Action::LspApplyWorkspaceEdit {
+        edit: LspWorkspaceEdit {
+            changes: vec![LspWorkspaceFileEdit {
+                path: path.clone(),
+                edits: vec![LspTextEdit {
+                    range: LspRange {
+                        start: LspPosition {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: LspPosition {
+                            line: 0,
+                            character: 0,
+                        },
+                    },
+                    new_text: "// formatted\n".to_string(),
+                }],
+            }],
+            ..Default::default()
+        },
+    });
+
+    let version = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+    assert_eq!(
+        store
+            .state
+            .lsp
+            .pending_second_semantic_pass_by_path
+            .get(&path)
+            .copied(),
+        Some(version)
+    );
+
+    let result = store.dispatch(Action::LspSemanticTokens {
+        path: path.clone(),
+        version,
+        tokens: vec![LspSemanticToken {
+            line: 1,
+            start: 0,
+            length: 2,
+            token_type: 0,
+            modifiers: 0,
+        }],
+    });
+
+    assert!(result.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::LspSemanticTokensRequest {
+                path: effect_path,
+                version: effect_version,
+            } if effect_path == &path && *effect_version == version
+        )
+    }));
+    assert!(!store
+        .state
+        .lsp
+        .pending_second_semantic_pass_by_path
+        .contains_key(&path));
 }
 
 #[test]

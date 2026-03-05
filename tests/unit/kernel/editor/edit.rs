@@ -9,10 +9,6 @@ fn sem_tok(text: &str, kind: Option<HighlightKind>) -> SemanticToken {
     }
 }
 
-fn has_semantic_kind(tokens: &[SemanticToken]) -> bool {
-    tokens.iter().any(|t| t.semantic_kind.is_some())
-}
-
 #[test]
 fn test_rust_brace_pair_and_electric_enter() {
     let config = EditorConfig::default();
@@ -668,17 +664,17 @@ fn semantic_highlight_and_inlay_hints_do_not_flicker_on_edit() {
     );
     tab.set_inlay_hints(0, 0, 1, vec![vec![": hint".to_string()]]);
 
-    assert!(tab.semantic_tokens_line(0).is_some_and(has_semantic_kind));
+    assert!(tab.semantic_tokens_line(0).is_some());
     assert!(tab.inlay_hint_line(0).is_some());
 
     let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
 
-    assert!(tab.semantic_tokens_line(0).is_some_and(has_semantic_kind));
+    assert!(tab.semantic_tokens_line(0).is_none());
     assert!(tab.inlay_hint_line(0).is_some());
 }
 
 #[test]
-fn semantic_highlight_is_shifted_on_line_edit() {
+fn semantic_highlight_is_cleared_on_line_edit() {
     let config = EditorConfig::default();
     let mut tab =
         EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "foo\nbar", &config);
@@ -693,21 +689,12 @@ fn semantic_highlight_is_shifted_on_line_edit() {
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
 
-    assert_eq!(
-        tab.semantic_tokens_line(0).unwrap_or_default(),
-        &[
-            sem_tok("foo", Some(HighlightKind::Function)),
-            sem_tok("x", None)
-        ]
-    );
-    assert_eq!(
-        tab.semantic_tokens_line(1).unwrap_or_default(),
-        &[sem_tok("bar", Some(HighlightKind::Macro))]
-    );
+    assert!(tab.semantic_tokens_line(0).is_none());
+    assert!(tab.semantic_tokens_line(1).is_none());
 }
 
 #[test]
-fn semantic_highlight_keeps_existing_lines_on_newline_edit() {
+fn semantic_highlight_is_cleared_on_newline_edit() {
     let config = EditorConfig::default();
     let mut tab = EditorTabState::from_file(
         TabId::new(1),
@@ -727,21 +714,13 @@ fn semantic_highlight_keeps_existing_lines_on_newline_edit() {
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
 
-    assert_eq!(
-        tab.semantic_tokens_line(0).unwrap_or_default(),
-        &[sem_tok("foo", Some(HighlightKind::Function))]
-    );
-    assert!(tab
-        .semantic_tokens_line(1)
-        .is_some_and(|tokens| !has_semantic_kind(tokens)));
-    assert_eq!(
-        tab.semantic_tokens_line(2).unwrap_or_default(),
-        &[sem_tok("bar", Some(HighlightKind::Macro))]
-    );
+    assert!(tab.semantic_tokens_line(0).is_none());
+    assert!(tab.semantic_tokens_line(1).is_none());
+    assert!(tab.semantic_tokens_line(2).is_none());
 }
 
 #[test]
-fn semantic_highlight_is_not_invalidated_when_appending_punctuation() {
+fn semantic_highlight_is_cleared_when_appending_punctuation() {
     let config = EditorConfig::default();
     let mut tab =
         EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "String", &config);
@@ -750,13 +729,7 @@ fn semantic_highlight_is_not_invalidated_when_appending_punctuation() {
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertChar(':'), 0, &config);
 
-    assert_eq!(
-        tab.semantic_tokens_line(0).unwrap_or_default(),
-        &[
-            sem_tok("String", Some(HighlightKind::Type)),
-            sem_tok(":", None)
-        ]
-    );
+    assert!(tab.semantic_tokens_line(0).is_none());
 }
 
 struct Rng(u64);

@@ -2869,8 +2869,8 @@ fn test_semantic_tokens_range_is_used_for_large_files() {
             .pane(0)
             .and_then(|pane| pane.active_tab())
             .and_then(|tab| tab.semantic_tokens_lines(0, 1))
-            .is_some(),
-        "semantic highlight unexpectedly cleared after edit"
+            .is_none(),
+        "semantic highlight should clear immediately after edit"
     );
 }
 

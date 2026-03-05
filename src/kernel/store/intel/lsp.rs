@@ -407,6 +407,30 @@ fn end_line_exclusive_from_range(range: &LspRange) -> usize {
 }
 
 impl super::super::Store {
+    fn arm_second_semantic_pass(&mut self, path: &Path, version: u64) {
+        self.state
+            .lsp
+            .pending_second_semantic_pass_by_path
+            .insert(path.to_path_buf(), version);
+    }
+
+    fn consume_second_semantic_pass(&mut self, path: &Path, version: u64) -> bool {
+        let pending = self
+            .state
+            .lsp
+            .pending_second_semantic_pass_by_path
+            .get(path)
+            .copied();
+        if pending == Some(version) {
+            self.state
+                .lsp
+                .pending_second_semantic_pass_by_path
+                .remove(path);
+            return true;
+        }
+        false
+    }
+
     pub(in crate::kernel::store) fn apply_workspace_edit(
         &mut self,
         edit: LspWorkspaceEdit,
@@ -573,6 +597,7 @@ impl super::super::Store {
             let can_range = caps.semantic_tokens_range;
             let can_full = caps.semantic_tokens_full;
             let prefer_range = can_range && (total_lines >= 2000 || !can_full);
+            let trigger_second_pass = self.state.lsp.pending_format_on_save.as_ref() == Some(&path);
 
             if prefer_range {
                 let viewport_top = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
@@ -591,9 +616,18 @@ impl super::super::Store {
                         version,
                         range,
                     });
+                    if trigger_second_pass {
+                        self.arm_second_semantic_pass(&path, version);
+                    }
                 }
             } else if can_full {
-                effects.push(Effect::LspSemanticTokensRequest { path, version });
+                effects.push(Effect::LspSemanticTokensRequest {
+                    path: path.clone(),
+                    version,
+                });
+                if trigger_second_pass {
+                    self.arm_second_semantic_pass(&path, version);
+                }
             }
         }
 
@@ -963,11 +997,23 @@ impl super::super::Store {
                 version,
                 tokens,
             } => {
+                let second_pass = self.consume_second_semantic_pass(&path, version);
+                let second_pass_effect = || {
+                    if second_pass {
+                        vec![Effect::LspSemanticTokensRequest {
+                            path: path.clone(),
+                            version,
+                        }]
+                    } else {
+                        Vec::new()
+                    }
+                };
+
                 let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
                     .and_then(|c| c.semantic_tokens_legend.as_ref())
                 else {
                     return super::super::DispatchResult {
-                        effects: Vec::new(),
+                        effects: second_pass_effect(),
                         state_changed: false,
                     };
                 };
@@ -988,7 +1034,7 @@ impl super::super::Store {
                     == Some(stamp)
                 {
                     return super::super::DispatchResult {
-                        effects: Vec::new(),
+                        effects: second_pass_effect(),
                         state_changed: false,
                     };
                 }
@@ -1003,7 +1049,7 @@ impl super::super::Store {
                     .count();
                 if matched_tabs == 0 {
                     return super::super::DispatchResult {
-                        effects: Vec::new(),
+                        effects: second_pass_effect(),
                         state_changed: false,
                     };
                 }
@@ -1012,7 +1058,7 @@ impl super::super::Store {
                     .and_then(|c| c.semantic_tokens_legend.clone())
                 else {
                     return super::super::DispatchResult {
-                        effects: Vec::new(),
+                        effects: second_pass_effect(),
                         state_changed: false,
                     };
                 };
@@ -1054,10 +1100,10 @@ impl super::super::Store {
                     .lsp
                     .payload_fingerprints
                     .semantic_full_by_path
-                    .insert(path, stamp);
+                    .insert(path.clone(), stamp);
 
                 super::super::DispatchResult {
-                    effects: Vec::new(),
+                    effects: second_pass_effect(),
                     state_changed: changed,
                 }
             }
@@ -1067,11 +1113,24 @@ impl super::super::Store {
                 range,
                 tokens,
             } => {
+                let second_pass = self.consume_second_semantic_pass(&path, version);
+                let second_pass_effect = || {
+                    if second_pass {
+                        vec![Effect::LspSemanticTokensRangeRequest {
+                            path: path.clone(),
+                            version,
+                            range,
+                        }]
+                    } else {
+                        Vec::new()
+                    }
+                };
+
                 let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
                     .and_then(|c| c.semantic_tokens_legend.as_ref())
                 else {
                     return super::super::DispatchResult {
-                        effects: Vec::new(),
+                        effects: second_pass_effect(),
                         state_changed: false,
                     };
                 };
@@ -1080,7 +1139,7 @@ impl super::super::Store {
                 let end_line_exclusive = end_line_exclusive_from_range(&range);
                 if end_line_exclusive <= start_line {
                     return super::super::DispatchResult {
-                        effects: Vec::new(),
+                        effects: second_pass_effect(),
                         state_changed: false,
                     };
                 }
@@ -1103,7 +1162,7 @@ impl super::super::Store {
                     == Some(stamp)
                 {
                     return super::super::DispatchResult {
-                        effects: Vec::new(),
+                        effects: second_pass_effect(),
                         state_changed: false,
                     };
                 }
@@ -1118,7 +1177,7 @@ impl super::super::Store {
                     .count();
                 if matched_tabs == 0 {
                     return super::super::DispatchResult {
-                        effects: Vec::new(),
+                        effects: second_pass_effect(),
                         state_changed: false,
                     };
                 }
@@ -1127,7 +1186,7 @@ impl super::super::Store {
                     .and_then(|c| c.semantic_tokens_legend.clone())
                 else {
                     return super::super::DispatchResult {
-                        effects: Vec::new(),
+                        effects: second_pass_effect(),
                         state_changed: false,
                     };
                 };
@@ -1168,10 +1227,10 @@ impl super::super::Store {
                     .lsp
                     .payload_fingerprints
                     .semantic_range_by_path
-                    .insert(path, stamp);
+                    .insert(path.clone(), stamp);
 
                 super::super::DispatchResult {
-                    effects: Vec::new(),
+                    effects: second_pass_effect(),
                     state_changed: changed,
                 }
             }
