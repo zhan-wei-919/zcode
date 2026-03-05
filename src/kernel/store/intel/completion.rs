@@ -380,11 +380,40 @@ pub(in crate::kernel::store) fn completion_replace_range(
         }
     };
 
-    if tab.edit_version == requested_version {
-        item.replace_range.unwrap_or_else(compute_range)
-    } else {
-        compute_range()
+    let fallback_range = compute_range();
+    if tab.edit_version != requested_version {
+        return fallback_range;
     }
+
+    let Some(mut item_range) = item.replace_range else {
+        return fallback_range;
+    };
+
+    let to_char_offset = |line: u32, character: u32| {
+        let byte = super::lsp::lsp_position_to_byte_offset(tab, line, character, encoding);
+        tab.buffer
+            .rope()
+            .byte_to_char(byte.min(tab.buffer.rope().len_bytes()))
+    };
+
+    let fallback_start_char =
+        to_char_offset(fallback_range.start.line, fallback_range.start.character);
+    let fallback_end_char = to_char_offset(fallback_range.end.line, fallback_range.end.character);
+    let item_start_char = to_char_offset(item_range.start.line, item_range.start.character);
+    let item_end_char = to_char_offset(item_range.end.line, item_range.end.character);
+
+    // Keep completion replacement anchored to the typed identifier prefix.
+    // Some servers may return a wider replace range (for example "&s"), but we should not
+    // consume boundary characters the user typed outside the identifier ("&").
+    if item_start_char > item_end_char || item_end_char < fallback_end_char {
+        return fallback_range;
+    }
+
+    if item_start_char < fallback_start_char {
+        item_range.start = fallback_range.start;
+    }
+
+    item_range
 }
 
 pub(in crate::kernel::store) fn adjust_completion_multiline_indentation(
@@ -1244,5 +1273,59 @@ mod tests {
         assert_eq!(range.start.character, 2);
         assert_eq!(range.end.line, 0);
         assert_eq!(range.end.character, 5);
+    }
+
+    #[test]
+    fn completion_replace_range_keeps_boundary_characters_before_prefix() {
+        let config = EditorConfig::default();
+        let mut tab = crate::kernel::editor::EditorTabState::from_file(
+            TabId::new(1),
+            PathBuf::from("test.rs"),
+            "&s",
+            &config,
+        );
+        tab.buffer.set_cursor(0, 2);
+
+        let item = LspCompletionItem {
+            id: 1,
+            label: "self".to_string(),
+            detail: None,
+            kind: Some(5),
+            documentation: None,
+            insert_text: "self".to_string(),
+            insert_text_format: LspInsertTextFormat::PlainText,
+            insert_range: Some(LspRange {
+                start: LspPosition {
+                    line: 0,
+                    character: 1,
+                },
+                end: LspPosition {
+                    line: 0,
+                    character: 2,
+                },
+            }),
+            replace_range: Some(LspRange {
+                start: LspPosition {
+                    line: 0,
+                    character: 0,
+                },
+                end: LspPosition {
+                    line: 0,
+                    character: 2,
+                },
+            }),
+            sort_text: None,
+            filter_text: None,
+            additional_text_edits: Vec::new(),
+            command: None,
+            data: None,
+        };
+
+        let range =
+            completion_replace_range(&tab, tab.edit_version, &item, LspPositionEncoding::Utf16);
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 1);
+        assert_eq!(range.end.line, 0);
+        assert_eq!(range.end.character, 2);
     }
 }
