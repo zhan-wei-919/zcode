@@ -1661,9 +1661,7 @@ impl Store {
                         state_changed = true;
                     }
                 }
-                if !should_complete
-                    && !self.state.ui.completion.all_items.is_empty()
-                {
+                if !should_complete && !self.state.ui.completion.all_items.is_empty() {
                     if let Some((tab, strategy)) = tab_with_strategy {
                         let session_ok =
                             self.state
@@ -3510,9 +3508,7 @@ impl Store {
                         };
                     }
 
-                    if session_ok
-                        && !self.state.ui.completion.all_items.is_empty()
-                    {
+                    if session_ok && !self.state.ui.completion.all_items.is_empty() {
                         let mut changed = sync_completion_items_from_cache(
                             &mut self.state.ui.completion,
                             tab,
