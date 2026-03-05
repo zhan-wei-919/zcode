@@ -19,9 +19,7 @@ type ComputeSyntaxEffect = (
     Vec<(usize, usize)>,
 );
 
-fn first_compute_syntax_effect(
-    effects: &[Effect],
-) -> Option<ComputeSyntaxEffect> {
+fn first_compute_syntax_effect(effects: &[Effect]) -> Option<ComputeSyntaxEffect> {
     effects.iter().find_map(|effect| match effect {
         Effect::ComputeSyntaxHighlights {
             tab_id,
