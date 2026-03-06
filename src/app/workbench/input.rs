@@ -58,7 +58,7 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
     // Intercept mouse events within the hover popup before any other processing.
     // This prevents record_user_input from clearing the hover state.
     if let InputEvent::Mouse(me) = event {
-        if workbench.store.state().ui.hover_message.is_some() {
+        if workbench.store.state().ui.hover.is_active() {
             if let Some(area) = workbench.hover_popup.last_area {
                 if util::rect_contains(area, me.column, me.row) {
                     match me.kind {

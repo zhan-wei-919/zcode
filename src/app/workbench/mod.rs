@@ -145,7 +145,7 @@ fn git_enabled() -> bool {
 }
 
 #[derive(Debug, Default)]
-struct HoverPopupState {
+struct HoverPopupRenderState {
     last_request: Option<(PathBuf, u32, u32, u64)>,
     last_anchor: Option<(u16, u16)>,
     target: Option<IdleHoverTarget>,
@@ -276,7 +276,7 @@ pub struct Workbench {
     last_settings_check: Instant,
     last_settings_modified: Option<SystemTime>,
     last_input_at: Instant,
-    hover_popup: HoverPopupState,
+    hover_popup: HoverPopupRenderState,
     completion_doc: CompletionDocState,
     lsp_debounce: LspDebounceState,
     file_save_versions: FxHashMap<(usize, PathBuf), u64>,
@@ -485,7 +485,7 @@ impl Workbench {
             last_settings_check: Instant::now(),
             last_settings_modified,
             last_input_at: Instant::now(),
-            hover_popup: HoverPopupState::default(),
+            hover_popup: HoverPopupRenderState::default(),
             completion_doc: CompletionDocState::default(),
             lsp_debounce: LspDebounceState::default(),
             file_save_versions: FxHashMap::default(),

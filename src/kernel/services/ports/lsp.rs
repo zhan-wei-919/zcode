@@ -54,16 +54,70 @@ pub enum LspPositionEncoding {
     Utf32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LspPosition {
     pub line: u32,
     pub character: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LspRange {
     pub start: LspPosition,
     pub end: LspPosition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LspMarkup {
+    Markdown(String),
+    PlainText(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LspSignatureParameterLabel {
+    Simple(String),
+    Offsets { start: u32, end: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspSignatureParameter {
+    pub label: LspSignatureParameterLabel,
+    pub documentation: Option<LspMarkup>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspSignatureInfo {
+    pub label: String,
+    pub documentation: Option<LspMarkup>,
+    pub parameters: Vec<LspSignatureParameter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LspSignatureHelpPayload {
+    pub signatures: Vec<LspSignatureInfo>,
+    pub active_signature: Option<u32>,
+    pub active_parameter: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LspHoverBlock {
+    Markdown(String),
+    Code {
+        language: Option<String>,
+        code: String,
+    },
+    PlainText(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LspHoverPayload {
+    pub blocks: Vec<LspHoverBlock>,
+    pub range: Option<LspRange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LspHoverPreviewPayload {
+    pub title: String,
+    pub blocks: Vec<LspHoverBlock>,
 }
 
 #[derive(Debug, Clone)]

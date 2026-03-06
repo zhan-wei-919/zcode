@@ -112,6 +112,10 @@ fn test_completion_item(id: u64) -> LspCompletionItem {
     }
 }
 
+fn test_completion_record(id: u64) -> crate::kernel::language::CompletionRecord {
+    test_completion_item(id).into()
+}
+
 fn open_single_rust_tab_for_input(store: &mut Store, filename: &str) -> (std::path::PathBuf, u64) {
     let path = store.state.workspace_root.join(filename);
     let content = "let alpha_beta = 12345;\nlet gamma = alpha_beta + 1;\n".to_string();
@@ -733,8 +737,9 @@ fn lsp_completion_resolve_updates_large_list_item_with_index_map() {
     let items_count = 20_000usize;
     let target_id = (items_count.saturating_sub(1)) as u64;
     store.state.ui.completion.visible = true;
-    store.state.ui.completion.all_items =
-        (0..items_count as u64).map(test_completion_item).collect();
+    store.state.ui.completion.all_items = (0..items_count as u64)
+        .map(test_completion_record)
+        .collect();
     store.state.ui.completion.visible_indices = (0..items_count).collect();
     store.state.ui.completion.rebuild_index_by_id();
     store.state.ui.completion.resolve_inflight = Some(target_id);
@@ -752,13 +757,16 @@ fn lsp_completion_resolve_updates_large_list_item_with_index_map() {
     });
 
     assert!(result.state_changed);
-    assert!(store
-        .state
-        .ui
-        .completion
-        .all_items
-        .iter()
-        .any(|item| item.id == target_id && item.detail.as_deref() == Some("resolved")));
+    assert!(
+        store
+            .state
+            .ui
+            .completion
+            .all_items
+            .iter()
+            .any(|item| item.entry.id == target_id
+                && item.entry.detail.as_deref() == Some("resolved"))
+    );
 }
 
 #[test]
@@ -835,7 +843,7 @@ fn experiment_completion_resolve_apply_scale_baseline() {
     let visible_items = all_items[..1500].to_vec();
 
     store.state.ui.completion.visible = true;
-    store.state.ui.completion.all_items = all_items;
+    store.state.ui.completion.all_items = all_items.into_iter().map(Into::into).collect();
     store.state.ui.completion.visible_indices = (0..visible_items.len()).collect();
     store.state.ui.completion.rebuild_index_by_id();
     store.state.ui.completion.resolve_inflight = Some(1);
@@ -902,13 +910,11 @@ fn experiment_completion_resolve_apply_scale_baseline() {
     );
 
     assert!(changed_count >= 1);
-    assert!(store
-        .state
-        .ui
-        .completion
-        .all_items
-        .iter()
-        .any(|item| item.documentation.as_deref() == Some("doc")));
+    assert!(store.state.ui.completion.all_items.iter().any(|item| item
+        .entry
+        .documentation
+        .as_deref()
+        == Some("doc")));
 }
 
 #[test]
@@ -950,7 +956,7 @@ fn experiment_lsp_completion_reuse_cache_burden() {
 
         let take = visible_items.min(all_items.len());
         store.state.ui.completion.visible = true;
-        store.state.ui.completion.all_items = all_items;
+        store.state.ui.completion.all_items = all_items.into_iter().map(Into::into).collect();
         store.state.ui.completion.visible_indices = (0..take).collect();
         store.state.ui.completion.request = Some(crate::kernel::state::CompletionRequestContext {
             pane: 0,

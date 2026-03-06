@@ -1,8 +1,31 @@
 use super::super::Workbench;
 use crate::core::Command;
+use crate::kernel::editor::EditorTabState;
 use crate::kernel::language::adapter::adapter_for_tab;
+use crate::kernel::language::LanguageRuntimeContext;
 use crate::kernel::lsp_registry;
 use crate::kernel::{Action as KernelAction, FocusTarget};
+
+fn interaction_runtime_context<'a>(
+    workbench: &'a Workbench,
+    tab: &'a EditorTabState,
+) -> LanguageRuntimeContext<'a> {
+    let state = workbench.store.state();
+    let adapter = adapter_for_tab(tab);
+    let client_key = tab.path.as_ref().and_then(|path| {
+        lsp_registry::client_key_for_path(&state.workspace_root, path).map(|(_, key)| key)
+    });
+    let server_caps = client_key
+        .as_ref()
+        .and_then(|key| state.lsp.server_capabilities.get(key));
+    let server = client_key
+        .as_ref()
+        .map(|key| key.server)
+        .or(adapter.features().lsp_server);
+
+    LanguageRuntimeContext::new(tab.language(), tab, adapter.syntax().syntax_facts(tab))
+        .with_server(server, server_caps)
+}
 
 impl Workbench {
     pub(super) fn maybe_trigger_completion(&mut self, cmd: &Command) {
@@ -36,7 +59,9 @@ impl Workbench {
             return;
         }
 
-        let behavior = adapter_for_tab(tab).completion();
+        let adapter = adapter_for_tab(tab);
+        let interaction = adapter.interaction();
+        let runtime = interaction_runtime_context(self, tab);
         let completion_triggers: &[char] =
             lsp_registry::client_key_for_path(&self.store.state().workspace_root, path)
                 .map(|(_, key)| key)
@@ -44,7 +69,9 @@ impl Workbench {
                 .map(|caps| caps.completion_triggers.as_slice())
                 .unwrap_or(&[]);
         let triggered_by_insert = match cmd {
-            Command::InsertChar(ch) => behavior.triggered_by_insert(tab, *ch, completion_triggers),
+            Command::InsertChar(ch) => {
+                interaction.completion_triggered_by_insert(&runtime, *ch, completion_triggers)
+            }
             _ => false,
         };
         if triggered_by_insert {
@@ -54,7 +81,7 @@ impl Workbench {
         }
 
         let should_schedule = match cmd {
-            Command::InsertChar(ch) => behavior.debounce_triggered_by_char(*ch),
+            Command::InsertChar(ch) => interaction.debounce_triggered_by_char(*ch),
             Command::DeleteBackward | Command::DeleteForward => true,
             _ => false,
         };
@@ -63,7 +90,7 @@ impl Workbench {
             return;
         }
 
-        if !behavior.context_allows_completion(tab) {
+        if !interaction.context_allows_completion(&runtime) {
             return;
         }
 
@@ -104,7 +131,9 @@ mod tests {
         );
         tab.buffer.set_cursor(0, 2);
 
-        let behavior = adapter_for_tab(&tab).completion();
-        assert!(!behavior.context_allows_completion(&tab));
+        let adapter = adapter_for_tab(&tab);
+        let runtime =
+            LanguageRuntimeContext::new(tab.language(), &tab, adapter.syntax().syntax_facts(&tab));
+        assert!(!adapter.interaction().context_allows_completion(&runtime));
     }
 }

@@ -21,7 +21,23 @@ impl DefaultLanguageAdapter {
 }
 
 impl LanguageAdapter for DefaultLanguageAdapter {
-    fn completion(&self) -> &dyn CompletionBehavior {
+    fn interaction(&self) -> &dyn crate::kernel::language::adapter::LanguageInteractionPolicy {
+        &DEFAULT_COMPLETION
+    }
+
+    fn completion_protocol(
+        &self,
+    ) -> &dyn crate::kernel::language::adapter::CompletionProtocolAdapter {
+        &DEFAULT_COMPLETION
+    }
+
+    fn signature_help_protocol(
+        &self,
+    ) -> &dyn crate::kernel::language::adapter::SignatureHelpProtocolAdapter {
+        &DEFAULT_COMPLETION
+    }
+
+    fn hover_protocol(&self) -> &dyn crate::kernel::language::adapter::HoverProtocolAdapter {
         &DEFAULT_COMPLETION
     }
 

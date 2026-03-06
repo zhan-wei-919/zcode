@@ -30,13 +30,13 @@ mod theme_editor;
 
 use intel::completion::{
     adjust_completion_multiline_indentation, apply_completion_insertion_cursor,
-    completion_replace_range, resolve_completion_insertion,
-    should_close_completion_on_editor_action, sync_completion_items_from_cache,
+    completion_replace_range, completion_runtime_context, should_close_completion_on_editor_action,
+    sync_completion_items_from_cache, CompletionInsertion,
 };
 pub use intel::completion_rank::CompletionRanker;
 
 #[cfg(test)]
-use intel::completion::{expand_snippet, CompletionInsertion};
+use intel::completion::expand_snippet;
 use intel::lsp::{
     lsp_position_encoding, lsp_position_encoding_for_path, lsp_position_from_buffer_pos,
     lsp_position_to_byte_offset, lsp_range_for_full_lines, lsp_request_target,
@@ -54,7 +54,9 @@ use super::{
     SidebarTab, SplitDirection,
 };
 use crate::kernel::editor::ReloadCause;
-use crate::kernel::language::{adapter::adapter_for_tab, adapter_for};
+use crate::kernel::language::{
+    adapter::adapter_for_tab, adapter_for, CompletionRecord, CompletionResolveState,
+};
 
 pub struct DispatchResult {
     pub effects: Vec<Effect>,
@@ -73,7 +75,7 @@ fn perf_action_label(action: &Action) -> &'static str {
         Action::LspInlayHints { .. } => "kernel.action.lsp_inlay_hints",
         Action::LspFoldingRanges { .. } => "kernel.action.lsp_folding_ranges",
         Action::LspDiagnostics { .. } => "kernel.action.lsp_diagnostics",
-        Action::LspHover { .. } => "kernel.action.lsp_hover",
+        Action::LspHoverClear => "kernel.action.lsp_hover_clear",
         Action::LspHoverResponse { .. } => "kernel.action.lsp_hover_response",
         Action::LspHoverImplementationPreview { .. } => {
             "kernel.action.lsp_hover_implementation_preview"
@@ -160,6 +162,41 @@ impl Store {
             .and_then(|p| p.active_tab())
             .and_then(|t| t.language());
         adapter_for(lang)
+    }
+
+    fn maybe_request_completion_resolve_for_record(
+        &mut self,
+        record: &CompletionRecord,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
+        if !matches!(
+            record.entry.resolve_state,
+            CompletionResolveState::Unresolved
+        ) {
+            return false;
+        }
+        if record
+            .entry
+            .documentation
+            .as_ref()
+            .is_some_and(|d| !d.trim().is_empty())
+        {
+            return false;
+        }
+        if self.state.ui.completion.resolve_inflight == Some(record.entry.id) {
+            return false;
+        }
+
+        self.state.ui.completion.resolve_inflight = Some(record.entry.id);
+        let _ = self
+            .state
+            .ui
+            .completion
+            .set_resolve_state(record.entry.id, CompletionResolveState::Resolving);
+        effects.push(Effect::LspCompletionResolveRequest {
+            item: Box::new(record.raw.clone()),
+        });
+        true
     }
 
     pub fn state(&self) -> &AppState {
@@ -393,10 +430,21 @@ impl Store {
                     .editor
                     .pane(self.state.ui.editor_layout.active_pane)
                     .and_then(|p| p.active_tab());
-                let completion_changed = if self
+                let completion_changed = if let Some(tab) = active_tab {
+                    let adapter = self.active_tab_adapter();
+                    let runtime = completion_runtime_context(&self.state, tab, adapter);
+                    if adapter
+                        .interaction()
+                        .should_close_on_command(&cmd, Some(&runtime))
+                    {
+                        self.state.ui.completion.close()
+                    } else {
+                        false
+                    }
+                } else if self
                     .active_tab_adapter()
-                    .completion()
-                    .should_close_on_command(&cmd, active_tab)
+                    .interaction()
+                    .should_close_on_command(&cmd, None)
                 {
                     self.state.ui.completion.close()
                 } else {
@@ -848,7 +896,7 @@ impl Store {
             | action @ Action::TerminalOutput { .. }
             | action @ Action::TerminalExited { .. } => self.reduce_terminal_action(action),
             action @ Action::LspDiagnostics { .. }
-            | action @ Action::LspHover { .. }
+            | action @ Action::LspHoverClear
             | action @ Action::LspHoverResponse { .. }
             | action @ Action::LspHoverImplementationPreview { .. }
             | action @ Action::LspHoverDefinitionPreview { .. }
@@ -893,30 +941,9 @@ impl Store {
                 let mut effects = Vec::new();
                 if next != prev {
                     self.state.ui.completion.selection_locked = true;
-                    if let Some(item) = self.state.ui.completion.visible_item(next).cloned() {
-                        let supports_resolve = self
-                            .state
-                            .ui
-                            .completion
-                            .request
-                            .as_ref()
-                            .and_then(|req| {
-                                lsp_server_capabilities_for_path(&self.state, &req.path)
-                            })
-                            .is_none_or(|c| c.completion_resolve);
-                        if supports_resolve
-                            && item.data.is_some()
-                            && item
-                                .documentation
-                                .as_ref()
-                                .is_none_or(|d| d.trim().is_empty())
-                            && self.state.ui.completion.resolve_inflight != Some(item.id)
-                        {
-                            self.state.ui.completion.resolve_inflight = Some(item.id);
-                            effects.push(Effect::LspCompletionResolveRequest {
-                                item: Box::new(item),
-                            });
-                        }
+                    if let Some(record) = self.state.ui.completion.visible_record(next).cloned() {
+                        let _ =
+                            self.maybe_request_completion_resolve_for_record(&record, &mut effects);
                     }
                 }
                 DispatchResult {
@@ -963,20 +990,14 @@ impl Store {
                     };
                 }
 
-                let selected = self
-                    .state
-                    .ui
-                    .completion
-                    .selected
-                    .min(self.state.ui.completion.visible_len().saturating_sub(1));
-                let Some(item) = self.state.ui.completion.visible_item(selected).cloned() else {
+                let Some(record) = self.state.ui.completion.selected_record().cloned() else {
                     return DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
                 };
+                let entry = record.entry;
 
-                // Record completion usage for frequency ranking.
                 {
                     let language = self
                         .state
@@ -985,14 +1006,14 @@ impl Store {
                         .and_then(|pane| pane.active_tab())
                         .and_then(|tab| tab.language());
                     self.completion_ranker
-                        .record(language, &item.label, item.kind);
+                        .record(language, &entry.label, entry.kind);
                 }
 
-                let adapter = adapter_for_tab(tab);
-                let mut insertion = resolve_completion_insertion(tab, adapter, &item);
+                let mut insertion = CompletionInsertion::from_plan(entry.commit.insert.clone());
 
                 let encoding = lsp_position_encoding_for_path(&self.state, &req.path);
-                let replace_range = completion_replace_range(tab, req.version, &item, encoding);
+                let replace_range =
+                    completion_replace_range(tab, req.version, &entry.commit.replace, encoding);
                 let insertion_start_byte = lsp_position_to_byte_offset(
                     tab,
                     replace_range.start.line,
@@ -1008,7 +1029,7 @@ impl Store {
 
                 let _ = self.state.ui.completion.close();
 
-                let mut edits = item.additional_text_edits.clone();
+                let mut edits = entry.commit.additional_edits.clone();
                 edits.push(LspTextEdit {
                     range: replace_range,
                     new_text: insertion.text.clone(),
@@ -1051,7 +1072,7 @@ impl Store {
                     }
                 }
 
-                if let Some(cmd) = item.command {
+                if let Some(cmd) = entry.commit.command {
                     effects.push(Effect::LspExecuteCommand {
                         command: cmd.command,
                         arguments: cmd.arguments,
@@ -1581,13 +1602,11 @@ impl Store {
                     .and_then(|pane| pane.active_tab());
                 let tab_with_adapter = tab.map(|t| (t, adapter_for_tab(t)));
                 let (
-                    tab_supports_completion_resolve,
+                    _tab_supports_completion_resolve,
                     should_complete,
                     should_trigger_signature_help,
                 ) = {
-                    let signature_help_active = self.state.ui.signature_help.visible
-                        || self.state.ui.signature_help.request.is_some()
-                        || !self.state.ui.signature_help.text.is_empty();
+                    let signature_help_active = self.state.ui.signature_help.is_active();
                     let caps = tab
                         .and_then(|t| t.path.as_ref())
                         .and_then(|path| lsp_server_capabilities_for_path(&self.state, path));
@@ -1616,16 +1635,23 @@ impl Store {
                             return false;
                         }
 
-                        adapter
-                            .completion()
-                            .triggered_by_insert(tab, ch, completion_triggers)
+                        let runtime = completion_runtime_context(&self.state, tab, adapter);
+                        adapter.interaction().completion_triggered_by_insert(
+                            &runtime,
+                            ch,
+                            completion_triggers,
+                        )
                     });
 
                     let should_trigger_signature_help = tab_supports_signature_help
-                        && self
-                            .active_tab_adapter()
-                            .completion()
-                            .signature_help_triggered(ch, signature_help_triggers);
+                        && tab_with_adapter.is_some_and(|(tab, adapter)| {
+                            let runtime = completion_runtime_context(&self.state, tab, adapter);
+                            adapter.interaction().signature_help_triggered(
+                                &runtime,
+                                ch,
+                                signature_help_triggers,
+                            )
+                        });
                     // Avoid popping up signature help on `,` when it isn't already active.
                     // This is a common editing gesture inside existing calls (e.g. building
                     // variadic argument lists) where a persistent popup is distracting.
@@ -1643,11 +1669,7 @@ impl Store {
                     if let Some((pane, path, line, column, version)) =
                         lsp_request_target(&self.state)
                     {
-                        self.state.ui.hover_message = None;
-                        self.state.ui.hover_session = 0;
-                        self.state.ui.hover_base_message.clear();
-                        self.state.ui.hover_implementation_message.clear();
-                        self.state.ui.hover_definition_message.clear();
+                        self.state.ui.hover.clear();
                         self.state.ui.completion.close();
                         self.state.ui.completion.pending_request =
                             Some(super::state::CompletionRequestContext {
@@ -1677,33 +1699,39 @@ impl Store {
                                     session.pane == pane && tab.path.as_ref() == Some(&session.path)
                                 });
                         if session_ok {
+                            let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+                                tab.language(),
+                                tab,
+                                adapter.syntax().syntax_facts(tab),
+                            );
                             let mut changed = sync_completion_items_from_cache(
                                 &mut self.state.ui.completion,
-                                tab,
-                                adapter.completion(),
+                                &runtime,
+                                adapter.interaction(),
                             );
 
-                            let selected = self
-                                .state
-                                .ui
-                                .completion
-                                .selected
-                                .min(self.state.ui.completion.visible_len().saturating_sub(1));
-                            if let Some(item) =
-                                self.state.ui.completion.visible_item(selected).cloned()
+                            if let Some(record) =
+                                self.state.ui.completion.selected_record().cloned()
                             {
-                                let supports_resolve = tab_supports_completion_resolve;
-                                if supports_resolve
-                                    && item.data.is_some()
-                                    && item
-                                        .documentation
-                                        .as_ref()
-                                        .is_none_or(|d| d.trim().is_empty())
-                                    && self.state.ui.completion.resolve_inflight != Some(item.id)
+                                if matches!(
+                                    record.entry.resolve_state,
+                                    CompletionResolveState::Unresolved
+                                ) && record
+                                    .entry
+                                    .documentation
+                                    .as_ref()
+                                    .is_none_or(|d| d.trim().is_empty())
+                                    && self.state.ui.completion.resolve_inflight
+                                        != Some(record.entry.id)
                                 {
-                                    self.state.ui.completion.resolve_inflight = Some(item.id);
+                                    self.state.ui.completion.resolve_inflight =
+                                        Some(record.entry.id);
+                                    let _ = self.state.ui.completion.set_resolve_state(
+                                        record.entry.id,
+                                        CompletionResolveState::Resolving,
+                                    );
                                     effects.push(Effect::LspCompletionResolveRequest {
-                                        item: Box::new(item),
+                                        item: Box::new(record.raw),
                                     });
                                     changed = true;
                                 }
@@ -1717,13 +1745,11 @@ impl Store {
                 }
 
                 if tab_with_adapter
-                    .map(|(_, adapter)| adapter.completion())
-                    .unwrap_or_else(|| self.active_tab_adapter().completion())
+                    .map(|(_, adapter)| adapter.interaction())
+                    .unwrap_or_else(|| self.active_tab_adapter().interaction())
                     .signature_help_closed_by(ch)
                 {
-                    let had = self.state.ui.signature_help.visible
-                        || self.state.ui.signature_help.request.is_some()
-                        || !self.state.ui.signature_help.text.is_empty();
+                    let had = self.state.ui.signature_help.is_active();
                     if had {
                         self.state.ui.signature_help =
                             super::state::SignatureHelpPopupState::default();
@@ -1736,7 +1762,7 @@ impl Store {
                         lsp_request_target(&self.state)
                     {
                         self.state.ui.signature_help.visible = false;
-                        self.state.ui.signature_help.text.clear();
+                        self.state.ui.signature_help.model = None;
                         self.state.ui.signature_help.request =
                             Some(super::state::SignatureHelpRequestContext {
                                 pane,
@@ -1748,12 +1774,13 @@ impl Store {
                     }
                 }
 
-                let had_signature_help = self.state.ui.signature_help.visible
-                    || self.state.ui.signature_help.request.is_some()
-                    || !self.state.ui.signature_help.text.is_empty();
+                let had_signature_help = self.state.ui.signature_help.is_active();
                 if had_signature_help
                     && !tab_with_adapter.is_some_and(|(t, adapter)| {
-                        adapter.completion().signature_help_should_keep_open(t)
+                        let runtime = completion_runtime_context(&self.state, t, adapter);
+                        adapter
+                            .interaction()
+                            .signature_help_should_keep_open(&runtime)
                     })
                 {
                     self.state.ui.signature_help = super::state::SignatureHelpPopupState::default();
@@ -2826,11 +2853,7 @@ impl Store {
                         };
                     }
 
-                    self.state.ui.hover_message = None;
-                    self.state.ui.hover_session = 0;
-                    self.state.ui.hover_base_message.clear();
-                    self.state.ui.hover_implementation_message.clear();
-                    self.state.ui.hover_definition_message.clear();
+                    self.state.ui.hover.clear();
                     let Some(tab) = self
                         .state
                         .editor
@@ -2861,36 +2884,38 @@ impl Store {
                             .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2));
 
                     if can_reuse {
-                        let behavior = adapter_for_tab(tab).completion();
+                        let adapter = adapter_for_tab(tab);
+                        let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+                            tab.language(),
+                            tab,
+                            adapter.syntax().syntax_facts(tab),
+                        );
                         let mut changed = sync_completion_items_from_cache(
                             &mut self.state.ui.completion,
-                            tab,
-                            behavior,
+                            &runtime,
+                            adapter.interaction(),
                         );
                         let mut effects = Vec::new();
 
-                        let selected = self
-                            .state
-                            .ui
-                            .completion
-                            .selected
-                            .min(self.state.ui.completion.visible_len().saturating_sub(1));
-                        if let Some(item) = self.state.ui.completion.visible_item(selected).cloned()
-                        {
-                            let supports_resolve =
-                                lsp_server_capabilities_for_path(&self.state, &path)
-                                    .is_none_or(|c| c.completion_resolve);
-                            if supports_resolve
-                                && item.data.is_some()
-                                && item
-                                    .documentation
-                                    .as_ref()
-                                    .is_none_or(|d| d.trim().is_empty())
-                                && self.state.ui.completion.resolve_inflight != Some(item.id)
+                        if let Some(record) = self.state.ui.completion.selected_record().cloned() {
+                            if matches!(
+                                record.entry.resolve_state,
+                                CompletionResolveState::Unresolved
+                            ) && record
+                                .entry
+                                .documentation
+                                .as_ref()
+                                .is_none_or(|d| d.trim().is_empty())
+                                && self.state.ui.completion.resolve_inflight
+                                    != Some(record.entry.id)
                             {
-                                self.state.ui.completion.resolve_inflight = Some(item.id);
+                                self.state.ui.completion.resolve_inflight = Some(record.entry.id);
+                                let _ = self.state.ui.completion.set_resolve_state(
+                                    record.entry.id,
+                                    CompletionResolveState::Resolving,
+                                );
                                 effects.push(Effect::LspCompletionResolveRequest {
-                                    item: Box::new(item),
+                                    item: Box::new(record.raw),
                                 });
                                 changed = true;
                             }
@@ -3491,17 +3516,25 @@ impl Store {
                     let session_ok = session.is_some_and(|session| {
                         session.pane == pane && tab.path.as_ref() == Some(&session.path)
                     });
-                    let behavior = adapter_for_tab(tab).completion();
+                    let adapter = adapter_for_tab(tab);
+                    let keep_completion_open = {
+                        let runtime = completion_runtime_context(&self.state, tab, adapter);
+                        adapter.interaction().completion_should_keep_open(&runtime)
+                    };
+                    let keep_signature_help_open = {
+                        let runtime = completion_runtime_context(&self.state, tab, adapter);
+                        adapter
+                            .interaction()
+                            .signature_help_should_keep_open(&runtime)
+                    };
 
-                    if session_ok && !behavior.completion_should_keep_open(tab) {
+                    if session_ok && !keep_completion_open {
                         if self.state.ui.completion.close() {
                             state_changed = true;
                         }
 
-                        let had_signature_help = self.state.ui.signature_help.visible
-                            || self.state.ui.signature_help.request.is_some()
-                            || !self.state.ui.signature_help.text.is_empty();
-                        if had_signature_help && !behavior.signature_help_should_keep_open(tab) {
+                        let had_signature_help = self.state.ui.signature_help.is_active();
+                        if had_signature_help && !keep_signature_help_open {
                             self.state.ui.signature_help =
                                 super::state::SignatureHelpPopupState::default();
                             state_changed = true;
@@ -3513,41 +3546,37 @@ impl Store {
                     }
 
                     if session_ok && !self.state.ui.completion.all_items.is_empty() {
+                        let adapter = adapter_for_tab(tab);
+                        let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+                            tab.language(),
+                            tab,
+                            adapter.syntax().syntax_facts(tab),
+                        );
                         let mut changed = sync_completion_items_from_cache(
                             &mut self.state.ui.completion,
-                            tab,
-                            behavior,
+                            &runtime,
+                            adapter.interaction(),
                         );
 
-                        let selected = self
-                            .state
-                            .ui
-                            .completion
-                            .selected
-                            .min(self.state.ui.completion.visible_len().saturating_sub(1));
-                        if let Some(item) = self.state.ui.completion.visible_item(selected).cloned()
-                        {
-                            let supports_resolve = self
-                                .state
-                                .ui
-                                .completion
-                                .request
+                        if let Some(record) = self.state.ui.completion.selected_record().cloned() {
+                            if matches!(
+                                record.entry.resolve_state,
+                                CompletionResolveState::Unresolved
+                            ) && record
+                                .entry
+                                .documentation
                                 .as_ref()
-                                .and_then(|req| {
-                                    lsp_server_capabilities_for_path(&self.state, &req.path)
-                                })
-                                .is_none_or(|c| c.completion_resolve);
-                            if supports_resolve
-                                && item.data.is_some()
-                                && item
-                                    .documentation
-                                    .as_ref()
-                                    .is_none_or(|d| d.trim().is_empty())
-                                && self.state.ui.completion.resolve_inflight != Some(item.id)
+                                .is_none_or(|d| d.trim().is_empty())
+                                && self.state.ui.completion.resolve_inflight
+                                    != Some(record.entry.id)
                             {
-                                self.state.ui.completion.resolve_inflight = Some(item.id);
+                                self.state.ui.completion.resolve_inflight = Some(record.entry.id);
+                                let _ = self.state.ui.completion.set_resolve_state(
+                                    record.entry.id,
+                                    CompletionResolveState::Resolving,
+                                );
                                 effects.push(Effect::LspCompletionResolveRequest {
-                                    item: Box::new(item),
+                                    item: Box::new(record.raw),
                                 });
                                 changed = true;
                             }
@@ -3559,9 +3588,7 @@ impl Store {
                     }
                 }
 
-                let had_signature_help = self.state.ui.signature_help.visible
-                    || self.state.ui.signature_help.request.is_some()
-                    || !self.state.ui.signature_help.text.is_empty();
+                let had_signature_help = self.state.ui.signature_help.is_active();
                 if had_signature_help {
                     let keep = self
                         .state
@@ -3569,9 +3596,11 @@ impl Store {
                         .pane(pane)
                         .and_then(|p| p.active_tab())
                         .is_some_and(|t| {
-                            adapter_for_tab(t)
-                                .completion()
-                                .signature_help_should_keep_open(t)
+                            let adapter = adapter_for_tab(t);
+                            let runtime = completion_runtime_context(&self.state, t, adapter);
+                            adapter
+                                .interaction()
+                                .signature_help_should_keep_open(&runtime)
                         });
                     if !keep {
                         self.state.ui.signature_help =
@@ -3658,9 +3687,7 @@ impl Store {
                     self.push_git_refresh_for_pane(pane, &mut effects);
                 }
 
-                let had_signature_help = self.state.ui.signature_help.visible
-                    || self.state.ui.signature_help.request.is_some()
-                    || !self.state.ui.signature_help.text.is_empty();
+                let had_signature_help = self.state.ui.signature_help.is_active();
                 if had_signature_help {
                     let pane = self.state.ui.editor_layout.active_pane;
                     let keep = self
@@ -3669,9 +3696,11 @@ impl Store {
                         .pane(pane)
                         .and_then(|p| p.active_tab())
                         .is_some_and(|t| {
-                            adapter_for_tab(t)
-                                .completion()
-                                .signature_help_should_keep_open(t)
+                            let adapter = adapter_for_tab(t);
+                            let runtime = completion_runtime_context(&self.state, t, adapter);
+                            adapter
+                                .interaction()
+                                .signature_help_should_keep_open(&runtime)
                         });
                     if !keep {
                         self.state.ui.signature_help =

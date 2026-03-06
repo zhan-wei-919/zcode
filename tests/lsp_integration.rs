@@ -178,7 +178,8 @@ fn test_lsp_spawn_sync_requests_and_diagnostics_are_wired() {
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state()
             .ui
-            .hover_message
+            .hover
+            .display_text()
             .as_deref()
             .is_some_and(|m| m.starts_with("stub hover @"))
     });
@@ -304,7 +305,8 @@ fn test_hover_requests_definition_preview_by_default() {
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state()
             .ui
-            .hover_message
+            .hover
+            .display_text()
             .as_deref()
             .is_some_and(|m| m.starts_with("stub hover @"))
     });
@@ -396,14 +398,19 @@ fn test_hover_appends_definition_preview_when_enabled_by_settings() {
     let _ = workbench.handle_input(&InputEvent::Key(hover));
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().ui.hover_message.as_deref().is_some_and(|m| {
-            m.contains("stub hover @")
-                && m.contains("Definition:")
-                && m.contains("Implementation:")
-                && m.contains("```rust")
-                && m.contains("pub fn target()")
-                && m.contains("pub fn impl_target()")
-        })
+        w.state()
+            .ui
+            .hover
+            .display_text()
+            .as_deref()
+            .is_some_and(|m| {
+                m.contains("stub hover @")
+                    && m.contains("Definition:")
+                    && m.contains("Implementation:")
+                    && m.contains("```rust")
+                    && m.contains("pub fn target()")
+                    && m.contains("pub fn impl_target()")
+            })
     });
 
     let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
@@ -593,7 +600,8 @@ fn test_hover_and_completion_work_for_python_go_and_js_ts() {
         drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
             w.state()
                 .ui
-                .hover_message
+                .hover
+                .display_text()
                 .as_deref()
                 .is_some_and(|m| m.starts_with("stub hover @"))
         });
@@ -604,7 +612,7 @@ fn test_hover_and_completion_work_for_python_go_and_js_ts() {
             kind: KeyEventKind::Press,
         }));
         drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-            w.state().ui.hover_message.is_none()
+            w.state().ui.hover.display_text().is_none()
         });
     }
 }
@@ -659,7 +667,8 @@ fn test_hover_works_when_cursor_is_after_identifier() {
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state()
             .ui
-            .hover_message
+            .hover
+            .display_text()
             .as_deref()
             .is_some_and(|m| m.starts_with("stub hover @"))
     });
@@ -909,7 +918,8 @@ fn test_real_pyright_hover_and_completion_smoke() {
     drive_until(&mut workbench, &rx, Duration::from_secs(10), |w| {
         w.state()
             .ui
-            .hover_message
+            .hover
+            .display_text()
             .as_deref()
             .is_some_and(|m| !m.trim().is_empty())
     });
@@ -918,8 +928,8 @@ fn test_real_pyright_hover_and_completion_smoke() {
     let hover_text = workbench
         .state()
         .ui
-        .hover_message
-        .clone()
+        .hover
+        .display_text()
         .unwrap_or_default();
     assert!(
         hover_text.contains("pred"),
@@ -2280,9 +2290,9 @@ fn test_idle_hover_does_not_trigger_when_cursor_not_on_identifier() {
         drain_runtime_messages(&mut workbench, &rx);
         workbench.tick();
         assert!(
-            workbench.state().ui.hover_message.is_none(),
+            workbench.state().ui.hover.display_text().is_none(),
             "unexpected hover message: {:?}",
-            workbench.state().ui.hover_message
+            workbench.state().ui.hover.display_text()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -2354,9 +2364,9 @@ fn test_hover_response_does_not_show_after_user_input() {
         drain_runtime_messages(&mut workbench, &rx);
         workbench.tick();
         assert!(
-            workbench.state().ui.hover_message.is_none(),
+            workbench.state().ui.hover.display_text().is_none(),
             "unexpected hover message: {:?}",
-            workbench.state().ui.hover_message
+            workbench.state().ui.hover.display_text()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -2516,7 +2526,7 @@ fn test_completion_filters_items_while_typing() {
                 .completion
                 .all_items
                 .get(*idx)
-                .map(|item| item.label.as_str())
+                .map(|item| item.entry.label.as_str())
         })
         .collect::<Vec<_>>();
     assert_eq!(labels, vec!["stubItem", "stubItem2"]);
@@ -2935,7 +2945,7 @@ fn test_signature_help_closes_after_cursor_leaves_call() {
     }));
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().ui.signature_help.visible && !w.state().ui.signature_help.text.trim().is_empty()
+        w.state().ui.signature_help.display_text().is_some()
     });
 
     let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {

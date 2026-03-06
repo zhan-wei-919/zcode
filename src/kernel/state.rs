@@ -4,10 +4,13 @@ use std::time::Instant;
 
 use crate::core::Command;
 use crate::kernel::editor::SyntaxColorGroup;
+use crate::kernel::language::{
+    CompletionEntry, CompletionRecord, CompletionResolveState, HoverModel, HoverSectionModel,
+    SignatureHelpModel,
+};
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::LspClientKey;
-use crate::kernel::services::ports::LspCompletionItem;
 use crate::kernel::services::ports::LspServerCapabilities;
 use crate::kernel::{CodeActionsState, LocationsState, ProblemsState, SymbolsState};
 use crate::kernel::{GitFileStatus, GitState};
@@ -392,7 +395,7 @@ pub struct CompletionRequestContext {
 #[derive(Debug, Clone, Default)]
 pub struct CompletionPopupState {
     pub visible: bool,
-    pub all_items: Vec<LspCompletionItem>,
+    pub all_items: Vec<CompletionRecord>,
     pub index_by_id: FxHashMap<u64, usize>,
     pub visible_indices: Vec<usize>,
     pub selected: usize,
@@ -416,29 +419,53 @@ impl CompletionPopupState {
     pub fn rebuild_index_by_id(&mut self) {
         self.index_by_id.clear();
         for (idx, item) in self.all_items.iter().enumerate() {
-            self.index_by_id.insert(item.id, idx);
+            self.index_by_id.insert(item.entry.id, idx);
         }
     }
 
     pub fn index_of_id(&mut self, id: u64) -> Option<usize> {
         if let Some(idx) = self.index_by_id.get(&id).copied() {
-            if self.all_items.get(idx).is_some_and(|item| item.id == id) {
+            if self
+                .all_items
+                .get(idx)
+                .is_some_and(|item| item.entry.id == id)
+            {
                 return Some(idx);
             }
         }
 
-        let found = self.all_items.iter().position(|item| item.id == id)?;
+        let found = self.all_items.iter().position(|item| item.entry.id == id)?;
         self.rebuild_index_by_id();
         Some(found)
     }
 
-    pub fn visible_item(&self, visible_idx: usize) -> Option<&LspCompletionItem> {
+    pub fn visible_record(&self, visible_idx: usize) -> Option<&CompletionRecord> {
         let item_idx = *self.visible_indices.get(visible_idx)?;
         self.all_items.get(item_idx)
     }
 
-    pub fn selected_item(&self) -> Option<&LspCompletionItem> {
-        self.visible_item(self.selected.min(self.visible_len().saturating_sub(1)))
+    pub fn selected_record(&self) -> Option<&CompletionRecord> {
+        self.visible_record(self.selected.min(self.visible_len().saturating_sub(1)))
+    }
+
+    pub fn visible_item(&self, visible_idx: usize) -> Option<&CompletionEntry> {
+        self.visible_record(visible_idx).map(|record| &record.entry)
+    }
+
+    pub fn selected_item(&self) -> Option<&CompletionEntry> {
+        self.selected_record().map(|record| &record.entry)
+    }
+
+    pub fn set_resolve_state(&mut self, id: u64, state: CompletionResolveState) -> bool {
+        let Some(idx) = self.index_of_id(id) else {
+            return false;
+        };
+        let entry = &mut self.all_items[idx].entry;
+        if entry.resolve_state == state {
+            return false;
+        }
+        entry.resolve_state = state;
+        true
     }
 
     pub fn invalidate_filter_cache(&mut self) {
@@ -480,10 +507,88 @@ pub struct SignatureHelpRequestContext {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct HoverPopupState {
+    pub session: i32,
+    pub model: Option<HoverModel>,
+    pub implementation_preview: Option<HoverSectionModel>,
+    pub definition_preview: Option<HoverSectionModel>,
+}
+
+impl HoverPopupState {
+    pub fn is_active(&self) -> bool {
+        self.model.is_some()
+            || self.implementation_preview.is_some()
+            || self.definition_preview.is_some()
+    }
+
+    pub fn clear(&mut self) {
+        self.session = 0;
+        self.model = None;
+        self.implementation_preview = None;
+        self.definition_preview = None;
+    }
+
+    pub fn display_text(&self) -> Option<String> {
+        let base = self
+            .model
+            .as_ref()
+            .map(HoverModel::to_display_text)
+            .unwrap_or_default();
+        let definition = self
+            .definition_preview
+            .as_ref()
+            .map(HoverSectionModel::to_display_text)
+            .unwrap_or_default();
+        let implementation = self
+            .implementation_preview
+            .as_ref()
+            .map(HoverSectionModel::to_display_text)
+            .unwrap_or_default();
+
+        let mut sections = Vec::with_capacity(3);
+        if !base.trim().is_empty() {
+            sections.push(base);
+        }
+        if !definition.trim().is_empty() {
+            sections.push(definition);
+        }
+        if !implementation.trim().is_empty() {
+            sections.push(implementation);
+        }
+
+        match sections.len() {
+            0 => None,
+            1 => sections.into_iter().next(),
+            _ => Some(sections.join("\n\n---\n\n")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct SignatureHelpPopupState {
     pub visible: bool,
-    pub text: String,
+    pub model: Option<SignatureHelpModel>,
     pub request: Option<SignatureHelpRequestContext>,
+}
+
+impl SignatureHelpPopupState {
+    pub fn is_active(&self) -> bool {
+        self.visible || self.model.is_some() || self.request.is_some()
+    }
+
+    pub fn display_text(&self) -> Option<String> {
+        if !self.visible {
+            return None;
+        }
+
+        let text = self.model.as_ref()?.to_display_text();
+        let text = text.trim();
+        if text.is_empty() {
+            None
+        } else {
+            Some(text.to_string())
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -603,11 +708,7 @@ pub struct UiState {
     pub should_quit: bool,
     pub hovered_tab: Option<(usize, usize)>,
     pub confirm_dialog: ConfirmDialogState,
-    pub hover_message: Option<String>,
-    pub hover_session: i32,
-    pub hover_base_message: String,
-    pub hover_implementation_message: String,
-    pub hover_definition_message: String,
+    pub hover: HoverPopupState,
     pub signature_help: SignatureHelpPopupState,
     pub completion: CompletionPopupState,
     pub theme_editor: ThemeEditorState,
@@ -638,11 +739,7 @@ impl Default for UiState {
             should_quit: false,
             hovered_tab: None,
             confirm_dialog: ConfirmDialogState::default(),
-            hover_message: None,
-            hover_session: 0,
-            hover_base_message: String::new(),
-            hover_implementation_message: String::new(),
-            hover_definition_message: String::new(),
+            hover: HoverPopupState::default(),
             signature_help: SignatureHelpPopupState::default(),
             completion: CompletionPopupState::default(),
             theme_editor: ThemeEditorState::default(),

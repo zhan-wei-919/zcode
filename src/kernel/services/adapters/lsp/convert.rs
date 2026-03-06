@@ -1,9 +1,11 @@
 use crate::kernel::panel::problems::{ProblemItem, ProblemRange, ProblemSeverity};
 use crate::kernel::panel::symbols::SymbolItem;
 use crate::kernel::services::ports::{
-    LspCodeAction, LspCommand, LspCompletionItem, LspInlayHint, LspInsertTextFormat, LspPosition,
-    LspPositionEncoding, LspRange, LspResourceOp, LspSemanticToken, LspSemanticTokensLegend,
-    LspServerCapabilities, LspTextChange, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspCodeAction, LspCommand, LspCompletionItem, LspHoverBlock, LspHoverPayload, LspInlayHint,
+    LspInsertTextFormat, LspMarkup, LspPosition, LspPositionEncoding, LspRange, LspResourceOp,
+    LspSemanticToken, LspSemanticTokensLegend, LspServerCapabilities, LspSignatureHelpPayload,
+    LspSignatureInfo, LspSignatureParameter, LspSignatureParameterLabel, LspTextChange,
+    LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use rustc_hash::FxHashMap;
 use serde_json::Value;
@@ -360,6 +362,120 @@ pub(super) fn symbol_kind_u32(kind: lsp_types::SymbolKind) -> u32 {
     }
 }
 
+pub(super) fn hover_payload(hover: &lsp_types::Hover) -> Option<LspHoverPayload> {
+    let mut blocks = Vec::new();
+    match &hover.contents {
+        lsp_types::HoverContents::Scalar(value) => push_marked_hover_block(value, &mut blocks),
+        lsp_types::HoverContents::Array(items) => {
+            for value in items {
+                push_marked_hover_block(value, &mut blocks);
+            }
+        }
+        lsp_types::HoverContents::Markup(markup) => blocks.push(hover_block_from_markup(markup)),
+    }
+
+    if blocks.is_empty() && hover.range.is_none() {
+        None
+    } else {
+        Some(LspHoverPayload {
+            blocks,
+            range: hover.range.map(range_from_lsp),
+        })
+    }
+}
+
+pub(super) fn signature_help_payload(
+    help: &lsp_types::SignatureHelp,
+) -> Option<LspSignatureHelpPayload> {
+    let signatures = help
+        .signatures
+        .iter()
+        .map(|signature| LspSignatureInfo {
+            label: signature.label.clone(),
+            documentation: signature
+                .documentation
+                .as_ref()
+                .and_then(markup_from_documentation),
+            parameters: signature
+                .parameters
+                .as_ref()
+                .map(|parameters| {
+                    parameters
+                        .iter()
+                        .map(|parameter| LspSignatureParameter {
+                            label: signature_parameter_label(&parameter.label),
+                            documentation: parameter
+                                .documentation
+                                .as_ref()
+                                .and_then(markup_from_documentation),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        })
+        .collect::<Vec<_>>();
+
+    if signatures.is_empty() {
+        None
+    } else {
+        Some(LspSignatureHelpPayload {
+            signatures,
+            active_signature: help.active_signature,
+            active_parameter: help.active_parameter,
+        })
+    }
+}
+
+fn hover_block_from_markup(markup: &lsp_types::MarkupContent) -> LspHoverBlock {
+    match markup.kind {
+        lsp_types::MarkupKind::Markdown => LspHoverBlock::Markdown(markup.value.clone()),
+        _ => LspHoverBlock::PlainText(markup.value.clone()),
+    }
+}
+
+pub(super) fn markup_from_documentation(doc: &lsp_types::Documentation) -> Option<LspMarkup> {
+    match doc {
+        lsp_types::Documentation::String(text) if !text.trim().is_empty() => {
+            Some(LspMarkup::PlainText(text.clone()))
+        }
+        lsp_types::Documentation::MarkupContent(markup) if !markup.value.trim().is_empty() => {
+            Some(match markup.kind {
+                lsp_types::MarkupKind::Markdown => LspMarkup::Markdown(markup.value.clone()),
+                _ => LspMarkup::PlainText(markup.value.clone()),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn signature_parameter_label(param: &lsp_types::ParameterLabel) -> LspSignatureParameterLabel {
+    match param {
+        lsp_types::ParameterLabel::Simple(text) => LspSignatureParameterLabel::Simple(text.clone()),
+        lsp_types::ParameterLabel::LabelOffsets([start, end]) => {
+            LspSignatureParameterLabel::Offsets {
+                start: *start,
+                end: *end,
+            }
+        }
+    }
+}
+
+fn push_marked_hover_block(value: &lsp_types::MarkedString, out: &mut Vec<LspHoverBlock>) {
+    match value {
+        lsp_types::MarkedString::String(text) if !text.trim().is_empty() => {
+            out.push(LspHoverBlock::Markdown(text.clone()))
+        }
+        lsp_types::MarkedString::LanguageString(language) if !language.value.trim().is_empty() => {
+            out.push(LspHoverBlock::Code {
+                language: Some(language.language.clone()).filter(|item| !item.trim().is_empty()),
+                code: language.value.clone(),
+            })
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
 pub(super) fn hover_text(hover: &lsp_types::Hover) -> Option<String> {
     let mut parts = Vec::new();
     match &hover.contents {
@@ -380,6 +496,8 @@ pub(super) fn hover_text(hover: &lsp_types::Hover) -> Option<String> {
     }
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(super) fn signature_help_text(help: &lsp_types::SignatureHelp) -> Option<String> {
     let active_sig = help.active_signature.unwrap_or(0) as usize;
     let sig = help.signatures.get(active_sig)?;
@@ -433,12 +551,12 @@ pub(super) fn signature_help_text(help: &lsp_types::SignatureHelp) -> Option<Str
 }
 
 pub(super) fn documentation_text(doc: &lsp_types::Documentation) -> Option<String> {
-    match doc {
-        lsp_types::Documentation::String(s) => Some(s.clone()),
-        lsp_types::Documentation::MarkupContent(m) => Some(m.value.clone()),
-    }
+    markup_from_documentation(doc).map(|markup| match markup {
+        LspMarkup::Markdown(text) | LspMarkup::PlainText(text) => text,
+    })
 }
 
+#[cfg(test)]
 pub(super) fn parameter_label_range(
     label: &str,
     param: &lsp_types::ParameterLabel,
@@ -456,6 +574,7 @@ pub(super) fn parameter_label_range(
     }
 }
 
+#[cfg(test)]
 pub(super) fn utf16_offset_to_byte(s: &str, offset: u32) -> usize {
     let mut units = 0u32;
     for (byte, ch) in s.char_indices() {
@@ -468,6 +587,7 @@ pub(super) fn utf16_offset_to_byte(s: &str, offset: u32) -> usize {
     s.len()
 }
 
+#[cfg(test)]
 pub(super) fn push_marked_string(s: &lsp_types::MarkedString, out: &mut Vec<String>) {
     match s {
         lsp_types::MarkedString::String(s) => out.push(s.clone()),
@@ -477,6 +597,7 @@ pub(super) fn push_marked_string(s: &lsp_types::MarkedString, out: &mut Vec<Stri
     }
 }
 
+#[cfg(test)]
 fn fenced_code_block(language: &str, value: &str) -> String {
     let mut out = String::with_capacity(language.len() + value.len() + 8);
     out.push_str("```");

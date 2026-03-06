@@ -45,18 +45,11 @@ impl Workbench {
         self.hover_popup.last_area = None;
         self.hover_popup.total_lines = 0;
 
-        let has_text = self
-            .store
-            .state()
-            .ui
-            .hover_message
-            .as_deref()
-            .is_some_and(|t| !t.trim().is_empty());
-        if !has_text {
+        let Some(text) = self.store.state().ui.hover.display_text() else {
             self.hover_popup.scroll = 0;
             self.hover_popup.render_cache.clear();
             return;
-        }
+        };
 
         let active_pane = self.store.state().ui.editor_layout.active_pane;
         let pane_area = match self.layout_cache.editor_areas.get(active_pane) {
@@ -90,23 +83,16 @@ impl Workbench {
         }
 
         let (cache_key, inner_w, rendered, cache_hit) = {
-            let text = self
-                .store
-                .state()
-                .ui
-                .hover_message
-                .as_deref()
-                .unwrap_or_default();
-
-            let natural_w = doc::natural_width_with_tab_size(text, tab_size);
+            let natural_w = doc::natural_width_with_tab_size(text.as_str(), tab_size);
             let max_inner_w = area.w.saturating_sub(2).max(1);
             let inner_w = (natural_w.min(u16::MAX as usize) as u16)
                 .clamp(1, 120)
                 .min(max_inner_w);
-            let (key, rendered, hit) =
-                self.hover_popup
-                    .render_cache
-                    .get_or_render(text, inner_w, MAX_DOC_RENDER_LINES);
+            let (key, rendered, hit) = self.hover_popup.render_cache.get_or_render(
+                text.as_str(),
+                inner_w,
+                MAX_DOC_RENDER_LINES,
+            );
             (key, inner_w, rendered, hit)
         };
 
@@ -196,9 +182,9 @@ impl Workbench {
 
     pub(super) fn paint_signature_help_popup(&self, painter: &mut Painter, area: UiRect) {
         let signature_help = &self.store.state().ui.signature_help;
-        if !signature_help.visible || signature_help.text.trim().is_empty() {
+        let Some(text) = signature_help.display_text() else {
             return;
-        }
+        };
 
         let active_pane = self.store.state().ui.editor_layout.active_pane;
         let pane_area = match self.layout_cache.editor_areas.get(active_pane) {
@@ -214,7 +200,7 @@ impl Workbench {
             return;
         };
 
-        let mut lines: Vec<&str> = signature_help.text.lines().collect();
+        let mut lines: Vec<&str> = text.lines().collect();
         if lines.is_empty() {
             return;
         }
@@ -357,8 +343,8 @@ impl Workbench {
             // When detail is empty and insert_text differs from label, show
             // a simplified insert_text so the user can distinguish items with
             // the same label (e.g. Java's two "class" completions).
-            if detail.is_empty() && item.insert_text != text {
-                let preview = strip_snippet_markers(&item.insert_text);
+            if detail.is_empty() && item.commit.insert.text != text {
+                let preview = strip_snippet_markers(&item.commit.insert.text);
                 if preview != text {
                     detail = preview;
                 }

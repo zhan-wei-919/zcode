@@ -22,7 +22,7 @@ impl Workbench {
         let preserve_hover = matches!(
             event,
             InputEvent::Mouse(me)
-                if self.store.state().ui.hover_message.is_some()
+                if self.store.state().ui.hover.is_active()
                     && self.hover_popup.last_area.is_some_and(|a| {
                         super::super::util::rect_contains(a, me.column, me.row)
                     })
@@ -58,10 +58,8 @@ impl Workbench {
                 service.cancel_hover();
             }
 
-            if self.store.state().ui.hover_message.is_some() {
-                let _ = self.dispatch_kernel(KernelAction::LspHover {
-                    text: String::new(),
-                });
+            if self.store.state().ui.hover.is_active() {
+                let _ = self.dispatch_kernel(KernelAction::LspHoverClear);
             }
         }
     }

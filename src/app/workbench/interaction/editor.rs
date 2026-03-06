@@ -677,7 +677,7 @@ impl Workbench {
                     let _ = self.scroll_completion_doc_by(-step);
                     return EventResult::Consumed;
                 }
-                if self.store.state().ui.hover_message.is_some()
+                if self.store.state().ui.hover.is_active()
                     && self
                         .hover_popup
                         .last_area
@@ -710,7 +710,7 @@ impl Workbench {
                     let _ = self.scroll_completion_doc_by(step);
                     return EventResult::Consumed;
                 }
-                if self.store.state().ui.hover_message.is_some()
+                if self.store.state().ui.hover.is_active()
                     && self
                         .hover_popup
                         .last_area
@@ -741,7 +741,7 @@ impl Workbench {
                 {
                     return EventResult::Consumed;
                 }
-                if self.store.state().ui.hover_message.is_some()
+                if self.store.state().ui.hover.is_active()
                     && self
                         .hover_popup
                         .last_area
@@ -765,7 +765,7 @@ impl Workbench {
                 {
                     return EventResult::Consumed;
                 }
-                if self.store.state().ui.hover_message.is_some()
+                if self.store.state().ui.hover.is_active()
                     && self
                         .hover_popup
                         .last_area

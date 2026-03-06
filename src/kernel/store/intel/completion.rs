@@ -1,13 +1,14 @@
 use crate::kernel::editor::EditorTabState;
 use crate::kernel::editor::SnippetTabstop;
 use crate::kernel::language::adapter::{
-    expand_snippet as expand_fallback_snippet, CompletionBehavior, CompletionContext,
-    CompletionFallbackPlan, LanguageBehaviorContext,
+    expand_snippet as expand_fallback_snippet, CompletionContext, CompletionProtocolAdapter,
+    CompletionRecord, CompletionReplacePolicy, LanguageInteractionPolicy, LanguageRuntimeContext,
+    TextEditPlan,
 };
-use crate::kernel::language::LanguageId;
+use crate::kernel::language::{CompletionEntry, LanguageId};
 use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding, LspRange};
 use crate::kernel::state::CompletionPopupState;
-use crate::kernel::EditorAction;
+use crate::kernel::{AppState, EditorAction};
 use crate::models::{Granularity, Selection};
 use rustc_hash::FxHashMap;
 
@@ -27,51 +28,100 @@ pub(in crate::kernel::store) fn should_close_completion_on_editor_action(
     )
 }
 
+pub(in crate::kernel::store) fn language_runtime_context<'a>(
+    state: &'a AppState,
+    tab: &'a EditorTabState,
+    adapter: &dyn crate::kernel::language::LanguageAdapter,
+) -> LanguageRuntimeContext<'a> {
+    let server_caps = tab
+        .path
+        .as_deref()
+        .and_then(|path| super::lsp::lsp_server_capabilities_for_path(state, path));
+    let server = tab
+        .path
+        .as_deref()
+        .and_then(|path| super::lsp::lsp_client_key_for_path(state, path).map(|key| key.server))
+        .or(adapter.features().lsp_server);
+
+    LanguageRuntimeContext::new(tab.language(), tab, adapter.syntax().syntax_facts(tab))
+        .with_server(server, server_caps)
+}
+
+pub(in crate::kernel::store) fn completion_runtime_context<'a>(
+    state: &'a AppState,
+    tab: &'a EditorTabState,
+    adapter: &dyn crate::kernel::language::LanguageAdapter,
+) -> LanguageRuntimeContext<'a> {
+    language_runtime_context(state, tab, adapter)
+}
+
+pub(in crate::kernel::store) fn normalize_completion_record(
+    runtime: &LanguageRuntimeContext<'_>,
+    adapter: &dyn CompletionProtocolAdapter,
+    raw: LspCompletionItem,
+) -> CompletionRecord {
+    let entry = adapter.normalize_completion(&CompletionContext {
+        runtime: runtime.clone(),
+        item: &raw,
+    });
+    CompletionRecord { entry, raw }
+}
+
 pub(in crate::kernel::store) fn sort_completion_items(
-    items: &mut [LspCompletionItem],
+    items: &mut [CompletionRecord],
     ranker: &CompletionRanker,
     language: Option<LanguageId>,
 ) {
     let mut score_by_id = FxHashMap::default();
     for item in items.iter() {
-        score_by_id.insert(item.id, ranker.score(language, &item.label, item.kind));
+        score_by_id.insert(
+            item.entry.id,
+            ranker.score(language, &item.entry.label, item.entry.kind),
+        );
     }
 
     items.sort_by(|a, b| {
-        let a_score = score_by_id.get(&a.id).copied().unwrap_or(0.0);
-        let b_score = score_by_id.get(&b.id).copied().unwrap_or(0.0);
-        // Higher frequency first.
+        let a_score = score_by_id.get(&a.entry.id).copied().unwrap_or(0.0);
+        let b_score = score_by_id.get(&b.entry.id).copied().unwrap_or(0.0);
         b_score
             .partial_cmp(&a_score)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| {
-                let a_key = a.sort_text.as_deref().unwrap_or(a.label.as_str());
-                let b_key = b.sort_text.as_deref().unwrap_or(b.label.as_str());
+                let a_key = a
+                    .entry
+                    .sort_text
+                    .as_deref()
+                    .unwrap_or(a.entry.label.as_str());
+                let b_key = b
+                    .entry
+                    .sort_text
+                    .as_deref()
+                    .unwrap_or(b.entry.label.as_str());
                 a_key
                     .cmp(b_key)
-                    .then_with(|| a.label.cmp(&b.label))
-                    .then_with(|| a.detail.cmp(&b.detail))
+                    .then_with(|| a.entry.label.cmp(&b.entry.label))
+                    .then_with(|| a.entry.detail.cmp(&b.entry.detail))
             })
     });
 }
 
 pub(in crate::kernel::store) fn filtered_completion_indices(
-    tab: &EditorTabState,
-    items: &[LspCompletionItem],
-    behavior: &dyn CompletionBehavior,
+    runtime: &LanguageRuntimeContext<'_>,
+    items: &[CompletionRecord],
+    interaction: &dyn LanguageInteractionPolicy,
 ) -> Vec<usize> {
     if items.is_empty() {
         return Vec::new();
     }
 
-    let prefix = completion_prefix_at_cursor(tab, behavior);
+    let prefix = completion_prefix_at_cursor(runtime, interaction);
     if prefix.is_empty() {
         return (0..items.len()).collect();
     }
 
     let mut filtered = Vec::with_capacity(items.len());
     for (idx, item) in items.iter().enumerate() {
-        if completion_item_matches_prefix(item, &prefix) {
+        if completion_item_matches_prefix(&item.entry, &prefix) {
             filtered.push(idx);
         }
     }
@@ -80,13 +130,13 @@ pub(in crate::kernel::store) fn filtered_completion_indices(
 }
 
 fn collect_matching_indices(
-    all_items: &[LspCompletionItem],
+    all_items: &[CompletionRecord],
     prefix: &str,
     base_indices: impl Iterator<Item = usize>,
 ) -> Vec<usize> {
     let mut matched = Vec::new();
     for idx in base_indices {
-        if completion_item_matches_prefix(&all_items[idx], prefix) {
+        if completion_item_matches_prefix(&all_items[idx].entry, prefix) {
             matched.push(idx);
         }
     }
@@ -109,7 +159,7 @@ fn selected_visible_index(
     if completion
         .all_items
         .get(item_idx)
-        .is_none_or(|item| item.id != id)
+        .is_none_or(|item| item.entry.id != id)
     {
         return 0;
     }
@@ -132,8 +182,8 @@ fn debug_assert_monotonic_indices(indices: &[usize]) {
 
 pub(in crate::kernel::store) fn sync_completion_items_from_cache(
     completion: &mut CompletionPopupState,
-    tab: &EditorTabState,
-    behavior: &dyn CompletionBehavior,
+    runtime: &LanguageRuntimeContext<'_>,
+    interaction: &dyn LanguageInteractionPolicy,
 ) -> bool {
     if completion.all_items.is_empty() {
         return false;
@@ -152,7 +202,7 @@ pub(in crate::kernel::store) fn sync_completion_items_from_cache(
         None
     };
 
-    let prefix = completion_prefix_at_cursor(tab, behavior);
+    let prefix = completion_prefix_at_cursor(runtime, interaction);
     if completion.filter_cache_valid
         && completion.filter_cache_source_len == source_len
         && prefix == completion.filter_cache_prefix
@@ -211,7 +261,7 @@ pub(in crate::kernel::store) fn sync_completion_items_from_cache(
     items_changed
 }
 
-fn completion_item_matches_prefix(item: &LspCompletionItem, prefix: &str) -> bool {
+fn completion_item_matches_prefix(item: &CompletionEntry, prefix: &str) -> bool {
     let candidate = item.filter_text.as_deref().unwrap_or(item.label.as_str());
     starts_with_ignore_ascii_case(candidate, prefix)
 }
@@ -223,11 +273,11 @@ fn starts_with_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
 }
 
 pub(in crate::kernel::store) fn completion_prefix_at_cursor(
-    tab: &EditorTabState,
-    behavior: &dyn CompletionBehavior,
+    runtime: &LanguageRuntimeContext<'_>,
+    interaction: &dyn LanguageInteractionPolicy,
 ) -> String {
-    let rope = tab.buffer.rope();
-    let (start_char, end_char) = behavior.prefix_bounds(tab);
+    let rope = runtime.tab.buffer.rope();
+    let (start_char, end_char) = interaction.completion_prefix_bounds(runtime);
     rope.slice(start_char..end_char).to_string()
 }
 
@@ -242,15 +292,15 @@ pub(in crate::kernel::store) struct CompletionInsertion {
 impl CompletionInsertion {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::kernel::store) fn from_plain_text(text: String) -> Self {
-        Self::from_plan(CompletionFallbackPlan::from_plain_text(text))
+        Self::from_plan(TextEditPlan::from_plain_text(text))
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::kernel::store) fn from_snippet(snippet: &str) -> Self {
-        Self::from_plan(CompletionFallbackPlan::from_snippet(snippet))
+        Self::from_plan(TextEditPlan::from_snippet(snippet))
     }
 
-    fn from_plan(plan: CompletionFallbackPlan) -> Self {
+    pub(in crate::kernel::store) fn from_plan(plan: TextEditPlan) -> Self {
         Self {
             text: plan.text,
             cursor: plan.cursor,
@@ -272,27 +322,24 @@ impl CompletionInsertion {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(in crate::kernel::store) fn resolve_completion_insertion(
     tab: &EditorTabState,
     adapter: &dyn crate::kernel::language::LanguageAdapter,
     item: &LspCompletionItem,
 ) -> CompletionInsertion {
-    let behavior = LanguageBehaviorContext {
-        language: tab.language(),
-        tab,
-        syntax: adapter.syntax().syntax_facts(tab),
-    };
-
+    let runtime =
+        LanguageRuntimeContext::new(tab.language(), tab, adapter.syntax().syntax_facts(tab));
     let plan = adapter
-        .completion()
-        .normalize_completion_item(&CompletionContext { behavior, item });
+        .completion_protocol()
+        .normalize_completion_text(&CompletionContext { runtime, item });
     CompletionInsertion::from_plan(plan)
 }
 
 pub(in crate::kernel::store) fn completion_replace_range(
     tab: &EditorTabState,
     requested_version: u64,
-    item: &LspCompletionItem,
+    replace: &CompletionReplacePolicy,
     encoding: LspPositionEncoding,
 ) -> LspRange {
     let compute_range = || {
@@ -322,9 +369,22 @@ pub(in crate::kernel::store) fn completion_replace_range(
         return fallback_range;
     }
 
-    let Some(mut item_range) = item.replace_range else {
+    let CompletionReplacePolicy::ServerRange {
+        insert_range,
+        replace_range,
+        anchor_to_prefix,
+    } = replace
+    else {
         return fallback_range;
     };
+
+    let Some(mut item_range) = replace_range.or(*insert_range) else {
+        return fallback_range;
+    };
+
+    if !anchor_to_prefix {
+        return item_range;
+    }
 
     let to_char_offset = |line: u32, character: u32| {
         let byte = super::lsp::lsp_position_to_byte_offset(tab, line, character, encoding);
@@ -339,9 +399,6 @@ pub(in crate::kernel::store) fn completion_replace_range(
     let item_start_char = to_char_offset(item_range.start.line, item_range.start.character);
     let item_end_char = to_char_offset(item_range.end.line, item_range.end.character);
 
-    // Keep completion replacement anchored to the typed identifier prefix.
-    // Some servers may return a wider replace range (for example "&s"), but we should not
-    // consume boundary characters the user typed outside the identifier ("&").
     if item_start_char > item_end_char || item_end_char < fallback_end_char {
         return fallback_range;
     }
@@ -542,6 +599,21 @@ mod tests {
         }
     }
 
+    fn completion_record(id: u64, label: &str) -> crate::kernel::language::CompletionRecord {
+        completion_item(id, label).into()
+    }
+
+    fn runtime_for<'a>(
+        tab: &'a crate::kernel::editor::EditorTabState,
+    ) -> crate::kernel::language::LanguageRuntimeContext<'a> {
+        let adapter = adapter_for_tab(tab);
+        crate::kernel::language::LanguageRuntimeContext::new(
+            tab.language(),
+            tab,
+            adapter.syntax().syntax_facts(tab),
+        )
+    }
+
     fn tab_with_cursor(content: &str, col: usize) -> crate::kernel::editor::EditorTabState {
         tab_with_cursor_at_path("test.rs", content, col)
     }
@@ -572,13 +644,12 @@ mod tests {
     #[test]
     fn sync_completion_items_incremental_prefix_matches_expected_items() {
         let mut tab = tab_with_cursor("pri", 1);
-        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
-                completion_item(1, "piano"),
-                completion_item(2, "print"),
-                completion_item(3, "private"),
-                completion_item(4, "probe"),
+                completion_record(1, "piano"),
+                completion_record(2, "print"),
+                completion_record(3, "private"),
+                completion_record(4, "probe"),
             ],
             visible: true,
             ..Default::default()
@@ -586,8 +657,8 @@ mod tests {
 
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         assert_eq!(
             completion_labels(&completion),
@@ -598,8 +669,8 @@ mod tests {
         tab.buffer.set_cursor(0, 2);
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         assert_eq!(
             completion_labels(&completion),
@@ -610,8 +681,8 @@ mod tests {
         tab.buffer.set_cursor(0, 3);
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         assert_eq!(completion_labels(&completion), ["print", "private"]);
         assert_eq!(completion.filter_cache_prefix, "pri");
@@ -620,13 +691,12 @@ mod tests {
     #[test]
     fn sync_completion_items_prefix_shrink_recomputes_correct_result() {
         let mut tab = tab_with_cursor("pri", 3);
-        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
-                completion_item(1, "piano"),
-                completion_item(2, "print"),
-                completion_item(3, "private"),
-                completion_item(4, "probe"),
+                completion_record(1, "piano"),
+                completion_record(2, "print"),
+                completion_record(3, "private"),
+                completion_record(4, "probe"),
             ],
             visible: true,
             ..Default::default()
@@ -634,16 +704,16 @@ mod tests {
 
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         assert_eq!(completion_labels(&completion), ["print", "private"]);
 
         tab.buffer.set_cursor(0, 2);
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         assert_eq!(
             completion_labels(&completion),
@@ -655,12 +725,11 @@ mod tests {
     #[test]
     fn sync_completion_items_no_match_hides_popup() {
         let tab = tab_with_cursor("zzz", 3);
-        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
-                completion_item(1, "piano"),
-                completion_item(2, "print"),
-                completion_item(3, "private"),
+                completion_record(1, "piano"),
+                completion_record(2, "print"),
+                completion_record(3, "private"),
             ],
             visible: true,
             ..Default::default()
@@ -668,8 +737,8 @@ mod tests {
 
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         assert_eq!(completion_labels(&completion), Vec::<String>::new());
         assert_eq!(completion.filter_cache_indices, Vec::<usize>::new());
@@ -679,13 +748,12 @@ mod tests {
     #[test]
     fn sync_completion_items_keeps_selected_id_stable() {
         let mut tab = tab_with_cursor("pri", 1);
-        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
-                completion_item(1, "piano"),
-                completion_item(2, "print"),
-                completion_item(3, "private"),
-                completion_item(4, "probe"),
+                completion_record(1, "piano"),
+                completion_record(2, "print"),
+                completion_record(3, "private"),
+                completion_record(4, "probe"),
             ],
             visible: true,
             ..Default::default()
@@ -693,8 +761,8 @@ mod tests {
 
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         completion.selected = 2;
         completion.selection_locked = true;
@@ -706,8 +774,8 @@ mod tests {
         tab.buffer.set_cursor(0, 2);
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         assert_eq!(
             completion.selected_item().map(|item| item.id),
@@ -717,8 +785,8 @@ mod tests {
         tab.buffer.set_cursor(0, 3);
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         assert_eq!(
             completion.selected_item().map(|item| item.id),
@@ -729,16 +797,19 @@ mod tests {
     #[test]
     fn sync_completion_items_keeps_selected_id_stable_with_large_visible_indices() {
         let mut tab = tab_with_cursor("pri", 1);
-        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: (0..5_000u64)
-                .map(|id| completion_item(id + 1, &format!("print_{id:04}")))
+                .map(|id| completion_record(id + 1, &format!("print_{id:04}")))
                 .collect(),
             visible: true,
             ..Default::default()
         };
 
-        let _ = sync_completion_items_from_cache(&mut completion, &tab, behavior);
+        let _ = sync_completion_items_from_cache(
+            &mut completion,
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction(),
+        );
         completion.selected = 3_200;
         completion.selection_locked = true;
         let selected_id = completion
@@ -747,14 +818,22 @@ mod tests {
             .expect("selected item");
 
         tab.buffer.set_cursor(0, 2);
-        let _ = sync_completion_items_from_cache(&mut completion, &tab, behavior);
+        let _ = sync_completion_items_from_cache(
+            &mut completion,
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction(),
+        );
         assert_eq!(
             completion.selected_item().map(|item| item.id),
             Some(selected_id)
         );
 
         tab.buffer.set_cursor(0, 3);
-        let _ = sync_completion_items_from_cache(&mut completion, &tab, behavior);
+        let _ = sync_completion_items_from_cache(
+            &mut completion,
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction(),
+        );
         assert_eq!(
             completion.selected_item().map(|item| item.id),
             Some(selected_id)
@@ -764,12 +843,11 @@ mod tests {
     #[test]
     fn sync_completion_items_selected_lookup_fallback_handles_unsorted_visible_indices() {
         let tab = tab_with_cursor("", 0);
-        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
-                completion_item(1, "alpha"),
-                completion_item(2, "beta"),
-                completion_item(3, "gamma"),
+                completion_record(1, "alpha"),
+                completion_record(2, "beta"),
+                completion_record(3, "gamma"),
             ],
             visible: true,
             visible_indices: vec![2, 0, 1],
@@ -784,7 +862,11 @@ mod tests {
         completion.rebuild_index_by_id();
 
         let selected_id = completion.selected_item().map(|item| item.id);
-        let changed = sync_completion_items_from_cache(&mut completion, &tab, behavior);
+        let changed = sync_completion_items_from_cache(
+            &mut completion,
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction(),
+        );
 
         assert!(!changed);
         assert_eq!(completion.selected, 1);
@@ -794,12 +876,11 @@ mod tests {
     #[test]
     fn sync_completion_items_respects_cache_invalidation_after_source_replace() {
         let tab = tab_with_cursor("pr", 2);
-        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
-                completion_item(1, "print"),
-                completion_item(2, "private"),
-                completion_item(3, "probe"),
+                completion_record(1, "print"),
+                completion_record(2, "private"),
+                completion_record(3, "probe"),
             ],
             visible: true,
             ..Default::default()
@@ -807,21 +888,24 @@ mod tests {
 
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         assert_eq!(
             completion_labels(&completion),
             ["print", "private", "probe"]
         );
 
-        completion.all_items = vec![completion_item(100, "prism"), completion_item(101, "proto")];
+        completion.all_items = vec![
+            completion_record(100, "prism"),
+            completion_record(101, "proto"),
+        ];
         completion.invalidate_filter_cache();
 
         assert!(sync_completion_items_from_cache(
             &mut completion,
-            &tab,
-            behavior
+            &runtime_for(&tab),
+            adapter_for_tab(&tab).interaction()
         ));
         assert_eq!(completion_labels(&completion), ["prism", "proto"]);
         assert_eq!(completion.filter_cache_source_len, 2);
@@ -864,7 +948,7 @@ mod tests {
 
         CompletionRanker::reset_perf_counters();
 
-        let mut items: Vec<LspCompletionItem> = (0..128)
+        let items: Vec<LspCompletionItem> = (0..128)
             .map(|i| {
                 let key = (i * 73) % 128;
                 LspCompletionItem {
@@ -884,7 +968,9 @@ mod tests {
                     data: None,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let mut items: Vec<crate::kernel::language::CompletionRecord> =
+            items.into_iter().map(Into::into).collect();
 
         sort_completion_items(&mut items, &ranker, Some(LanguageId::Rust));
 
@@ -1050,8 +1136,12 @@ mod tests {
             data: None,
         };
 
+        let replace = crate::kernel::language::CompletionRecord::from(item.clone())
+            .entry
+            .commit
+            .replace;
         let range =
-            completion_replace_range(&tab, tab.edit_version, &item, LspPositionEncoding::Utf16);
+            completion_replace_range(&tab, tab.edit_version, &replace, LspPositionEncoding::Utf16);
         assert_eq!(range.start.line, 0);
         assert_eq!(range.start.character, 2);
         assert_eq!(range.end.line, 0);
@@ -1104,8 +1194,12 @@ mod tests {
             data: None,
         };
 
+        let replace = crate::kernel::language::CompletionRecord::from(item.clone())
+            .entry
+            .commit
+            .replace;
         let range =
-            completion_replace_range(&tab, tab.edit_version, &item, LspPositionEncoding::Utf16);
+            completion_replace_range(&tab, tab.edit_version, &replace, LspPositionEncoding::Utf16);
         assert_eq!(range.start.line, 0);
         assert_eq!(range.start.character, 1);
         assert_eq!(range.end.line, 0);

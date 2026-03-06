@@ -232,18 +232,18 @@ fn callable_item(label: &str) -> LspCompletionItem {
 fn normalize_plan(
     tab: &crate::kernel::editor::EditorTabState,
     item: &LspCompletionItem,
-) -> crate::kernel::language::CompletionFallbackPlan {
+) -> crate::kernel::language::TextEditPlan {
     let adapter = crate::kernel::language::adapter_for(tab.language());
-    adapter
-        .completion()
-        .normalize_completion_item(&crate::kernel::language::CompletionContext {
-            behavior: crate::kernel::language::LanguageBehaviorContext {
-                language: tab.language(),
+    adapter.completion_protocol().normalize_completion_text(
+        &crate::kernel::language::CompletionContext {
+            runtime: crate::kernel::language::LanguageRuntimeContext::new(
+                tab.language(),
                 tab,
-                syntax: adapter.syntax().syntax_facts(tab),
-            },
+                adapter.syntax().syntax_facts(tab),
+            ),
             item,
-        })
+        },
+    )
 }
 
 #[test]
@@ -255,7 +255,7 @@ fn default_adapter_callable_plan_adds_parentheses_and_cursor() {
     assert_eq!(plan.cursor, Some("print(".chars().count()));
     assert_eq!(
         plan.strategy,
-        crate::kernel::language::CompletionFallbackStrategy::CallableFallback
+        crate::kernel::language::TextEditStrategy::CallableTemplate
     );
 }
 
@@ -268,7 +268,7 @@ fn rust_adapter_callable_plan_uses_unified_fallback_plan() {
     assert_eq!(plan.cursor, Some("println(".chars().count()));
     assert_eq!(
         plan.strategy,
-        crate::kernel::language::CompletionFallbackStrategy::CallableFallback
+        crate::kernel::language::TextEditStrategy::CallableTemplate
     );
 }
 
@@ -287,7 +287,7 @@ fn c_family_adapter_disables_callable_fallback_in_special_contexts() {
         assert!(plan.cursor.is_none(), "case: {content}");
         assert_eq!(
             plan.strategy,
-            crate::kernel::language::CompletionFallbackStrategy::PlainText,
+            crate::kernel::language::TextEditStrategy::PlainText,
             "case: {content}"
         );
     }

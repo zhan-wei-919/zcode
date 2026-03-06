@@ -193,7 +193,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
             let mut painter = Painter::new();
             workbench.paint_completion_popup(&mut painter, area);
             backend.draw(area, painter.cmds());
-        } else if workbench.store.state().ui.hover_message.is_some() {
+        } else if workbench.store.state().ui.hover.is_active() {
             let mut painter = Painter::new();
             workbench.paint_hover_popup(&mut painter, area);
             backend.draw(area, painter.cmds());

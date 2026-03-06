@@ -18,8 +18,10 @@ use crate::kernel::services::ports::LspInlayHint;
 use crate::kernel::services::ports::LspSemanticToken;
 use crate::kernel::services::ports::LspServerCapabilities;
 use crate::kernel::services::ports::LspServerKind;
+use crate::kernel::services::ports::LspSignatureHelpPayload;
 use crate::kernel::services::ports::LspTextEdit;
 use crate::kernel::services::ports::LspWorkspaceEdit;
+use crate::kernel::services::ports::{LspHoverPayload, LspHoverPreviewPayload};
 use crate::kernel::state::{BottomPanelTab, PreviewLanguage, ThemeEditorFocus};
 use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem, TerminalId};
 
@@ -195,20 +197,18 @@ pub enum Action {
         path: PathBuf,
         items: Vec<ProblemItem>,
     },
-    LspHover {
-        text: String,
-    },
+    LspHoverClear,
     LspHoverResponse {
         session: i32,
-        text: String,
+        payload: LspHoverPayload,
     },
     LspHoverImplementationPreview {
         session: i32,
-        text: String,
+        payload: LspHoverPreviewPayload,
     },
     LspHoverDefinitionPreview {
         session: i32,
-        text: String,
+        payload: LspHoverPreviewPayload,
     },
     LspDefinition {
         path: PathBuf,
@@ -267,7 +267,7 @@ pub enum Action {
         command: Option<LspCommand>,
     },
     LspSignatureHelp {
-        text: String,
+        payload: LspSignatureHelpPayload,
     },
     LspApplyWorkspaceEdit {
         edit: LspWorkspaceEdit,

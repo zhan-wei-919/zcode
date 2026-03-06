@@ -13,10 +13,12 @@ pub use file::{
 };
 pub use lsp::{
     LspClientKey, LspCodeAction, LspCommand, LspCompletionItem, LspCompletionTriggerContext,
-    LspCompletionTriggerKind, LspFoldingRange, LspInlayHint, LspInsertTextFormat, LspPosition,
+    LspCompletionTriggerKind, LspFoldingRange, LspHoverBlock, LspHoverPayload,
+    LspHoverPreviewPayload, LspInlayHint, LspInsertTextFormat, LspMarkup, LspPosition,
     LspPositionEncoding, LspRange, LspResourceOp, LspSemanticToken, LspSemanticTokensLegend,
-    LspServerCapabilities, LspServerKind, LspTextChange, LspTextEdit, LspWorkspaceEdit,
-    LspWorkspaceFileEdit,
+    LspServerCapabilities, LspServerKind, LspSignatureHelpPayload, LspSignatureInfo,
+    LspSignatureParameter, LspSignatureParameterLabel, LspTextChange, LspTextEdit,
+    LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 pub use runtime::{AsyncExecutor, BoxFuture};
 pub use search::{

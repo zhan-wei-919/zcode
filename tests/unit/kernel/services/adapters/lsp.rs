@@ -378,6 +378,85 @@ fn hover_text_array_separates_segments_with_blank_line() {
 }
 
 #[test]
+fn hover_payload_preserves_block_kinds_and_range() {
+    let hover = lsp_types::Hover {
+        contents: lsp_types::HoverContents::Array(vec![
+            lsp_types::MarkedString::String("signature".to_string()),
+            lsp_types::MarkedString::LanguageString(lsp_types::LanguageString {
+                language: "rust".to_string(),
+                value: "fn demo()".to_string(),
+            }),
+        ]),
+        range: Some(lsp_types::Range::new(
+            lsp_types::Position::new(2, 4),
+            lsp_types::Position::new(2, 9),
+        )),
+    };
+
+    let payload = super::convert::hover_payload(&hover).expect("hover payload");
+    assert_eq!(
+        payload.blocks,
+        vec![
+            crate::kernel::services::ports::LspHoverBlock::Markdown("signature".to_string()),
+            crate::kernel::services::ports::LspHoverBlock::Code {
+                language: Some("rust".to_string()),
+                code: "fn demo()".to_string(),
+            },
+        ]
+    );
+    let range = payload.range.expect("hover range");
+    assert_eq!(range.start.line, 2);
+    assert_eq!(range.start.character, 4);
+    assert_eq!(range.end.character, 9);
+}
+
+#[test]
+fn signature_help_payload_preserves_markup_and_parameter_offsets() {
+    let help = lsp_types::SignatureHelp {
+        signatures: vec![lsp_types::SignatureInformation {
+            label: "demo(arg: i32)".to_string(),
+            documentation: Some(lsp_types::Documentation::MarkupContent(
+                lsp_types::MarkupContent {
+                    kind: lsp_types::MarkupKind::Markdown,
+                    value: "**docs**".to_string(),
+                },
+            )),
+            parameters: Some(vec![lsp_types::ParameterInformation {
+                label: lsp_types::ParameterLabel::LabelOffsets([5, 8]),
+                documentation: Some(lsp_types::Documentation::String("arg docs".to_string())),
+            }]),
+            active_parameter: Some(0),
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(0),
+    };
+
+    let payload = super::convert::signature_help_payload(&help).expect("signature help payload");
+    assert_eq!(payload.active_signature, Some(0));
+    assert_eq!(payload.active_parameter, Some(0));
+    assert_eq!(payload.signatures.len(), 1);
+    let signature = &payload.signatures[0];
+    assert_eq!(signature.label, "demo(arg: i32)");
+    assert_eq!(
+        signature.documentation,
+        Some(crate::kernel::services::ports::LspMarkup::Markdown(
+            "**docs**".to_string()
+        ))
+    );
+    assert_eq!(signature.parameters.len(), 1);
+    assert_eq!(
+        signature.parameters[0].label,
+        crate::kernel::services::ports::LspSignatureParameterLabel::Offsets { start: 5, end: 8 }
+    );
+    assert_eq!(
+        signature.parameters[0].documentation,
+        Some(crate::kernel::services::ports::LspMarkup::PlainText(
+            "arg docs".to_string()
+        ))
+    );
+}
+
+#[test]
 fn client_capabilities_enable_definition_link_support() {
     let caps = super::convert::client_capabilities();
     let text_document = caps.text_document.expect("textDocument capabilities");
@@ -483,16 +562,24 @@ struct PressedState {
     let msg = host.try_recv().expect("hover definition action");
     match msg.payload {
         crate::kernel::services::KernelMessagePayload::Action(
-            crate::kernel::Action::LspHoverDefinitionPreview { session, text },
+            crate::kernel::Action::LspHoverDefinitionPreview { session, payload },
         ) => {
             assert_eq!(session, 42);
+            assert!(payload
+                .title
+                .starts_with(&format!("Definition: {}:", path.display())));
+            assert_eq!(payload.blocks.len(), 1);
+            let code = match &payload.blocks[0] {
+                crate::kernel::services::ports::LspHoverBlock::Code { code, .. } => code,
+                other => panic!("expected code block, got {:?}", other),
+            };
             assert!(
-                text.contains("fn can_drop"),
-                "missing method signature:\n{text}"
+                code.contains("fn can_drop"),
+                "missing method signature:\n{code}"
             );
             assert!(
-                !text.contains("struct PressedState"),
-                "preview should stop at trait method declaration:\n{text}"
+                !code.contains("struct PressedState"),
+                "preview should stop at trait method declaration:\n{code}"
             );
         }
         other => panic!("expected hover definition preview action, got {other:?}"),

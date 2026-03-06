@@ -4,8 +4,9 @@ use crate::kernel::language::adapter::{
 };
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::{
-    LspCompletionTriggerKind, LspPosition, LspRange, LspSemanticToken, LspSemanticTokensLegend,
-    LspServerCapabilities, LspServerKind, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspCompletionTriggerKind, LspHoverBlock, LspHoverPayload, LspPosition, LspRange,
+    LspSemanticToken, LspSemanticTokensLegend, LspServerCapabilities, LspServerKind, LspTextEdit,
+    LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{
     CompletionRequestContext, ContextMenuRequest, PendingAction, PendingEditorNavigation,
@@ -25,28 +26,43 @@ fn new_store() -> Store {
 #[test]
 fn hover_preview_includes_definition_and_implementation() {
     let mut store = new_store();
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "fn main() {}".to_string(),
+    }));
     let session = 10;
 
     let _ = store.dispatch(Action::LspHoverResponse {
         session,
-        text: "stub hover".to_string(),
+        payload: LspHoverPayload {
+            blocks: vec![LspHoverBlock::PlainText("stub hover".to_string())],
+            range: None,
+        },
     });
     let _ = store.dispatch(Action::LspHoverDefinitionPreview {
         session,
-        text: "Definition preview: trait".to_string(),
+        payload: crate::kernel::services::ports::LspHoverPreviewPayload {
+            title: String::new(),
+            blocks: vec![LspHoverBlock::PlainText(
+                "Definition preview: trait".to_string(),
+            )],
+        },
     });
 
     let _ = store.dispatch(Action::LspHoverImplementationPreview {
         session,
-        text: "Implementation preview: impl".to_string(),
+        payload: crate::kernel::services::ports::LspHoverPreviewPayload {
+            title: String::new(),
+            blocks: vec![LspHoverBlock::PlainText(
+                "Implementation preview: impl".to_string(),
+            )],
+        },
     });
 
-    let hover = store
-        .state
-        .ui
-        .hover_message
-        .as_deref()
-        .expect("hover message");
+    let hover_text = store.state.ui.hover.display_text().expect("hover message");
+    let hover = hover_text.as_str();
     assert!(hover.contains("stub hover"));
     assert!(hover.contains("Definition preview: trait"));
     assert!(hover.contains("Implementation preview: impl"));
@@ -65,27 +81,37 @@ fn hover_preview_includes_definition_and_implementation() {
 #[test]
 fn hover_preview_falls_back_to_definition_when_implementation_empty() {
     let mut store = new_store();
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "fn main() {}".to_string(),
+    }));
     let session = 11;
 
     let _ = store.dispatch(Action::LspHoverResponse {
         session,
-        text: "stub hover".to_string(),
+        payload: LspHoverPayload {
+            blocks: vec![LspHoverBlock::PlainText("stub hover".to_string())],
+            range: None,
+        },
     });
     let _ = store.dispatch(Action::LspHoverImplementationPreview {
         session,
-        text: String::new(),
+        payload: crate::kernel::services::ports::LspHoverPreviewPayload::default(),
     });
     let _ = store.dispatch(Action::LspHoverDefinitionPreview {
         session,
-        text: "Definition preview: trait".to_string(),
+        payload: crate::kernel::services::ports::LspHoverPreviewPayload {
+            title: String::new(),
+            blocks: vec![LspHoverBlock::PlainText(
+                "Definition preview: trait".to_string(),
+            )],
+        },
     });
 
-    let hover = store
-        .state
-        .ui
-        .hover_message
-        .as_deref()
-        .expect("hover message");
+    let hover_text = store.state.ui.hover.display_text().expect("hover message");
+    let hover = hover_text.as_str();
     assert!(hover.contains("Definition preview: trait"));
     assert!(!hover.contains("Implementation preview:"));
 }
@@ -173,6 +199,21 @@ fn test_completion_item(id: u64, label: &str) -> LspCompletionItem {
     }
 }
 
+fn test_completion_record(id: u64, label: &str) -> crate::kernel::language::CompletionRecord {
+    test_completion_item(id, label).into()
+}
+
+fn runtime_for_tab<'a>(
+    tab: &'a crate::kernel::editor::EditorTabState,
+) -> crate::kernel::language::LanguageRuntimeContext<'a> {
+    let adapter = adapter_for_tab(tab);
+    crate::kernel::language::LanguageRuntimeContext::new(
+        tab.language(),
+        tab,
+        adapter.syntax().syntax_facts(tab),
+    )
+}
+
 fn seed_visible_completion_for_active_tab(
     store: &mut Store,
     pane: usize,
@@ -191,7 +232,7 @@ fn seed_visible_completion_for_active_tab(
 
     store.state.ui.completion.visible = true;
     store.state.ui.completion.selected = 0;
-    store.state.ui.completion.all_items = vec![item];
+    store.state.ui.completion.all_items = vec![item.into()];
     store.state.ui.completion.visible_indices = vec![0];
     store.state.ui.completion.request = Some(CompletionRequestContext {
         pane,
@@ -1464,7 +1505,7 @@ fn completion_selected_id_stays_stable_when_visible_indices_change() {
         .completion
         .visible_indices
         .iter()
-        .position(|idx| store.state.ui.completion.all_items[*idx].id == 1)
+        .position(|idx| store.state.ui.completion.all_items[*idx].entry.id == 1)
         .expect("print should be visible");
     store.state.ui.completion.selected = selected;
     store.state.ui.completion.selection_locked = true;
@@ -1506,8 +1547,8 @@ fn completion_defaults_to_first_item_when_selection_unlocked() {
     // Seed an existing completion popup with a non-zero selection, but keep it unlocked.
     store.state.ui.completion.visible = true;
     store.state.ui.completion.all_items = vec![
-        test_completion_item(1, "print"),
-        test_completion_item(2, "probe"),
+        test_completion_record(1, "print"),
+        test_completion_record(2, "probe"),
     ];
     store.state.ui.completion.visible_indices = vec![0, 1];
     store.state.ui.completion.selected = 1;
@@ -1557,7 +1598,10 @@ fn completion_index_map_matches_visible_indices_after_lsp_completion() {
             .all_items
             .get(*idx)
             .expect("visible index must point to item");
-        assert_eq!(completion.index_by_id.get(&item.id).copied(), Some(*idx));
+        assert_eq!(
+            completion.index_by_id.get(&item.entry.id).copied(),
+            Some(*idx)
+        );
     }
 }
 
@@ -1651,14 +1695,17 @@ fn lsp_completion_resolved_repairs_stale_index_map_via_fallback() {
         .completion
         .all_items
         .iter()
-        .position(|item| item.id == 102)
+        .position(|item| item.entry.id == 102)
         .expect("resolved item index");
     assert_eq!(
         store.state.ui.completion.index_by_id.get(&102).copied(),
         Some(idx)
     );
     assert_eq!(
-        store.state.ui.completion.all_items[idx].detail.as_deref(),
+        store.state.ui.completion.all_items[idx]
+            .entry
+            .detail
+            .as_deref(),
         Some("resolved")
     );
 }
@@ -1733,15 +1780,15 @@ fn lsp_completion_resolve_updates_insert_payload_fields() {
         .state
         .ui
         .completion
-        .visible_item(0)
+        .selected_record()
         .expect("completion item");
-    assert_eq!(item.insert_text, "print(${1:value})$0");
+    assert_eq!(item.raw.insert_text, "print(${1:value})$0");
     assert_eq!(
-        item.insert_text_format,
+        item.raw.insert_text_format,
         crate::kernel::services::ports::LspInsertTextFormat::Snippet
     );
-    assert!(item.insert_range.is_some());
-    assert!(item.replace_range.is_some());
+    assert!(item.raw.insert_range.is_some());
+    assert!(item.raw.replace_range.is_some());
 }
 
 #[test]
@@ -1872,8 +1919,9 @@ fn cpp_include_path_context_allows_completion() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let behavior = adapter_for_tab(tab).completion();
-    assert!(behavior.context_allows_completion(tab));
+    let adapter = adapter_for_tab(tab);
+    let runtime = runtime_for_tab(tab);
+    assert!(adapter.interaction().context_allows_completion(&runtime));
 }
 
 #[test]
@@ -1901,8 +1949,9 @@ fn cpp_include_trailing_comment_context_is_blocked() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let behavior = adapter_for_tab(tab).completion();
-    assert!(!behavior.context_allows_completion(tab));
+    let adapter = adapter_for_tab(tab);
+    let runtime = runtime_for_tab(tab);
+    assert!(!adapter.interaction().context_allows_completion(&runtime));
 }
 
 #[test]
@@ -1930,8 +1979,9 @@ fn cpp_include_trailing_comment_does_not_keep_completion_open() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let behavior = adapter_for_tab(tab).completion();
-    assert!(!behavior.completion_should_keep_open(tab));
+    let adapter = adapter_for_tab(tab);
+    let runtime = runtime_for_tab(tab);
+    assert!(!adapter.interaction().completion_should_keep_open(&runtime));
 }
 
 #[test]
@@ -2037,9 +2087,12 @@ fn cpp_insert_gt_after_dash_keeps_open_and_triggers() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let behavior = adapter_for_tab(tab).completion();
+    let adapter = adapter_for_tab(tab);
+    let runtime = runtime_for_tab(tab);
 
-    assert!(!behavior.should_close_on_command(&Command::InsertChar('>'), Some(tab)));
+    assert!(!adapter
+        .interaction()
+        .should_close_on_command(&Command::InsertChar('>'), Some(&runtime)));
 
     let result = store.dispatch(Action::RunCommand(Command::InsertChar('>')));
     assert!(result.effects.iter().any(|e| {
@@ -2077,10 +2130,15 @@ fn cpp_insert_gt_in_comparison_closes_and_does_not_trigger_by_default() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let behavior = adapter_for_tab(tab).completion();
+    let adapter = adapter_for_tab(tab);
+    let runtime = runtime_for_tab(tab);
 
-    assert!(behavior.should_close_on_command(&Command::InsertChar('>'), Some(tab)));
-    assert!(!behavior.triggered_by_insert(tab, '>', &[]));
+    assert!(adapter
+        .interaction()
+        .should_close_on_command(&Command::InsertChar('>'), Some(&runtime)));
+    assert!(!adapter
+        .interaction()
+        .completion_triggered_by_insert(&runtime, '>', &[]));
 }
 
 #[test]
@@ -2098,30 +2156,35 @@ fn experiment_completion_filtering_scale_baseline() {
     }));
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let behavior = adapter_for_tab(tab).completion();
+    let adapter = adapter_for_tab(tab);
+    let runtime = runtime_for_tab(tab);
 
     let items: Vec<LspCompletionItem> = (0..10_000)
         .map(|i| test_completion_item(i, &format!("item_{i:05}")))
         .collect();
 
-    let warm = filtered_completion_indices(tab, &items, behavior);
+    let item_records: Vec<crate::kernel::language::CompletionRecord> =
+        items.clone().into_iter().map(Into::into).collect();
+    let warm = filtered_completion_indices(&runtime, &item_records, adapter.interaction());
     assert!(!warm.is_empty());
 
     let start = Instant::now();
     let mut total = 0usize;
     for _ in 0..50 {
-        total = total.saturating_add(filtered_completion_indices(tab, &items, behavior).len());
+        total = total.saturating_add(
+            filtered_completion_indices(&runtime, &item_records, adapter.interaction()).len(),
+        );
     }
     let elapsed = start.elapsed();
 
     let mut popup = crate::kernel::state::CompletionPopupState {
-        all_items: items,
+        all_items: items.into_iter().map(Into::into).collect(),
         ..Default::default()
     };
     let start_sync = Instant::now();
     let mut changed_count = 0usize;
     for _ in 0..50 {
-        if sync_completion_items_from_cache(&mut popup, tab, behavior) {
+        if sync_completion_items_from_cache(&mut popup, &runtime, adapter.interaction()) {
             changed_count += 1;
         }
     }
@@ -2162,12 +2225,13 @@ fn experiment_cpp_include_context_lookup_counts() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let behavior = adapter_for_tab(tab).completion();
+    let adapter = adapter_for_tab(tab);
+    let runtime = runtime_for_tab(tab);
 
     for _ in 0..1000 {
-        let _ = behavior.context_allows_completion(tab);
-        let _ = behavior.prefix_bounds(tab);
-        let _ = behavior.completion_should_keep_open(tab);
+        let _ = adapter.interaction().context_allows_completion(&runtime);
+        let _ = adapter.interaction().completion_prefix_bounds(&runtime);
+        let _ = adapter.interaction().completion_should_keep_open(&runtime);
     }
 
     let calls = include_context_perf_counter();

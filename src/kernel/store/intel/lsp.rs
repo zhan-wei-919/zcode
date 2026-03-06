@@ -1,6 +1,8 @@
+use crate::kernel::language::{CompletionResolveState, HoverSectionModel};
 use crate::kernel::services::ports::{
-    LspClientKey, LspPosition, LspPositionEncoding, LspRange, LspResourceOp, LspServerCapabilities,
-    LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspClientKey, LspHoverPayload, LspHoverPreviewPayload, LspPosition, LspPositionEncoding,
+    LspRange, LspResourceOp, LspServerCapabilities, LspTextEdit, LspWorkspaceEdit,
+    LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{
     CompletionPopupState, PayloadStamp, RangePayloadStamp, SignatureHelpPopupState,
@@ -20,11 +22,40 @@ use super::super::util::find_open_tab;
 use super::super::util::{
     is_lsp_source_path, line_len_chars, open_tabs_for_path, resolve_renamed_path,
 };
-use super::completion::{filtered_completion_indices, sort_completion_items};
+use super::completion::{
+    completion_runtime_context, filtered_completion_indices, language_runtime_context,
+    normalize_completion_record, sort_completion_items,
+};
 use super::semantic::{semantic_token_lines_from_tokens, semantic_token_lines_from_tokens_range};
 
 #[cfg(test)]
 static LSP_CAPABILITY_LOOKUP_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+fn normalize_hover_preview_for_active_tab(
+    state: &crate::kernel::AppState,
+    payload: &LspHoverPreviewPayload,
+) -> Option<HoverSectionModel> {
+    if payload.title.trim().is_empty() && payload.blocks.is_empty() {
+        return None;
+    }
+
+    let pane = state.ui.editor_layout.active_pane;
+    let tab = state.editor.pane(pane).and_then(|pane| pane.active_tab())?;
+    let adapter = crate::kernel::language::adapter::adapter_for_tab(tab);
+    let runtime = language_runtime_context(state, tab, adapter);
+    let body = adapter.hover_protocol().normalize_hover(
+        &runtime,
+        &LspHoverPayload {
+            blocks: payload.blocks.clone(),
+            range: None,
+        },
+    )?;
+
+    Some(HoverSectionModel {
+        title: payload.title.trim().to_string(),
+        body,
+    })
+}
 
 #[cfg(test)]
 pub(in crate::kernel::store) fn reset_lsp_capability_lookup_perf_counter() {
@@ -34,29 +65,6 @@ pub(in crate::kernel::store) fn reset_lsp_capability_lookup_perf_counter() {
 #[cfg(test)]
 pub(in crate::kernel::store) fn lsp_capability_lookup_perf_counter() -> usize {
     LSP_CAPABILITY_LOOKUP_CALLS.load(Ordering::Relaxed)
-}
-
-fn compose_hover_message(base: &str, implementation: &str, definition: &str) -> Option<String> {
-    let base = base.trim();
-    let implementation = implementation.trim();
-    let definition = definition.trim();
-
-    let mut sections = Vec::with_capacity(3);
-    if !base.is_empty() {
-        sections.push(base);
-    }
-    if !definition.is_empty() {
-        sections.push(definition);
-    }
-    if !implementation.is_empty() {
-        sections.push(implementation);
-    }
-
-    match sections.as_slice() {
-        [] => None,
-        [only] => Some((*only).to_string()),
-        _ => Some(sections.join("\n\n---\n\n")),
-    }
 }
 
 pub(in crate::kernel::store) fn problem_byte_offset(
@@ -651,108 +659,102 @@ impl super::super::Store {
                 effects: Vec::new(),
                 state_changed: self.state.problems.update_path(path, items),
             },
-            Action::LspHover { text } => {
-                let text = text.trim().to_string();
-                let next = if text.is_empty() {
-                    self.state.ui.hover_session = 0;
-                    self.state.ui.hover_base_message.clear();
-                    self.state.ui.hover_implementation_message.clear();
-                    self.state.ui.hover_definition_message.clear();
-                    None
-                } else {
-                    self.state.ui.hover_session = 0;
-                    self.state.ui.hover_base_message = text;
-                    self.state.ui.hover_implementation_message.clear();
-                    self.state.ui.hover_definition_message.clear();
-                    compose_hover_message(
-                        self.state.ui.hover_base_message.as_str(),
-                        self.state.ui.hover_implementation_message.as_str(),
-                        self.state.ui.hover_definition_message.as_str(),
-                    )
+            Action::LspHoverClear => {
+                let had = self.state.ui.hover.is_active();
+                self.state.ui.hover.clear();
+                super::super::DispatchResult {
+                    effects: Vec::new(),
+                    state_changed: had,
+                }
+            }
+            Action::LspHoverResponse { session, payload } => {
+                if session < self.state.ui.hover.session {
+                    return super::super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    };
+                }
+
+                let previous_text = self.state.ui.hover.display_text();
+                let next_model = {
+                    let pane = self.state.ui.editor_layout.active_pane;
+                    self.state
+                        .editor
+                        .pane(pane)
+                        .and_then(|pane| pane.active_tab())
+                        .and_then(|tab| {
+                            let adapter = crate::kernel::language::adapter::adapter_for_tab(tab);
+                            let runtime = language_runtime_context(&self.state, tab, adapter);
+                            adapter.hover_protocol().normalize_hover(&runtime, &payload)
+                        })
                 };
-                let updated = self.state.ui.hover_message != next;
-                self.state.ui.hover_message = next;
+                let session_changed = session != self.state.ui.hover.session;
+                let model_changed = self.state.ui.hover.model.as_ref() != next_model.as_ref();
+
+                if session_changed {
+                    self.state.ui.hover.session = session;
+                    self.state.ui.hover.implementation_preview = None;
+                    self.state.ui.hover.definition_preview = None;
+                }
+                self.state.ui.hover.model = next_model;
+
+                let updated = session_changed
+                    || model_changed
+                    || previous_text != self.state.ui.hover.display_text();
                 super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: updated,
                 }
             }
-            Action::LspHoverResponse { session, text } => {
-                if session < self.state.ui.hover_session {
+            Action::LspHoverImplementationPreview { session, payload } => {
+                if session < self.state.ui.hover.session {
                     return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
                 }
 
-                if session != self.state.ui.hover_session {
-                    self.state.ui.hover_session = session;
-                    self.state.ui.hover_implementation_message.clear();
-                    self.state.ui.hover_definition_message.clear();
+                let previous_text = self.state.ui.hover.display_text();
+                let session_changed = session != self.state.ui.hover.session;
+                let model_changed = session_changed && self.state.ui.hover.model.is_some();
+                if session_changed {
+                    self.state.ui.hover.session = session;
+                    self.state.ui.hover.model = None;
+                    self.state.ui.hover.definition_preview = None;
                 }
-                self.state.ui.hover_base_message = text.trim().to_string();
+                self.state.ui.hover.implementation_preview =
+                    normalize_hover_preview_for_active_tab(&self.state, &payload);
 
-                let next = compose_hover_message(
-                    self.state.ui.hover_base_message.as_str(),
-                    self.state.ui.hover_implementation_message.as_str(),
-                    self.state.ui.hover_definition_message.as_str(),
-                );
-                let updated = self.state.ui.hover_message != next;
-                self.state.ui.hover_message = next;
+                let updated = session_changed
+                    || model_changed
+                    || previous_text != self.state.ui.hover.display_text();
                 super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: updated,
                 }
             }
-            Action::LspHoverImplementationPreview { session, text } => {
-                if session < self.state.ui.hover_session {
+            Action::LspHoverDefinitionPreview { session, payload } => {
+                if session < self.state.ui.hover.session {
                     return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: false,
                     };
                 }
 
-                if session != self.state.ui.hover_session {
-                    self.state.ui.hover_session = session;
-                    self.state.ui.hover_base_message.clear();
-                    self.state.ui.hover_definition_message.clear();
+                let previous_text = self.state.ui.hover.display_text();
+                let session_changed = session != self.state.ui.hover.session;
+                let model_changed = session_changed && self.state.ui.hover.model.is_some();
+                if session_changed {
+                    self.state.ui.hover.session = session;
+                    self.state.ui.hover.model = None;
+                    self.state.ui.hover.implementation_preview = None;
                 }
-                self.state.ui.hover_implementation_message = text.trim().to_string();
+                self.state.ui.hover.definition_preview =
+                    normalize_hover_preview_for_active_tab(&self.state, &payload);
 
-                let next = compose_hover_message(
-                    self.state.ui.hover_base_message.as_str(),
-                    self.state.ui.hover_implementation_message.as_str(),
-                    self.state.ui.hover_definition_message.as_str(),
-                );
-                let updated = self.state.ui.hover_message != next;
-                self.state.ui.hover_message = next;
-                super::super::DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: updated,
-                }
-            }
-            Action::LspHoverDefinitionPreview { session, text } => {
-                if session < self.state.ui.hover_session {
-                    return super::super::DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                if session != self.state.ui.hover_session {
-                    self.state.ui.hover_session = session;
-                    self.state.ui.hover_base_message.clear();
-                    self.state.ui.hover_implementation_message.clear();
-                }
-                self.state.ui.hover_definition_message = text.trim().to_string();
-
-                let next = compose_hover_message(
-                    self.state.ui.hover_base_message.as_str(),
-                    self.state.ui.hover_implementation_message.as_str(),
-                    self.state.ui.hover_definition_message.as_str(),
-                );
-                let updated = self.state.ui.hover_message != next;
-                self.state.ui.hover_message = next;
+                let updated = session_changed
+                    || model_changed
+                    || previous_text != self.state.ui.hover.display_text();
                 super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: updated,
@@ -1433,26 +1435,40 @@ impl super::super::Store {
                     };
                 }
 
-                self.state.ui.hover_message = None;
-                self.state.ui.hover_session = 0;
-                self.state.ui.hover_base_message.clear();
-                self.state.ui.hover_implementation_message.clear();
-                self.state.ui.hover_definition_message.clear();
+                self.state.ui.hover.clear();
                 let prev_selected = if self.state.ui.completion.selection_locked {
                     self.state.ui.completion.selected_item().map(|item| item.id)
                 } else {
                     None
                 };
 
-                let mut all_items = items;
+                let adapter = crate::kernel::language::adapter::adapter_for_tab(tab);
+                let mut all_items = {
+                    let runtime = completion_runtime_context(&self.state, tab, adapter);
+                    items
+                        .into_iter()
+                        .map(|raw| {
+                            normalize_completion_record(
+                                &runtime,
+                                adapter.completion_protocol(),
+                                raw,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                };
                 let language = tab.language();
                 sort_completion_items(&mut all_items, &self.completion_ranker, language);
                 self.state.ui.completion.all_items = all_items;
                 self.state.ui.completion.rebuild_index_by_id();
                 self.state.ui.completion.invalidate_filter_cache();
-                let behavior = crate::kernel::language::adapter::adapter_for_tab(tab).completion();
-                self.state.ui.completion.visible_indices =
-                    filtered_completion_indices(tab, &self.state.ui.completion.all_items, behavior);
+                self.state.ui.completion.visible_indices = {
+                    let runtime = completion_runtime_context(&self.state, tab, adapter);
+                    filtered_completion_indices(
+                        &runtime,
+                        &self.state.ui.completion.all_items,
+                        adapter.interaction(),
+                    )
+                };
                 self.state.ui.completion.visible = self.state.ui.completion.visible_len() > 0;
                 self.state.ui.completion.selected = prev_selected
                     .and_then(|id| {
@@ -1461,7 +1477,7 @@ impl super::super::Store {
                             .completion
                             .visible_indices
                             .iter()
-                            .position(|idx| self.state.ui.completion.all_items[*idx].id == id)
+                            .position(|idx| self.state.ui.completion.all_items[*idx].entry.id == id)
                     })
                     .unwrap_or(0)
                     .min(self.state.ui.completion.visible_len().saturating_sub(1));
@@ -1472,18 +1488,24 @@ impl super::super::Store {
                 self.state.ui.completion.session_started_at = Some(Instant::now());
 
                 let mut effects = Vec::new();
-                if let Some(item) = self.state.ui.completion.selected_item().cloned() {
-                    if lsp_server_capabilities_for_path(&self.state, &req.path)
-                        .is_none_or(|c| c.completion_resolve)
-                        && item.data.is_some()
-                        && item
-                            .documentation
-                            .as_ref()
-                            .is_none_or(|d| d.trim().is_empty())
+                if let Some(record) = self.state.ui.completion.selected_record().cloned() {
+                    if matches!(
+                        record.entry.resolve_state,
+                        CompletionResolveState::Unresolved
+                    ) && record
+                        .entry
+                        .documentation
+                        .as_ref()
+                        .is_none_or(|d| d.trim().is_empty())
                     {
-                        self.state.ui.completion.resolve_inflight = Some(item.id);
+                        self.state.ui.completion.resolve_inflight = Some(record.entry.id);
+                        let _ = self
+                            .state
+                            .ui
+                            .completion
+                            .set_resolve_state(record.entry.id, CompletionResolveState::Resolving);
                         effects.push(Effect::LspCompletionResolveRequest {
-                            item: Box::new(item),
+                            item: Box::new(record.raw),
                         });
                     }
                 }
@@ -1512,80 +1534,118 @@ impl super::super::Store {
 
                 let resolved_index = self.state.ui.completion.index_of_id(id);
                 if let Some(idx) = resolved_index {
-                    let item = &mut self.state.ui.completion.all_items[idx];
                     let mut item_changed = false;
+                    {
+                        let record = &mut self.state.ui.completion.all_items[idx];
+                        let item = &mut record.raw;
 
-                    if let Some(detail) = detail.as_ref() {
-                        if item.detail.as_deref() != Some(detail) {
-                            item.detail = Some(detail.clone());
+                        if let Some(detail) = detail.as_ref() {
+                            if item.detail.as_deref() != Some(detail) {
+                                item.detail = Some(detail.clone());
+                                item_changed = true;
+                            }
+                        }
+                        if let Some(doc) = documentation.as_ref() {
+                            if item.documentation.as_deref() != Some(doc) {
+                                item.documentation = Some(doc.clone());
+                                item_changed = true;
+                            }
+                        }
+                        if let Some(text) = insert_text.as_ref() {
+                            if item.insert_text != *text {
+                                item.insert_text = text.clone();
+                                item_changed = true;
+                            }
+                        }
+                        if let Some(format) = insert_text_format {
+                            if item.insert_text_format != format {
+                                item.insert_text_format = format;
+                                item_changed = true;
+                            }
+                        }
+                        if let Some(range) = insert_range {
+                            let needs_update = item.insert_range.is_none_or(|current| {
+                                current.start.line != range.start.line
+                                    || current.start.character != range.start.character
+                                    || current.end.line != range.end.line
+                                    || current.end.character != range.end.character
+                            });
+                            if needs_update {
+                                item.insert_range = Some(range);
+                                item_changed = true;
+                            }
+                        }
+                        if let Some(range) = replace_range {
+                            let needs_update = item.replace_range.is_none_or(|current| {
+                                current.start.line != range.start.line
+                                    || current.start.character != range.start.character
+                                    || current.end.line != range.end.line
+                                    || current.end.character != range.end.character
+                            });
+                            if needs_update {
+                                item.replace_range = Some(range);
+                                item_changed = true;
+                            }
+                        }
+                        if !additional_text_edits.is_empty()
+                            && item.additional_text_edits.is_empty()
+                        {
+                            item.additional_text_edits = additional_text_edits.clone();
                             item_changed = true;
                         }
-                    }
-                    if let Some(doc) = documentation.as_ref() {
-                        if item.documentation.as_deref() != Some(doc) {
-                            item.documentation = Some(doc.clone());
+                        if command.is_some() && item.command.is_none() {
+                            item.command = command.clone();
                             item_changed = true;
                         }
-                    }
-                    if let Some(text) = insert_text.as_ref() {
-                        if item.insert_text != *text {
-                            item.insert_text = text.clone();
+                        if item.data.is_some() {
+                            item.data = None;
                             item_changed = true;
                         }
-                    }
-                    if let Some(format) = insert_text_format {
-                        if item.insert_text_format != format {
-                            item.insert_text_format = format;
-                            item_changed = true;
-                        }
-                    }
-                    if let Some(range) = insert_range {
-                        let needs_update = item.insert_range.is_none_or(|current| {
-                            current.start.line != range.start.line
-                                || current.start.character != range.start.character
-                                || current.end.line != range.end.line
-                                || current.end.character != range.end.character
-                        });
-                        if needs_update {
-                            item.insert_range = Some(range);
-                            item_changed = true;
-                        }
-                    }
-                    if let Some(range) = replace_range {
-                        let needs_update = item.replace_range.is_none_or(|current| {
-                            current.start.line != range.start.line
-                                || current.start.character != range.start.character
-                                || current.end.line != range.end.line
-                                || current.end.character != range.end.character
-                        });
-                        if needs_update {
-                            item.replace_range = Some(range);
-                            item_changed = true;
-                        }
-                    }
-                    if !additional_text_edits.is_empty() && item.additional_text_edits.is_empty() {
-                        item.additional_text_edits = additional_text_edits.clone();
-                        item_changed = true;
-                    }
-                    if command.is_some() && item.command.is_none() {
-                        item.command = command.clone();
-                        item_changed = true;
-                    }
-                    if item.data.is_some() {
-                        item.data = None;
-                        item_changed = true;
                     }
 
-                    if item_changed
-                        && self
+                    if item_changed {
+                        let next_entry = self
+                            .state
+                            .ui
+                            .completion
+                            .request
+                            .as_ref()
+                            .and_then(|req| find_open_tab(&self.state.editor, req.pane, &req.path))
+                            .and_then(|(pane, tab_index)| {
+                                self.state
+                                    .editor
+                                    .panes
+                                    .get(pane)
+                                    .and_then(|pane_state| pane_state.tabs.get(tab_index))
+                            })
+                            .map(|tab| {
+                                let adapter =
+                                    crate::kernel::language::adapter::adapter_for_tab(tab);
+                                let runtime = completion_runtime_context(&self.state, tab, adapter);
+                                adapter.completion_protocol().normalize_completion(
+                                    &crate::kernel::language::CompletionContext {
+                                        runtime,
+                                        item: &self.state.ui.completion.all_items[idx].raw,
+                                    },
+                                )
+                            })
+                            .unwrap_or_else(|| {
+                                crate::kernel::language::CompletionRecord::from(
+                                    self.state.ui.completion.all_items[idx].raw.clone(),
+                                )
+                                .entry
+                            });
+                        self.state.ui.completion.all_items[idx].entry = next_entry;
+                        if self
                             .state
                             .ui
                             .completion
                             .visible_indices
                             .binary_search(&idx)
                             .is_ok()
-                    {
-                        changed = true;
+                        {
+                            changed = true;
+                        }
                     }
                 }
 
@@ -1594,7 +1654,7 @@ impl super::super::Store {
                     state_changed: changed,
                 }
             }
-            Action::LspSignatureHelp { text } => {
+            Action::LspSignatureHelp { payload } => {
                 let Some(req) = self.state.ui.signature_help.request.clone() else {
                     return super::super::DispatchResult {
                         effects: Vec::new(),
@@ -1602,32 +1662,38 @@ impl super::super::Store {
                     };
                 };
 
-                let valid = self
+                let next_model = self
                     .state
                     .editor
                     .pane(req.pane)
                     .and_then(|pane| pane.active_tab())
-                    .is_some_and(|tab| {
+                    .filter(|tab| {
                         tab.path.as_ref() == Some(&req.path) && tab.edit_version >= req.version
+                    })
+                    .and_then(|tab| {
+                        let adapter = crate::kernel::language::adapter::adapter_for_tab(tab);
+                        let runtime = language_runtime_context(&self.state, tab, adapter);
+                        adapter
+                            .signature_help_protocol()
+                            .normalize_signature_help(&runtime, &payload)
                     });
 
-                let text = text.trim().to_string();
-
-                if !valid || text.is_empty() {
-                    let had = self.state.ui.signature_help.visible
-                        || self.state.ui.signature_help.request.is_some()
-                        || !self.state.ui.signature_help.text.is_empty();
+                let Some(next_model) = next_model else {
+                    let had = self.state.ui.signature_help.is_active();
                     self.state.ui.signature_help = SignatureHelpPopupState::default();
                     return super::super::DispatchResult {
                         effects: Vec::new(),
                         state_changed: had,
                     };
-                }
+                };
 
+                let previous_text = self.state.ui.signature_help.display_text();
                 let changed = !self.state.ui.signature_help.visible
-                    || self.state.ui.signature_help.text != text;
+                    || self.state.ui.signature_help.model.as_ref() != Some(&next_model);
                 self.state.ui.signature_help.visible = true;
-                self.state.ui.signature_help.text = text;
+                self.state.ui.signature_help.model = Some(next_model);
+                let changed =
+                    changed || previous_text != self.state.ui.signature_help.display_text();
                 super::super::DispatchResult {
                     effects: Vec::new(),
                     state_changed: changed,

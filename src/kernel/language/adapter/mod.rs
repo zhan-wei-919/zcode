@@ -11,7 +11,11 @@ use std::path::Path;
 use crate::core::Command;
 use crate::kernel::editor::EditorTabState;
 use crate::kernel::language::LanguageId;
-use crate::kernel::services::ports::{LspCompletionItem, LspInsertTextFormat, LspServerKind};
+use crate::kernel::services::ports::{
+    LspCommand, LspCompletionItem, LspHoverBlock, LspHoverPayload, LspInsertTextFormat, LspMarkup,
+    LspRange, LspServerCapabilities, LspServerKind, LspSignatureHelpPayload,
+    LspSignatureParameterLabel, LspTextEdit,
+};
 
 #[cfg(test)]
 pub(crate) use c_family::{include_context_perf_counter, reset_include_context_perf_counter};
@@ -75,51 +79,75 @@ impl SyntaxFacts {
 }
 
 #[derive(Debug, Clone)]
-pub struct LanguageBehaviorContext<'a> {
+pub struct LanguageRuntimeContext<'a> {
     pub language: Option<LanguageId>,
+    pub server: Option<LspServerKind>,
+    pub server_caps: Option<&'a LspServerCapabilities>,
     pub tab: &'a EditorTabState,
     pub syntax: SyntaxFacts,
 }
 
+impl<'a> LanguageRuntimeContext<'a> {
+    pub fn new(language: Option<LanguageId>, tab: &'a EditorTabState, syntax: SyntaxFacts) -> Self {
+        Self {
+            language,
+            server: None,
+            server_caps: None,
+            tab,
+            syntax,
+        }
+    }
+
+    pub fn with_server(
+        mut self,
+        server: Option<LspServerKind>,
+        server_caps: Option<&'a LspServerCapabilities>,
+    ) -> Self {
+        self.server = server;
+        self.server_caps = server_caps;
+        self
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CompletionContext<'a> {
-    pub behavior: LanguageBehaviorContext<'a>,
+    pub runtime: LanguageRuntimeContext<'a>,
     pub item: &'a LspCompletionItem,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompletionFallbackStrategy {
-    NativeSnippet,
-    CallableFallback,
-    CursorOnly,
+pub enum TextEditStrategy {
     PlainText,
+    NativeSnippet,
+    SynthesizedSnippet,
+    CallableTemplate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompletionTabstop {
+pub struct TextTabstop {
     pub index: u32,
     pub start: usize,
     pub end: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompletionFallbackPlan {
+pub struct TextEditPlan {
     pub text: String,
     pub cursor: Option<usize>,
     pub selection: Option<(usize, usize)>,
-    pub tabstops: Vec<CompletionTabstop>,
-    pub strategy: CompletionFallbackStrategy,
+    pub tabstops: Vec<TextTabstop>,
+    pub strategy: TextEditStrategy,
 }
 
-impl CompletionFallbackPlan {
+impl TextEditPlan {
     pub fn from_plain_text(text: String) -> Self {
         let cursor = text
             .strip_suffix("()")
             .map(|prefix| prefix.chars().count().saturating_add(1));
         let strategy = if cursor.is_some() {
-            CompletionFallbackStrategy::CursorOnly
+            TextEditStrategy::CallableTemplate
         } else {
-            CompletionFallbackStrategy::PlainText
+            TextEditStrategy::PlainText
         };
         Self {
             text,
@@ -137,7 +165,7 @@ impl CompletionFallbackPlan {
             cursor: expanded.cursor,
             selection: expanded.selection,
             tabstops: expanded.tabstops,
-            strategy: CompletionFallbackStrategy::NativeSnippet,
+            strategy: TextEditStrategy::NativeSnippet,
         }
     }
 
@@ -146,11 +174,292 @@ impl CompletionFallbackPlan {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum CompletionReplacePolicy {
+    IdentifierPrefix,
+    ServerRange {
+        insert_range: Option<LspRange>,
+        replace_range: Option<LspRange>,
+        anchor_to_prefix: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct CompletionCommitPlan {
+    pub replace: CompletionReplacePolicy,
+    pub insert: TextEditPlan,
+    pub additional_edits: Vec<LspTextEdit>,
+    pub command: Option<LspCommand>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionResolveState {
+    Unsupported,
+    Unresolved,
+    Resolving,
+    Resolved,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompletionEntry {
+    pub id: u64,
+    pub label: String,
+    pub detail: Option<String>,
+    pub documentation: Option<String>,
+    pub filter_text: Option<String>,
+    pub sort_text: Option<String>,
+    pub kind: Option<u32>,
+    pub commit: CompletionCommitPlan,
+    pub resolve_state: CompletionResolveState,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompletionRecord {
+    pub entry: CompletionEntry,
+    pub raw: LspCompletionItem,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureHelpModel {
+    pub label: String,
+    pub documentation: Option<String>,
+    pub active_parameter_range: Option<(usize, usize)>,
+    pub overload_count: usize,
+}
+
+impl SignatureHelpModel {
+    pub fn to_display_text(&self) -> String {
+        let mut lines = Vec::with_capacity(2);
+        if self.overload_count > 1 {
+            lines.push(format!("{} ({})", self.label, self.overload_count));
+        } else {
+            lines.push(self.label.clone());
+        }
+        if let Some(doc) = self
+            .documentation
+            .as_deref()
+            .filter(|doc| !doc.trim().is_empty())
+        {
+            lines.push(doc.trim().to_string());
+        }
+        lines.join("\n")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HoverBlock {
+    Markdown(String),
+    Code {
+        language: Option<LanguageId>,
+        code: String,
+    },
+    PlainText(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HoverModel {
+    pub blocks: Vec<HoverBlock>,
+    pub range: Option<LspRange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HoverSectionModel {
+    pub title: String,
+    pub body: HoverModel,
+}
+
+impl HoverSectionModel {
+    pub fn to_display_text(&self) -> String {
+        let body = self.body.to_display_text();
+        if body.trim().is_empty() {
+            self.title.trim().to_string()
+        } else if self.title.trim().is_empty() {
+            body
+        } else {
+            format!("{}\n\n{}", self.title.trim(), body)
+        }
+    }
+}
+
+impl HoverModel {
+    pub fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
+    }
+
+    pub fn to_display_text(&self) -> String {
+        self.blocks
+            .iter()
+            .map(|block| match block {
+                HoverBlock::Markdown(text) | HoverBlock::PlainText(text) => text.trim().to_string(),
+                HoverBlock::Code { language, code } => {
+                    let mut out = String::new();
+                    out.push_str("```");
+                    if let Some(language) = language {
+                        out.push_str(language_code_fence(*language));
+                    }
+                    out.push('\n');
+                    out.push_str(code.trim_end());
+                    out.push('\n');
+                    out.push_str("```");
+                    out
+                }
+            })
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+}
+
+impl CompletionRecord {
+    pub fn from_raw_unresolved(raw: LspCompletionItem) -> Self {
+        let insert = match raw.insert_text_format {
+            LspInsertTextFormat::PlainText => {
+                TextEditPlan::from_plain_text(raw.insert_text.clone())
+            }
+            LspInsertTextFormat::Snippet => TextEditPlan::from_snippet(&raw.insert_text),
+        };
+        let resolve_state = if raw.data.is_some() {
+            CompletionResolveState::Unresolved
+        } else {
+            CompletionResolveState::Resolved
+        };
+        let entry = CompletionEntry {
+            id: raw.id,
+            label: raw.label.clone(),
+            detail: raw.detail.clone(),
+            documentation: raw.documentation.clone(),
+            filter_text: raw.filter_text.clone(),
+            sort_text: raw.sort_text.clone(),
+            kind: raw.kind,
+            commit: CompletionCommitPlan {
+                replace: default_completion_replace_policy(&raw),
+                insert,
+                additional_edits: raw.additional_text_edits.clone(),
+                command: raw.command.clone(),
+            },
+            resolve_state,
+        };
+        Self { entry, raw }
+    }
+}
+
+impl From<LspCompletionItem> for CompletionRecord {
+    fn from(raw: LspCompletionItem) -> Self {
+        Self::from_raw_unresolved(raw)
+    }
+}
+
 pub trait SyntaxBehavior: Send + Sync {
     fn syntax_facts(&self, tab: &EditorTabState) -> SyntaxFacts;
 }
 
-pub trait CompletionBehavior: Send + Sync {
+pub trait LanguageInteractionPolicy: Send + Sync {
+    fn debounce_triggered_by_char(&self, ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == ':'
+    }
+
+    fn context_allows_completion(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
+        default_context_allows_completion(ctx.tab)
+    }
+
+    fn keeps_open_on_char(&self, ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_' || ch == '.'
+    }
+
+    fn completion_prefix_bounds(&self, ctx: &LanguageRuntimeContext<'_>) -> (usize, usize) {
+        default_prefix_bounds(ctx.tab)
+    }
+
+    fn completion_triggered_by_insert(
+        &self,
+        ctx: &LanguageRuntimeContext<'_>,
+        ch: char,
+        triggers: &[char],
+    ) -> bool {
+        default_triggered_by_insert(ctx.tab, ch, triggers)
+    }
+
+    fn signature_help_triggered(
+        &self,
+        _ctx: &LanguageRuntimeContext<'_>,
+        ch: char,
+        triggers: &[char],
+    ) -> bool {
+        if triggers.is_empty() {
+            matches!(ch, '(' | ',')
+        } else {
+            triggers.contains(&ch)
+        }
+    }
+
+    fn signature_help_closed_by(&self, ch: char) -> bool {
+        matches!(ch, ')')
+    }
+
+    fn signature_help_should_keep_open(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
+        default_signature_help_should_keep_open(ctx.tab)
+    }
+
+    fn should_close_on_command(
+        &self,
+        cmd: &Command,
+        _ctx: Option<&LanguageRuntimeContext<'_>>,
+    ) -> bool {
+        default_should_close_on_command(self, cmd)
+    }
+
+    fn completion_should_keep_open(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
+        default_completion_should_keep_open(ctx.tab)
+    }
+}
+
+pub trait CompletionProtocolAdapter: Send + Sync {
+    fn normalize_completion_text(&self, context: &CompletionContext<'_>) -> TextEditPlan {
+        default_normalize_completion_item(context)
+    }
+
+    fn completion_replace_policy(
+        &self,
+        context: &CompletionContext<'_>,
+    ) -> CompletionReplacePolicy {
+        default_completion_replace_policy(context.item)
+    }
+
+    fn completion_resolve_state(&self, context: &CompletionContext<'_>) -> CompletionResolveState {
+        default_completion_resolve_state(&context.runtime, context.item)
+    }
+
+    fn normalize_completion(&self, context: &CompletionContext<'_>) -> CompletionEntry {
+        default_normalize_completion(
+            context,
+            self.normalize_completion_text(context),
+            self.completion_replace_policy(context),
+            self.completion_resolve_state(context),
+        )
+    }
+}
+
+pub trait SignatureHelpProtocolAdapter: Send + Sync {
+    fn normalize_signature_help(
+        &self,
+        ctx: &LanguageRuntimeContext<'_>,
+        payload: &LspSignatureHelpPayload,
+    ) -> Option<SignatureHelpModel> {
+        default_normalize_signature_help(ctx, payload)
+    }
+}
+
+pub trait HoverProtocolAdapter: Send + Sync {
+    fn normalize_hover(
+        &self,
+        ctx: &LanguageRuntimeContext<'_>,
+        payload: &LspHoverPayload,
+    ) -> Option<HoverModel> {
+        default_normalize_hover(ctx, payload)
+    }
+}
+
+pub(crate) trait CompletionBehavior: Send + Sync {
     fn debounce_triggered_by_char(&self, ch: char) -> bool {
         ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == ':'
     }
@@ -195,13 +504,88 @@ pub trait CompletionBehavior: Send + Sync {
         default_completion_should_keep_open(tab)
     }
 
-    fn normalize_completion_item(&self, context: &CompletionContext<'_>) -> CompletionFallbackPlan {
+    fn normalize_completion_item(&self, context: &CompletionContext<'_>) -> TextEditPlan {
         default_normalize_completion_item(context)
     }
 }
 
+impl<T> LanguageInteractionPolicy for T
+where
+    T: CompletionBehavior + ?Sized,
+{
+    fn debounce_triggered_by_char(&self, ch: char) -> bool {
+        CompletionBehavior::debounce_triggered_by_char(self, ch)
+    }
+
+    fn context_allows_completion(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
+        CompletionBehavior::context_allows_completion(self, ctx.tab)
+    }
+
+    fn keeps_open_on_char(&self, ch: char) -> bool {
+        CompletionBehavior::keeps_open_on_char(self, ch)
+    }
+
+    fn completion_prefix_bounds(&self, ctx: &LanguageRuntimeContext<'_>) -> (usize, usize) {
+        CompletionBehavior::prefix_bounds(self, ctx.tab)
+    }
+
+    fn completion_triggered_by_insert(
+        &self,
+        ctx: &LanguageRuntimeContext<'_>,
+        ch: char,
+        triggers: &[char],
+    ) -> bool {
+        CompletionBehavior::triggered_by_insert(self, ctx.tab, ch, triggers)
+    }
+
+    fn signature_help_triggered(
+        &self,
+        _ctx: &LanguageRuntimeContext<'_>,
+        ch: char,
+        triggers: &[char],
+    ) -> bool {
+        CompletionBehavior::signature_help_triggered(self, ch, triggers)
+    }
+
+    fn signature_help_closed_by(&self, ch: char) -> bool {
+        CompletionBehavior::signature_help_closed_by(self, ch)
+    }
+
+    fn signature_help_should_keep_open(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
+        CompletionBehavior::signature_help_should_keep_open(self, ctx.tab)
+    }
+
+    fn should_close_on_command(
+        &self,
+        cmd: &Command,
+        ctx: Option<&LanguageRuntimeContext<'_>>,
+    ) -> bool {
+        CompletionBehavior::should_close_on_command(self, cmd, ctx.map(|runtime| runtime.tab))
+    }
+
+    fn completion_should_keep_open(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
+        CompletionBehavior::completion_should_keep_open(self, ctx.tab)
+    }
+}
+
+impl<T> CompletionProtocolAdapter for T
+where
+    T: CompletionBehavior + ?Sized,
+{
+    fn normalize_completion_text(&self, context: &CompletionContext<'_>) -> TextEditPlan {
+        CompletionBehavior::normalize_completion_item(self, context)
+    }
+}
+
+impl<T> SignatureHelpProtocolAdapter for T where T: CompletionBehavior + ?Sized {}
+
+impl<T> HoverProtocolAdapter for T where T: CompletionBehavior + ?Sized {}
+
 pub trait LanguageAdapter: Send + Sync {
-    fn completion(&self) -> &dyn CompletionBehavior;
+    fn interaction(&self) -> &dyn LanguageInteractionPolicy;
+    fn completion_protocol(&self) -> &dyn CompletionProtocolAdapter;
+    fn signature_help_protocol(&self) -> &dyn SignatureHelpProtocolAdapter;
+    fn hover_protocol(&self) -> &dyn HoverProtocolAdapter;
     fn syntax(&self) -> &dyn SyntaxBehavior;
     fn features(&self) -> LanguageFeatures;
 }
@@ -268,7 +652,7 @@ pub(crate) fn default_context_allows_completion(tab: &EditorTabState) -> bool {
     )
 }
 
-pub(crate) fn default_should_close_on_command<S: CompletionBehavior + ?Sized>(
+pub(crate) fn default_should_close_on_command<S: LanguageInteractionPolicy + ?Sized>(
     behavior: &S,
     cmd: &Command,
 ) -> bool {
@@ -365,24 +749,19 @@ pub(crate) fn default_completion_should_keep_open(tab: &EditorTabState) -> bool 
     )
 }
 
-pub(crate) fn default_normalize_completion_item(
-    context: &CompletionContext<'_>,
-) -> CompletionFallbackPlan {
+pub(crate) fn default_normalize_completion_item(context: &CompletionContext<'_>) -> TextEditPlan {
     let mut plan = match context.item.insert_text_format {
         LspInsertTextFormat::PlainText => {
-            let mut plan =
-                CompletionFallbackPlan::from_plain_text(context.item.insert_text.clone());
+            let mut plan = TextEditPlan::from_plain_text(context.item.insert_text.clone());
             if !plan.has_cursor_or_selection() && should_append_callable_parentheses(context.item) {
                 plan.text.push('(');
                 plan.text.push(')');
                 plan.cursor = Some(plan.text.chars().count().saturating_sub(1));
-                plan.strategy = CompletionFallbackStrategy::CallableFallback;
+                plan.strategy = TextEditStrategy::CallableTemplate;
             }
             plan
         }
-        LspInsertTextFormat::Snippet => {
-            CompletionFallbackPlan::from_snippet(&context.item.insert_text)
-        }
+        LspInsertTextFormat::Snippet => TextEditPlan::from_snippet(&context.item.insert_text),
     };
 
     if !plan.has_cursor_or_selection()
@@ -393,6 +772,226 @@ pub(crate) fn default_normalize_completion_item(
     }
 
     plan
+}
+
+pub(crate) fn default_completion_replace_policy(
+    item: &LspCompletionItem,
+) -> CompletionReplacePolicy {
+    if item.insert_range.is_some() || item.replace_range.is_some() {
+        CompletionReplacePolicy::ServerRange {
+            insert_range: item.insert_range,
+            replace_range: item.replace_range,
+            anchor_to_prefix: true,
+        }
+    } else {
+        CompletionReplacePolicy::IdentifierPrefix
+    }
+}
+
+pub(crate) fn default_completion_resolve_state(
+    runtime: &LanguageRuntimeContext<'_>,
+    item: &LspCompletionItem,
+) -> CompletionResolveState {
+    if runtime
+        .server_caps
+        .is_some_and(|caps| !caps.completion_resolve)
+    {
+        CompletionResolveState::Unsupported
+    } else if item.data.is_some() {
+        CompletionResolveState::Unresolved
+    } else {
+        CompletionResolveState::Resolved
+    }
+}
+
+pub(crate) fn default_normalize_completion(
+    context: &CompletionContext<'_>,
+    insert: TextEditPlan,
+    replace: CompletionReplacePolicy,
+    resolve_state: CompletionResolveState,
+) -> CompletionEntry {
+    CompletionEntry {
+        id: context.item.id,
+        label: context.item.label.clone(),
+        detail: context.item.detail.clone(),
+        documentation: context.item.documentation.clone(),
+        filter_text: context.item.filter_text.clone(),
+        sort_text: context.item.sort_text.clone(),
+        kind: context.item.kind,
+        commit: CompletionCommitPlan {
+            replace,
+            insert,
+            additional_edits: context.item.additional_text_edits.clone(),
+            command: context.item.command.clone(),
+        },
+        resolve_state,
+    }
+}
+
+pub(crate) fn default_normalize_signature_help(
+    _ctx: &LanguageRuntimeContext<'_>,
+    payload: &LspSignatureHelpPayload,
+) -> Option<SignatureHelpModel> {
+    default_normalize_signature_help_payload(payload)
+}
+
+pub(crate) fn default_normalize_signature_help_payload(
+    payload: &LspSignatureHelpPayload,
+) -> Option<SignatureHelpModel> {
+    let active_signature = payload.active_signature.unwrap_or(0) as usize;
+    let signature = payload.signatures.get(active_signature)?;
+    let active_parameter = payload.active_parameter.unwrap_or(0) as usize;
+    let active_parameter_range = signature
+        .parameters
+        .get(active_parameter)
+        .and_then(|parameter| {
+            signature_parameter_range(signature.label.as_str(), &parameter.label)
+        });
+
+    Some(SignatureHelpModel {
+        label: highlight_signature_label(signature.label.as_str(), active_parameter_range),
+        documentation: signature.documentation.as_ref().map(markup_to_display_text),
+        active_parameter_range,
+        overload_count: payload.signatures.len(),
+    })
+}
+
+pub(crate) fn default_normalize_hover(
+    _ctx: &LanguageRuntimeContext<'_>,
+    payload: &LspHoverPayload,
+) -> Option<HoverModel> {
+    default_normalize_hover_payload(payload)
+}
+
+pub(crate) fn default_normalize_hover_payload(payload: &LspHoverPayload) -> Option<HoverModel> {
+    let blocks = payload
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            LspHoverBlock::Markdown(text) if !text.trim().is_empty() => {
+                Some(HoverBlock::Markdown(text.clone()))
+            }
+            LspHoverBlock::PlainText(text) if !text.trim().is_empty() => {
+                Some(HoverBlock::PlainText(text.clone()))
+            }
+            LspHoverBlock::Code { language, code } if !code.trim().is_empty() => {
+                Some(HoverBlock::Code {
+                    language: language.as_deref().and_then(language_id_from_code_fence),
+                    code: code.clone(),
+                })
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if blocks.is_empty() {
+        None
+    } else {
+        Some(HoverModel {
+            blocks,
+            range: payload.range,
+        })
+    }
+}
+
+fn markup_to_display_text(markup: &LspMarkup) -> String {
+    match markup {
+        LspMarkup::Markdown(text) | LspMarkup::PlainText(text) => text.trim().to_string(),
+    }
+}
+
+fn signature_parameter_range(
+    label: &str,
+    parameter: &LspSignatureParameterLabel,
+) -> Option<(usize, usize)> {
+    match parameter {
+        LspSignatureParameterLabel::Simple(text) => {
+            let start = label.find(text)?;
+            Some((start, start.saturating_add(text.len())))
+        }
+        LspSignatureParameterLabel::Offsets { start, end } => {
+            let start = utf16_offset_to_byte(label, *start);
+            let end = utf16_offset_to_byte(label, *end);
+            Some((start, end.max(start)))
+        }
+    }
+}
+
+fn highlight_signature_label(label: &str, range: Option<(usize, usize)>) -> String {
+    let Some((start, end)) = range else {
+        return label.to_string();
+    };
+    if start >= end || end > label.len() {
+        return label.to_string();
+    }
+
+    format!(
+        "{}[{}]{}",
+        &label[..start],
+        &label[start..end],
+        &label[end..]
+    )
+}
+
+fn utf16_offset_to_byte(text: &str, offset: u32) -> usize {
+    let mut units = 0u32;
+    for (byte, ch) in text.char_indices() {
+        let next = units.saturating_add(ch.len_utf16() as u32);
+        if next > offset {
+            return byte;
+        }
+        units = next;
+    }
+    text.len()
+}
+
+fn language_id_from_code_fence(language: &str) -> Option<LanguageId> {
+    match language.trim().to_ascii_lowercase().as_str() {
+        "rust" | "rs" => Some(LanguageId::Rust),
+        "go" => Some(LanguageId::Go),
+        "python" | "py" => Some(LanguageId::Python),
+        "javascript" | "js" => Some(LanguageId::JavaScript),
+        "typescript" | "ts" => Some(LanguageId::TypeScript),
+        "jsx" => Some(LanguageId::Jsx),
+        "tsx" => Some(LanguageId::Tsx),
+        "c" => Some(LanguageId::C),
+        "cpp" | "c++" | "cc" | "cxx" => Some(LanguageId::Cpp),
+        "java" => Some(LanguageId::Java),
+        "json" => Some(LanguageId::Json),
+        "yaml" | "yml" => Some(LanguageId::Yaml),
+        "html" => Some(LanguageId::Html),
+        "xml" => Some(LanguageId::Xml),
+        "css" => Some(LanguageId::Css),
+        "toml" => Some(LanguageId::Toml),
+        "sql" => Some(LanguageId::Sql),
+        "bash" | "sh" | "shell" => Some(LanguageId::Bash),
+        "markdown" | "md" => Some(LanguageId::Markdown),
+        _ => None,
+    }
+}
+
+fn language_code_fence(language: LanguageId) -> &'static str {
+    match language {
+        LanguageId::Rust => "rust",
+        LanguageId::Go => "go",
+        LanguageId::Python => "python",
+        LanguageId::JavaScript => "javascript",
+        LanguageId::TypeScript => "typescript",
+        LanguageId::Jsx => "jsx",
+        LanguageId::Tsx => "tsx",
+        LanguageId::C => "c",
+        LanguageId::Cpp => "cpp",
+        LanguageId::Java => "java",
+        LanguageId::Json => "json",
+        LanguageId::Yaml => "yaml",
+        LanguageId::Html => "html",
+        LanguageId::Xml => "xml",
+        LanguageId::Css => "css",
+        LanguageId::Toml => "toml",
+        LanguageId::Sql => "sql",
+        LanguageId::Bash => "bash",
+        LanguageId::Markdown => "markdown",
+    }
 }
 
 pub(crate) fn should_append_trailing_space(item: &LspCompletionItem) -> bool {
@@ -442,7 +1041,7 @@ pub(crate) struct SnippetExpansion {
     pub(crate) text: String,
     pub(crate) cursor: Option<usize>,
     pub(crate) selection: Option<(usize, usize)>,
-    pub(crate) tabstops: Vec<CompletionTabstop>,
+    pub(crate) tabstops: Vec<TextTabstop>,
 }
 
 pub(crate) fn expand_snippet(snippet: &str) -> SnippetExpansion {
@@ -450,7 +1049,7 @@ pub(crate) fn expand_snippet(snippet: &str) -> SnippetExpansion {
     let mut out_chars = 0usize;
     let cursor;
     let mut selection = None;
-    let mut tabstops = Vec::<CompletionTabstop>::new();
+    let mut tabstops = Vec::<TextTabstop>::new();
     let mut best_placeholder: Option<(u32, usize, usize)> = None;
     let mut best_tabstop: Option<(u32, usize)> = None;
     let mut final_cursor = None;
@@ -530,10 +1129,10 @@ pub(crate) fn expand_snippet(snippet: &str) -> SnippetExpansion {
                                 }
                             }
 
-                            tabstops.push(CompletionTabstop { index, start, end });
+                            tabstops.push(TextTabstop { index, start, end });
                         } else if index == 0 {
                             final_cursor = Some(out_chars);
-                            tabstops.push(CompletionTabstop {
+                            tabstops.push(TextTabstop {
                                 index,
                                 start: out_chars,
                                 end: out_chars,
@@ -545,7 +1144,7 @@ pub(crate) fn expand_snippet(snippet: &str) -> SnippetExpansion {
                             if replace {
                                 best_tabstop = Some((index, out_chars));
                             }
-                            tabstops.push(CompletionTabstop {
+                            tabstops.push(TextTabstop {
                                 index,
                                 start: out_chars,
                                 end: out_chars,
@@ -565,7 +1164,7 @@ pub(crate) fn expand_snippet(snippet: &str) -> SnippetExpansion {
                     }
                     if num == 0 {
                         final_cursor = Some(out_chars);
-                        tabstops.push(CompletionTabstop {
+                        tabstops.push(TextTabstop {
                             index: 0,
                             start: out_chars,
                             end: out_chars,
@@ -577,7 +1176,7 @@ pub(crate) fn expand_snippet(snippet: &str) -> SnippetExpansion {
                         if replace {
                             best_tabstop = Some((num, out_chars));
                         }
-                        tabstops.push(CompletionTabstop {
+                        tabstops.push(TextTabstop {
                             index: num,
                             start: out_chars,
                             end: out_chars,

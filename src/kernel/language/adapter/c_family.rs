@@ -4,8 +4,8 @@ use crate::kernel::language::adapter::syntax_bridge::{syntax_facts_for_tab, SYNT
 use crate::kernel::language::adapter::{
     default_context_allows_completion, default_normalize_completion_item, default_prefix_bounds,
     default_should_close_on_command, default_triggered_by_insert, language_features,
-    should_append_trailing_space, CompletionBehavior, CompletionContext, CompletionFallbackPlan,
-    LanguageAdapter, LanguageFeatures, LineContext, MemberAccessKind,
+    should_append_trailing_space, CompletionBehavior, CompletionContext, LanguageAdapter,
+    LanguageFeatures, LineContext, MemberAccessKind, TextEditPlan,
 };
 use crate::kernel::language::LanguageId;
 
@@ -133,8 +133,8 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
         )
     }
 
-    fn normalize_completion_item(&self, context: &CompletionContext<'_>) -> CompletionFallbackPlan {
-        let syntax = &context.behavior.syntax;
+    fn normalize_completion_item(&self, context: &CompletionContext<'_>) -> TextEditPlan {
+        let syntax = &context.runtime.syntax;
         let suppress_callable_fallback =
             matches!(
                 syntax.member_access_kind,
@@ -147,10 +147,10 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
 
         let mut plan = match context.item.insert_text_format {
             crate::kernel::services::ports::LspInsertTextFormat::Snippet => {
-                CompletionFallbackPlan::from_snippet(&context.item.insert_text)
+                TextEditPlan::from_snippet(&context.item.insert_text)
             }
             crate::kernel::services::ports::LspInsertTextFormat::PlainText => {
-                CompletionFallbackPlan::from_plain_text(context.item.insert_text.clone())
+                TextEditPlan::from_plain_text(context.item.insert_text.clone())
             }
         };
 
@@ -178,7 +178,23 @@ impl CFamilyLanguageAdapter {
 }
 
 impl LanguageAdapter for CFamilyLanguageAdapter {
-    fn completion(&self) -> &dyn CompletionBehavior {
+    fn interaction(&self) -> &dyn crate::kernel::language::adapter::LanguageInteractionPolicy {
+        &C_FAMILY_COMPLETION
+    }
+
+    fn completion_protocol(
+        &self,
+    ) -> &dyn crate::kernel::language::adapter::CompletionProtocolAdapter {
+        &C_FAMILY_COMPLETION
+    }
+
+    fn signature_help_protocol(
+        &self,
+    ) -> &dyn crate::kernel::language::adapter::SignatureHelpProtocolAdapter {
+        &C_FAMILY_COMPLETION
+    }
+
+    fn hover_protocol(&self) -> &dyn crate::kernel::language::adapter::HoverProtocolAdapter {
         &C_FAMILY_COMPLETION
     }
 

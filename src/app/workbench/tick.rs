@@ -303,7 +303,7 @@ impl Workbench {
             || self.store.state().ui.command_palette.visible
             || self.store.state().ui.input_dialog.visible
             || self.store.state().ui.confirm_dialog.visible
-            || self.store.state().ui.hover_message.is_some()
+            || self.store.state().ui.hover.is_active()
         {
             return false;
         }

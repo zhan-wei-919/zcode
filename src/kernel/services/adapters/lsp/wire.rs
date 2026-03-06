@@ -1,15 +1,16 @@
 use super::convert::{
     code_actions_from_lsp, command_from_lsp, completion_items, decode_semantic_tokens,
     definition_location, definition_preview_target, diagnostics_from_params, documentation_text,
-    hover_text, inlay_hints_from_lsp, insert_text_format, language_id_for_path,
-    push_document_symbols, range_from_lsp, server_capabilities_from_lsp, signature_help_text,
+    hover_payload, inlay_hints_from_lsp, insert_text_format, language_id_for_path,
+    push_document_symbols, range_from_lsp, server_capabilities_from_lsp, signature_help_payload,
     symbol_item_from_symbol_information, symbol_item_from_workspace_symbol,
     workspace_edit_from_lsp, DefinitionPreviewTarget,
 };
 use super::LspClient;
 use crate::kernel::panel::locations::LocationItem;
 use crate::kernel::services::ports::{
-    LspFoldingRange, LspRange, LspServerKind, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspFoldingRange, LspHoverBlock, LspHoverPayload, LspHoverPreviewPayload, LspRange,
+    LspServerKind, LspSignatureHelpPayload, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use crate::kernel::services::KernelServiceContext;
 use crate::kernel::Action;
@@ -751,11 +752,11 @@ fn definition_window(
     Some((start, end))
 }
 
-fn render_source_preview_text(
+fn render_source_preview_payload(
     label: &str,
     target: &DefinitionPreviewTarget,
     max_lines: usize,
-) -> Option<String> {
+) -> Option<LspHoverPreviewPayload> {
     let max_lines = max_lines.clamp(20, 2000);
     let content = std::fs::read_to_string(&target.path).ok()?;
     let lines = content.lines().collect::<Vec<_>>();
@@ -765,9 +766,16 @@ fn render_source_preview_text(
         return None;
     }
 
-    let language = language_id_for_path(target.path.as_path());
-    let header = format!("{}: {}:{}", label, target.path.display(), start + 1);
-    Some(format!("{header}\n\n```{language}\n{snippet}\n```"))
+    let language = language_id_for_path(target.path.as_path())
+        .trim()
+        .to_string();
+    Some(LspHoverPreviewPayload {
+        title: format!("{}: {}:{}", label, target.path.display(), start + 1),
+        blocks: vec![LspHoverBlock::Code {
+            language: Some(language).filter(|item| !item.trim().is_empty()),
+            code: snippet,
+        }],
+    })
 }
 
 pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceContext) {
@@ -810,18 +818,18 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
         match &kind {
             LspRequestKind::Hover { session } => ctx.dispatch(Action::LspHoverResponse {
                 session: *session,
-                text: String::new(),
+                payload: LspHoverPayload::default(),
             }),
             LspRequestKind::HoverImplementation { session, .. } => {
                 ctx.dispatch(Action::LspHoverImplementationPreview {
                     session: *session,
-                    text: String::new(),
+                    payload: LspHoverPreviewPayload::default(),
                 })
             }
             LspRequestKind::HoverDefinition { session, .. } => {
                 ctx.dispatch(Action::LspHoverDefinitionPreview {
                     session: *session,
-                    text: String::new(),
+                    payload: LspHoverPreviewPayload::default(),
                 })
             }
             LspRequestKind::References => ctx.dispatch(Action::LspReferences { items: Vec::new() }),
@@ -845,7 +853,7 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                 })
             }
             LspRequestKind::SignatureHelp => ctx.dispatch(Action::LspSignatureHelp {
-                text: String::new(),
+                payload: LspSignatureHelpPayload::default(),
             }),
             LspRequestKind::Format { path } => {
                 ctx.dispatch(Action::LspFormatCompleted { path: path.clone() })
@@ -859,18 +867,18 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
         match &kind {
             LspRequestKind::Hover { session } => ctx.dispatch(Action::LspHoverResponse {
                 session: *session,
-                text: String::new(),
+                payload: LspHoverPayload::default(),
             }),
             LspRequestKind::HoverImplementation { session, .. } => {
                 ctx.dispatch(Action::LspHoverImplementationPreview {
                     session: *session,
-                    text: String::new(),
+                    payload: LspHoverPreviewPayload::default(),
                 })
             }
             LspRequestKind::HoverDefinition { session, .. } => {
                 ctx.dispatch(Action::LspHoverDefinitionPreview {
                     session: *session,
-                    text: String::new(),
+                    payload: LspHoverPreviewPayload::default(),
                 })
             }
             LspRequestKind::References => ctx.dispatch(Action::LspReferences { items: Vec::new() }),
@@ -894,7 +902,7 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                 })
             }
             LspRequestKind::SignatureHelp => ctx.dispatch(Action::LspSignatureHelp {
-                text: String::new(),
+                payload: LspSignatureHelpPayload::default(),
             }),
             LspRequestKind::Format { path } => {
                 ctx.dispatch(Action::LspFormatCompleted { path: path.clone() })
@@ -909,29 +917,33 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
             let hover = serde_json::from_value::<Option<lsp_types::Hover>>(result)
                 .ok()
                 .flatten();
-            let text = hover.and_then(|h| hover_text(&h)).unwrap_or_default();
-            tracing::debug!(text_len = text.len(), "lsp hover response");
-            ctx.dispatch(Action::LspHoverResponse { session, text });
+            let payload = hover
+                .and_then(|item| hover_payload(&item))
+                .unwrap_or_default();
+            tracing::debug!(block_count = payload.blocks.len(), "lsp hover response");
+            ctx.dispatch(Action::LspHoverResponse { session, payload });
         }
         LspRequestKind::HoverImplementation { session, max_lines } => {
             let resp = serde_json::from_value::<Option<lsp_types::GotoDefinitionResponse>>(result)
                 .ok()
                 .flatten();
-            let text = resp
+            let payload = resp
                 .and_then(definition_preview_target)
-                .and_then(|target| render_source_preview_text("Implementation", &target, max_lines))
+                .and_then(|target| {
+                    render_source_preview_payload("Implementation", &target, max_lines)
+                })
                 .unwrap_or_default();
-            ctx.dispatch(Action::LspHoverImplementationPreview { session, text });
+            ctx.dispatch(Action::LspHoverImplementationPreview { session, payload });
         }
         LspRequestKind::HoverDefinition { session, max_lines } => {
             let resp = serde_json::from_value::<Option<lsp_types::GotoDefinitionResponse>>(result)
                 .ok()
                 .flatten();
-            let text = resp
+            let payload = resp
                 .and_then(definition_preview_target)
-                .and_then(|target| render_source_preview_text("Definition", &target, max_lines))
+                .and_then(|target| render_source_preview_payload("Definition", &target, max_lines))
                 .unwrap_or_default();
-            ctx.dispatch(Action::LspHoverDefinitionPreview { session, text });
+            ctx.dispatch(Action::LspHoverDefinitionPreview { session, payload });
         }
         LspRequestKind::Definition => {
             let resp = serde_json::from_value::<Option<lsp_types::GotoDefinitionResponse>>(result)
@@ -1222,11 +1234,11 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
             let resp = serde_json::from_value::<Option<lsp_types::SignatureHelp>>(result)
                 .ok()
                 .flatten();
-            let text = resp
+            let payload = resp
                 .as_ref()
-                .and_then(signature_help_text)
+                .and_then(signature_help_payload)
                 .unwrap_or_default();
-            ctx.dispatch(Action::LspSignatureHelp { text });
+            ctx.dispatch(Action::LspSignatureHelp { payload });
         }
         LspRequestKind::Rename => {
             let edit = serde_json::from_value::<Option<lsp_types::WorkspaceEdit>>(result)
