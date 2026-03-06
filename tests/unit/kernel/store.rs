@@ -2658,10 +2658,10 @@ fn expand_snippet_strips_tabstops_and_keeps_placeholder_text() {
 }
 
 #[test]
-fn completion_plain_text_moves_cursor_inside_trailing_parens() {
+fn completion_plain_text_keeps_server_text_literal() {
     let insertion = CompletionInsertion::from_plain_text("println!()".to_string());
     assert_eq!(insertion.text, "println!()");
-    assert_eq!(insertion.cursor, Some("println!(".chars().count()));
+    assert!(insertion.cursor.is_none());
     assert!(insertion.selection.is_none());
 
     let insertion = CompletionInsertion::from_plain_text("no_parens".to_string());

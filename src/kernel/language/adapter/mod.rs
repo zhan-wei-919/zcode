@@ -141,20 +141,12 @@ pub struct TextEditPlan {
 
 impl TextEditPlan {
     pub fn from_plain_text(text: String) -> Self {
-        let cursor = text
-            .strip_suffix("()")
-            .map(|prefix| prefix.chars().count().saturating_add(1));
-        let strategy = if cursor.is_some() {
-            TextEditStrategy::CallableTemplate
-        } else {
-            TextEditStrategy::PlainText
-        };
         Self {
             text,
-            cursor,
+            cursor: None,
             selection: None,
             tabstops: Vec::new(),
-            strategy,
+            strategy: TextEditStrategy::PlainText,
         }
     }
 
@@ -749,29 +741,45 @@ pub(crate) fn default_completion_should_keep_open(tab: &EditorTabState) -> bool 
     )
 }
 
-pub(crate) fn default_normalize_completion_item(context: &CompletionContext<'_>) -> TextEditPlan {
-    let mut plan = match context.item.insert_text_format {
+pub(crate) fn normalize_server_completion_text(context: &CompletionContext<'_>) -> TextEditPlan {
+    match context.item.insert_text_format {
         LspInsertTextFormat::PlainText => {
-            let mut plan = TextEditPlan::from_plain_text(context.item.insert_text.clone());
-            if !plan.has_cursor_or_selection() && should_append_callable_parentheses(context.item) {
-                plan.text.push('(');
-                plan.text.push(')');
-                plan.cursor = Some(plan.text.chars().count().saturating_sub(1));
-                plan.strategy = TextEditStrategy::CallableTemplate;
-            }
-            plan
+            TextEditPlan::from_plain_text(context.item.insert_text.clone())
         }
         LspInsertTextFormat::Snippet => TextEditPlan::from_snippet(&context.item.insert_text),
-    };
+    }
+}
 
+pub(crate) fn apply_callable_completion_fallback(
+    mut plan: TextEditPlan,
+    item: &LspCompletionItem,
+) -> TextEditPlan {
+    if !plan.has_cursor_or_selection() && should_append_callable_parentheses(item) {
+        plan.text.push('(');
+        plan.text.push(')');
+        plan.cursor = Some(plan.text.chars().count().saturating_sub(1));
+        plan.strategy = TextEditStrategy::CallableTemplate;
+    }
+
+    plan
+}
+
+pub(crate) fn apply_trailing_space_completion_fallback(
+    mut plan: TextEditPlan,
+    item: &LspCompletionItem,
+) -> TextEditPlan {
     if !plan.has_cursor_or_selection()
-        && should_append_trailing_space(context.item)
+        && should_append_trailing_space(item)
         && !plan.text.ends_with(' ')
     {
         plan.text.push(' ');
     }
 
     plan
+}
+
+pub(crate) fn default_normalize_completion_item(context: &CompletionContext<'_>) -> TextEditPlan {
+    normalize_server_completion_text(context)
 }
 
 pub(crate) fn default_completion_replace_policy(

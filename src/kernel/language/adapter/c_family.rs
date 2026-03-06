@@ -2,10 +2,11 @@ use crate::core::Command;
 use crate::kernel::editor::EditorTabState;
 use crate::kernel::language::adapter::syntax_bridge::{syntax_facts_for_tab, SYNTAX_BRIDGE};
 use crate::kernel::language::adapter::{
-    default_context_allows_completion, default_normalize_completion_item, default_prefix_bounds,
-    default_should_close_on_command, default_triggered_by_insert, language_features,
-    should_append_trailing_space, CompletionBehavior, CompletionContext, LanguageAdapter,
-    LanguageFeatures, LineContext, MemberAccessKind, TextEditPlan,
+    apply_callable_completion_fallback, apply_trailing_space_completion_fallback,
+    default_context_allows_completion, default_prefix_bounds, default_should_close_on_command,
+    default_triggered_by_insert, language_features, normalize_server_completion_text,
+    CompletionBehavior, CompletionContext, LanguageAdapter, LanguageFeatures, LineContext,
+    MemberAccessKind, TextEditPlan,
 };
 use crate::kernel::language::LanguageId;
 
@@ -141,27 +142,14 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
                 Some(MemberAccessKind::Arrow | MemberAccessKind::Scope)
             ) || matches!(syntax.line_context, LineContext::Include(_));
 
-        if !suppress_callable_fallback {
-            return default_normalize_completion_item(context);
-        }
-
-        let mut plan = match context.item.insert_text_format {
-            crate::kernel::services::ports::LspInsertTextFormat::Snippet => {
-                TextEditPlan::from_snippet(&context.item.insert_text)
-            }
-            crate::kernel::services::ports::LspInsertTextFormat::PlainText => {
-                TextEditPlan::from_plain_text(context.item.insert_text.clone())
-            }
+        let plan = normalize_server_completion_text(context);
+        let plan = if suppress_callable_fallback {
+            plan
+        } else {
+            apply_callable_completion_fallback(plan, context.item)
         };
 
-        if !plan.has_cursor_or_selection()
-            && should_append_trailing_space(context.item)
-            && !plan.text.ends_with(' ')
-        {
-            plan.text.push(' ');
-        }
-
-        plan
+        apply_trailing_space_completion_fallback(plan, context.item)
     }
 }
 

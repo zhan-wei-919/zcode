@@ -934,8 +934,8 @@ mod tests {
         let tab = tab_with_cursor("", 0);
         let adapter = adapter_for_tab(&tab);
         let insertion = resolve_completion_insertion(&tab, adapter, &item);
-        assert_eq!(insertion.text, "print()");
-        assert_eq!(insertion.cursor, Some("print(".chars().count()));
+        assert_eq!(insertion.text, "print");
+        assert_eq!(insertion.cursor, None);
         assert!(insertion.selection.is_none());
     }
 
@@ -1010,7 +1010,7 @@ mod tests {
         let tab = tab_with_cursor("", 0);
         let adapter = adapter_for_tab(&tab);
         let insertion = resolve_completion_insertion(&tab, adapter, &item);
-        assert_eq!(insertion.text, "static ");
+        assert_eq!(insertion.text, "static");
         assert!(insertion.cursor.is_none());
         assert!(insertion.selection.is_none());
     }
@@ -1226,15 +1226,16 @@ mod tests {
         };
 
         let rust_tab = tab_with_cursor_at_path("main.rs", "", 0);
-        let cpp_tab = tab_with_cursor_at_path("main.cpp", "obj->", "obj->".chars().count());
+        let cpp_tab = tab_with_cursor_at_path("main.cpp", "", 0);
 
         let rust_insertion =
             resolve_completion_insertion(&rust_tab, adapter_for_tab(&rust_tab), &item);
         let cpp_insertion =
             resolve_completion_insertion(&cpp_tab, adapter_for_tab(&cpp_tab), &item);
 
-        assert_eq!(rust_insertion.text, "push_back()");
-        assert_eq!(cpp_insertion.text, "push_back");
-        assert_eq!(cpp_insertion.cursor, None);
+        assert_eq!(rust_insertion.text, "push_back");
+        assert_eq!(rust_insertion.cursor, None);
+        assert_eq!(cpp_insertion.text, "push_back()");
+        assert_eq!(cpp_insertion.cursor, Some("push_back(".chars().count()));
     }
 }

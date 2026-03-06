@@ -247,25 +247,38 @@ fn normalize_plan(
 }
 
 #[test]
-fn default_adapter_callable_plan_adds_parentheses_and_cursor() {
+fn default_adapter_does_not_synthesize_callable_fallback() {
     let tab = test_tab("Main.java", "pri", 3);
     let plan = normalize_plan(&tab, &callable_item("print"));
 
-    assert_eq!(plan.text, "print()");
-    assert_eq!(plan.cursor, Some("print(".chars().count()));
+    assert_eq!(plan.text, "print");
+    assert_eq!(plan.cursor, None);
     assert_eq!(
         plan.strategy,
-        crate::kernel::language::TextEditStrategy::CallableTemplate
+        crate::kernel::language::TextEditStrategy::PlainText
     );
 }
 
 #[test]
-fn rust_adapter_callable_plan_uses_unified_fallback_plan() {
+fn rust_adapter_does_not_synthesize_callable_fallback() {
     let tab = test_tab("main.rs", "pri", 3);
     let plan = normalize_plan(&tab, &callable_item("println"));
 
-    assert_eq!(plan.text, "println()");
-    assert_eq!(plan.cursor, Some("println(".chars().count()));
+    assert_eq!(plan.text, "println");
+    assert_eq!(plan.cursor, None);
+    assert_eq!(
+        plan.strategy,
+        crate::kernel::language::TextEditStrategy::PlainText
+    );
+}
+
+#[test]
+fn c_family_adapter_applies_callable_fallback_in_normal_context() {
+    let tab = test_tab("main.cpp", "pri", 3);
+    let plan = normalize_plan(&tab, &callable_item("printf"));
+
+    assert_eq!(plan.text, "printf()");
+    assert_eq!(plan.cursor, Some("printf(".chars().count()));
     assert_eq!(
         plan.strategy,
         crate::kernel::language::TextEditStrategy::CallableTemplate
