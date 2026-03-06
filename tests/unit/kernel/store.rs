@@ -1,5 +1,7 @@
-use super::intel::completion_strategy;
 use super::*;
+use crate::kernel::language::adapter::{
+    adapter_for_tab, include_context_perf_counter, reset_include_context_perf_counter,
+};
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::{
     LspCompletionTriggerKind, LspPosition, LspRange, LspSemanticToken, LspSemanticTokensLegend,
@@ -1870,8 +1872,8 @@ fn cpp_include_path_context_allows_completion() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let strategy = completion_strategy::strategy_for_tab(tab);
-    assert!(strategy.context_allows_completion(tab));
+    let behavior = adapter_for_tab(tab).completion();
+    assert!(behavior.context_allows_completion(tab));
 }
 
 #[test]
@@ -1899,8 +1901,8 @@ fn cpp_include_trailing_comment_context_is_blocked() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let strategy = completion_strategy::strategy_for_tab(tab);
-    assert!(!strategy.context_allows_completion(tab));
+    let behavior = adapter_for_tab(tab).completion();
+    assert!(!behavior.context_allows_completion(tab));
 }
 
 #[test]
@@ -1928,8 +1930,8 @@ fn cpp_include_trailing_comment_does_not_keep_completion_open() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let strategy = completion_strategy::strategy_for_tab(tab);
-    assert!(!strategy.completion_should_keep_open(tab));
+    let behavior = adapter_for_tab(tab).completion();
+    assert!(!behavior.completion_should_keep_open(tab));
 }
 
 #[test]
@@ -2035,9 +2037,9 @@ fn cpp_insert_gt_after_dash_keeps_open_and_triggers() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let strategy = completion_strategy::strategy_for_tab(tab);
+    let behavior = adapter_for_tab(tab).completion();
 
-    assert!(!strategy.should_close_on_command(&Command::InsertChar('>'), Some(tab)));
+    assert!(!behavior.should_close_on_command(&Command::InsertChar('>'), Some(tab)));
 
     let result = store.dispatch(Action::RunCommand(Command::InsertChar('>')));
     assert!(result.effects.iter().any(|e| {
@@ -2075,10 +2077,10 @@ fn cpp_insert_gt_in_comparison_closes_and_does_not_trigger_by_default() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let strategy = completion_strategy::strategy_for_tab(tab);
+    let behavior = adapter_for_tab(tab).completion();
 
-    assert!(strategy.should_close_on_command(&Command::InsertChar('>'), Some(tab)));
-    assert!(!strategy.triggered_by_insert(tab, '>', &[]));
+    assert!(behavior.should_close_on_command(&Command::InsertChar('>'), Some(tab)));
+    assert!(!behavior.triggered_by_insert(tab, '>', &[]));
 }
 
 #[test]
@@ -2096,19 +2098,19 @@ fn experiment_completion_filtering_scale_baseline() {
     }));
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let strategy = completion_strategy::strategy_for_tab(tab);
+    let behavior = adapter_for_tab(tab).completion();
 
     let items: Vec<LspCompletionItem> = (0..10_000)
         .map(|i| test_completion_item(i, &format!("item_{i:05}")))
         .collect();
 
-    let warm = filtered_completion_indices(tab, &items, strategy);
+    let warm = filtered_completion_indices(tab, &items, behavior);
     assert!(!warm.is_empty());
 
     let start = Instant::now();
     let mut total = 0usize;
     for _ in 0..50 {
-        total = total.saturating_add(filtered_completion_indices(tab, &items, strategy).len());
+        total = total.saturating_add(filtered_completion_indices(tab, &items, behavior).len());
     }
     let elapsed = start.elapsed();
 
@@ -2119,7 +2121,7 @@ fn experiment_completion_filtering_scale_baseline() {
     let start_sync = Instant::now();
     let mut changed_count = 0usize;
     for _ in 0..50 {
-        if sync_completion_items_from_cache(&mut popup, tab, strategy) {
+        if sync_completion_items_from_cache(&mut popup, tab, behavior) {
             changed_count += 1;
         }
     }
@@ -2136,7 +2138,7 @@ fn experiment_completion_filtering_scale_baseline() {
 
 #[test]
 fn experiment_cpp_include_context_lookup_counts() {
-    completion_strategy::reset_include_context_perf_counter();
+    reset_include_context_perf_counter();
 
     let mut store = new_store();
     store.state.ui.focus = FocusTarget::Editor;
@@ -2160,15 +2162,15 @@ fn experiment_cpp_include_context_lookup_counts() {
     }
 
     let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
-    let strategy = completion_strategy::strategy_for_tab(tab);
+    let behavior = adapter_for_tab(tab).completion();
 
     for _ in 0..1000 {
-        let _ = strategy.context_allows_completion(tab);
-        let _ = strategy.prefix_bounds(tab);
-        let _ = strategy.completion_should_keep_open(tab);
+        let _ = behavior.context_allows_completion(tab);
+        let _ = behavior.prefix_bounds(tab);
+        let _ = behavior.completion_should_keep_open(tab);
     }
 
-    let calls = completion_strategy::include_context_perf_counter();
+    let calls = include_context_perf_counter();
     eprintln!(
         "[experiment] cpp_include_context loops=1000 include_context_bounds_calls={}",
         calls

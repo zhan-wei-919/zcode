@@ -1484,3 +1484,33 @@ func main() {}
         spans[2]
     );
 }
+
+#[test]
+fn syntax_identifier_bounds_and_member_access_queries_follow_cursor() {
+    let rope = Rope::from_str("foo::bar");
+    let doc = SyntaxDocument::for_path(Path::new("test.rs"), &rope).expect("rust syntax");
+
+    assert_eq!(
+        doc.member_access_context_at(&rope, "foo::".chars().count()),
+        Some(SyntaxMemberAccessKind::Scope)
+    );
+    assert_eq!(
+        doc.identifier_bounds_at(&rope, "foo::bar".chars().count()),
+        Some((5, 8))
+    );
+}
+
+#[test]
+fn syntax_line_directive_context_tracks_c_include_bounds() {
+    let src = "#include <vec";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.cpp"), &rope).expect("cpp syntax");
+
+    assert_eq!(
+        doc.line_directive_context_at(&rope, src.chars().count()),
+        SyntaxDirectiveContext::Include {
+            bounds: Some((10, 13)),
+            delimiter: Some(SyntaxIncludeDelimiter::Angle),
+        }
+    );
+}

@@ -1,7 +1,7 @@
 use super::super::Workbench;
 use crate::core::Command;
+use crate::kernel::language::adapter::adapter_for_tab;
 use crate::kernel::lsp_registry;
-use crate::kernel::store::strategy_for_tab;
 use crate::kernel::{Action as KernelAction, FocusTarget};
 
 impl Workbench {
@@ -36,7 +36,7 @@ impl Workbench {
             return;
         }
 
-        let strategy = strategy_for_tab(tab);
+        let behavior = adapter_for_tab(tab).completion();
         let completion_triggers: &[char] =
             lsp_registry::client_key_for_path(&self.store.state().workspace_root, path)
                 .map(|(_, key)| key)
@@ -44,7 +44,7 @@ impl Workbench {
                 .map(|caps| caps.completion_triggers.as_slice())
                 .unwrap_or(&[]);
         let triggered_by_insert = match cmd {
-            Command::InsertChar(ch) => strategy.triggered_by_insert(tab, *ch, completion_triggers),
+            Command::InsertChar(ch) => behavior.triggered_by_insert(tab, *ch, completion_triggers),
             _ => false,
         };
         if triggered_by_insert {
@@ -54,7 +54,7 @@ impl Workbench {
         }
 
         let should_schedule = match cmd {
-            Command::InsertChar(ch) => strategy.debounce_triggered_by_char(*ch),
+            Command::InsertChar(ch) => behavior.debounce_triggered_by_char(*ch),
             Command::DeleteBackward | Command::DeleteForward => true,
             _ => false,
         };
@@ -63,7 +63,7 @@ impl Workbench {
             return;
         }
 
-        if !strategy.context_allows_completion(tab) {
+        if !behavior.context_allows_completion(tab) {
             return;
         }
 
@@ -104,7 +104,7 @@ mod tests {
         );
         tab.buffer.set_cursor(0, 2);
 
-        let strategy = strategy_for_tab(&tab);
-        assert!(!strategy.context_allows_completion(&tab));
+        let behavior = adapter_for_tab(&tab).completion();
+        assert!(!behavior.context_allows_completion(&tab));
     }
 }

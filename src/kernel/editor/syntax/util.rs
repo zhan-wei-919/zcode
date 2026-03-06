@@ -58,14 +58,14 @@ pub(super) fn same_node(left: Node<'_>, right: Node<'_>) -> bool {
     left.start_byte() == right.start_byte() && left.end_byte() == right.end_byte()
 }
 
-pub(super) fn is_comment_kind(kind: &str) -> bool {
+pub(crate) fn is_comment_kind(kind: &str) -> bool {
     kind.contains("comment")
 }
 
-pub(super) fn is_regex_kind(kind: &str) -> bool {
+pub(crate) fn is_regex_kind(kind: &str) -> bool {
     kind.contains("regex") || kind == "regular_expression"
 }
 
-pub(super) fn is_string_kind(kind: &str) -> bool {
+pub(crate) fn is_string_kind(kind: &str) -> bool {
     kind.contains("string") || matches!(kind, "char_literal" | "byte_literal")
 }

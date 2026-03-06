@@ -6,7 +6,7 @@ mod mouse;
 mod reducer;
 mod search;
 mod state;
-mod syntax;
+pub(crate) mod syntax;
 mod syntax_highlight_cache;
 mod viewport;
 

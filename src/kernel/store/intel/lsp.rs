@@ -1450,9 +1450,9 @@ impl super::super::Store {
                 self.state.ui.completion.all_items = all_items;
                 self.state.ui.completion.rebuild_index_by_id();
                 self.state.ui.completion.invalidate_filter_cache();
-                let strategy = super::completion_strategy::strategy_for_tab(tab);
+                let behavior = crate::kernel::language::adapter::adapter_for_tab(tab).completion();
                 self.state.ui.completion.visible_indices =
-                    filtered_completion_indices(tab, &self.state.ui.completion.all_items, strategy);
+                    filtered_completion_indices(tab, &self.state.ui.completion.all_items, behavior);
                 self.state.ui.completion.visible = self.state.ui.completion.visible_len() > 0;
                 self.state.ui.completion.selected = prev_selected
                     .and_then(|id| {

@@ -1229,7 +1229,7 @@ impl EditorTabState {
         true
     }
 
-    pub(super) fn syntax(&self) -> Option<&SyntaxDocument> {
+    pub(crate) fn syntax(&self) -> Option<&SyntaxDocument> {
         self.syntax.as_ref()
     }
 

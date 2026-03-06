@@ -34,11 +34,9 @@ use intel::completion::{
     should_close_completion_on_editor_action, sync_completion_items_from_cache,
 };
 pub use intel::completion_rank::CompletionRanker;
-pub(crate) use intel::completion_strategy::{strategy_for_tab, CompletionStrategy};
 
 #[cfg(test)]
 use intel::completion::{expand_snippet, CompletionInsertion};
-use intel::completion_strategy;
 use intel::lsp::{
     lsp_position_encoding, lsp_position_encoding_for_path, lsp_position_from_buffer_pos,
     lsp_position_to_byte_offset, lsp_range_for_full_lines, lsp_request_target,
@@ -56,6 +54,7 @@ use super::{
     SidebarTab, SplitDirection,
 };
 use crate::kernel::editor::ReloadCause;
+use crate::kernel::language::{adapter::adapter_for_tab, adapter_for};
 
 pub struct DispatchResult {
     pub effects: Vec<Effect>,
@@ -153,14 +152,14 @@ impl Store {
         }
     }
 
-    fn active_tab_strategy(&self) -> &'static dyn CompletionStrategy {
+    fn active_tab_adapter(&self) -> &'static dyn crate::kernel::language::LanguageAdapter {
         let lang = self
             .state
             .editor
             .pane(self.state.ui.editor_layout.active_pane)
             .and_then(|p| p.active_tab())
             .and_then(|t| t.language());
-        completion_strategy::completion_strategy_for(lang)
+        adapter_for(lang)
     }
 
     pub fn state(&self) -> &AppState {
@@ -395,7 +394,8 @@ impl Store {
                     .pane(self.state.ui.editor_layout.active_pane)
                     .and_then(|p| p.active_tab());
                 let completion_changed = if self
-                    .active_tab_strategy()
+                    .active_tab_adapter()
+                    .completion()
                     .should_close_on_command(&cmd, active_tab)
                 {
                     self.state.ui.completion.close()
@@ -988,7 +988,8 @@ impl Store {
                         .record(language, &item.label, item.kind);
                 }
 
-                let mut insertion = resolve_completion_insertion(&item);
+                let adapter = adapter_for_tab(tab);
+                let mut insertion = resolve_completion_insertion(tab, adapter, &item);
 
                 let encoding = lsp_position_encoding_for_path(&self.state, &req.path);
                 let replace_range = completion_replace_range(tab, req.version, &item, encoding);
@@ -1578,7 +1579,7 @@ impl Store {
                     .editor
                     .pane(pane)
                     .and_then(|pane| pane.active_tab());
-                let tab_with_strategy = tab.map(|t| (t, completion_strategy::strategy_for_tab(t)));
+                let tab_with_adapter = tab.map(|t| (t, adapter_for_tab(t)));
                 let (
                     tab_supports_completion_resolve,
                     should_complete,
@@ -1603,7 +1604,7 @@ impl Store {
                         .map(|caps| caps.signature_help_triggers.as_slice())
                         .unwrap_or(&[]);
 
-                    let should_complete = tab_with_strategy.is_some_and(|(tab, strategy)| {
+                    let should_complete = tab_with_adapter.is_some_and(|(tab, adapter)| {
                         let Some(path) = tab.path.as_ref() else {
                             return false;
                         };
@@ -1615,12 +1616,15 @@ impl Store {
                             return false;
                         }
 
-                        strategy.triggered_by_insert(tab, ch, completion_triggers)
+                        adapter
+                            .completion()
+                            .triggered_by_insert(tab, ch, completion_triggers)
                     });
 
                     let should_trigger_signature_help = tab_supports_signature_help
                         && self
-                            .active_tab_strategy()
+                            .active_tab_adapter()
+                            .completion()
                             .signature_help_triggered(ch, signature_help_triggers);
                     // Avoid popping up signature help on `,` when it isn't already active.
                     // This is a common editing gesture inside existing calls (e.g. building
@@ -1662,7 +1666,7 @@ impl Store {
                     }
                 }
                 if !should_complete && !self.state.ui.completion.all_items.is_empty() {
-                    if let Some((tab, strategy)) = tab_with_strategy {
+                    if let Some((tab, adapter)) = tab_with_adapter {
                         let session_ok =
                             self.state
                                 .ui
@@ -1676,7 +1680,7 @@ impl Store {
                             let mut changed = sync_completion_items_from_cache(
                                 &mut self.state.ui.completion,
                                 tab,
-                                strategy,
+                                adapter.completion(),
                             );
 
                             let selected = self
@@ -1712,9 +1716,9 @@ impl Store {
                     }
                 }
 
-                if tab_with_strategy
-                    .map(|(_, s)| s)
-                    .unwrap_or_else(|| self.active_tab_strategy())
+                if tab_with_adapter
+                    .map(|(_, adapter)| adapter.completion())
+                    .unwrap_or_else(|| self.active_tab_adapter().completion())
                     .signature_help_closed_by(ch)
                 {
                     let had = self.state.ui.signature_help.visible
@@ -1748,8 +1752,9 @@ impl Store {
                     || self.state.ui.signature_help.request.is_some()
                     || !self.state.ui.signature_help.text.is_empty();
                 if had_signature_help
-                    && !tab_with_strategy
-                        .is_some_and(|(t, strategy)| strategy.signature_help_should_keep_open(t))
+                    && !tab_with_adapter.is_some_and(|(t, adapter)| {
+                        adapter.completion().signature_help_should_keep_open(t)
+                    })
                 {
                     self.state.ui.signature_help = super::state::SignatureHelpPopupState::default();
                     state_changed = true;
@@ -2856,11 +2861,11 @@ impl Store {
                             .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(2));
 
                     if can_reuse {
-                        let strategy = completion_strategy::strategy_for_tab(tab);
+                        let behavior = adapter_for_tab(tab).completion();
                         let mut changed = sync_completion_items_from_cache(
                             &mut self.state.ui.completion,
                             tab,
-                            strategy,
+                            behavior,
                         );
                         let mut effects = Vec::new();
 
@@ -3486,10 +3491,9 @@ impl Store {
                     let session_ok = session.is_some_and(|session| {
                         session.pane == pane && tab.path.as_ref() == Some(&session.path)
                     });
+                    let behavior = adapter_for_tab(tab).completion();
 
-                    let strategy = completion_strategy::strategy_for_tab(tab);
-
-                    if session_ok && !strategy.completion_should_keep_open(tab) {
+                    if session_ok && !behavior.completion_should_keep_open(tab) {
                         if self.state.ui.completion.close() {
                             state_changed = true;
                         }
@@ -3497,7 +3501,7 @@ impl Store {
                         let had_signature_help = self.state.ui.signature_help.visible
                             || self.state.ui.signature_help.request.is_some()
                             || !self.state.ui.signature_help.text.is_empty();
-                        if had_signature_help && !strategy.signature_help_should_keep_open(tab) {
+                        if had_signature_help && !behavior.signature_help_should_keep_open(tab) {
                             self.state.ui.signature_help =
                                 super::state::SignatureHelpPopupState::default();
                             state_changed = true;
@@ -3512,7 +3516,7 @@ impl Store {
                         let mut changed = sync_completion_items_from_cache(
                             &mut self.state.ui.completion,
                             tab,
-                            strategy,
+                            behavior,
                         );
 
                         let selected = self
@@ -3565,7 +3569,8 @@ impl Store {
                         .pane(pane)
                         .and_then(|p| p.active_tab())
                         .is_some_and(|t| {
-                            completion_strategy::strategy_for_tab(t)
+                            adapter_for_tab(t)
+                                .completion()
                                 .signature_help_should_keep_open(t)
                         });
                     if !keep {
@@ -3664,7 +3669,8 @@ impl Store {
                         .pane(pane)
                         .and_then(|p| p.active_tab())
                         .is_some_and(|t| {
-                            completion_strategy::strategy_for_tab(t)
+                            adapter_for_tab(t)
+                                .completion()
                                 .signature_help_should_keep_open(t)
                         });
                     if !keep {

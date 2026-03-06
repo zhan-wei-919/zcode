@@ -194,3 +194,146 @@ fn markers_mapping_is_correct() {
         ]
     );
 }
+
+use crate::kernel::editor::TabId;
+use crate::kernel::services::ports::{EditorConfig, LspCompletionItem, LspInsertTextFormat};
+
+fn test_tab(path: &str, content: &str, col: usize) -> crate::kernel::editor::EditorTabState {
+    let config = EditorConfig::default();
+    let mut tab = crate::kernel::editor::EditorTabState::from_file(
+        TabId::new(1),
+        path.into(),
+        content,
+        &config,
+    );
+    tab.buffer.set_cursor(0, col);
+    tab
+}
+
+fn callable_item(label: &str) -> LspCompletionItem {
+    LspCompletionItem {
+        id: 1,
+        label: label.to_string(),
+        detail: None,
+        kind: Some(3),
+        documentation: None,
+        insert_text: label.to_string(),
+        insert_text_format: LspInsertTextFormat::PlainText,
+        insert_range: None,
+        replace_range: None,
+        sort_text: None,
+        filter_text: None,
+        additional_text_edits: Vec::new(),
+        command: None,
+        data: None,
+    }
+}
+
+fn normalize_plan(
+    tab: &crate::kernel::editor::EditorTabState,
+    item: &LspCompletionItem,
+) -> crate::kernel::language::CompletionFallbackPlan {
+    let adapter = crate::kernel::language::adapter_for(tab.language());
+    adapter
+        .completion()
+        .normalize_completion_item(&crate::kernel::language::CompletionContext {
+            behavior: crate::kernel::language::LanguageBehaviorContext {
+                language: tab.language(),
+                tab,
+                syntax: adapter.syntax().syntax_facts(tab),
+            },
+            item,
+        })
+}
+
+#[test]
+fn default_adapter_callable_plan_adds_parentheses_and_cursor() {
+    let tab = test_tab("Main.java", "pri", 3);
+    let plan = normalize_plan(&tab, &callable_item("print"));
+
+    assert_eq!(plan.text, "print()");
+    assert_eq!(plan.cursor, Some("print(".chars().count()));
+    assert_eq!(
+        plan.strategy,
+        crate::kernel::language::CompletionFallbackStrategy::CallableFallback
+    );
+}
+
+#[test]
+fn rust_adapter_callable_plan_uses_unified_fallback_plan() {
+    let tab = test_tab("main.rs", "pri", 3);
+    let plan = normalize_plan(&tab, &callable_item("println"));
+
+    assert_eq!(plan.text, "println()");
+    assert_eq!(plan.cursor, Some("println(".chars().count()));
+    assert_eq!(
+        plan.strategy,
+        crate::kernel::language::CompletionFallbackStrategy::CallableFallback
+    );
+}
+
+#[test]
+fn c_family_adapter_disables_callable_fallback_in_special_contexts() {
+    let cases = [
+        ("main.cpp", "obj->", "push_back"),
+        ("main.cpp", "std::", "vector"),
+        ("main.cpp", "#include <vec", "header"),
+    ];
+
+    for (path, content, insert_text) in cases {
+        let tab = test_tab(path, content, content.chars().count());
+        let plan = normalize_plan(&tab, &callable_item(insert_text));
+        assert_eq!(plan.text, insert_text, "case: {content}");
+        assert!(plan.cursor.is_none(), "case: {content}");
+        assert_eq!(
+            plan.strategy,
+            crate::kernel::language::CompletionFallbackStrategy::PlainText,
+            "case: {content}"
+        );
+    }
+}
+
+#[test]
+fn syntax_bridge_reports_string_and_comment_context() {
+    let string_tab = test_tab(
+        "main.rs",
+        "let value = \"hi\";",
+        "let value = \"h".chars().count(),
+    );
+    let string_adapter = crate::kernel::language::adapter_for(string_tab.language());
+    let string_facts = string_adapter.syntax().syntax_facts(&string_tab);
+    assert!(string_facts.in_string);
+    assert!(!string_facts.in_comment);
+
+    let comment_tab = test_tab("main.rs", "// note", 3);
+    let comment_adapter = crate::kernel::language::adapter_for(comment_tab.language());
+    let comment_facts = comment_adapter.syntax().syntax_facts(&comment_tab);
+    assert!(comment_facts.in_comment);
+    assert!(!comment_facts.in_string);
+}
+
+#[test]
+fn syntax_bridge_reports_identifier_bounds_and_member_access() {
+    let tab = test_tab("main.rs", "foo::bar", "foo::bar".chars().count());
+    let adapter = crate::kernel::language::adapter_for(tab.language());
+    let facts = adapter.syntax().syntax_facts(&tab);
+
+    assert_eq!(facts.identifier_bounds, Some((5, 8)));
+    assert_eq!(
+        facts.member_access_kind,
+        Some(crate::kernel::language::MemberAccessKind::Scope)
+    );
+}
+
+#[test]
+fn markdown_adapter_still_provides_fallback_syntax_facts() {
+    let tab = test_tab("README.md", "hello world", 5);
+    let adapter = crate::kernel::language::adapter_for(tab.language());
+    let facts = adapter.syntax().syntax_facts(&tab);
+
+    assert_eq!(adapter.features().lsp_server, None);
+    assert!(!adapter.features().has_syntax);
+    assert_eq!(facts.identifier_bounds, Some((0, 5)));
+    assert!(!facts.in_string);
+    assert!(!facts.in_comment);
+}

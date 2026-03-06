@@ -2,6 +2,14 @@ use std::path::Path;
 
 use crate::kernel::services::ports::LspServerKind;
 
+pub mod adapter;
+
+pub use adapter::{
+    CompletionBehavior, CompletionContext, CompletionFallbackPlan, CompletionFallbackStrategy,
+    CompletionTabstop, IncludeContext, IncludeDelimiter, LanguageAdapter, LanguageBehaviorContext,
+    LanguageFeatures, LineContext, MemberAccessKind, SyntaxBehavior, SyntaxFacts,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum LanguageId {
     Rust,
@@ -164,6 +172,14 @@ impl LanguageId {
     }
 }
 
+pub fn adapter_for(language: Option<LanguageId>) -> &'static dyn adapter::LanguageAdapter {
+    adapter::adapter_for(language)
+}
+
+pub fn adapter_for_path(path: &Path) -> &'static dyn adapter::LanguageAdapter {
+    adapter::adapter_for_path(path)
+}
+
 #[cfg(test)]
-#[path = "../../tests/unit/kernel/language.rs"]
+#[path = "../../../tests/unit/kernel/language.rs"]
 mod tests;

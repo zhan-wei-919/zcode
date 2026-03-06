@@ -10,7 +10,7 @@ mod rust;
 mod sql;
 mod util;
 
-use self::util::{is_comment_kind, is_regex_kind, is_string_kind};
+pub(crate) use self::util::{is_comment_kind, is_regex_kind, is_string_kind};
 use crate::kernel::language::LanguageId;
 use crate::kernel::services::adapters::perf;
 use crate::models::EditOp;
@@ -20,6 +20,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::path::Path;
 use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
+use unicode_xid::UnicodeXID;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -78,6 +79,32 @@ pub const DEFAULT_CONFIGURABLE_SYNTAX_RGB_HEX: [u32; SyntaxColorGroup::CONFIGURA
 ];
 
 const _: () = assert!(SyntaxColorGroup::COUNT == 15);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntaxMemberAccessKind {
+    Dot,
+    Scope,
+    Arrow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyntaxIncludeDelimiter {
+    Angle,
+    Quote,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SyntaxDirectiveContext {
+    #[default]
+    None,
+    Directive,
+    Import,
+    Include {
+        bounds: Option<(usize, usize)>,
+        delimiter: Option<SyntaxIncludeDelimiter>,
+    },
+}
+
 const _: () = assert!(SyntaxColorGroup::Tag as usize == SyntaxColorGroup::COUNT - 1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -310,6 +337,212 @@ impl SyntaxDocument {
             }
         }
     }
+
+    pub fn identifier_bounds_at(&self, rope: &Rope, char_offset: usize) -> Option<(usize, usize)> {
+        identifier_bounds_at(rope, char_offset)
+    }
+
+    pub fn member_access_context_at(
+        &self,
+        rope: &Rope,
+        char_offset: usize,
+    ) -> Option<SyntaxMemberAccessKind> {
+        member_access_context_at(rope, char_offset)
+    }
+
+    pub fn line_directive_context_at(
+        &self,
+        rope: &Rope,
+        char_offset: usize,
+    ) -> SyntaxDirectiveContext {
+        line_directive_context_at(Some(self.language), rope, char_offset)
+    }
+}
+
+pub(crate) fn identifier_bounds_at(rope: &Rope, char_offset: usize) -> Option<(usize, usize)> {
+    let len_chars = rope.len_chars();
+    let cursor = char_offset.min(len_chars);
+
+    let mut start = cursor;
+    while start > 0 {
+        let ch = rope.char(start - 1);
+        if ch == '_' || UnicodeXID::is_xid_continue(ch) {
+            start = start.saturating_sub(1);
+        } else {
+            break;
+        }
+    }
+
+    let mut end = cursor;
+    while end < len_chars {
+        let ch = rope.char(end);
+        if ch == '_' || UnicodeXID::is_xid_continue(ch) {
+            end = end.saturating_add(1);
+        } else {
+            break;
+        }
+    }
+
+    if start == end {
+        return None;
+    }
+
+    let first = rope.char(start);
+    if !(first == '_' || UnicodeXID::is_xid_start(first)) {
+        return None;
+    }
+
+    Some((start, end))
+}
+
+pub(crate) fn member_access_context_at(
+    rope: &Rope,
+    char_offset: usize,
+) -> Option<SyntaxMemberAccessKind> {
+    let cursor = char_offset.min(rope.len_chars());
+    if let Some(kind) = member_access_kind_before(rope, cursor) {
+        return Some(kind);
+    }
+
+    let identifier_start = identifier_bounds_at(rope, cursor).map(|(start, _end)| start)?;
+    member_access_kind_before(rope, identifier_start)
+}
+
+fn member_access_kind_before(rope: &Rope, cursor: usize) -> Option<SyntaxMemberAccessKind> {
+    if cursor >= 2 {
+        let last = rope.char(cursor - 1);
+        let penultimate = rope.char(cursor - 2);
+        if penultimate == '-' && last == '>' {
+            return Some(SyntaxMemberAccessKind::Arrow);
+        }
+        if penultimate == ':' && last == ':' {
+            return Some(SyntaxMemberAccessKind::Scope);
+        }
+    }
+
+    if cursor > 0 && rope.char(cursor - 1) == '.' {
+        return Some(SyntaxMemberAccessKind::Dot);
+    }
+
+    None
+}
+
+pub(crate) fn line_directive_context_at(
+    language: Option<LanguageId>,
+    rope: &Rope,
+    char_offset: usize,
+) -> SyntaxDirectiveContext {
+    match language {
+        Some(LanguageId::C | LanguageId::Cpp) => c_family_directive_context(rope, char_offset),
+        Some(
+            LanguageId::Go
+            | LanguageId::Python
+            | LanguageId::JavaScript
+            | LanguageId::TypeScript
+            | LanguageId::Jsx
+            | LanguageId::Tsx,
+        ) => import_directive_context(rope, char_offset),
+        _ => SyntaxDirectiveContext::None,
+    }
+}
+
+fn c_family_directive_context(rope: &Rope, char_offset: usize) -> SyntaxDirectiveContext {
+    let cursor = char_offset.min(rope.len_chars());
+    let row = rope.char_to_line(cursor);
+    let line_start = rope.line_to_char(row);
+
+    let mut idx = line_start;
+    while idx < cursor {
+        let ch = rope.char(idx);
+        if ch == ' ' || ch == '\t' {
+            idx = idx.saturating_add(1);
+            continue;
+        }
+        break;
+    }
+
+    if idx >= cursor || rope.char(idx) != '#' {
+        return SyntaxDirectiveContext::None;
+    }
+    idx = idx.saturating_add(1);
+
+    while idx < cursor {
+        let ch = rope.char(idx);
+        if ch == ' ' || ch == '\t' {
+            idx = idx.saturating_add(1);
+            continue;
+        }
+        break;
+    }
+
+    if idx >= cursor {
+        return SyntaxDirectiveContext::Directive;
+    }
+
+    for expected in ['i', 'n', 'c', 'l', 'u', 'd', 'e'] {
+        if idx >= cursor || rope.char(idx) != expected {
+            return SyntaxDirectiveContext::Directive;
+        }
+        idx = idx.saturating_add(1);
+    }
+
+    while idx < cursor {
+        let ch = rope.char(idx);
+        if ch == ' ' || ch == '\t' {
+            idx = idx.saturating_add(1);
+            continue;
+        }
+        break;
+    }
+
+    if idx >= cursor {
+        return SyntaxDirectiveContext::Include {
+            bounds: None,
+            delimiter: None,
+        };
+    }
+
+    let (delimiter, closer) = match rope.char(idx) {
+        '<' => (SyntaxIncludeDelimiter::Angle, '>'),
+        '"' => (SyntaxIncludeDelimiter::Quote, '"'),
+        _ => {
+            return SyntaxDirectiveContext::Include {
+                bounds: None,
+                delimiter: None,
+            };
+        }
+    };
+
+    let start = idx.saturating_add(1);
+    let mut scan = start;
+    while scan < cursor {
+        if rope.char(scan) == closer {
+            return SyntaxDirectiveContext::Include {
+                bounds: None,
+                delimiter: Some(delimiter),
+            };
+        }
+        scan = scan.saturating_add(1);
+    }
+
+    SyntaxDirectiveContext::Include {
+        bounds: Some((start, cursor)),
+        delimiter: Some(delimiter),
+    }
+}
+
+fn import_directive_context(rope: &Rope, char_offset: usize) -> SyntaxDirectiveContext {
+    let cursor = char_offset.min(rope.len_chars());
+    let row = rope.char_to_line(cursor);
+    let line_start = rope.line_to_char(row);
+    let text = rope.slice(line_start..cursor).to_string();
+    let trimmed = text.trim_start();
+
+    if trimmed.starts_with("import") || trimmed.starts_with("from ") {
+        return SyntaxDirectiveContext::Import;
+    }
+
+    SyntaxDirectiveContext::None
 }
 
 pub(crate) fn compute_highlight_patches(

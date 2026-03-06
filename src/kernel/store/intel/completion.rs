@@ -1,16 +1,19 @@
 use crate::kernel::editor::EditorTabState;
 use crate::kernel::editor::SnippetTabstop;
-use crate::kernel::language::LanguageId;
-use crate::kernel::services::ports::{
-    LspCompletionItem, LspInsertTextFormat, LspPositionEncoding, LspRange,
+use crate::kernel::language::adapter::{
+    expand_snippet as expand_fallback_snippet, CompletionBehavior, CompletionContext,
+    CompletionFallbackPlan, LanguageBehaviorContext,
 };
+use crate::kernel::language::LanguageId;
+use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding, LspRange};
 use crate::kernel::state::CompletionPopupState;
 use crate::kernel::EditorAction;
 use crate::models::{Granularity, Selection};
 use rustc_hash::FxHashMap;
 
 use super::completion_rank::CompletionRanker;
-use super::completion_strategy::CompletionStrategy;
+
+pub(in crate::kernel::store) use crate::kernel::language::adapter::SnippetExpansion;
 
 pub(in crate::kernel::store) fn should_close_completion_on_editor_action(
     action: &EditorAction,
@@ -55,13 +58,13 @@ pub(in crate::kernel::store) fn sort_completion_items(
 pub(in crate::kernel::store) fn filtered_completion_indices(
     tab: &EditorTabState,
     items: &[LspCompletionItem],
-    strategy: &dyn CompletionStrategy,
+    behavior: &dyn CompletionBehavior,
 ) -> Vec<usize> {
     if items.is_empty() {
         return Vec::new();
     }
 
-    let prefix = completion_prefix_at_cursor(tab, strategy);
+    let prefix = completion_prefix_at_cursor(tab, behavior);
     if prefix.is_empty() {
         return (0..items.len()).collect();
     }
@@ -130,7 +133,7 @@ fn debug_assert_monotonic_indices(indices: &[usize]) {
 pub(in crate::kernel::store) fn sync_completion_items_from_cache(
     completion: &mut CompletionPopupState,
     tab: &EditorTabState,
-    strategy: &dyn CompletionStrategy,
+    behavior: &dyn CompletionBehavior,
 ) -> bool {
     if completion.all_items.is_empty() {
         return false;
@@ -149,7 +152,7 @@ pub(in crate::kernel::store) fn sync_completion_items_from_cache(
         None
     };
 
-    let prefix = completion_prefix_at_cursor(tab, strategy);
+    let prefix = completion_prefix_at_cursor(tab, behavior);
     if completion.filter_cache_valid
         && completion.filter_cache_source_len == source_len
         && prefix == completion.filter_cache_prefix
@@ -221,19 +224,11 @@ fn starts_with_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
 
 pub(in crate::kernel::store) fn completion_prefix_at_cursor(
     tab: &EditorTabState,
-    strategy: &dyn CompletionStrategy,
+    behavior: &dyn CompletionBehavior,
 ) -> String {
     let rope = tab.buffer.rope();
-    let (start_char, end_char) = strategy.prefix_bounds(tab);
+    let (start_char, end_char) = behavior.prefix_bounds(tab);
     rope.slice(start_char..end_char).to_string()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::kernel::store) struct SnippetExpansion {
-    pub(in crate::kernel::store) text: String,
-    pub(in crate::kernel::store) cursor: Option<usize>,
-    pub(in crate::kernel::store) selection: Option<(usize, usize)>,
-    pub(in crate::kernel::store) tabstops: Vec<SnippetTabstop>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,25 +240,30 @@ pub(in crate::kernel::store) struct CompletionInsertion {
 }
 
 impl CompletionInsertion {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::kernel::store) fn from_plain_text(text: String) -> Self {
-        let cursor = text
-            .strip_suffix("()")
-            .map(|prefix| prefix.chars().count().saturating_add(1));
-        Self {
-            text,
-            cursor,
-            selection: None,
-            tabstops: Vec::new(),
-        }
+        Self::from_plan(CompletionFallbackPlan::from_plain_text(text))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::kernel::store) fn from_snippet(snippet: &str) -> Self {
-        let expanded = expand_snippet(snippet);
+        Self::from_plan(CompletionFallbackPlan::from_snippet(snippet))
+    }
+
+    fn from_plan(plan: CompletionFallbackPlan) -> Self {
         Self {
-            text: expanded.text,
-            cursor: expanded.cursor,
-            selection: expanded.selection,
-            tabstops: expanded.tabstops,
+            text: plan.text,
+            cursor: plan.cursor,
+            selection: plan.selection,
+            tabstops: plan
+                .tabstops
+                .into_iter()
+                .map(|tabstop| SnippetTabstop {
+                    index: tabstop.index,
+                    start: tabstop.start,
+                    end: tabstop.end,
+                })
+                .collect(),
         }
     }
 
@@ -273,76 +273,20 @@ impl CompletionInsertion {
 }
 
 pub(in crate::kernel::store) fn resolve_completion_insertion(
+    tab: &EditorTabState,
+    adapter: &dyn crate::kernel::language::LanguageAdapter,
     item: &LspCompletionItem,
 ) -> CompletionInsertion {
-    let mut insertion = match item.insert_text_format {
-        LspInsertTextFormat::PlainText => {
-            let mut insertion = CompletionInsertion::from_plain_text(item.insert_text.clone());
-            if insertion.cursor.is_none()
-                && insertion.selection.is_none()
-                && should_append_callable_parentheses(item)
-            {
-                insertion.text.push('(');
-                insertion.text.push(')');
-                insertion.cursor = Some(insertion.text.chars().count().saturating_sub(1));
-            }
-            insertion
-        }
-        LspInsertTextFormat::Snippet => CompletionInsertion::from_snippet(&item.insert_text),
+    let behavior = LanguageBehaviorContext {
+        language: tab.language(),
+        tab,
+        syntax: adapter.syntax().syntax_facts(tab),
     };
 
-    if !insertion.has_cursor_or_selection()
-        && should_append_trailing_space(item)
-        && !insertion.text.ends_with(' ')
-    {
-        insertion.text.push(' ');
-    }
-
-    insertion
-}
-
-fn should_append_callable_parentheses(item: &LspCompletionItem) -> bool {
-    if !completion_kind_is_callable(item.kind) {
-        return false;
-    }
-
-    let text = item.insert_text.as_str();
-    if text.is_empty()
-        || text.contains('(')
-        || text.contains('!')
-        || text.chars().any(|ch| ch.is_whitespace())
-    {
-        return false;
-    }
-
-    let mut chars = text.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first == '_' || unicode_xid::UnicodeXID::is_xid_start(first)) {
-        return false;
-    }
-
-    chars.all(|ch| ch == '_' || unicode_xid::UnicodeXID::is_xid_continue(ch))
-}
-
-fn completion_kind_is_callable(kind: Option<u32>) -> bool {
-    matches!(kind, Some(2..=4))
-}
-
-fn should_append_trailing_space(item: &LspCompletionItem) -> bool {
-    // LSP CompletionItemKind::Keyword = 14
-    if !matches!(item.kind, Some(14)) {
-        return false;
-    }
-
-    let text = item.insert_text.as_str();
-    if text.is_empty() || text.ends_with(' ') {
-        return false;
-    }
-
-    // Only for simple identifiers — not values like operators or punctuation.
-    text.chars().all(|ch| ch == '_' || ch.is_alphanumeric())
+    let plan = adapter
+        .completion()
+        .normalize_completion_item(&CompletionContext { behavior, item });
+    CompletionInsertion::from_plan(plan)
 }
 
 pub(in crate::kernel::store) fn completion_replace_range(
@@ -562,185 +506,21 @@ pub(in crate::kernel::store) fn apply_completion_insertion_cursor(
     crate::kernel::editor::clamp_and_follow(&mut tab.viewport, &tab.buffer, tab_size);
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(in crate::kernel::store) fn expand_snippet(snippet: &str) -> SnippetExpansion {
-    let mut out = String::with_capacity(snippet.len());
-    let mut out_chars = 0usize;
-
-    let mut tabstops = Vec::<SnippetTabstop>::new();
-    let mut best_placeholder: Option<(u32, usize, usize)> = None;
-    let mut best_tabstop: Option<(u32, usize)> = None;
-    let mut final_cursor: Option<usize> = None;
-
-    let mut it = snippet.chars().peekable();
-
-    while let Some(ch) = it.next() {
-        match ch {
-            '\\' => match it.next() {
-                Some(next) => {
-                    out.push(next);
-                    out_chars = out_chars.saturating_add(1);
-                }
-                None => {
-                    out.push('\\');
-                    out_chars = out_chars.saturating_add(1);
-                }
-            },
-            '$' => match it.peek().copied() {
-                Some('{') => {
-                    let _ = it.next();
-                    let mut content = String::new();
-                    let mut depth = 0usize;
-                    for c in it.by_ref() {
-                        match c {
-                            '{' => {
-                                depth = depth.saturating_add(1);
-                                content.push(c);
-                            }
-                            '}' => {
-                                if depth == 0 {
-                                    break;
-                                }
-                                depth = depth.saturating_sub(1);
-                                content.push(c);
-                            }
-                            _ => content.push(c),
-                        }
-                    }
-
-                    let digits = content
-                        .chars()
-                        .take_while(|c| c.is_ascii_digit())
-                        .collect::<String>();
-                    let index: Option<u32> = if digits.is_empty() {
-                        None
-                    } else {
-                        digits.parse().ok()
-                    };
-
-                    if let Some(index) = index {
-                        let rest = content.get(digits.len()..).unwrap_or_default();
-                        let (inserted, inserted_is_placeholder) = if let Some((_, text)) =
-                            rest.split_once(':')
-                        {
-                            (text.to_string(), true)
-                        } else if let (Some(start), Some(end)) = (rest.find('|'), rest.rfind('|')) {
-                            if end > start.saturating_add(1) {
-                                let opts = &rest[start + 1..end];
-                                let first = opts.split(',').next().unwrap_or_default().to_string();
-                                (first, true)
-                            } else {
-                                (String::new(), false)
-                            }
-                        } else {
-                            (String::new(), false)
-                        };
-
-                        if !inserted.is_empty() {
-                            let start = out_chars;
-                            out.push_str(&inserted);
-                            let inserted_chars = inserted.chars().count();
-                            out_chars = out_chars.saturating_add(inserted_chars);
-                            let end = out_chars;
-
-                            if inserted_is_placeholder && index > 0 {
-                                let replace = best_placeholder
-                                    .as_ref()
-                                    .is_none_or(|(best_idx, _, _)| index < *best_idx);
-                                if replace {
-                                    best_placeholder = Some((index, start, end));
-                                }
-                            }
-
-                            tabstops.push(SnippetTabstop { index, start, end });
-                        } else if index == 0 {
-                            final_cursor = Some(out_chars);
-                            tabstops.push(SnippetTabstop {
-                                index,
-                                start: out_chars,
-                                end: out_chars,
-                            });
-                        } else if index > 0 {
-                            let replace = best_tabstop
-                                .as_ref()
-                                .is_none_or(|(best_idx, _)| index < *best_idx);
-                            if replace {
-                                best_tabstop = Some((index, out_chars));
-                            }
-                            tabstops.push(SnippetTabstop {
-                                index,
-                                start: out_chars,
-                                end: out_chars,
-                            });
-                        }
-
-                        continue;
-                    }
-                }
-                Some(c) if c.is_ascii_digit() => {
-                    let mut num: u32 = 0;
-                    while it.peek().is_some_and(|c| c.is_ascii_digit()) {
-                        let digit = it.next().unwrap();
-                        num = num
-                            .saturating_mul(10)
-                            .saturating_add((digit as u32).saturating_sub('0' as u32));
-                    }
-                    if num == 0 {
-                        final_cursor = Some(out_chars);
-                        tabstops.push(SnippetTabstop {
-                            index: 0,
-                            start: out_chars,
-                            end: out_chars,
-                        });
-                    } else {
-                        let replace = best_tabstop
-                            .as_ref()
-                            .is_none_or(|(best_idx, _)| num < *best_idx);
-                        if replace {
-                            best_tabstop = Some((num, out_chars));
-                        }
-                        tabstops.push(SnippetTabstop {
-                            index: num,
-                            start: out_chars,
-                            end: out_chars,
-                        });
-                    }
-                }
-                _ => {
-                    out.push('$');
-                    out_chars = out_chars.saturating_add(1);
-                }
-            },
-            _ => {
-                out.push(ch);
-                out_chars = out_chars.saturating_add(1);
-            }
-        }
-    }
-
-    let (selection, cursor) = if let Some((_idx, start, end)) = best_placeholder {
-        (Some((start, end)), Some(end))
-    } else if let Some((_idx, pos)) = best_tabstop {
-        (None, Some(pos))
-    } else {
-        (None, final_cursor)
-    };
-
-    SnippetExpansion {
-        text: out,
-        cursor,
-        selection,
-        tabstops,
-    }
+    expand_fallback_snippet(snippet)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::kernel::editor::TabId;
+    use crate::kernel::language::adapter::adapter_for_tab;
     use crate::kernel::language::LanguageId;
-    use crate::kernel::services::ports::{EditorConfig, LspPosition, LspRange};
+    use crate::kernel::services::ports::{
+        EditorConfig, LspInsertTextFormat, LspPosition, LspRange,
+    };
     use crate::kernel::state::CompletionPopupState;
-    use crate::kernel::store::intel::completion_strategy;
     use std::path::PathBuf;
 
     fn completion_item(id: u64, label: &str) -> LspCompletionItem {
@@ -763,10 +543,18 @@ mod tests {
     }
 
     fn tab_with_cursor(content: &str, col: usize) -> crate::kernel::editor::EditorTabState {
+        tab_with_cursor_at_path("test.rs", content, col)
+    }
+
+    fn tab_with_cursor_at_path(
+        path: &str,
+        content: &str,
+        col: usize,
+    ) -> crate::kernel::editor::EditorTabState {
         let config = EditorConfig::default();
         let mut tab = crate::kernel::editor::EditorTabState::from_file(
             TabId::new(1),
-            PathBuf::from("test.rs"),
+            PathBuf::from(path),
             content,
             &config,
         );
@@ -784,7 +572,7 @@ mod tests {
     #[test]
     fn sync_completion_items_incremental_prefix_matches_expected_items() {
         let mut tab = tab_with_cursor("pri", 1);
-        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
                 completion_item(1, "piano"),
@@ -799,7 +587,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         assert_eq!(
             completion_labels(&completion),
@@ -811,7 +599,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         assert_eq!(
             completion_labels(&completion),
@@ -823,7 +611,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         assert_eq!(completion_labels(&completion), ["print", "private"]);
         assert_eq!(completion.filter_cache_prefix, "pri");
@@ -832,7 +620,7 @@ mod tests {
     #[test]
     fn sync_completion_items_prefix_shrink_recomputes_correct_result() {
         let mut tab = tab_with_cursor("pri", 3);
-        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
                 completion_item(1, "piano"),
@@ -847,7 +635,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         assert_eq!(completion_labels(&completion), ["print", "private"]);
 
@@ -855,7 +643,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         assert_eq!(
             completion_labels(&completion),
@@ -867,7 +655,7 @@ mod tests {
     #[test]
     fn sync_completion_items_no_match_hides_popup() {
         let tab = tab_with_cursor("zzz", 3);
-        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
                 completion_item(1, "piano"),
@@ -881,7 +669,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         assert_eq!(completion_labels(&completion), Vec::<String>::new());
         assert_eq!(completion.filter_cache_indices, Vec::<usize>::new());
@@ -891,7 +679,7 @@ mod tests {
     #[test]
     fn sync_completion_items_keeps_selected_id_stable() {
         let mut tab = tab_with_cursor("pri", 1);
-        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
                 completion_item(1, "piano"),
@@ -906,7 +694,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         completion.selected = 2;
         completion.selection_locked = true;
@@ -919,7 +707,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         assert_eq!(
             completion.selected_item().map(|item| item.id),
@@ -930,7 +718,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         assert_eq!(
             completion.selected_item().map(|item| item.id),
@@ -941,7 +729,7 @@ mod tests {
     #[test]
     fn sync_completion_items_keeps_selected_id_stable_with_large_visible_indices() {
         let mut tab = tab_with_cursor("pri", 1);
-        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: (0..5_000u64)
                 .map(|id| completion_item(id + 1, &format!("print_{id:04}")))
@@ -950,7 +738,7 @@ mod tests {
             ..Default::default()
         };
 
-        let _ = sync_completion_items_from_cache(&mut completion, &tab, strategy);
+        let _ = sync_completion_items_from_cache(&mut completion, &tab, behavior);
         completion.selected = 3_200;
         completion.selection_locked = true;
         let selected_id = completion
@@ -959,14 +747,14 @@ mod tests {
             .expect("selected item");
 
         tab.buffer.set_cursor(0, 2);
-        let _ = sync_completion_items_from_cache(&mut completion, &tab, strategy);
+        let _ = sync_completion_items_from_cache(&mut completion, &tab, behavior);
         assert_eq!(
             completion.selected_item().map(|item| item.id),
             Some(selected_id)
         );
 
         tab.buffer.set_cursor(0, 3);
-        let _ = sync_completion_items_from_cache(&mut completion, &tab, strategy);
+        let _ = sync_completion_items_from_cache(&mut completion, &tab, behavior);
         assert_eq!(
             completion.selected_item().map(|item| item.id),
             Some(selected_id)
@@ -976,7 +764,7 @@ mod tests {
     #[test]
     fn sync_completion_items_selected_lookup_fallback_handles_unsorted_visible_indices() {
         let tab = tab_with_cursor("", 0);
-        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
                 completion_item(1, "alpha"),
@@ -996,7 +784,7 @@ mod tests {
         completion.rebuild_index_by_id();
 
         let selected_id = completion.selected_item().map(|item| item.id);
-        let changed = sync_completion_items_from_cache(&mut completion, &tab, strategy);
+        let changed = sync_completion_items_from_cache(&mut completion, &tab, behavior);
 
         assert!(!changed);
         assert_eq!(completion.selected, 1);
@@ -1006,7 +794,7 @@ mod tests {
     #[test]
     fn sync_completion_items_respects_cache_invalidation_after_source_replace() {
         let tab = tab_with_cursor("pr", 2);
-        let strategy = completion_strategy::strategy_for_tab(&tab);
+        let behavior = adapter_for_tab(&tab).completion();
         let mut completion = CompletionPopupState {
             all_items: vec![
                 completion_item(1, "print"),
@@ -1020,7 +808,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         assert_eq!(
             completion_labels(&completion),
@@ -1033,7 +821,7 @@ mod tests {
         assert!(sync_completion_items_from_cache(
             &mut completion,
             &tab,
-            strategy
+            behavior
         ));
         assert_eq!(completion_labels(&completion), ["prism", "proto"]);
         assert_eq!(completion.filter_cache_source_len, 2);
@@ -1059,7 +847,9 @@ mod tests {
             data: None,
         };
 
-        let insertion = resolve_completion_insertion(&item);
+        let tab = tab_with_cursor("", 0);
+        let adapter = adapter_for_tab(&tab);
+        let insertion = resolve_completion_insertion(&tab, adapter, &item);
         assert_eq!(insertion.text, "print()");
         assert_eq!(insertion.cursor, Some("print(".chars().count()));
         assert!(insertion.selection.is_none());
@@ -1131,7 +921,9 @@ mod tests {
             data: None,
         };
 
-        let insertion = resolve_completion_insertion(&item);
+        let tab = tab_with_cursor("", 0);
+        let adapter = adapter_for_tab(&tab);
+        let insertion = resolve_completion_insertion(&tab, adapter, &item);
         assert_eq!(insertion.text, "static ");
         assert!(insertion.cursor.is_none());
         assert!(insertion.selection.is_none());
@@ -1318,5 +1110,37 @@ mod tests {
         assert_eq!(range.start.character, 1);
         assert_eq!(range.end.line, 0);
         assert_eq!(range.end.character, 2);
+    }
+
+    #[test]
+    fn resolve_completion_insertion_uses_adapter_behavior_per_language() {
+        let item = LspCompletionItem {
+            id: 1,
+            label: "push_back".to_string(),
+            detail: None,
+            kind: Some(3),
+            documentation: None,
+            insert_text: "push_back".to_string(),
+            insert_text_format: LspInsertTextFormat::PlainText,
+            insert_range: None,
+            replace_range: None,
+            sort_text: None,
+            filter_text: None,
+            additional_text_edits: Vec::new(),
+            command: None,
+            data: None,
+        };
+
+        let rust_tab = tab_with_cursor_at_path("main.rs", "", 0);
+        let cpp_tab = tab_with_cursor_at_path("main.cpp", "obj->", "obj->".chars().count());
+
+        let rust_insertion =
+            resolve_completion_insertion(&rust_tab, adapter_for_tab(&rust_tab), &item);
+        let cpp_insertion =
+            resolve_completion_insertion(&cpp_tab, adapter_for_tab(&cpp_tab), &item);
+
+        assert_eq!(rust_insertion.text, "push_back()");
+        assert_eq!(cpp_insertion.text, "push_back");
+        assert_eq!(cpp_insertion.cursor, None);
     }
 }
