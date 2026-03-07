@@ -318,3 +318,18 @@ fn highlight_lines_shared_keeps_stale_non_opaque_spans_until_syntax_patch_applie
         span.kind == HighlightKind::Keyword && span.start <= use_idx && use_idx < span.end
     }));
 }
+
+#[test]
+fn identifier_pos_at_is_exact_while_identifier_pos_at_or_before_backtracks() {
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    let config = EditorConfig::default();
+    let tab = EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "foo \n", &config);
+
+    assert_eq!(tab.identifier_pos_at((0, 0)), Some((0, 0)));
+    assert_eq!(tab.identifier_pos_at((0, 2)), Some((0, 2)));
+    assert_eq!(tab.identifier_pos_at((0, 3)), None);
+
+    assert_eq!(tab.identifier_pos_at_or_before((0, 3)), Some((0, 2)));
+}

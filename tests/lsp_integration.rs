@@ -95,6 +95,56 @@ fn drive_until(
     }
 }
 
+fn render_once(workbench: &mut Workbench, width: u16, height: u16) {
+    let mut backend = zcode::ui::backend::test::TestBackend::new(width, height);
+    workbench.render(
+        &mut backend,
+        zcode::ui::core::geom::Rect::new(0, 0, width, height),
+    );
+    let _ = workbench.flush_post_render_sync();
+}
+
+fn find_text_position(
+    workbench: &mut Workbench,
+    width: u16,
+    height: u16,
+    needle: &str,
+) -> Option<(u16, u16)> {
+    let mut backend = zcode::ui::backend::test::TestBackend::new(width, height);
+    workbench.render(
+        &mut backend,
+        zcode::ui::core::geom::Rect::new(0, 0, width, height),
+    );
+    let _ = workbench.flush_post_render_sync();
+
+    let area = backend.buffer().area();
+    let chars: Vec<char> = needle.chars().collect();
+    if chars.is_empty() {
+        return None;
+    }
+
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            let mut matched = true;
+            for (offset, ch) in chars.iter().enumerate() {
+                let Some(cell) = backend.buffer().cell(x.saturating_add(offset as u16), y) else {
+                    matched = false;
+                    break;
+                };
+                if cell.symbol != ch.to_string() {
+                    matched = false;
+                    break;
+                }
+            }
+            if matched {
+                return Some((x, y));
+            }
+        }
+    }
+
+    None
+}
+
 fn has_command_in_path(name: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return false;
@@ -2235,6 +2285,73 @@ fn test_idle_hover_does_not_trigger_without_mouse_target() {
             .lines()
             .any(|line| line.trim() == "request textDocument/hover"),
         "unexpected idle hover request without mouse target, trace:\n{trace}"
+    );
+}
+
+#[test]
+fn test_idle_hover_does_not_trigger_when_mouse_is_only_after_identifier() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "foo \n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    render_once(&mut workbench, 120, 40);
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state()
+            .lsp
+            .server_capabilities
+            .keys()
+            .any(|k| k.server == LspServerKind::RustAnalyzer)
+    });
+
+    let (foo_x, foo_y) =
+        find_text_position(&mut workbench, 120, 40, "foo").expect("rendered foo position");
+
+    let _ = workbench.handle_input(&InputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: foo_x.saturating_add(3),
+        row: foo_y,
+        modifiers: KeyModifiers::NONE,
+    }));
+
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(850) {
+        drain_runtime_messages(&mut workbench, &rx);
+        workbench.tick();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
+    assert!(
+        !trace
+            .lines()
+            .any(|line| line.trim() == "request textDocument/hover"),
+        "unexpected idle hover request when mouse is only after identifier, trace:\n{trace}"
     );
 }
 

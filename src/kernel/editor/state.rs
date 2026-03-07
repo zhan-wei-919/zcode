@@ -586,6 +586,14 @@ impl EditorTabState {
         self.path.as_ref().and_then(|p| LanguageId::from_path(p)) == Some(LanguageId::Markdown)
     }
 
+    /// Returns `pos` only when it directly lands on an identifier.
+    ///
+    /// Pointer-driven interactions should use this exact check instead of the cursor-oriented
+    /// backtracking behavior in `identifier_pos_at_or_before`.
+    pub fn identifier_pos_at(&self, pos: (usize, usize)) -> Option<(usize, usize)> {
+        self.is_identifier_at_pos(pos).then_some(pos)
+    }
+
     /// Returns the nearest identifier position at or immediately before `pos`.
     ///
     /// This makes cursor-based actions (hover, etc.) work when the cursor is placed *after* an

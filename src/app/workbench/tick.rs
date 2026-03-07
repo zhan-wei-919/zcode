@@ -347,7 +347,7 @@ impl Workbench {
         let col = pos.1.min(tab.buffer.line_grapheme_len(row));
         let buf_pos = (row, col);
 
-        let Some(buf_pos) = tab.identifier_pos_at_or_before(buf_pos) else {
+        let Some(buf_pos) = tab.identifier_pos_at(buf_pos) else {
             return false;
         };
 
