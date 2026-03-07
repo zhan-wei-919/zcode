@@ -686,6 +686,15 @@ impl EditorTabState {
                 end_line_exclusive,
             )
         });
+        let full_fallback_lines = any_dirty.then(|| {
+            super::syntax::highlight_lines_for_range(
+                syntax.language(),
+                syntax.tree(),
+                self.buffer.rope(),
+                start_line,
+                end_line_exclusive,
+            )
+        });
 
         let empty: Arc<Vec<HighlightSpan>> = Arc::new(Vec::new());
         let mut out: Vec<Arc<Vec<HighlightSpan>>> =
@@ -697,6 +706,16 @@ impl EditorTabState {
                 .unwrap_or_else(|| Arc::clone(&empty));
             if !cache.is_line_dirty(line) {
                 out.push(cached);
+                continue;
+            }
+
+            if cached.is_empty() {
+                let fallback = full_fallback_lines
+                    .as_ref()
+                    .and_then(|lines| lines.get(idx))
+                    .cloned()
+                    .unwrap_or_default();
+                out.push(Arc::new(fallback));
                 continue;
             }
 

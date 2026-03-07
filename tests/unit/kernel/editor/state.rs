@@ -216,7 +216,7 @@ fn highlight_lines_shared_overlays_opaque_spans_on_dirty_lines() {
 }
 
 #[test]
-fn highlight_lines_shared_drops_cached_spans_on_multiline_same_line_count_edit() {
+fn highlight_lines_shared_uses_full_fallback_when_dirty_line_cache_is_empty() {
     use crate::kernel::services::ports::EditorConfig;
     use std::path::PathBuf;
 
@@ -257,11 +257,17 @@ fn highlight_lines_shared_drops_cached_spans_on_multiline_same_line_count_edit()
     // Cached spans for dirty lines must not be reused when the edit spans multiple lines.
     assert!(cache.line(3).is_none());
     let rendered = tab.highlight_lines_shared(3, 4).expect("syntax available");
-    assert!(rendered[0].is_empty());
+    assert!(rendered[0].iter().any(|span| {
+        matches!(
+            span.kind,
+            HighlightKind::Keyword | HighlightKind::KeywordControl
+        ) && span.start <= 1
+            && 1 < span.end
+    }));
 }
 
 #[test]
-fn highlight_lines_shared_keeps_stale_non_opaque_spans_until_syntax_patch_applied() {
+fn highlight_lines_shared_uses_full_fallback_before_async_patch_when_cache_is_empty() {
     use crate::kernel::editor::compute_highlight_patches;
     use crate::kernel::services::ports::EditorConfig;
     use std::path::PathBuf;
@@ -289,12 +295,15 @@ fn highlight_lines_shared_keeps_stale_non_opaque_spans_until_syntax_patch_applie
     tab.apply_syntax_edit(&op);
 
     let stale = tab.highlight_lines_shared(0, 1).expect("syntax available");
-    assert!(
-        stale[0]
-            .iter()
-            .all(|span| span.kind != HighlightKind::Keyword),
-        "dirty line should still use cached non-opaque spans before async patch"
-    );
+    let line = tab.buffer.rope().line(0).to_string();
+    let use_idx = line.find("use").expect("use token");
+    assert!(stale[0].iter().any(|span| {
+        matches!(
+            span.kind,
+            HighlightKind::Keyword | HighlightKind::KeywordControl
+        ) && span.start <= use_idx
+            && use_idx < span.end
+    }));
 
     let syntax = tab.syntax().expect("rust syntax available");
     let patches = compute_highlight_patches(
@@ -312,10 +321,12 @@ fn highlight_lines_shared_keeps_stale_non_opaque_spans_until_syntax_patch_applie
     }
 
     let refreshed = tab.highlight_lines_shared(0, 1).expect("syntax available");
-    let line = tab.buffer.rope().line(0).to_string();
-    let use_idx = line.find("use").expect("use token");
     assert!(refreshed[0].iter().any(|span| {
-        span.kind == HighlightKind::Keyword && span.start <= use_idx && use_idx < span.end
+        matches!(
+            span.kind,
+            HighlightKind::Keyword | HighlightKind::KeywordControl
+        ) && span.start <= use_idx
+            && use_idx < span.end
     }));
 }
 

@@ -602,6 +602,30 @@ pub(super) fn opaque_highlight_lines_for_range(
     project_abs_spans_to_lines(rope, start_line, end_line_exclusive, &spans)
 }
 
+pub(super) fn highlight_lines_for_range(
+    language: LanguageId,
+    tree: &Tree,
+    rope: &Rope,
+    start_line: usize,
+    end_line_exclusive: usize,
+) -> Vec<Vec<HighlightSpan>> {
+    if start_line >= end_line_exclusive {
+        return Vec::new();
+    }
+
+    let total_lines = rope.len_lines().max(1);
+    let start_line = start_line.min(total_lines);
+    let end_line_exclusive = end_line_exclusive.min(total_lines);
+    if start_line >= end_line_exclusive {
+        return Vec::new();
+    }
+
+    let start_byte = rope.line_to_byte(start_line);
+    let end_byte = rope.line_to_byte(end_line_exclusive);
+    let spans = collect_highlights(language, tree, rope, start_byte, end_byte);
+    project_abs_spans_to_lines(rope, start_line, end_line_exclusive, &spans)
+}
+
 fn collect_opaque_highlights(
     _language: LanguageId,
     tree: &Tree,
