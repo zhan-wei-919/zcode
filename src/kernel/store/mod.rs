@@ -164,6 +164,35 @@ impl Store {
         adapter_for(lang)
     }
 
+    fn completion_request_context(
+        &self,
+        pane: usize,
+        path: std::path::PathBuf,
+        version: u64,
+    ) -> super::state::CompletionRequestContext {
+        let normalization = self
+            .state
+            .editor
+            .pane(pane)
+            .and_then(|pane_state| pane_state.active_tab())
+            .map(|tab| {
+                let adapter = adapter_for_tab(tab);
+                completion_runtime_context(&self.state, tab, adapter).completion_snapshot()
+            })
+            .unwrap_or_else(|| {
+                crate::kernel::language::CompletionNormalizationSnapshot::detached(
+                    crate::kernel::language::LanguageId::from_path(path.as_path()),
+                )
+            });
+
+        super::state::CompletionRequestContext {
+            pane,
+            path,
+            version,
+            normalization,
+        }
+    }
+
     fn maybe_request_completion_resolve_for_record(
         &mut self,
         record: &CompletionRecord,
@@ -1672,11 +1701,7 @@ impl Store {
                         self.state.ui.hover.clear();
                         self.state.ui.completion.close();
                         self.state.ui.completion.pending_request =
-                            Some(super::state::CompletionRequestContext {
-                                pane,
-                                path: path.clone(),
-                                version,
-                            });
+                            Some(self.completion_request_context(pane, path.clone(), version));
 
                         effects.push(Effect::LspCompletionRequest {
                             path,
@@ -2933,11 +2958,7 @@ impl Store {
                         self.state.ui.completion.close();
                     }
                     self.state.ui.completion.pending_request =
-                        Some(super::state::CompletionRequestContext {
-                            pane,
-                            path: path.clone(),
-                            version,
-                        });
+                        Some(self.completion_request_context(pane, path.clone(), version));
 
                     return DispatchResult {
                         effects: vec![Effect::LspCompletionRequest {

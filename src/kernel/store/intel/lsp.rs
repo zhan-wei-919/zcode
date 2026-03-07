@@ -1604,6 +1604,8 @@ impl super::super::Store {
                     }
 
                     if item_changed {
+                        let request = self.state.ui.completion.request.clone();
+                        let raw = self.state.ui.completion.all_items[idx].raw.clone();
                         let next_entry = self
                             .state
                             .ui
@@ -1623,17 +1625,25 @@ impl super::super::Store {
                                     crate::kernel::language::adapter::adapter_for_tab(tab);
                                 let runtime = completion_runtime_context(&self.state, tab, adapter);
                                 adapter.completion_protocol().normalize_completion(
-                                    &crate::kernel::language::CompletionContext {
-                                        runtime,
-                                        item: &self.state.ui.completion.all_items[idx].raw,
-                                    },
+                                    &crate::kernel::language::CompletionContext::live(runtime, &raw),
                                 )
                             })
                             .unwrap_or_else(|| {
-                                crate::kernel::language::CompletionRecord::from(
-                                    self.state.ui.completion.all_items[idx].raw.clone(),
+                                let snapshot = request
+                                    .as_ref()
+                                    .map(|req| req.normalization.clone())
+                                    .unwrap_or_else(|| {
+                                        crate::kernel::language::CompletionNormalizationSnapshot::detached(
+                                            None,
+                                        )
+                                    });
+                                let adapter = crate::kernel::language::adapter_for(snapshot.language);
+                                adapter.completion_protocol().normalize_completion(
+                                    &crate::kernel::language::CompletionContext::snapshot(
+                                        snapshot,
+                                        &raw,
+                                    ),
                                 )
-                                .entry
                             });
                         self.state.ui.completion.all_items[idx].entry = next_entry;
                         if self

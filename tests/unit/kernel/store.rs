@@ -220,24 +220,28 @@ fn seed_visible_completion_for_active_tab(
     path: std::path::PathBuf,
     label: &str,
 ) {
-    let version = store
-        .state
-        .editor
-        .pane(pane)
-        .unwrap()
-        .active_tab()
-        .unwrap()
-        .edit_version;
+    let (version, normalization) = {
+        let tab = store.state.editor.pane(pane).unwrap().active_tab().unwrap();
+        let adapter = adapter_for_tab(tab);
+        let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+            tab.language(),
+            tab,
+            adapter.syntax().syntax_facts(tab),
+        );
+        (tab.edit_version, runtime.completion_snapshot())
+    };
     let item = test_completion_item(1, label);
 
     store.state.ui.completion.visible = true;
     store.state.ui.completion.selected = 0;
     store.state.ui.completion.all_items = vec![item.into()];
+    store.state.ui.completion.rebuild_index_by_id();
     store.state.ui.completion.visible_indices = vec![0];
     store.state.ui.completion.request = Some(CompletionRequestContext {
         pane,
         path,
         version,
+        normalization,
     });
     store.state.ui.completion.pending_request = None;
     store.state.ui.completion.is_incomplete = false;
@@ -1789,6 +1793,75 @@ fn lsp_completion_resolve_updates_insert_payload_fields() {
     );
     assert!(item.raw.insert_range.is_some());
     assert!(item.raw.replace_range.is_some());
+}
+
+#[test]
+fn lsp_completion_resolved_uses_request_snapshot_when_tab_is_gone() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "pri".to_string(),
+    }));
+
+    let (version, normalization) = {
+        let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+        let adapter = adapter_for_tab(tab);
+        let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+            tab.language(),
+            tab,
+            adapter.syntax().syntax_facts(tab),
+        );
+        (tab.edit_version, runtime.completion_snapshot())
+    };
+
+    let _ = store.dispatch(Action::Editor(EditorAction::CloseTabAt {
+        pane: 0,
+        index: 0,
+    }));
+
+    store.state.ui.completion.visible = true;
+    store.state.ui.completion.selected = 0;
+    let mut item = test_completion_item(1, "printf");
+    item.kind = Some(3);
+    store.state.ui.completion.all_items = vec![item.into()];
+    store.state.ui.completion.rebuild_index_by_id();
+    store.state.ui.completion.visible_indices = vec![0];
+    store.state.ui.completion.request = Some(CompletionRequestContext {
+        pane: 0,
+        path,
+        version,
+        normalization,
+    });
+    store.state.ui.completion.pending_request = None;
+
+    let result = store.dispatch(Action::LspCompletionResolved {
+        id: 1,
+        detail: Some("resolved".to_string()),
+        documentation: None,
+        insert_text: None,
+        insert_text_format: None,
+        insert_range: None,
+        replace_range: None,
+        additional_text_edits: Vec::new(),
+        command: None,
+    });
+
+    assert!(result.state_changed);
+    let item = store
+        .state
+        .ui
+        .completion
+        .selected_record()
+        .expect("completion item");
+    assert_eq!(item.entry.detail.as_deref(), Some("resolved"));
+    assert_eq!(item.entry.commit.insert.text, "printf()");
+    assert_eq!(
+        item.entry.commit.insert.cursor,
+        Some("printf(".chars().count())
+    );
 }
 
 #[test]

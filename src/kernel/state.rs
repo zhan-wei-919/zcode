@@ -5,8 +5,8 @@ use std::time::Instant;
 use crate::core::Command;
 use crate::kernel::editor::SyntaxColorGroup;
 use crate::kernel::language::{
-    CompletionEntry, CompletionRecord, CompletionResolveState, HoverModel, HoverSectionModel,
-    SignatureHelpModel,
+    CompletionEntry, CompletionNormalizationSnapshot, CompletionRecord, CompletionResolveState,
+    HoverModel, HoverSectionModel, SignatureHelpModel,
 };
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
@@ -390,6 +390,7 @@ pub struct CompletionRequestContext {
     pub pane: usize,
     pub path: PathBuf,
     pub version: u64,
+    pub normalization: CompletionNormalizationSnapshot,
 }
 
 #[derive(Debug, Clone, Default)]

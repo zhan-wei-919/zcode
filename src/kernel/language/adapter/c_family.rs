@@ -135,7 +135,7 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
     }
 
     fn normalize_completion_item(&self, context: &CompletionContext<'_>) -> TextEditPlan {
-        let syntax = &context.runtime.syntax;
+        let syntax = context.syntax();
         let suppress_callable_fallback =
             matches!(
                 syntax.member_access_kind,

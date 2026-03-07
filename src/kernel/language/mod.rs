@@ -5,12 +5,13 @@ use crate::kernel::services::ports::LspServerKind;
 pub mod adapter;
 
 pub use adapter::{
-    CompletionCommitPlan, CompletionContext, CompletionEntry, CompletionProtocolAdapter,
-    CompletionRecord, CompletionReplacePolicy, CompletionResolveState, HoverBlock, HoverModel,
-    HoverProtocolAdapter, HoverSectionModel, IncludeContext, IncludeDelimiter, LanguageAdapter,
-    LanguageFeatures, LanguageInteractionPolicy, LanguageRuntimeContext, LineContext,
-    MemberAccessKind, SignatureHelpModel, SignatureHelpProtocolAdapter, SyntaxBehavior,
-    SyntaxFacts, TextEditPlan, TextEditStrategy, TextTabstop,
+    CompletionCommitPlan, CompletionContext, CompletionEntry, CompletionNormalizationContext,
+    CompletionNormalizationSnapshot, CompletionProtocolAdapter, CompletionRecord,
+    CompletionReplacePolicy, CompletionResolveState, HoverBlock, HoverModel, HoverProtocolAdapter,
+    HoverSectionModel, IncludeContext, IncludeDelimiter, LanguageAdapter, LanguageFeatures,
+    LanguageInteractionPolicy, LanguageRuntimeContext, LineContext, MemberAccessKind,
+    SignatureHelpModel, SignatureHelpProtocolAdapter, SyntaxBehavior, SyntaxFacts, TextEditPlan,
+    TextEditStrategy, TextTabstop,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

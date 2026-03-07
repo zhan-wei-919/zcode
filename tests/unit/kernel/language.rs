@@ -235,14 +235,30 @@ fn normalize_plan(
 ) -> crate::kernel::language::TextEditPlan {
     let adapter = crate::kernel::language::adapter_for(tab.language());
     adapter.completion_protocol().normalize_completion_text(
-        &crate::kernel::language::CompletionContext {
-            runtime: crate::kernel::language::LanguageRuntimeContext::new(
+        &crate::kernel::language::CompletionContext::live(
+            crate::kernel::language::LanguageRuntimeContext::new(
                 tab.language(),
                 tab,
                 adapter.syntax().syntax_facts(tab),
             ),
             item,
-        },
+        ),
+    )
+}
+
+fn normalize_snapshot_plan(
+    tab: &crate::kernel::editor::EditorTabState,
+    item: &LspCompletionItem,
+) -> crate::kernel::language::TextEditPlan {
+    let adapter = crate::kernel::language::adapter_for(tab.language());
+    let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+        tab.language(),
+        tab,
+        adapter.syntax().syntax_facts(tab),
+    );
+    let snapshot = runtime.completion_snapshot();
+    adapter.completion_protocol().normalize_completion_text(
+        &crate::kernel::language::CompletionContext::snapshot(snapshot, item),
     )
 }
 
@@ -304,6 +320,28 @@ fn c_family_adapter_disables_callable_fallback_in_special_contexts() {
             "case: {content}"
         );
     }
+}
+
+#[test]
+fn c_family_snapshot_matches_live_callable_fallback() {
+    let tab = test_tab("main.cpp", "pri", 3);
+    let live = normalize_plan(&tab, &callable_item("printf"));
+    let snapshot = normalize_snapshot_plan(&tab, &callable_item("printf"));
+
+    assert_eq!(snapshot, live);
+    assert_eq!(snapshot.text, "printf()");
+    assert_eq!(snapshot.cursor, Some("printf(".chars().count()));
+}
+
+#[test]
+fn c_family_snapshot_preserves_special_context_suppression() {
+    let tab = test_tab("main.cpp", "obj->", "obj->".chars().count());
+    let live = normalize_plan(&tab, &callable_item("push_back"));
+    let snapshot = normalize_snapshot_plan(&tab, &callable_item("push_back"));
+
+    assert_eq!(snapshot, live);
+    assert_eq!(snapshot.text, "push_back");
+    assert!(snapshot.cursor.is_none());
 }
 
 #[test]

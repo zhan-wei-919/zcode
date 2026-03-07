@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::editor::HighlightKind;
+use crate::kernel::language::adapter::adapter_for_tab;
 use crate::kernel::services::ports::{
     EditorConfig, LspCommand, LspCompletionItem, LspFoldingRange, LspInlayHint,
     LspInsertTextFormat, LspPosition, LspRange, LspSemanticToken, LspSemanticTokensLegend,
@@ -946,6 +947,16 @@ fn experiment_lsp_completion_reuse_cache_burden() {
         let mut store = new_store();
         store.state.ui.focus = FocusTarget::Editor;
         let (path, version) = open_single_rust_tab_for_input(&mut store, "completion_reuse.rs");
+        let normalization = {
+            let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+            let adapter = adapter_for_tab(tab);
+            let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+                tab.language(),
+                tab,
+                adapter.syntax().syntax_facts(tab),
+            );
+            runtime.completion_snapshot()
+        };
 
         let mut all_items: Vec<LspCompletionItem> =
             (0..items as u64).map(test_completion_item).collect();
@@ -962,6 +973,7 @@ fn experiment_lsp_completion_reuse_cache_burden() {
             pane: 0,
             path,
             version,
+            normalization,
         });
         store.state.ui.completion.pending_request = None;
         store.state.ui.completion.is_incomplete = false;

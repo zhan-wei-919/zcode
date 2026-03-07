@@ -60,10 +60,7 @@ pub(in crate::kernel::store) fn normalize_completion_record(
     adapter: &dyn CompletionProtocolAdapter,
     raw: LspCompletionItem,
 ) -> CompletionRecord {
-    let entry = adapter.normalize_completion(&CompletionContext {
-        runtime: runtime.clone(),
-        item: &raw,
-    });
+    let entry = adapter.normalize_completion(&CompletionContext::live(runtime.clone(), &raw));
     CompletionRecord { entry, raw }
 }
 
@@ -332,7 +329,7 @@ pub(in crate::kernel::store) fn resolve_completion_insertion(
         LanguageRuntimeContext::new(tab.language(), tab, adapter.syntax().syntax_facts(tab));
     let plan = adapter
         .completion_protocol()
-        .normalize_completion_text(&CompletionContext { runtime, item });
+        .normalize_completion_text(&CompletionContext::live(runtime, item));
     CompletionInsertion::from_plan(plan)
 }
 

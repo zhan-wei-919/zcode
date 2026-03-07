@@ -107,12 +107,134 @@ impl<'a> LanguageRuntimeContext<'a> {
         self.server_caps = server_caps;
         self
     }
+
+    pub fn completion_snapshot(&self) -> CompletionNormalizationSnapshot {
+        CompletionNormalizationSnapshot {
+            language: self.language,
+            server: self.server,
+            server_caps: self.server_caps.cloned(),
+            syntax: self.syntax.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CompletionNormalizationSnapshot {
+    pub language: Option<LanguageId>,
+    pub server: Option<LspServerKind>,
+    pub server_caps: Option<LspServerCapabilities>,
+    pub syntax: SyntaxFacts,
+}
+
+impl CompletionNormalizationSnapshot {
+    pub fn detached(language: Option<LanguageId>) -> Self {
+        Self {
+            language,
+            server: language.and_then(LanguageId::server_kind),
+            server_caps: None,
+            syntax: SyntaxFacts::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CompletionNormalizationContext<'a> {
+    Live(LanguageRuntimeContext<'a>),
+    Snapshot(CompletionNormalizationSnapshot),
+    Detached(Option<LanguageId>),
+}
+
+impl<'a> CompletionNormalizationContext<'a> {
+    pub fn language(&self) -> Option<LanguageId> {
+        match self {
+            Self::Live(runtime) => runtime.language,
+            Self::Snapshot(snapshot) => snapshot.language,
+            Self::Detached(language) => *language,
+        }
+    }
+
+    pub fn server(&self) -> Option<LspServerKind> {
+        match self {
+            Self::Live(runtime) => runtime.server,
+            Self::Snapshot(snapshot) => snapshot.server,
+            Self::Detached(language) => (*language).and_then(LanguageId::server_kind),
+        }
+    }
+
+    pub fn server_caps(&self) -> Option<&LspServerCapabilities> {
+        match self {
+            Self::Live(runtime) => runtime.server_caps,
+            Self::Snapshot(snapshot) => snapshot.server_caps.as_ref(),
+            Self::Detached(_) => None,
+        }
+    }
+
+    pub fn syntax(&self) -> SyntaxFacts {
+        match self {
+            Self::Live(runtime) => runtime.syntax.clone(),
+            Self::Snapshot(snapshot) => snapshot.syntax.clone(),
+            Self::Detached(_) => SyntaxFacts::default(),
+        }
+    }
+
+    pub fn runtime(&self) -> Option<&LanguageRuntimeContext<'a>> {
+        match self {
+            Self::Live(runtime) => Some(runtime),
+            Self::Snapshot(_) | Self::Detached(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct CompletionContext<'a> {
-    pub runtime: LanguageRuntimeContext<'a>,
+    pub normalization: CompletionNormalizationContext<'a>,
     pub item: &'a LspCompletionItem,
+}
+
+impl<'a> CompletionContext<'a> {
+    pub fn live(runtime: LanguageRuntimeContext<'a>, item: &'a LspCompletionItem) -> Self {
+        Self {
+            normalization: CompletionNormalizationContext::Live(runtime),
+            item,
+        }
+    }
+
+    pub fn snapshot(
+        snapshot: CompletionNormalizationSnapshot,
+        item: &'a LspCompletionItem,
+    ) -> Self {
+        Self {
+            normalization: CompletionNormalizationContext::Snapshot(snapshot),
+            item,
+        }
+    }
+
+    pub fn detached(language: Option<LanguageId>, item: &'a LspCompletionItem) -> Self {
+        Self {
+            normalization: CompletionNormalizationContext::Detached(language),
+            item,
+        }
+    }
+
+    pub fn language(&self) -> Option<LanguageId> {
+        self.normalization.language()
+    }
+
+    pub fn server(&self) -> Option<LspServerKind> {
+        self.normalization.server()
+    }
+
+    pub fn server_caps(&self) -> Option<&LspServerCapabilities> {
+        self.normalization.server_caps()
+    }
+
+    pub fn syntax(&self) -> SyntaxFacts {
+        self.normalization.syntax()
+    }
+
+    pub fn runtime(&self) -> Option<&LanguageRuntimeContext<'a>> {
+        self.normalization.runtime()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -418,7 +540,7 @@ pub trait CompletionProtocolAdapter: Send + Sync {
     }
 
     fn completion_resolve_state(&self, context: &CompletionContext<'_>) -> CompletionResolveState {
-        default_completion_resolve_state(&context.runtime, context.item)
+        default_completion_resolve_state(context, context.item)
     }
 
     fn normalize_completion(&self, context: &CompletionContext<'_>) -> CompletionEntry {
@@ -797,11 +919,11 @@ pub(crate) fn default_completion_replace_policy(
 }
 
 pub(crate) fn default_completion_resolve_state(
-    runtime: &LanguageRuntimeContext<'_>,
+    context: &CompletionContext<'_>,
     item: &LspCompletionItem,
 ) -> CompletionResolveState {
-    if runtime
-        .server_caps
+    if context
+        .server_caps()
         .is_some_and(|caps| !caps.completion_resolve)
     {
         CompletionResolveState::Unsupported
