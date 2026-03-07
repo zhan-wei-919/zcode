@@ -524,7 +524,7 @@ impl super::super::Store {
                         (start, end)
                     };
 
-                    let (changed, _) =
+                    let (changed, editor_effects) =
                         self.state
                             .editor
                             .dispatch_action(EditorAction::ApplyTextEditToTab {
@@ -534,6 +534,7 @@ impl super::super::Store {
                                 end_byte,
                                 text: edit.new_text.clone(),
                             });
+                    effects.extend(editor_effects);
                     if changed {
                         any_changed = true;
                         if let Some(path) = self

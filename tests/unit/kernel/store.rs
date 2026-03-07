@@ -2616,6 +2616,73 @@ fn semantic_tokens_response_triggers_second_pass_after_format_workspace_edit() {
 }
 
 #[test]
+fn direct_editor_text_edit_schedules_syntax_highlight_recompute() {
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("format.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "use std::sync::mpsc;\nfn main() {}\n".to_string(),
+    }));
+
+    let result = store.dispatch(Action::Editor(EditorAction::ApplyTextEditToTab {
+        pane: 0,
+        tab_index: 0,
+        start_byte: 0,
+        end_byte: 0,
+        text: "// formatted\n".to_string(),
+    }));
+
+    assert!(result.state_changed);
+    assert!(result
+        .effects
+        .iter()
+        .any(|effect| { matches!(effect, Effect::ComputeSyntaxHighlights { .. }) }));
+}
+
+#[test]
+fn lsp_format_workspace_edit_propagates_syntax_highlight_recompute() {
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("format.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "use std::sync::mpsc;\nfn main() {}\n".to_string(),
+    }));
+
+    let result = store.dispatch(Action::LspApplyWorkspaceEdit {
+        edit: LspWorkspaceEdit {
+            changes: vec![LspWorkspaceFileEdit {
+                path,
+                edits: vec![LspTextEdit {
+                    range: LspRange {
+                        start: LspPosition {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: LspPosition {
+                            line: 0,
+                            character: 0,
+                        },
+                    },
+                    new_text: "// formatted\n".to_string(),
+                }],
+            }],
+            ..Default::default()
+        },
+    });
+
+    assert!(result.state_changed);
+    assert!(
+        result
+            .effects
+            .iter()
+            .any(|effect| { matches!(effect, Effect::ComputeSyntaxHighlights { .. }) }),
+        "format-applied LSP edits should propagate editor syntax-highlight effects"
+    );
+}
+
+#[test]
 fn semantic_tokens_response_is_deferred_until_boundary_after_identifier_input() {
     let mut store = new_store();
     let path = store.state.workspace_root.join("timing.rs");
