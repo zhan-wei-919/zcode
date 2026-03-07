@@ -1,14 +1,161 @@
 use std::path::{Path, PathBuf};
 
-use crate::kernel::language::LanguageId;
+use serde_json::{json, Value};
 
-/// Resolve the `rust-analyzer` executable path on this machine.
-///
-/// Order:
-/// 1) `$PATH`
-/// 2) `$CARGO_HOME/bin` (or `$HOME/.cargo/bin`)
-/// 3) `rustup which rust-analyzer` (using `root` as `current_dir` to honor overrides)
-pub(super) fn resolve_rust_analyzer_command(root: &Path) -> Option<String> {
+use crate::kernel::language::LanguageId;
+use crate::kernel::services::ports::LspServerKind;
+
+#[derive(Debug, Clone, Copy)]
+pub struct LspLaunchContext<'a> {
+    pub workspace_root: &'a Path,
+    pub language_root: &'a Path,
+    pub language: LanguageId,
+    pub server: LspServerKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LspLaunchPlan {
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub initialization_options: Option<Value>,
+    pub install_hint: &'static str,
+}
+
+pub trait LspLaunchPolicy: Send + Sync {
+    fn default_launch_plan(&self, ctx: &LspLaunchContext<'_>) -> LspLaunchPlan;
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EmptyLspLaunchPolicy;
+
+impl LspLaunchPolicy for EmptyLspLaunchPolicy {
+    fn default_launch_plan(&self, _ctx: &LspLaunchContext<'_>) -> LspLaunchPlan {
+        LspLaunchPlan::default()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RustAnalyzerLspLaunchPolicy;
+
+impl LspLaunchPolicy for RustAnalyzerLspLaunchPolicy {
+    fn default_launch_plan(&self, ctx: &LspLaunchContext<'_>) -> LspLaunchPlan {
+        launch_plan(
+            resolve_rust_analyzer_command(ctx.language_root),
+            &[],
+            None,
+            "install rust-analyzer (e.g. `rustup component add rust-analyzer`)",
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GoplsLspLaunchPolicy;
+
+impl LspLaunchPolicy for GoplsLspLaunchPolicy {
+    fn default_launch_plan(&self, _ctx: &LspLaunchContext<'_>) -> LspLaunchPlan {
+        launch_plan(
+            resolve_gopls_command(),
+            &[],
+            Some(json!({ "semanticTokens": true })),
+            "install gopls (e.g. `go install golang.org/x/tools/gopls@latest`)",
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PyrightLspLaunchPolicy;
+
+impl LspLaunchPolicy for PyrightLspLaunchPolicy {
+    fn default_launch_plan(&self, ctx: &LspLaunchContext<'_>) -> LspLaunchPlan {
+        launch_plan(
+            resolve_pyright_langserver_command(ctx.workspace_root, ctx.language_root),
+            &["--stdio"],
+            None,
+            "install pyright-langserver (e.g. `npm i -g pyright` or `pip install pyright`)",
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TypeScriptLanguageServerLaunchPolicy;
+
+impl LspLaunchPolicy for TypeScriptLanguageServerLaunchPolicy {
+    fn default_launch_plan(&self, ctx: &LspLaunchContext<'_>) -> LspLaunchPlan {
+        launch_plan(
+            resolve_typescript_language_server_command(ctx.workspace_root, ctx.language_root),
+            &["--stdio"],
+            None,
+            "install typescript-language-server (e.g. `npm i -g typescript-language-server typescript`)",
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClangdLspLaunchPolicy;
+
+impl LspLaunchPolicy for ClangdLspLaunchPolicy {
+    fn default_launch_plan(&self, _ctx: &LspLaunchContext<'_>) -> LspLaunchPlan {
+        launch_plan(
+            resolve_clangd_command(),
+            &[],
+            None,
+            "install clangd (usually from llvm/clang toolchain packages)",
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct JdtlsLspLaunchPolicy;
+
+impl LspLaunchPolicy for JdtlsLspLaunchPolicy {
+    fn default_launch_plan(&self, _ctx: &LspLaunchContext<'_>) -> LspLaunchPlan {
+        launch_plan(
+            resolve_jdtls_command(),
+            &[],
+            None,
+            "install jdtls (Eclipse JDT Language Server) and ensure `jdtls` is in PATH",
+        )
+    }
+}
+
+pub(crate) static EMPTY_LSP_LAUNCH_POLICY: EmptyLspLaunchPolicy = EmptyLspLaunchPolicy;
+static RUST_ANALYZER_LSP_LAUNCH_POLICY: RustAnalyzerLspLaunchPolicy = RustAnalyzerLspLaunchPolicy;
+static GOPLS_LSP_LAUNCH_POLICY: GoplsLspLaunchPolicy = GoplsLspLaunchPolicy;
+static PYRIGHT_LSP_LAUNCH_POLICY: PyrightLspLaunchPolicy = PyrightLspLaunchPolicy;
+static TYPESCRIPT_LANGUAGE_SERVER_LSP_LAUNCH_POLICY: TypeScriptLanguageServerLaunchPolicy =
+    TypeScriptLanguageServerLaunchPolicy;
+static CLANGD_LSP_LAUNCH_POLICY: ClangdLspLaunchPolicy = ClangdLspLaunchPolicy;
+static JDTLS_LSP_LAUNCH_POLICY: JdtlsLspLaunchPolicy = JdtlsLspLaunchPolicy;
+
+pub(crate) fn launch_policy_for(server: Option<LspServerKind>) -> &'static dyn LspLaunchPolicy {
+    match server {
+        Some(LspServerKind::RustAnalyzer) => &RUST_ANALYZER_LSP_LAUNCH_POLICY,
+        Some(LspServerKind::Gopls) => &GOPLS_LSP_LAUNCH_POLICY,
+        Some(LspServerKind::Pyright) => &PYRIGHT_LSP_LAUNCH_POLICY,
+        Some(LspServerKind::TypeScriptLanguageServer) => {
+            &TYPESCRIPT_LANGUAGE_SERVER_LSP_LAUNCH_POLICY
+        }
+        Some(LspServerKind::Clangd) => &CLANGD_LSP_LAUNCH_POLICY,
+        Some(LspServerKind::Jdtls) => &JDTLS_LSP_LAUNCH_POLICY,
+        None => &EMPTY_LSP_LAUNCH_POLICY,
+    }
+}
+
+fn launch_plan(
+    command: Option<String>,
+    args: &[&str],
+    initialization_options: Option<Value>,
+    install_hint: &'static str,
+) -> LspLaunchPlan {
+    LspLaunchPlan {
+        command,
+        args: args.iter().map(|arg| (*arg).to_string()).collect(),
+        initialization_options,
+        install_hint,
+    }
+}
+
+fn resolve_rust_analyzer_command(root: &Path) -> Option<String> {
     let from_path = find_in_path("rust-analyzer");
     if let Some(path) = from_path {
         return Some(path.to_string_lossy().to_string());
@@ -26,26 +173,6 @@ pub(super) fn resolve_rust_analyzer_command(root: &Path) -> Option<String> {
             None
         }
     })
-}
-
-pub(super) fn resolve_default_server_command(
-    workspace_root: &Path,
-    root: &Path,
-    language: LanguageId,
-) -> Option<(String, Vec<String>)> {
-    match language {
-        LanguageId::Rust => resolve_rust_analyzer_command(root).map(|cmd| (cmd, Vec::new())),
-        LanguageId::Go => resolve_gopls_command().map(|cmd| (cmd, Vec::new())),
-        LanguageId::Python => resolve_pyright_langserver_command(workspace_root, root)
-            .map(|cmd| (cmd, vec!["--stdio".to_string()])),
-        LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Jsx | LanguageId::Tsx => {
-            resolve_typescript_language_server_command(workspace_root, root)
-                .map(|cmd| (cmd, vec!["--stdio".to_string()]))
-        }
-        LanguageId::C | LanguageId::Cpp => resolve_clangd_command().map(|cmd| (cmd, Vec::new())),
-        LanguageId::Java => resolve_jdtls_command().map(|cmd| (cmd, Vec::new())),
-        _ => None,
-    }
 }
 
 fn resolve_clangd_command() -> Option<String> {
@@ -127,8 +254,6 @@ fn resolve_node_modules_bin(workspace_root: &Path, root: &Path, name: &str) -> O
         return None;
     }
 
-    // Support monorepo setups where the LSP server is installed at a higher-level
-    // `node_modules/.bin` (e.g. workspace root), even if the language root is nested.
     let mut cur = root;
     loop {
         let bin_dir = cur.join("node_modules").join(".bin");

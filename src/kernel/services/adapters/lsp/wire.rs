@@ -7,6 +7,7 @@ use super::convert::{
     workspace_edit_from_lsp, DefinitionPreviewTarget,
 };
 use super::LspClient;
+use crate::kernel::language::{adapter_for_path, DefinitionPreviewContext};
 use crate::kernel::panel::locations::LocationItem;
 use crate::kernel::services::ports::{
     LspFoldingRange, LspHoverBlock, LspHoverPayload, LspHoverPreviewPayload, LspRange,
@@ -581,177 +582,6 @@ fn handle_server_request(
     }
 }
 
-fn line_window_from_range(
-    range: crate::kernel::services::ports::LspRange,
-    line_count: usize,
-) -> Option<(usize, usize)> {
-    if line_count == 0 {
-        return None;
-    }
-
-    let start = (range.start.line as usize).min(line_count.saturating_sub(1));
-    let mut end = (range.end.line as usize).min(line_count.saturating_sub(1));
-    if range.end.line > range.start.line && range.end.character == 0 {
-        end = end.saturating_sub(1);
-    }
-    if end < start {
-        end = start;
-    }
-    Some((start, end))
-}
-
-fn clamp_window(start: usize, end: usize, max_lines: usize, line_count: usize) -> (usize, usize) {
-    let start = start.min(line_count.saturating_sub(1));
-    let mut end = end.min(line_count.saturating_sub(1));
-    if end < start {
-        end = start;
-    }
-    let max_end = start
-        .saturating_add(max_lines.saturating_sub(1))
-        .min(line_count.saturating_sub(1));
-    if end > max_end {
-        end = max_end;
-    }
-    (start, end)
-}
-
-fn leading_indent(line: &str) -> usize {
-    line.chars().take_while(|ch| ch.is_whitespace()).count()
-}
-
-fn is_decorator_or_comment(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with("#[")
-        || trimmed.starts_with('@')
-        || trimmed.starts_with("//")
-        || trimmed.starts_with("/*")
-        || trimmed.starts_with('*')
-        || trimmed.starts_with("*/")
-}
-
-fn adjust_start_line(lines: &[&str], mut start: usize) -> usize {
-    while start > 0 {
-        let prev = lines[start - 1];
-        if prev.trim().is_empty() {
-            break;
-        }
-        if !is_decorator_or_comment(prev) {
-            break;
-        }
-        start -= 1;
-    }
-    start
-}
-
-fn is_definition_continuation_line(trimmed: &str) -> bool {
-    trimmed.starts_with(')')
-        || trimmed.starts_with(']')
-        || trimmed.starts_with("where ")
-        || trimmed.starts_with("->")
-        || trimmed.starts_with(':')
-}
-
-fn brace_scoped_end(lines: &[&str], start: usize, max_lines: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut seen_open = false;
-    let base_indent = leading_indent(lines[start]);
-    let max_end = start.saturating_add(max_lines.saturating_sub(1));
-    let last = lines.len().saturating_sub(1).min(max_end);
-
-    for (idx, line) in lines.iter().enumerate().take(last + 1).skip(start) {
-        let trimmed = line.trim_start();
-        if !seen_open && idx > start && !trimmed.is_empty() {
-            let indent = leading_indent(line);
-            if indent <= base_indent
-                && !is_definition_continuation_line(trimmed)
-                && !is_decorator_or_comment(line)
-                && !line.contains('{')
-            {
-                return None;
-            }
-        }
-
-        for ch in line.chars() {
-            if ch == '{' {
-                depth = depth.saturating_add(1);
-                seen_open = true;
-            } else if ch == '}' && seen_open {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some(idx);
-                }
-            }
-        }
-    }
-
-    if seen_open {
-        Some(last)
-    } else {
-        None
-    }
-}
-
-fn indentation_end(lines: &[&str], start: usize, max_lines: usize) -> usize {
-    let base_indent = leading_indent(lines[start]);
-    let mut end = start;
-    let max_end = start
-        .saturating_add(max_lines.saturating_sub(1))
-        .min(lines.len().saturating_sub(1));
-
-    for (idx, line) in lines.iter().enumerate().take(max_end + 1).skip(start + 1) {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() {
-            end = idx;
-            continue;
-        }
-
-        let indent = leading_indent(line);
-        let continuation = is_definition_continuation_line(trimmed);
-        if indent > base_indent || continuation {
-            end = idx;
-            continue;
-        }
-        break;
-    }
-
-    end
-}
-
-fn definition_window(
-    target: &DefinitionPreviewTarget,
-    lines: &[&str],
-    max_lines: usize,
-) -> Option<(usize, usize)> {
-    if lines.is_empty() {
-        return None;
-    }
-
-    let line_count = lines.len();
-    let anchor = (target.anchor_line as usize).min(line_count.saturating_sub(1));
-    if let Some(range) = target
-        .range
-        .and_then(|range| line_window_from_range(range, line_count))
-    {
-        if range.1 > range.0 {
-            return Some(clamp_window(range.0, range.1, max_lines, line_count));
-        }
-    }
-
-    let seed = target
-        .range
-        .and_then(|range| line_window_from_range(range, line_count))
-        .map(|(start, _)| start)
-        .unwrap_or(anchor);
-    let start = adjust_start_line(lines, seed);
-
-    if let Some(end) = brace_scoped_end(lines, start, max_lines) {
-        return Some((start, end));
-    }
-
-    let end = indentation_end(lines, start, max_lines);
-    Some((start, end))
-}
-
 fn render_source_preview_payload(
     label: &str,
     target: &DefinitionPreviewTarget,
@@ -760,7 +590,16 @@ fn render_source_preview_payload(
     let max_lines = max_lines.clamp(20, 2000);
     let content = std::fs::read_to_string(&target.path).ok()?;
     let lines = content.lines().collect::<Vec<_>>();
-    let (start, end) = definition_window(target, lines.as_slice(), max_lines)?;
+    let adapter = adapter_for_path(target.path.as_path());
+    let (start, end) =
+        adapter
+            .definition_preview()
+            .definition_window(&DefinitionPreviewContext {
+                lines: lines.as_slice(),
+                anchor_line: target.anchor_line as usize,
+                range: target.range,
+                max_lines,
+            })?;
     let snippet = lines[start..=end].join("\n").trim_end().to_string();
     if snippet.trim().is_empty() {
         return None;

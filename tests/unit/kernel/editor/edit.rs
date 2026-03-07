@@ -362,6 +362,56 @@ fn test_python_auto_pair_and_colon_indent() {
 }
 
 #[test]
+fn test_plain_text_does_not_auto_pair() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(TabId::new(3), PathBuf::from("test.txt"), "", &config);
+
+    let _ = tab.apply_command(Command::InsertChar('('), 0, &config);
+    assert_eq!(tab.buffer.text(), "(");
+    assert_eq!(tab.buffer.cursor(), (0, 1));
+}
+
+#[test]
+fn test_rust_paren_newline_uses_electric_enter() {
+    let config = EditorConfig::default();
+    let mut tab =
+        EditorTabState::from_file(TabId::new(4), PathBuf::from("test.rs"), "call()", &config);
+
+    tab.buffer.set_cursor(0, "call(".len());
+
+    let _ = tab.apply_command(Command::InsertNewline, 0, &config);
+    assert_eq!(
+        tab.buffer.text(),
+        "call(
+    
+)"
+    );
+    assert_eq!(tab.buffer.cursor(), (1, 4));
+}
+
+#[test]
+fn test_rust_bracket_newline_uses_electric_enter() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(5),
+        PathBuf::from("test.rs"),
+        "let items = vec![];",
+        &config,
+    );
+
+    tab.buffer.set_cursor(0, "let items = vec![".len());
+
+    let _ = tab.apply_command(Command::InsertNewline, 0, &config);
+    assert_eq!(
+        tab.buffer.text(),
+        "let items = vec![
+    
+];"
+    );
+    assert_eq!(tab.buffer.cursor(), (1, 4));
+}
+
+#[test]
 fn multi_cursor_insert_delete_and_undo_restore_all_cursors() {
     let config = EditorConfig::default();
     let mut tab = EditorTabState::from_file(

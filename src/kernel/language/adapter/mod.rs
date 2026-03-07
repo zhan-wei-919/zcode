@@ -1,7 +1,10 @@
 mod c_family;
 mod default;
+mod editing;
 mod go;
 mod js;
+mod launch;
+mod preview;
 mod python;
 mod rust;
 mod syntax_bridge;
@@ -28,6 +31,10 @@ use go::GO_ADAPTER;
 use js::{JSX_ADAPTER, JS_ADAPTER, TSX_ADAPTER, TS_ADAPTER};
 use python::PYTHON_ADAPTER;
 use rust::RUST_ADAPTER;
+
+pub use editing::{DelimiterRule, LanguageEditingPolicy, LineSuffixIndentRule};
+pub use launch::{LspLaunchContext, LspLaunchPlan, LspLaunchPolicy};
+pub use preview::{DefinitionPreviewContext, DefinitionPreviewPolicy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct LanguageFeatures {
@@ -701,6 +708,13 @@ pub trait LanguageAdapter: Send + Sync {
     fn signature_help_protocol(&self) -> &dyn SignatureHelpProtocolAdapter;
     fn hover_protocol(&self) -> &dyn HoverProtocolAdapter;
     fn syntax(&self) -> &dyn SyntaxBehavior;
+    fn editing(&self) -> &dyn LanguageEditingPolicy;
+    fn definition_preview(&self) -> &dyn DefinitionPreviewPolicy {
+        &preview::DEFAULT_DEFINITION_PREVIEW_POLICY
+    }
+    fn lsp_launch(&self) -> &dyn LspLaunchPolicy {
+        launch::launch_policy_for(self.features().lsp_server)
+    }
     fn features(&self) -> LanguageFeatures;
 }
 

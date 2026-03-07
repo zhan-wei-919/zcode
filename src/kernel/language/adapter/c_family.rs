@@ -1,12 +1,13 @@
 use crate::core::Command;
 use crate::kernel::editor::EditorTabState;
+use crate::kernel::language::adapter::editing::BRACE_LANGUAGE_EDITING_POLICY;
 use crate::kernel::language::adapter::syntax_bridge::{syntax_facts_for_tab, SYNTAX_BRIDGE};
 use crate::kernel::language::adapter::{
     apply_callable_completion_fallback, apply_trailing_space_completion_fallback,
     default_context_allows_completion, default_prefix_bounds, default_should_close_on_command,
     default_triggered_by_insert, language_features, normalize_server_completion_text,
-    CompletionBehavior, CompletionContext, LanguageAdapter, LanguageFeatures, LineContext,
-    MemberAccessKind, TextEditPlan,
+    CompletionBehavior, CompletionContext, LanguageAdapter, LanguageEditingPolicy,
+    LanguageFeatures, LineContext, MemberAccessKind, TextEditPlan,
 };
 use crate::kernel::language::LanguageId;
 
@@ -188,6 +189,10 @@ impl LanguageAdapter for CFamilyLanguageAdapter {
 
     fn syntax(&self) -> &dyn crate::kernel::language::adapter::SyntaxBehavior {
         &SYNTAX_BRIDGE
+    }
+
+    fn editing(&self) -> &dyn LanguageEditingPolicy {
+        &BRACE_LANGUAGE_EDITING_POLICY
     }
 
     fn features(&self) -> LanguageFeatures {

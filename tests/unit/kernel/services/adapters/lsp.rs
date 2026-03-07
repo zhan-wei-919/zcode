@@ -1,4 +1,6 @@
 use super::*;
+use crate::kernel::language::adapter::adapter_for;
+use crate::kernel::language::{LanguageId, LspLaunchContext, LspLaunchPlan};
 use crate::kernel::services::ports::{AsyncExecutor, BoxFuture};
 use crate::kernel::services::KernelServiceHost;
 use lsp_server::Message;
@@ -48,6 +50,26 @@ impl Drop for EnvRestore {
         Self::restore_var("GOPATH", self.gopath.take());
         Self::restore_var("HOME", self.home.take());
     }
+}
+
+#[cfg(unix)]
+fn default_launch_plan(
+    language: LanguageId,
+    workspace_root: &std::path::Path,
+    language_root: &std::path::Path,
+) -> LspLaunchPlan {
+    let server = adapter_for(Some(language))
+        .features()
+        .lsp_server
+        .expect("language server");
+    adapter_for(Some(language))
+        .lsp_launch()
+        .default_launch_plan(&LspLaunchContext {
+            workspace_root,
+            language_root,
+            language,
+            server,
+        })
 }
 
 #[cfg(unix)]
@@ -208,7 +230,13 @@ fn resolve_rust_analyzer_command_prefers_path() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let ra = temp.path().join("rust-analyzer");
-    std::fs::write(&ra, "#!/usr/bin/env sh\nexit 0\n").expect("write stub ra");
+    std::fs::write(
+        &ra,
+        "#!/usr/bin/env sh
+exit 0
+",
+    )
+    .expect("write stub ra");
     let mut perms = std::fs::metadata(&ra).expect("stat ra").permissions();
     use std::os::unix::fs::PermissionsExt as _;
     perms.set_mode(0o755);
@@ -217,8 +245,13 @@ fn resolve_rust_analyzer_command_prefers_path() {
     std::env::set_var("PATH", temp.path());
     std::env::set_var("CARGO_HOME", temp.path().join("cargo-empty"));
 
-    let resolved = super::discovery::resolve_rust_analyzer_command(temp.path()).expect("resolved");
-    assert_eq!(resolved, ra.to_string_lossy());
+    let plan = default_launch_plan(LanguageId::Rust, temp.path(), temp.path());
+    assert_eq!(plan.command, Some(ra.to_string_lossy().to_string()));
+    assert!(plan.args.is_empty());
+    assert_eq!(
+        plan.install_hint,
+        "install rust-analyzer (e.g. `rustup component add rust-analyzer`)"
+    );
 }
 
 #[test]
@@ -232,7 +265,13 @@ fn resolve_rust_analyzer_command_falls_back_to_cargo_home() {
     let cargo_bin = cargo_home.join("bin");
     std::fs::create_dir_all(&cargo_bin).expect("mkdir cargo bin");
     let ra = cargo_bin.join("rust-analyzer");
-    std::fs::write(&ra, "#!/usr/bin/env sh\nexit 0\n").expect("write stub ra");
+    std::fs::write(
+        &ra,
+        "#!/usr/bin/env sh
+exit 0
+",
+    )
+    .expect("write stub ra");
     let mut perms = std::fs::metadata(&ra).expect("stat ra").permissions();
     use std::os::unix::fs::PermissionsExt as _;
     perms.set_mode(0o755);
@@ -241,8 +280,9 @@ fn resolve_rust_analyzer_command_falls_back_to_cargo_home() {
     std::env::set_var("PATH", "");
     std::env::set_var("CARGO_HOME", &cargo_home);
 
-    let resolved = super::discovery::resolve_rust_analyzer_command(temp.path()).expect("resolved");
-    assert_eq!(resolved, ra.to_string_lossy());
+    let plan = default_launch_plan(LanguageId::Rust, temp.path(), temp.path());
+    assert_eq!(plan.command, Some(ra.to_string_lossy().to_string()));
+    assert!(plan.args.is_empty());
 }
 
 #[test]
@@ -253,7 +293,13 @@ fn resolve_rust_analyzer_command_falls_back_to_rustup_which() {
 
     let temp = tempfile::tempdir().expect("tempdir");
     let ra = temp.path().join("ra-from-rustup");
-    std::fs::write(&ra, "#!/bin/sh\nexit 0\n").expect("write stub ra");
+    std::fs::write(
+        &ra,
+        "#!/bin/sh
+exit 0
+",
+    )
+    .expect("write stub ra");
     let mut perms = std::fs::metadata(&ra).expect("stat ra").permissions();
     use std::os::unix::fs::PermissionsExt as _;
     perms.set_mode(0o755);
@@ -263,7 +309,13 @@ fn resolve_rust_analyzer_command_falls_back_to_rustup_which() {
     std::fs::create_dir_all(&rustup_dir).expect("mkdir rustup bin");
     let rustup = rustup_dir.join("rustup");
     let script = format!(
-        "#!/bin/sh\nif [ \"$1\" = \"which\" ] && [ \"$2\" = \"rust-analyzer\" ]; then\n  echo \"{}\"\n  exit 0\nfi\nexit 1\n",
+        "#!/bin/sh
+if [ \"$1\" = \"which\" ] && [ \"$2\" = \"rust-analyzer\" ]; then
+  echo \"{}\"
+  exit 0
+fi
+exit 1
+",
         ra.to_string_lossy()
     );
     std::fs::write(&rustup, script).expect("write stub rustup");
@@ -276,8 +328,9 @@ fn resolve_rust_analyzer_command_falls_back_to_rustup_which() {
     std::env::set_var("PATH", &rustup_dir);
     std::env::set_var("CARGO_HOME", temp.path().join("cargo-empty"));
 
-    let resolved = super::discovery::resolve_rust_analyzer_command(temp.path()).expect("resolved");
-    assert_eq!(resolved, ra.to_string_lossy());
+    let plan = default_launch_plan(LanguageId::Rust, temp.path(), temp.path());
+    assert_eq!(plan.command, Some(ra.to_string_lossy().to_string()));
+    assert!(plan.args.is_empty());
 }
 
 #[test]
@@ -589,6 +642,98 @@ struct PressedState {
 }
 
 #[test]
+fn hover_definition_preview_for_python_function_keeps_decorator_and_stops_before_next_top_level_item(
+) {
+    struct NoopExecutor;
+
+    impl AsyncExecutor for NoopExecutor {
+        fn spawn(&self, _task: BoxFuture) {}
+    }
+
+    let mut host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let ctx = host.context();
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("runtime.py");
+    std::fs::write(
+        &path,
+        r#"@trace
+def build_value(
+    value: int,
+) -> int:
+    return value
+
+class NextItem:
+    pass
+"#,
+    )
+    .expect("write python source");
+
+    let uri = lsp_types::Url::from_file_path(&path).expect("file url");
+    let response = lsp_types::GotoDefinitionResponse::Link(vec![lsp_types::LocationLink {
+        origin_selection_range: None,
+        target_uri: uri,
+        target_range: lsp_types::Range::new(
+            lsp_types::Position::new(1, 0),
+            lsp_types::Position::new(4, 16),
+        ),
+        target_selection_range: lsp_types::Range::new(
+            lsp_types::Position::new(1, 4),
+            lsp_types::Position::new(1, 15),
+        ),
+    }]);
+
+    handle_response(
+        LspRequestKind::HoverDefinition {
+            session: 7,
+            max_lines: 400,
+        },
+        lsp_server::Response {
+            id: lsp_server::RequestId::from(100),
+            result: Some(serde_json::to_value(response).expect("serialize definition response")),
+            error: None,
+        },
+        &ctx,
+    );
+
+    let msg = host.try_recv().expect("hover definition action");
+    match msg.payload {
+        crate::kernel::services::KernelMessagePayload::Action(
+            crate::kernel::Action::LspHoverDefinitionPreview { session, payload },
+        ) => {
+            assert_eq!(session, 7);
+            let code = match &payload.blocks[0] {
+                crate::kernel::services::ports::LspHoverBlock::Code { code, .. } => code,
+                other => panic!("expected code block, got {:?}", other),
+            };
+            assert!(
+                code.contains("@trace"),
+                "missing decorator:
+{code}"
+            );
+            assert!(
+                code.contains("def build_value"),
+                "missing function:
+{code}"
+            );
+            assert!(
+                code.contains("return value"),
+                "missing body:
+{code}"
+            );
+            assert!(
+                !code.contains("class NextItem"),
+                "preview should stop before next top-level item:
+{code}"
+            );
+        }
+        other => panic!("expected hover definition preview action, got {other:?}"),
+    }
+
+    assert!(matches!(host.try_recv(), Err(TryRecvError::Empty)));
+}
+
+#[test]
 fn lsp_server_kind_from_settings_key_includes_c_cpp_java() {
     assert_eq!(
         LspServerKind::from_settings_key("clangd"),
@@ -624,7 +769,13 @@ fn resolve_default_server_command_prefers_node_modules_bin() {
     std::fs::create_dir_all(&bin_dir).expect("mkdir node_modules/.bin");
 
     let tls = bin_dir.join("typescript-language-server");
-    std::fs::write(&tls, "#!/bin/sh\nexit 0\n").expect("write tls");
+    std::fs::write(
+        &tls,
+        "#!/bin/sh
+exit 0
+",
+    )
+    .expect("write tls");
     let mut perms = std::fs::metadata(&tls).expect("stat tls").permissions();
     use std::os::unix::fs::PermissionsExt as _;
     perms.set_mode(0o755);
@@ -632,14 +783,9 @@ fn resolve_default_server_command_prefers_node_modules_bin() {
 
     std::env::set_var("PATH", "");
 
-    let (cmd, args) = super::discovery::resolve_default_server_command(
-        root,
-        root,
-        crate::kernel::language::LanguageId::TypeScript,
-    )
-    .expect("resolved");
-    assert_eq!(cmd, tls.to_string_lossy());
-    assert_eq!(args, vec!["--stdio".to_string()]);
+    let plan = default_launch_plan(LanguageId::TypeScript, root, root);
+    assert_eq!(plan.command, Some(tls.to_string_lossy().to_string()));
+    assert_eq!(plan.args, vec!["--stdio".to_string()]);
 }
 
 #[test]
@@ -655,7 +801,13 @@ fn resolve_default_server_command_searches_node_modules_upwards() {
     std::fs::create_dir_all(&bin_dir).expect("mkdir node_modules/.bin");
 
     let tls = bin_dir.join("typescript-language-server");
-    std::fs::write(&tls, "#!/bin/sh\nexit 0\n").expect("write tls");
+    std::fs::write(
+        &tls,
+        "#!/bin/sh
+exit 0
+",
+    )
+    .expect("write tls");
     let mut perms = std::fs::metadata(&tls).expect("stat tls").permissions();
     use std::os::unix::fs::PermissionsExt as _;
     perms.set_mode(0o755);
@@ -666,14 +818,9 @@ fn resolve_default_server_command_searches_node_modules_upwards() {
 
     std::env::set_var("PATH", "");
 
-    let (cmd, args) = super::discovery::resolve_default_server_command(
-        workspace_root,
-        &nested_root,
-        crate::kernel::language::LanguageId::TypeScript,
-    )
-    .expect("resolved");
-    assert_eq!(cmd, tls.to_string_lossy());
-    assert_eq!(args, vec!["--stdio".to_string()]);
+    let plan = default_launch_plan(LanguageId::TypeScript, workspace_root, &nested_root);
+    assert_eq!(plan.command, Some(tls.to_string_lossy().to_string()));
+    assert_eq!(plan.args, vec!["--stdio".to_string()]);
 }
 
 #[test]
@@ -689,7 +836,13 @@ fn resolve_default_server_command_go_falls_back_to_gopath_bin() {
     std::fs::create_dir_all(&gopath_bin).expect("mkdir gopath bin");
 
     let gopls = gopath_bin.join("gopls");
-    std::fs::write(&gopls, "#!/bin/sh\nexit 0\n").expect("write gopls");
+    std::fs::write(
+        &gopls,
+        "#!/bin/sh
+exit 0
+",
+    )
+    .expect("write gopls");
     let mut perms = std::fs::metadata(&gopls).expect("stat gopls").permissions();
     use std::os::unix::fs::PermissionsExt as _;
     perms.set_mode(0o755);
@@ -699,15 +852,13 @@ fn resolve_default_server_command_go_falls_back_to_gopath_bin() {
     std::env::set_var("GOPATH", &gopath);
     std::env::remove_var("GOBIN");
 
-    let (cmd, args) = super::discovery::resolve_default_server_command(
-        workspace_root,
-        workspace_root,
-        crate::kernel::language::LanguageId::Go,
-    )
-    .expect("resolved");
-
-    assert_eq!(cmd, gopls.to_string_lossy());
-    assert!(args.is_empty());
+    let plan = default_launch_plan(LanguageId::Go, workspace_root, workspace_root);
+    assert_eq!(plan.command, Some(gopls.to_string_lossy().to_string()));
+    assert!(plan.args.is_empty());
+    assert_eq!(
+        plan.initialization_options,
+        Some(serde_json::json!({ "semanticTokens": true }))
+    );
 }
 
 #[test]
@@ -723,7 +874,13 @@ fn resolve_default_server_command_go_falls_back_to_home_go_bin() {
     std::fs::create_dir_all(&home_go_bin).expect("mkdir home go bin");
 
     let gopls = home_go_bin.join("gopls");
-    std::fs::write(&gopls, "#!/bin/sh\nexit 0\n").expect("write gopls");
+    std::fs::write(
+        &gopls,
+        "#!/bin/sh
+exit 0
+",
+    )
+    .expect("write gopls");
     let mut perms = std::fs::metadata(&gopls).expect("stat gopls").permissions();
     use std::os::unix::fs::PermissionsExt as _;
     perms.set_mode(0o755);
@@ -734,15 +891,9 @@ fn resolve_default_server_command_go_falls_back_to_home_go_bin() {
     std::env::remove_var("GOBIN");
     std::env::set_var("HOME", &home);
 
-    let (cmd, args) = super::discovery::resolve_default_server_command(
-        workspace_root,
-        workspace_root,
-        crate::kernel::language::LanguageId::Go,
-    )
-    .expect("resolved");
-
-    assert_eq!(cmd, gopls.to_string_lossy());
-    assert!(args.is_empty());
+    let plan = default_launch_plan(LanguageId::Go, workspace_root, workspace_root);
+    assert_eq!(plan.command, Some(gopls.to_string_lossy().to_string()));
+    assert!(plan.args.is_empty());
 }
 
 #[test]
@@ -755,7 +906,13 @@ fn resolve_default_server_command_c_cpp_and_java_from_path() {
     let workspace_root = temp.path();
 
     let clangd = workspace_root.join("clangd");
-    std::fs::write(&clangd, "#!/bin/sh\nexit 0\n").expect("write clangd");
+    std::fs::write(
+        &clangd,
+        "#!/bin/sh
+exit 0
+",
+    )
+    .expect("write clangd");
     let mut clangd_perms = std::fs::metadata(&clangd)
         .expect("stat clangd")
         .permissions();
@@ -764,39 +921,30 @@ fn resolve_default_server_command_c_cpp_and_java_from_path() {
     std::fs::set_permissions(&clangd, clangd_perms).expect("chmod clangd");
 
     let jdtls = workspace_root.join("jdtls");
-    std::fs::write(&jdtls, "#!/bin/sh\nexit 0\n").expect("write jdtls");
+    std::fs::write(
+        &jdtls,
+        "#!/bin/sh
+exit 0
+",
+    )
+    .expect("write jdtls");
     let mut jdtls_perms = std::fs::metadata(&jdtls).expect("stat jdtls").permissions();
     jdtls_perms.set_mode(0o755);
     std::fs::set_permissions(&jdtls, jdtls_perms).expect("chmod jdtls");
 
     std::env::set_var("PATH", workspace_root);
 
-    let (cmd_c, args_c) = super::discovery::resolve_default_server_command(
-        workspace_root,
-        workspace_root,
-        crate::kernel::language::LanguageId::C,
-    )
-    .expect("resolved c");
-    assert_eq!(cmd_c, clangd.to_string_lossy());
-    assert!(args_c.is_empty());
+    let plan_c = default_launch_plan(LanguageId::C, workspace_root, workspace_root);
+    assert_eq!(plan_c.command, Some(clangd.to_string_lossy().to_string()));
+    assert!(plan_c.args.is_empty());
 
-    let (cmd_cpp, args_cpp) = super::discovery::resolve_default_server_command(
-        workspace_root,
-        workspace_root,
-        crate::kernel::language::LanguageId::Cpp,
-    )
-    .expect("resolved cpp");
-    assert_eq!(cmd_cpp, clangd.to_string_lossy());
-    assert!(args_cpp.is_empty());
+    let plan_cpp = default_launch_plan(LanguageId::Cpp, workspace_root, workspace_root);
+    assert_eq!(plan_cpp.command, Some(clangd.to_string_lossy().to_string()));
+    assert!(plan_cpp.args.is_empty());
 
-    let (cmd_java, args_java) = super::discovery::resolve_default_server_command(
-        workspace_root,
-        workspace_root,
-        crate::kernel::language::LanguageId::Java,
-    )
-    .expect("resolved java");
-    assert_eq!(cmd_java, jdtls.to_string_lossy());
-    assert!(args_java.is_empty());
+    let plan_java = default_launch_plan(LanguageId::Java, workspace_root, workspace_root);
+    assert_eq!(plan_java.command, Some(jdtls.to_string_lossy().to_string()));
+    assert!(plan_java.args.is_empty());
 }
 
 #[test]
@@ -844,6 +992,39 @@ fn resolve_server_command_go_uses_default_semantic_init_options() {
         init_options,
         Some(serde_json::json!({ "semanticTokens": true }))
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn resolve_server_command_global_override_short_circuits_defaults() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _env = EnvRestore::capture();
+
+    struct NoopExecutor;
+
+    impl AsyncExecutor for NoopExecutor {
+        fn spawn(&self, _task: BoxFuture) {}
+    }
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace_root = temp.path();
+    let go_file = workspace_root.join("main.go");
+    std::fs::write(&go_file, "package main\n").expect("write go file");
+
+    let host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let mut service = LspService::new(workspace_root.to_path_buf(), host.context())
+        .with_command("custom-lsp".to_string(), vec!["--custom".to_string()]);
+
+    let (language, key) = service
+        .client_key_for_path(&go_file)
+        .expect("go client key");
+    let (command, args, init_options) = service
+        .resolve_server_command(language, &key)
+        .expect("resolve overridden command");
+
+    assert_eq!(command, "custom-lsp");
+    assert_eq!(args, vec!["--custom".to_string()]);
+    assert_eq!(init_options, None);
 }
 
 #[test]

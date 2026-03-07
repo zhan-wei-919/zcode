@@ -1,6 +1,9 @@
+use crate::kernel::language::adapter::editing::{
+    BRACE_LANGUAGE_EDITING_POLICY, DEFAULT_EDITING_POLICY,
+};
 use crate::kernel::language::adapter::syntax_bridge::SYNTAX_BRIDGE;
 use crate::kernel::language::adapter::{
-    language_features, CompletionBehavior, LanguageAdapter, LanguageFeatures,
+    language_features, CompletionBehavior, LanguageAdapter, LanguageEditingPolicy, LanguageFeatures,
 };
 use crate::kernel::language::LanguageId;
 
@@ -43,6 +46,13 @@ impl LanguageAdapter for DefaultLanguageAdapter {
 
     fn syntax(&self) -> &dyn crate::kernel::language::adapter::SyntaxBehavior {
         &SYNTAX_BRIDGE
+    }
+
+    fn editing(&self) -> &dyn LanguageEditingPolicy {
+        match self.language {
+            Some(LanguageId::Java) => &BRACE_LANGUAGE_EDITING_POLICY,
+            _ => &DEFAULT_EDITING_POLICY,
+        }
     }
 
     fn features(&self) -> LanguageFeatures {

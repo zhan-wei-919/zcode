@@ -1,4 +1,5 @@
 use crate::core::Command;
+use crate::kernel::language::adapter_for;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::Match;
 use crate::models::cursor_set;
@@ -11,7 +12,6 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::state::EditorTabState;
 use super::viewport;
-use super::LanguageId;
 
 #[derive(Default)]
 struct DryExecution {
@@ -208,49 +208,6 @@ fn is_word_boundary_char(c: char) -> bool {
             c,
             '（' | '）' | '【' | '】' | '「' | '」' | '，' | '。' | '：' | '；'
         )
-}
-
-fn supports_auto_pairs(language: Option<LanguageId>) -> bool {
-    matches!(
-        language,
-        Some(
-            LanguageId::Rust
-                | LanguageId::Go
-                | LanguageId::Python
-                | LanguageId::JavaScript
-                | LanguageId::TypeScript
-                | LanguageId::Jsx
-                | LanguageId::Tsx
-                | LanguageId::C
-                | LanguageId::Cpp
-                | LanguageId::Java
-        )
-    )
-}
-
-fn supports_brace_electric_enter(language: Option<LanguageId>) -> bool {
-    matches!(
-        language,
-        Some(
-            LanguageId::Rust
-                | LanguageId::Go
-                | LanguageId::JavaScript
-                | LanguageId::TypeScript
-                | LanguageId::Jsx
-                | LanguageId::Tsx
-                | LanguageId::C
-                | LanguageId::Cpp
-                | LanguageId::Java
-        )
-    )
-}
-
-fn supports_paren_electric_enter(language: Option<LanguageId>) -> bool {
-    language == Some(LanguageId::Go)
-}
-
-fn supports_python_colon_indent(language: Option<LanguageId>) -> bool {
-    language == Some(LanguageId::Python)
 }
 
 impl EditorTabState {
@@ -862,20 +819,9 @@ impl EditorTabState {
                     return DryExecution { changed: true, ops };
                 }
 
-                if matches!(c, '{' | '(' | '[' | '"' | '\'') {
-                    let language = self.language();
-                    let can_pair = config.auto_indent
-                        && supports_auto_pairs(language)
-                        && !self.in_string_or_comment();
-                    if can_pair {
-                        let op = match c {
-                            '{' => self.insert_brace_pair_op(parent),
-                            '(' => self.insert_pair_op('(', ')', parent),
-                            '[' => self.insert_pair_op('[', ']', parent),
-                            '"' => self.insert_pair_op('"', '"', parent),
-                            '\'' => self.insert_pair_op('\'', '\'', parent),
-                            _ => unreachable!("matches! gate ensures auto-pair chars"),
-                        };
+                if config.auto_indent && !self.in_string_or_comment() {
+                    if let Some(close) = self.editing_policy().auto_pair_closing_for(c) {
+                        let op = self.insert_pair_op(c, close, parent);
                         ops.push(op);
                         self.reset_cursor_goal_col();
                         return DryExecution { changed: true, ops };
@@ -887,21 +833,11 @@ impl EditorTabState {
                 changed = true;
             }
             Command::InsertNewline => {
-                let language = self.language();
                 if config.auto_indent && !self.in_string_or_comment() {
-                    if supports_brace_electric_enter(language) {
-                        if let Some(op) = self.expand_empty_pair_op("{", "}", tab_size, parent) {
-                            ops.push(op);
-                            self.reset_cursor_goal_col();
-                            return DryExecution { changed: true, ops };
-                        }
-                    }
-                    if supports_paren_electric_enter(language) {
-                        if let Some(op) = self.expand_empty_pair_op("(", ")", tab_size, parent) {
-                            ops.push(op);
-                            self.reset_cursor_goal_col();
-                            return DryExecution { changed: true, ops };
-                        }
+                    if let Some(op) = self.expand_electric_enter_op(tab_size, parent) {
+                        ops.push(op);
+                        self.reset_cursor_goal_col();
+                        return DryExecution { changed: true, ops };
                     }
                 }
 
@@ -1203,23 +1139,10 @@ impl EditorTabState {
                     }
                 }
                 Command::InsertNewline => {
-                    let language = self.language();
                     if config.auto_indent && !self.in_string_or_comment_at(record.cursor_char) {
-                        let (row, col) =
-                            self.buffer.cursor_pos_from_char_offset(record.cursor_char);
-                        if supports_brace_electric_enter(language) {
-                            if let Some(plan) =
-                                self.empty_pair_replace_plan((row, col), "{", "}", config.tab_size)
-                            {
-                                return plan.start_char;
-                            }
-                        }
-                        if supports_paren_electric_enter(language) {
-                            if let Some(plan) =
-                                self.empty_pair_replace_plan((row, col), "(", ")", config.tab_size)
-                            {
-                                return plan.start_char;
-                            }
+                        let cursor = self.buffer.cursor_pos_from_char_offset(record.cursor_char);
+                        if let Some(plan) = self.electric_enter_plan(cursor, config.tab_size) {
+                            return plan.start_char;
                         }
                     }
                     record.cursor_char
@@ -1745,15 +1668,51 @@ impl EditorTabState {
         self.commit_op(op, tab_size);
     }
 
-    fn insert_brace_pair_op(&mut self, parent: OpId) -> EditOp {
-        let (row, col) = self.buffer.cursor();
-        let cursor_char_offset = self.buffer.cursor_char_offset();
-        self.buffer.insert_str_op_with_cursor_after_char_offset(
-            "{}",
-            (row, col.saturating_add(1)),
-            cursor_char_offset.saturating_add(1),
-            parent,
-        )
+    fn editing_policy(&self) -> &'static dyn crate::kernel::language::LanguageEditingPolicy {
+        adapter_for(self.language()).editing()
+    }
+
+    fn electric_enter_plan(
+        &self,
+        cursor: (usize, usize),
+        tab_size: u8,
+    ) -> Option<EmptyPairReplacePlan> {
+        self.editing_policy()
+            .delimiter_rules()
+            .iter()
+            .filter(|rule| rule.electric_enter)
+            .find_map(|rule| {
+                let mut open_buf = [0u8; 4];
+                let mut close_buf = [0u8; 4];
+                self.empty_pair_replace_plan(
+                    cursor,
+                    rule.open.encode_utf8(&mut open_buf),
+                    rule.close.encode_utf8(&mut close_buf),
+                    tab_size,
+                )
+            })
+    }
+
+    fn expand_electric_enter_op(&mut self, tab_size: u8, parent: OpId) -> Option<EditOp> {
+        for rule in self
+            .editing_policy()
+            .delimiter_rules()
+            .iter()
+            .filter(|rule| rule.electric_enter)
+        {
+            let mut open_buf = [0u8; 4];
+            let mut close_buf = [0u8; 4];
+            if let Some(op) = self.expand_empty_pair_op(
+                rule.open.encode_utf8(&mut open_buf),
+                rule.close.encode_utf8(&mut close_buf),
+                tab_size,
+                parent,
+            ) {
+                return Some(op);
+            }
+        }
+
+        None
     }
 
     fn try_skip_closing(&mut self, c: char, tab_size: u8) -> bool {
@@ -1810,16 +1769,11 @@ impl EditorTabState {
         }
 
         let trimmed = before_cursor.trim_end_matches([' ', '\t']);
-        let language = self.language();
-        if supports_brace_electric_enter(language)
-            && trimmed.ends_with('{')
-            && !in_string_or_comment
-        {
-            indent.push_str(&" ".repeat(tab_size as usize));
-        }
-        if supports_python_colon_indent(language) && trimmed.ends_with(':') && !in_string_or_comment
-        {
-            indent.push_str(&" ".repeat(tab_size as usize));
+        if !in_string_or_comment {
+            let extra_levels = self.editing_policy().newline_indent_extra_levels(trimmed);
+            if extra_levels > 0 {
+                indent.push_str(&" ".repeat(tab_size as usize * extra_levels as usize));
+            }
         }
 
         let mut text = String::with_capacity(1 + indent.len());

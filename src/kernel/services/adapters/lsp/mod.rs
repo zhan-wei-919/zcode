@@ -6,17 +6,17 @@ use crate::kernel::services::ports::{
 use crate::kernel::services::KernelServiceContext;
 use lsp_server::RequestId;
 use rustc_hash::{FxHashMap, FxHashSet};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicI32;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::kernel::language::LanguageId;
+use crate::kernel::language::adapter::adapter_for;
+use crate::kernel::language::{LanguageId, LspLaunchContext, LspLaunchPlan};
 use crate::kernel::lsp_registry::language_root_for_file;
 
 mod convert;
-mod discovery;
 mod process;
 mod requests;
 mod sync;
@@ -61,21 +61,6 @@ use lsp_server::Response;
 use std::time::Duration;
 #[cfg(test)]
 use wire::handle_response;
-
-impl LspServerKind {
-    fn install_hint(self) -> &'static str {
-        match self {
-            Self::RustAnalyzer => "install rust-analyzer (e.g. `rustup component add rust-analyzer`)",
-            Self::Gopls => "install gopls (e.g. `go install golang.org/x/tools/gopls@latest`)",
-            Self::Pyright => "install pyright-langserver (e.g. `npm i -g pyright` or `pip install pyright`)",
-            Self::TypeScriptLanguageServer => {
-                "install typescript-language-server (e.g. `npm i -g typescript-language-server typescript`)"
-            }
-            Self::Clangd => "install clangd (usually from llvm/clang toolchain packages)",
-            Self::Jdtls => "install jdtls (Eclipse JDT Language Server) and ensure `jdtls` is in PATH",
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ClientKey {
@@ -176,27 +161,19 @@ impl LspService {
     fn client_key_for_path(&self, path: &Path) -> Option<(LanguageId, ClientKey)> {
         let language = LanguageId::from_path(path)?;
         let root = language_root_for_file(&self.workspace_root, language, path);
-        let server = language.server_kind()?;
+        let server = adapter_for(Some(language)).features().lsp_server?;
         Some((language, ClientKey { server, root }))
     }
 
-    fn default_args_for_language(language: LanguageId) -> Vec<String> {
-        match language {
-            LanguageId::Python
-            | LanguageId::JavaScript
-            | LanguageId::TypeScript
-            | LanguageId::Jsx
-            | LanguageId::Tsx => vec!["--stdio".to_string()],
-            LanguageId::Java | LanguageId::C | LanguageId::Cpp => Vec::new(),
-            _ => Vec::new(),
-        }
-    }
-
-    fn default_initialization_options_for_server(server: LspServerKind) -> Option<Value> {
-        match server {
-            LspServerKind::Gopls => Some(json!({ "semanticTokens": true })),
-            _ => None,
-        }
+    fn default_launch_plan(&self, language: LanguageId, key: &ClientKey) -> LspLaunchPlan {
+        adapter_for(Some(language))
+            .lsp_launch()
+            .default_launch_plan(&LspLaunchContext {
+                workspace_root: &self.workspace_root,
+                language_root: &key.root,
+                language,
+                server: key.server,
+            })
     }
 
     fn resolve_server_command(
@@ -209,21 +186,19 @@ impl LspService {
         }
 
         let per_server = self.server_command_overrides.get(&key.server);
-        let default =
-            discovery::resolve_default_server_command(&self.workspace_root, &key.root, language);
+        let default = self.default_launch_plan(language, key);
 
         let command = per_server
             .and_then(|cfg| cfg.command.clone())
-            .or_else(|| default.as_ref().map(|(cmd, _)| cmd.clone()))?;
+            .or(default.command)?;
 
         let args = per_server
             .and_then(|cfg| cfg.args.clone())
-            .or_else(|| default.as_ref().map(|(_, args)| args.clone()))
-            .unwrap_or_else(|| Self::default_args_for_language(language));
+            .unwrap_or(default.args);
 
         let initialization_options = per_server
             .and_then(|cfg| cfg.initialization_options.clone())
-            .or_else(|| Self::default_initialization_options_for_server(key.server));
+            .or(default.initialization_options);
 
         Some((command, args, initialization_options))
     }
@@ -231,13 +206,14 @@ impl LspService {
     fn client_for_path_mut(&mut self, path: &Path) -> Option<&mut LspClient> {
         let (language, key) = self.client_key_for_path(path)?;
         if !self.clients.contains_key(&key) {
+            let default_launch_plan = self.default_launch_plan(language, &key);
             let Some((command, args, initialization_options)) =
                 self.resolve_server_command(language, &key)
             else {
                 if self.warned_missing.insert(key.server) {
                     tracing::warn!(
                         language = language.display_name(),
-                        hint = key.server.install_hint(),
+                        hint = default_launch_plan.install_hint,
                         "lsp server not found"
                     );
                 }

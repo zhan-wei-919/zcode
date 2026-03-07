@@ -7,9 +7,11 @@ pub mod adapter;
 pub use adapter::{
     CompletionCommitPlan, CompletionContext, CompletionEntry, CompletionNormalizationContext,
     CompletionNormalizationSnapshot, CompletionProtocolAdapter, CompletionRecord,
-    CompletionReplacePolicy, CompletionResolveState, HoverBlock, HoverModel, HoverProtocolAdapter,
-    HoverSectionModel, IncludeContext, IncludeDelimiter, LanguageAdapter, LanguageFeatures,
-    LanguageInteractionPolicy, LanguageRuntimeContext, LineContext, MemberAccessKind,
+    CompletionReplacePolicy, CompletionResolveState, DefinitionPreviewContext,
+    DefinitionPreviewPolicy, DelimiterRule, HoverBlock, HoverModel, HoverProtocolAdapter,
+    HoverSectionModel, IncludeContext, IncludeDelimiter, LanguageAdapter, LanguageEditingPolicy,
+    LanguageFeatures, LanguageInteractionPolicy, LanguageRuntimeContext, LineContext,
+    LineSuffixIndentRule, LspLaunchContext, LspLaunchPlan, LspLaunchPolicy, MemberAccessKind,
     SignatureHelpModel, SignatureHelpProtocolAdapter, SyntaxBehavior, SyntaxFacts, TextEditPlan,
     TextEditStrategy, TextTabstop,
 };
