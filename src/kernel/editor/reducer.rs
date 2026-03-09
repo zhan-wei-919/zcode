@@ -1407,6 +1407,12 @@ impl EditorState {
                     cache.apply_patch(patch.start_line, patch.lines);
                 }
 
+                if cache.has_dirty_lines() {
+                    tab.syntax_highlight_pending_version = Some(version);
+                } else {
+                    tab.syntax_highlight_pending_version = None;
+                }
+
                 state_changed = true;
                 return (state_changed, Vec::new());
             }
@@ -1434,8 +1440,9 @@ impl EditorState {
         }
 
         let version = tab.edit_version;
+        let same_version_reschedule = tab.syntax_highlight_pending_version == Some(version);
         if tab.syntax_highlight_inflight_version == Some(version)
-            || tab.syntax_highlight_last_requested_version == version
+            || (tab.syntax_highlight_last_requested_version == version && !same_version_reschedule)
         {
             return false;
         }
@@ -1452,6 +1459,10 @@ impl EditorState {
         let segments =
             cache.dirty_segments_with_budget(cursor_row, MAX_SYNTAX_HIGHLIGHT_LINES_PER_REQUEST);
         if segments.is_empty() {
+            if same_version_reschedule {
+                tab.syntax_highlight_pending_version = None;
+                return true;
+            }
             return false;
         }
 

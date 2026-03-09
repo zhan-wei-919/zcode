@@ -2926,6 +2926,77 @@ fn semantic_tokens_response_is_deferred_until_boundary_after_identifier_input() 
 }
 
 #[test]
+fn completion_confirm_requests_immediate_refresh_but_clears_preexisting_pending_semantic() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: String::new(),
+    }));
+    let _ = store.dispatch(Action::LspServerCapabilities {
+        server: LspServerKind::RustAnalyzer,
+        root: store.state.workspace_root.clone(),
+        capabilities: LspServerCapabilities {
+            semantic_tokens: true,
+            semantic_tokens_full: true,
+            semantic_tokens_range: false,
+            semantic_tokens_legend: Some(LspSemanticTokensLegend {
+                token_types: vec!["function".to_string()],
+                token_modifiers: Vec::new(),
+            }),
+            ..Default::default()
+        },
+    });
+
+    seed_visible_completion_for_active_tab(&mut store, 0, path.clone(), "println");
+
+    let version = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+    let pending_lines = vec![vec![crate::kernel::editor::SemanticToken {
+        text: "println".into(),
+        semantic_kind: Some(crate::kernel::editor::HighlightKind::Function),
+    }]];
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .and_then(|pane| pane.active_tab_mut())
+            .expect("open tab exists");
+        let _ = tab.set_pending_semantic_highlight_from_slice(version, &pending_lines);
+        assert!(tab.semantic_tokens_lines(0, 1).is_none());
+    }
+
+    let result = store.dispatch(Action::CompletionConfirm);
+
+    assert!(
+        result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::LspSemanticTokensRequest { .. } | Effect::LspSemanticTokensRangeRequest { .. }
+        )),
+        "completion confirm should request an immediate semantic refresh after applying the insertion"
+    );
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("open tab exists");
+    assert!(
+        tab.semantic_tokens_lines(0, 1).is_none(),
+        "the preexisting pending semantic snapshot is cleared by the edit before confirm-time flush runs"
+    );
+}
+
+#[test]
 fn expand_snippet_strips_tabstops_and_keeps_placeholder_text() {
     let out = expand_snippet("foo$1bar$0");
     assert_eq!(out.text, "foobar");

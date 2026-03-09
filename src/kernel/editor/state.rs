@@ -1288,6 +1288,7 @@ impl EditorTabState {
 
     pub(super) fn bump_version(&mut self) {
         self.edit_version = self.edit_version.saturating_add(1);
+        self.syntax_highlight_pending_version = None;
     }
 
     pub(super) fn reparse_syntax(&mut self) {

@@ -275,6 +275,10 @@ impl AsyncSyntaxHighlightCache {
         self.dirty.get(line).copied().unwrap_or(true)
     }
 
+    pub(crate) fn has_dirty_lines(&self) -> bool {
+        self.dirty.iter().copied().any(|dirty| dirty)
+    }
+
     pub(crate) fn apply_patch(&mut self, start_line: usize, lines: Vec<Vec<HighlightSpan>>) {
         if self.lines.len() != self.dirty.len() {
             self.lines.resize_with(self.dirty.len(), || None);

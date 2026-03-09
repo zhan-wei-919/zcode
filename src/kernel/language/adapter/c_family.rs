@@ -157,13 +157,11 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
             ) || matches!(syntax.line_context, LineContext::Include(_));
 
         let plan = normalize_server_completion_text(context);
-        let plan = if suppress_callable_fallback {
+        if suppress_callable_fallback {
             plan
         } else {
             apply_callable_completion_fallback(plan, context.item)
-        };
-
-        plan
+        }
     }
 
     fn fallback_completion_items(

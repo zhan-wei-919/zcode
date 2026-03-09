@@ -520,6 +520,82 @@ fn test_syntax_highlight_inflight_without_reply_still_requests_latest_version() 
 }
 
 #[test]
+fn test_syntax_highlight_same_version_reschedules_until_dirty_lines_are_cleared() {
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("main.rs");
+    let content = (0..600)
+        .map(|idx| format!("fn item_{idx}() {{}}\n"))
+        .collect::<String>();
+
+    let (_, open_effects) = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content,
+    });
+    let (tab_id, version, language, rope, tree, segments) =
+        first_compute_syntax_effect(&open_effects).expect("open should schedule syntax highlight");
+
+    assert_eq!(segments.len(), 1, "expected a single budgeted syntax chunk");
+    assert!(
+        segments[0].1.saturating_sub(segments[0].0) <= 400,
+        "syntax request should respect the per-request line budget"
+    );
+
+    let patches =
+        crate::kernel::editor::compute_highlight_patches(language, &tree, &rope, &segments);
+    let (changed, reply_effects) =
+        editor.dispatch_action(EditorAction::ApplySyntaxHighlightPatches {
+            tab_id,
+            version,
+            patches,
+        });
+    assert!(changed, "first syntax patch should be applied");
+    let (_, reply_version, reply_language, reply_rope, reply_tree, reply_segments) =
+        first_compute_syntax_effect(&reply_effects)
+            .expect("remaining dirty lines should trigger a same-version follow-up request");
+    assert_eq!(reply_version, version);
+    assert_eq!(reply_segments.len(), 1);
+    assert_eq!(reply_segments[0].0, segments[0].1);
+    assert!(
+        reply_segments[0].1 > reply_segments[0].0,
+        "follow-up request should cover the remaining dirty lines"
+    );
+
+    let reply_patches = crate::kernel::editor::compute_highlight_patches(
+        reply_language,
+        &reply_tree,
+        &reply_rope,
+        &reply_segments,
+    );
+    let (changed, final_effects) =
+        editor.dispatch_action(EditorAction::ApplySyntaxHighlightPatches {
+            tab_id,
+            version,
+            patches: reply_patches,
+        });
+    assert!(changed, "follow-up syntax patch should be applied");
+    assert!(
+        !has_compute_syntax_effect(&final_effects),
+        "once all dirty lines are cleared there should be no more follow-up work"
+    );
+
+    let tab = editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    let remaining_dirty = tab
+        .syntax_highlight_cache
+        .as_ref()
+        .expect("syntax cache")
+        .dirty_segments();
+    assert!(
+        remaining_dirty.is_empty(),
+        "all dirty syntax lines should be cleared after the follow-up chunk is applied"
+    );
+}
+
+#[test]
 fn test_file_externally_modified_emits_reload_for_clean_and_marks_dirty_conflict() {
     let config = EditorConfig::default();
     let mut editor = EditorState::new(config);
