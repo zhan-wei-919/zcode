@@ -1968,6 +1968,157 @@ fn completion_does_not_close_on_editor_search_messages() {
 }
 
 #[test]
+fn cpp_insert_hash_at_line_start_triggers_completion_request() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: String::new(),
+    }));
+
+    let result = store.dispatch(Action::RunCommand(Command::InsertChar('#')));
+
+    assert!(result.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            Effect::LspCompletionRequest { trigger, .. }
+                if trigger.kind == LspCompletionTriggerKind::TriggerCharacter
+                    && trigger.character == Some('#')
+        )
+    }));
+}
+
+#[test]
+fn cpp_hash_empty_lsp_completion_falls_back_to_directives() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: String::new(),
+    }));
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('#')));
+    let _ = store.dispatch(Action::LspCompletion {
+        items: Vec::new(),
+        is_incomplete: false,
+    });
+
+    let labels = (0..store.state.ui.completion.visible_len())
+        .filter_map(|i| store.state.ui.completion.visible_item(i))
+        .map(|item| item.label.clone())
+        .collect::<Vec<_>>();
+
+    assert!(store.state.ui.completion.visible);
+    assert!(labels.contains(&"include".to_string()));
+    assert!(labels.contains(&"define".to_string()));
+}
+
+#[test]
+fn cpp_hash_directive_context_allows_completion() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "#".to_string();
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let adapter = adapter_for_tab(tab);
+    let runtime = runtime_for_tab(tab);
+    assert!(adapter.interaction().context_allows_completion(&runtime));
+}
+
+#[test]
+fn cpp_include_empty_lsp_completion_falls_back_to_delimiters() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "#include ".to_string();
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    let _ = store.dispatch(Action::RunCommand(Command::LspCompletion));
+    let _ = store.dispatch(Action::LspCompletion {
+        items: Vec::new(),
+        is_incomplete: false,
+    });
+
+    let labels = (0..store.state.ui.completion.visible_len())
+        .filter_map(|i| store.state.ui.completion.visible_item(i))
+        .map(|item| item.label.clone())
+        .collect::<Vec<_>>();
+
+    assert!(store.state.ui.completion.visible);
+    assert_eq!(labels, vec!["<...>".to_string(), "\"...\"".to_string()]);
+}
+
+#[test]
+fn cpp_include_directive_before_delimiter_allows_completion() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "#include ".to_string();
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+    let adapter = adapter_for_tab(tab);
+    let runtime = runtime_for_tab(tab);
+    assert!(adapter.interaction().context_allows_completion(&runtime));
+}
+
+#[test]
 fn cpp_include_path_context_allows_completion() {
     let mut store = new_store();
     store.state.ui.focus = FocusTarget::Editor;

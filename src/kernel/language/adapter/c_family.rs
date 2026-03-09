@@ -6,10 +6,11 @@ use crate::kernel::language::adapter::{
     apply_callable_completion_fallback, apply_trailing_space_completion_fallback,
     default_context_allows_completion, default_prefix_bounds, default_should_close_on_command,
     default_triggered_by_insert, language_features, normalize_server_completion_text,
-    CompletionBehavior, CompletionContext, LanguageAdapter, LanguageEditingPolicy,
-    LanguageFeatures, LineContext, MemberAccessKind, TextEditPlan,
+    CompletionBehavior, CompletionContext, IncludeContext, LanguageAdapter, LanguageEditingPolicy,
+    LanguageFeatures, LanguageRuntimeContext, LineContext, MemberAccessKind, TextEditPlan,
 };
 use crate::kernel::language::LanguageId;
+use crate::kernel::services::ports::{LspCompletionItem, LspInsertTextFormat};
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -39,6 +40,15 @@ pub(crate) fn include_context_perf_counter() -> usize {
 
 pub(crate) struct CFamilyCompletionBehavior;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectiveCompletionState {
+    None,
+    DirectiveName,
+    IncludeBeforeDelimiter,
+    IncludePath,
+    IncludeClosed,
+}
+
 impl CompletionBehavior for CFamilyCompletionBehavior {
     fn debounce_triggered_by_char(&self, ch: char) -> bool {
         ch.is_alphanumeric()
@@ -52,18 +62,12 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
     }
 
     fn context_allows_completion(&self, tab: &EditorTabState) -> bool {
-        if include_bounds(tab).is_some() {
-            return true;
-        }
-
-        match syntax_facts_for_tab(tab).line_context {
-            LineContext::Include(_) | LineContext::Directive => false,
-            _ => {
-                if is_hash_at_line_start(tab) {
-                    return true;
-                }
-                default_context_allows_completion(tab)
-            }
+        match directive_completion_state(tab) {
+            DirectiveCompletionState::DirectiveName
+            | DirectiveCompletionState::IncludeBeforeDelimiter
+            | DirectiveCompletionState::IncludePath => true,
+            DirectiveCompletionState::IncludeClosed => false,
+            DirectiveCompletionState::None => default_context_allows_completion(tab),
         }
     }
 
@@ -90,6 +94,13 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
 
     fn should_close_on_command(&self, cmd: &Command, tab: Option<&EditorTabState>) -> bool {
         match cmd {
+            Command::InsertChar(' ') => tab.is_none_or(|current| {
+                !matches!(
+                    directive_completion_state(current),
+                    DirectiveCompletionState::DirectiveName
+                        | DirectiveCompletionState::IncludeBeforeDelimiter
+                )
+            }),
             Command::InsertChar('/') | Command::InsertChar('<') => {
                 tab.is_none_or(|current| include_bounds(current).is_none())
             }
@@ -101,38 +112,40 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
     }
 
     fn completion_should_keep_open(&self, tab: &EditorTabState) -> bool {
-        if let Some((start_char, end_char)) = include_bounds(tab) {
-            if start_char != end_char {
-                return true;
+        match directive_completion_state(tab) {
+            DirectiveCompletionState::IncludePath => {
+                if let Some((start_char, end_char)) = include_bounds(tab) {
+                    if start_char != end_char {
+                        return true;
+                    }
+                    let rope = tab.buffer.rope();
+                    if end_char > 0 {
+                        let prev = rope.char(end_char - 1);
+                        if matches!(prev, '<' | '"' | '/') {
+                            return true;
+                        }
+                    }
+                }
+                false
             }
-            let rope = tab.buffer.rope();
-            if end_char > 0 {
-                let prev = rope.char(end_char - 1);
-                if matches!(prev, '<' | '"' | '/') {
+            DirectiveCompletionState::IncludeClosed => false,
+            DirectiveCompletionState::DirectiveName
+            | DirectiveCompletionState::IncludeBeforeDelimiter => true,
+            DirectiveCompletionState::None => {
+                let syntax = syntax_facts_for_tab(tab);
+                if syntax.in_string_or_comment() {
+                    return false;
+                }
+                if syntax.identifier_bounds.is_some() {
                     return true;
                 }
+
+                matches!(
+                    syntax.member_access_kind,
+                    Some(MemberAccessKind::Dot | MemberAccessKind::Scope | MemberAccessKind::Arrow)
+                )
             }
-            return false;
         }
-
-        let syntax = syntax_facts_for_tab(tab);
-        if matches!(
-            syntax.line_context,
-            LineContext::Include(_) | LineContext::Directive
-        ) {
-            return false;
-        }
-        if syntax.in_string_or_comment() {
-            return false;
-        }
-        if syntax.identifier_bounds.is_some() {
-            return true;
-        }
-
-        matches!(
-            syntax.member_access_kind,
-            Some(MemberAccessKind::Dot | MemberAccessKind::Scope | MemberAccessKind::Arrow)
-        )
     }
 
     fn normalize_completion_item(&self, context: &CompletionContext<'_>) -> TextEditPlan {
@@ -151,6 +164,21 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
         };
 
         apply_trailing_space_completion_fallback(plan, context.item)
+    }
+
+    fn fallback_completion_items(
+        &self,
+        ctx: &LanguageRuntimeContext<'_>,
+    ) -> Vec<LspCompletionItem> {
+        match directive_completion_state(ctx.tab) {
+            DirectiveCompletionState::DirectiveName => directive_keyword_completion_items(),
+            DirectiveCompletionState::IncludeBeforeDelimiter => {
+                include_delimiter_completion_items()
+            }
+            DirectiveCompletionState::IncludePath
+            | DirectiveCompletionState::IncludeClosed
+            | DirectiveCompletionState::None => Vec::new(),
+        }
     }
 }
 
@@ -213,6 +241,118 @@ fn include_bounds(tab: &EditorTabState) -> Option<(usize, usize)> {
     match syntax_facts_for_tab(tab).line_context {
         LineContext::Include(include) => include.bounds,
         _ => None,
+    }
+}
+
+fn directive_completion_state(tab: &EditorTabState) -> DirectiveCompletionState {
+    match syntax_facts_for_tab(tab).line_context {
+        LineContext::Directive => DirectiveCompletionState::DirectiveName,
+        LineContext::Include(IncludeContext {
+            bounds: Some(_), ..
+        }) => DirectiveCompletionState::IncludePath,
+        LineContext::Include(IncludeContext {
+            bounds: None,
+            delimiter: None,
+        }) => DirectiveCompletionState::IncludeBeforeDelimiter,
+        LineContext::Include(_) => DirectiveCompletionState::IncludeClosed,
+        LineContext::Import | LineContext::None => {
+            if is_hash_at_line_start(tab) {
+                DirectiveCompletionState::DirectiveName
+            } else {
+                DirectiveCompletionState::None
+            }
+        }
+    }
+}
+
+fn directive_keyword_completion_items() -> Vec<LspCompletionItem> {
+    [
+        ("include", "preprocessor directive", "#include header"),
+        ("define", "preprocessor directive", "#define macro"),
+        ("ifdef", "preprocessor directive", "#ifdef symbol"),
+        ("ifndef", "preprocessor directive", "#ifndef symbol"),
+        ("if", "preprocessor directive", "#if expression"),
+        ("elif", "preprocessor directive", "#elif expression"),
+        ("else", "preprocessor directive", "#else"),
+        ("endif", "preprocessor directive", "#endif"),
+        ("pragma", "preprocessor directive", "#pragma option"),
+        ("undef", "preprocessor directive", "#undef symbol"),
+        ("error", "preprocessor directive", "#error message"),
+        ("line", "preprocessor directive", "#line number"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(idx, (label, detail, documentation))| {
+        synthetic_completion_item(SyntheticCompletionSpec {
+            id: 0xC000_0000_0000_0000 + idx as u64,
+            label: label.to_string(),
+            insert_text: label.to_string(),
+            kind: Some(14),
+            detail: Some(detail.to_string()),
+            documentation: Some(documentation.to_string()),
+            insert_text_format: LspInsertTextFormat::PlainText,
+            sort_text: Some(format!("{idx:02}")),
+            filter_text: None,
+        })
+    })
+    .collect()
+}
+
+fn include_delimiter_completion_items() -> Vec<LspCompletionItem> {
+    vec![
+        synthetic_completion_item(SyntheticCompletionSpec {
+            id: 0xC000_0000_0000_0100,
+            label: "<...>".to_string(),
+            insert_text: "<$0>".to_string(),
+            kind: None,
+            detail: Some("system header".to_string()),
+            documentation: Some("Insert angle brackets for a system header include.".to_string()),
+            insert_text_format: LspInsertTextFormat::Snippet,
+            sort_text: Some("00".to_string()),
+            filter_text: Some("<".to_string()),
+        }),
+        synthetic_completion_item(SyntheticCompletionSpec {
+            id: 0xC000_0000_0000_0101,
+            label: "\"...\"".to_string(),
+            insert_text: "\"$0\"".to_string(),
+            kind: None,
+            detail: Some("local header".to_string()),
+            documentation: Some("Insert quotes for a local header include.".to_string()),
+            insert_text_format: LspInsertTextFormat::Snippet,
+            sort_text: Some("01".to_string()),
+            filter_text: Some("\"".to_string()),
+        }),
+    ]
+}
+
+struct SyntheticCompletionSpec {
+    id: u64,
+    label: String,
+    insert_text: String,
+    kind: Option<u32>,
+    detail: Option<String>,
+    documentation: Option<String>,
+    insert_text_format: LspInsertTextFormat,
+    sort_text: Option<String>,
+    filter_text: Option<String>,
+}
+
+fn synthetic_completion_item(spec: SyntheticCompletionSpec) -> LspCompletionItem {
+    LspCompletionItem {
+        id: spec.id,
+        label: spec.label,
+        detail: spec.detail,
+        kind: spec.kind,
+        documentation: spec.documentation,
+        insert_text: spec.insert_text,
+        insert_text_format: spec.insert_text_format,
+        insert_range: None,
+        replace_range: None,
+        sort_text: spec.sort_text,
+        filter_text: spec.filter_text,
+        additional_text_edits: Vec::new(),
+        command: None,
+        data: None,
     }
 }
 

@@ -539,6 +539,13 @@ pub trait CompletionProtocolAdapter: Send + Sync {
         default_normalize_completion_item(context)
     }
 
+    fn fallback_completion_items(
+        &self,
+        _ctx: &LanguageRuntimeContext<'_>,
+    ) -> Vec<LspCompletionItem> {
+        Vec::new()
+    }
+
     fn completion_replace_policy(
         &self,
         context: &CompletionContext<'_>,
@@ -628,6 +635,13 @@ pub(crate) trait CompletionBehavior: Send + Sync {
     fn normalize_completion_item(&self, context: &CompletionContext<'_>) -> TextEditPlan {
         default_normalize_completion_item(context)
     }
+
+    fn fallback_completion_items(
+        &self,
+        _ctx: &LanguageRuntimeContext<'_>,
+    ) -> Vec<LspCompletionItem> {
+        Vec::new()
+    }
 }
 
 impl<T> LanguageInteractionPolicy for T
@@ -695,6 +709,13 @@ where
 {
     fn normalize_completion_text(&self, context: &CompletionContext<'_>) -> TextEditPlan {
         CompletionBehavior::normalize_completion_item(self, context)
+    }
+
+    fn fallback_completion_items(
+        &self,
+        ctx: &LanguageRuntimeContext<'_>,
+    ) -> Vec<LspCompletionItem> {
+        CompletionBehavior::fallback_completion_items(self, ctx)
     }
 }
 

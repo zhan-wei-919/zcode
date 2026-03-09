@@ -1427,7 +1427,26 @@ impl super::super::Store {
 
                 let valid = tab.path.as_ref() == Some(&req.path) && tab.edit_version >= req.version;
 
-                if !valid || items.is_empty() {
+                if !valid {
+                    let had = self.state.ui.completion.is_active();
+                    self.state.ui.completion = CompletionPopupState::default();
+                    return super::super::DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: had,
+                    };
+                }
+
+                let adapter = crate::kernel::language::adapter::adapter_for_tab(tab);
+                let items = if items.is_empty() {
+                    let runtime = completion_runtime_context(&self.state, tab, adapter);
+                    adapter
+                        .completion_protocol()
+                        .fallback_completion_items(&runtime)
+                } else {
+                    items
+                };
+
+                if items.is_empty() {
                     let had = self.state.ui.completion.is_active();
                     self.state.ui.completion = CompletionPopupState::default();
                     return super::super::DispatchResult {
@@ -1443,7 +1462,6 @@ impl super::super::Store {
                     None
                 };
 
-                let adapter = crate::kernel::language::adapter::adapter_for_tab(tab);
                 let mut all_items = {
                     let runtime = completion_runtime_context(&self.state, tab, adapter);
                     items

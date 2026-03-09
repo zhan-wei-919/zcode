@@ -758,6 +758,41 @@ fn test_highlight_c_keyword_control() {
 }
 
 #[test]
+fn test_highlight_c_preprocessor_include_keyword() {
+    let src = "#include <stdio.h>\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.c"), &rope).expect("c syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, 1);
+    let idx_include = src.find("include").unwrap();
+    let covering = spans[0]
+        .iter()
+        .find(|s| s.start <= idx_include && idx_include < s.end);
+
+    assert!(
+        covering.is_some_and(|s| s.kind == HighlightKind::Macro),
+        "expected a Macro span covering `include`, got: {:?}",
+        spans[0]
+    );
+}
+
+#[test]
+fn test_highlight_c_bare_preprocessor_marker() {
+    let src = "#\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.c"), &rope).expect("c syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, 1);
+    let covering = spans[0].iter().find(|s| s.start == 0 && 0 < s.end);
+
+    assert!(
+        covering.is_some_and(|s| s.kind == HighlightKind::Macro),
+        "expected a Macro span covering `#`, got: {:?}",
+        spans[0]
+    );
+}
+
+#[test]
 fn test_highlight_cpp_comment_string_keyword_and_in_string_or_comment() {
     let src = "class A { public: bool ok = true; };\n";
     let rope = Rope::from_str(src);
@@ -1511,6 +1546,29 @@ fn syntax_line_directive_context_tracks_c_include_bounds() {
         SyntaxDirectiveContext::Include {
             bounds: Some((10, 13)),
             delimiter: Some(SyntaxIncludeDelimiter::Angle),
+        }
+    );
+}
+
+#[test]
+fn syntax_line_directive_context_tracks_hash_and_include_without_delimiter() {
+    let hash = "#";
+    let hash_rope = Rope::from_str(hash);
+    let doc = SyntaxDocument::for_path(Path::new("test.cpp"), &hash_rope).expect("cpp syntax");
+
+    assert_eq!(
+        doc.line_directive_context_at(&hash_rope, hash.chars().count()),
+        SyntaxDirectiveContext::Directive
+    );
+
+    let include = "#include ";
+    let include_rope = Rope::from_str(include);
+
+    assert_eq!(
+        doc.line_directive_context_at(&include_rope, include.chars().count()),
+        SyntaxDirectiveContext::Include {
+            bounds: None,
+            delimiter: None,
         }
     );
 }

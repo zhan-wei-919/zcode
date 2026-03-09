@@ -950,12 +950,16 @@ fn collect_highlights(
     }
 
     let mut normalized = normalize_overlapping_highlight_spans(spans, start_byte, end_byte);
-    if language == LanguageId::Sql {
-        let supplemental = sql::collect_fallback_spans(rope, start_byte, end_byte, &normalized);
-        if !supplemental.is_empty() {
-            normalized.extend(supplemental);
-            normalized = normalize_overlapping_highlight_spans(normalized, start_byte, end_byte);
+    let supplemental = match language {
+        LanguageId::C | LanguageId::Cpp => {
+            c::collect_fallback_spans(rope, start_byte, end_byte, &normalized)
         }
+        LanguageId::Sql => sql::collect_fallback_spans(rope, start_byte, end_byte, &normalized),
+        _ => Vec::new(),
+    };
+    if !supplemental.is_empty() {
+        normalized.extend(supplemental);
+        normalized = normalize_overlapping_highlight_spans(normalized, start_byte, end_byte);
     }
 
     normalized
@@ -1148,6 +1152,11 @@ fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<Hi
     }
     if kind == "lifetime" {
         return Some(HighlightKind::Lifetime);
+    }
+    if matches!(language, LanguageId::C | LanguageId::Cpp) {
+        if let Some(kind) = c::classify_preprocessor(kind) {
+            return Some(kind);
+        }
     }
     match language {
         LanguageId::Rust => {
