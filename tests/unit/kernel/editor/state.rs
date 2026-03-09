@@ -331,6 +331,56 @@ fn highlight_lines_shared_uses_full_fallback_before_async_patch_when_cache_is_em
 }
 
 #[test]
+fn highlight_lines_shared_uses_full_fallback_when_dirty_line_keeps_stale_nonopaque_cache() {
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    let config = EditorConfig::default();
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "value\n", &config);
+
+    let total_lines = tab.buffer.len_lines().max(1);
+    let mut lines = vec![Vec::new(); total_lines];
+    lines[0] = vec![span(0, 5, HighlightKind::Variable)];
+    tab.syntax_highlight_cache
+        .as_mut()
+        .expect("rust file has syntax cache")
+        .apply_patch(0, lines);
+
+    let insert_at = tab.buffer.rope().line_to_char(0);
+    let op = tab
+        .buffer
+        .replace_range_op_adjust_cursor(insert_at, insert_at, "let ", OpId::root());
+    tab.apply_syntax_edit(&op);
+
+    let cache = tab
+        .syntax_highlight_cache
+        .as_ref()
+        .expect("syntax cache remains present");
+    assert!(cache.is_line_dirty(0));
+    assert_eq!(
+        cache.line(0).map(|line| line.as_slice()),
+        Some(&[span(4, 9, HighlightKind::Variable)][..])
+    );
+
+    let rendered = tab.highlight_lines_shared(0, 1).expect("syntax available");
+    assert!(rendered[0].iter().any(|span| {
+        matches!(
+            span.kind,
+            HighlightKind::Keyword | HighlightKind::KeywordControl
+        ) && span.start == 0
+            && 0 < span.end
+    }));
+    assert!(rendered[0].iter().any(|span| {
+        matches!(
+            span.kind,
+            HighlightKind::Variable | HighlightKind::Parameter
+        ) && span.start <= 4
+            && 4 < span.end
+    }));
+}
+
+#[test]
 fn identifier_pos_at_is_exact_while_identifier_pos_at_or_before_backtracks() {
     use crate::kernel::services::ports::EditorConfig;
     use std::path::PathBuf;

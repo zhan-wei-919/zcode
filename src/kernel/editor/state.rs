@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 use unicode_xid::UnicodeXID;
 
-use super::syntax::{merge_adjacent_highlight_spans, SyntaxDocument};
+use super::syntax::SyntaxDocument;
 use super::syntax_highlight_cache::AsyncSyntaxHighlightCache;
-use super::{viewport, HighlightKind, HighlightSpan, LanguageId, SemanticToken};
+use super::{viewport, HighlightSpan, LanguageId, SemanticToken};
 
 type SharedSyntaxHighlightLines = Arc<Vec<Arc<Vec<HighlightSpan>>>>;
 
@@ -677,15 +677,6 @@ impl EditorTabState {
         }
 
         let any_dirty = (start_line..end_line_exclusive).any(|line| cache.is_line_dirty(line));
-        let opaque_lines = any_dirty.then(|| {
-            super::syntax::opaque_highlight_lines_for_range(
-                syntax.language(),
-                syntax.tree(),
-                self.buffer.rope(),
-                start_line,
-                end_line_exclusive,
-            )
-        });
         let full_fallback_lines = any_dirty.then(|| {
             super::syntax::highlight_lines_for_range(
                 syntax.language(),
@@ -709,54 +700,12 @@ impl EditorTabState {
                 continue;
             }
 
-            if cached.is_empty() {
-                let fallback = full_fallback_lines
-                    .as_ref()
-                    .and_then(|lines| lines.get(idx))
-                    .cloned()
-                    .unwrap_or_default();
-                out.push(Arc::new(fallback));
-                continue;
-            }
-
-            let opaque = opaque_lines
+            let fallback = full_fallback_lines
                 .as_ref()
                 .and_then(|lines| lines.get(idx))
-                .map(|line| line.as_slice())
-                .unwrap_or(&[]);
-
-            if opaque.is_empty()
-                && cached.iter().all(|span| {
-                    !matches!(
-                        span.kind,
-                        HighlightKind::Comment | HighlightKind::String | HighlightKind::Regex
-                    )
-                })
-            {
-                out.push(cached);
-                continue;
-            }
-
-            let mut combined: Vec<HighlightSpan> = cached.as_ref().clone();
-            combined.retain(|span| {
-                !matches!(
-                    span.kind,
-                    HighlightKind::Comment | HighlightKind::String | HighlightKind::Regex
-                )
-            });
-
-            if !opaque.is_empty() {
-                combined.retain(|span| {
-                    !opaque
-                        .iter()
-                        .any(|o| o.start < span.end && o.end > span.start)
-                });
-                combined.extend(opaque.iter().copied());
-            }
-
-            combined.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
-            merge_adjacent_highlight_spans(&mut combined);
-            out.push(Arc::new(combined));
+                .cloned()
+                .unwrap_or_default();
+            out.push(Arc::new(fallback));
         }
         Some(Arc::new(out))
     }

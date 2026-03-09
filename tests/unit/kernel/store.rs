@@ -247,6 +247,36 @@ fn seed_visible_completion_for_active_tab(
     store.state.ui.completion.is_incomplete = false;
 }
 
+type ComputeSyntaxEffect = (
+    crate::kernel::editor::TabId,
+    u64,
+    crate::kernel::language::LanguageId,
+    ropey::Rope,
+    tree_sitter::Tree,
+    Vec<(usize, usize)>,
+);
+
+fn first_compute_syntax_effect(effects: &[Effect]) -> Option<ComputeSyntaxEffect> {
+    effects.iter().find_map(|effect| match effect {
+        Effect::ComputeSyntaxHighlights {
+            tab_id,
+            version,
+            language,
+            rope,
+            tree,
+            segments,
+        } => Some((
+            *tab_id,
+            *version,
+            *language,
+            rope.clone(),
+            tree.clone(),
+            segments.clone(),
+        )),
+        _ => None,
+    })
+}
+
 #[test]
 fn escape_opens_settings_when_idle_in_editor() {
     let mut store = new_store();
@@ -2994,6 +3024,75 @@ fn completion_confirm_requests_immediate_refresh_but_clears_preexisting_pending_
         tab.semantic_tokens_lines(0, 1).is_none(),
         "the preexisting pending semantic snapshot is cleared by the edit before confirm-time flush runs"
     );
+}
+
+#[test]
+fn completion_confirm_renders_dirty_line_with_local_keyword_fallback_before_async_patch() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let opened = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "foo()\n".to_string(),
+    }));
+    let (tab_id, version, language, rope, tree, segments) =
+        first_compute_syntax_effect(&opened.effects)
+            .expect("open should schedule syntax highlight");
+    let patches =
+        crate::kernel::editor::compute_highlight_patches(language, &tree, &rope, &segments);
+    let _ = store.dispatch(Action::Editor(EditorAction::ApplySyntaxHighlightPatches {
+        tab_id,
+        version,
+        patches,
+    }));
+    let initial_tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("open tab exists");
+    assert!(
+        initial_tab
+            .highlight_lines_shared(0, 1)
+            .expect("syntax available")[0]
+            .iter()
+            .any(|span| matches!(
+                span.kind,
+                crate::kernel::editor::HighlightKind::Function
+                    | crate::kernel::editor::HighlightKind::Method
+            )),
+        "test setup should start from a line with reusable non-opaque syntax spans"
+    );
+
+    seed_visible_completion_for_active_tab(&mut store, 0, path.clone(), "let ");
+
+    let result = store.dispatch(Action::CompletionConfirm);
+    assert!(
+        result
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ComputeSyntaxHighlights { .. })),
+        "completion confirm should schedule syntax recompute for the edited line"
+    );
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("open tab exists");
+    assert_eq!(tab.buffer.text(), "let foo()\n");
+
+    let rendered = tab.highlight_lines_shared(0, 1).expect("syntax available");
+    assert!(rendered[0].iter().any(|span| {
+        matches!(
+            span.kind,
+            crate::kernel::editor::HighlightKind::Keyword
+                | crate::kernel::editor::HighlightKind::KeywordControl
+        ) && span.start == 0
+            && 0 < span.end
+    }));
 }
 
 #[test]
