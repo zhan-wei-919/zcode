@@ -12,7 +12,7 @@ mod syntax_bridge;
 use std::path::Path;
 
 use crate::core::Command;
-use crate::kernel::editor::EditorTabState;
+use crate::kernel::editor::{EditorTabState, HighlightKind};
 use crate::kernel::language::LanguageId;
 use crate::kernel::services::ports::{
     LspCommand, LspCompletionItem, LspHoverBlock, LspHoverPayload, LspInsertTextFormat, LspMarkup,
@@ -539,6 +539,10 @@ pub trait CompletionProtocolAdapter: Send + Sync {
         default_normalize_completion_item(context)
     }
 
+    fn completion_highlight_kind(&self, context: &CompletionContext<'_>) -> Option<HighlightKind> {
+        default_completion_highlight_kind(context.item.kind)
+    }
+
     fn fallback_completion_items(
         &self,
         _ctx: &LanguageRuntimeContext<'_>,
@@ -953,6 +957,70 @@ pub(crate) fn default_completion_resolve_state(
     } else {
         CompletionResolveState::Resolved
     }
+}
+
+pub(crate) fn default_completion_highlight_kind(kind: Option<u32>) -> Option<HighlightKind> {
+    let kind = kind.and_then(|kind| {
+        serde_json::from_value::<lsp_types::CompletionItemKind>(serde_json::Value::from(
+            kind as i64,
+        ))
+        .ok()
+    })?;
+
+    if kind == lsp_types::CompletionItemKind::METHOD {
+        return Some(HighlightKind::Method);
+    }
+    if matches!(
+        kind,
+        k if k == lsp_types::CompletionItemKind::FUNCTION
+            || k == lsp_types::CompletionItemKind::CONSTRUCTOR
+    ) {
+        return Some(HighlightKind::Function);
+    }
+    if matches!(
+        kind,
+        k if k == lsp_types::CompletionItemKind::CLASS
+            || k == lsp_types::CompletionItemKind::INTERFACE
+            || k == lsp_types::CompletionItemKind::STRUCT
+            || k == lsp_types::CompletionItemKind::ENUM
+            || k == lsp_types::CompletionItemKind::TYPE_PARAMETER
+    ) {
+        return Some(HighlightKind::Type);
+    }
+    if matches!(
+        kind,
+        k if k == lsp_types::CompletionItemKind::FIELD
+            || k == lsp_types::CompletionItemKind::PROPERTY
+    ) {
+        return Some(HighlightKind::Property);
+    }
+    if matches!(
+        kind,
+        k if k == lsp_types::CompletionItemKind::VARIABLE
+            || k == lsp_types::CompletionItemKind::VALUE
+            || k == lsp_types::CompletionItemKind::EVENT
+    ) {
+        return Some(HighlightKind::Variable);
+    }
+    if matches!(
+        kind,
+        k if k == lsp_types::CompletionItemKind::CONSTANT
+            || k == lsp_types::CompletionItemKind::ENUM_MEMBER
+    ) {
+        return Some(HighlightKind::Constant);
+    }
+    if matches!(
+        kind,
+        k if k == lsp_types::CompletionItemKind::MODULE
+            || k == lsp_types::CompletionItemKind::REFERENCE
+    ) {
+        return Some(HighlightKind::Namespace);
+    }
+    if kind == lsp_types::CompletionItemKind::KEYWORD {
+        return Some(HighlightKind::Keyword);
+    }
+
+    None
 }
 
 pub(crate) fn default_normalize_completion(

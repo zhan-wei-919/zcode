@@ -72,6 +72,17 @@ pub(super) fn lsp_debounce_duration(
     Duration::from_millis(millis)
 }
 
+pub(super) fn semantic_tokens_trigger(
+    trigger: LspDebounceTrigger,
+    eager_refresh: bool,
+) -> LspDebounceTrigger {
+    if eager_refresh {
+        LspDebounceTrigger::Immediate
+    } else {
+        trigger
+    }
+}
+
 fn is_lsp_boundary_char(ch: char, boundary_chars: &str) -> bool {
     boundary_chars.contains(ch)
 }
@@ -121,5 +132,29 @@ mod tests {
 
         assert_eq!(semantic, Duration::from_millis(360));
         assert_eq!(inlay_delete, Duration::from_millis(180));
+    }
+
+    #[test]
+    fn semantic_tokens_trigger_stays_immediate_when_eager() {
+        assert_eq!(
+            semantic_tokens_trigger(LspDebounceTrigger::Identifier, true),
+            LspDebounceTrigger::Immediate
+        );
+        assert_eq!(
+            semantic_tokens_trigger(LspDebounceTrigger::Delete, true),
+            LspDebounceTrigger::Immediate
+        );
+    }
+
+    #[test]
+    fn semantic_tokens_trigger_keeps_original_when_not_eager() {
+        assert_eq!(
+            semantic_tokens_trigger(LspDebounceTrigger::Identifier, false),
+            LspDebounceTrigger::Identifier
+        );
+        assert_eq!(
+            semantic_tokens_trigger(LspDebounceTrigger::Delete, false),
+            LspDebounceTrigger::Delete
+        );
     }
 }

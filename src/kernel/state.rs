@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -791,6 +791,7 @@ pub struct LspState {
     pub pending_format_on_save: Option<PathBuf>,
     pub pending_second_semantic_pass_by_path: FxHashMap<PathBuf, u64>,
     pub defer_semantic_flush_by_path: FxHashMap<PathBuf, u64>,
+    pub eager_semantic_refresh_paths: FxHashSet<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

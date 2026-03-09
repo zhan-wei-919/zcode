@@ -1,6 +1,7 @@
 use super::super::Workbench;
 use super::{
-    classify_lsp_edit_trigger, lsp_debounce_duration, LspDebouncePipeline, LspDebounceTrigger,
+    classify_lsp_edit_trigger, lsp_debounce_duration, semantic_tokens_trigger, LspDebouncePipeline,
+    LspDebounceTrigger,
 };
 use crate::core::Command;
 use crate::kernel::lsp_registry;
@@ -175,6 +176,12 @@ impl Workbench {
         }
 
         let timing = &self.store.state().editor.config.lsp_input_timing;
+        let eager_refresh = self
+            .store
+            .state()
+            .lsp
+            .eager_semantic_refresh_paths
+            .contains(path);
 
         let edit_trigger = classify_lsp_edit_trigger(cmd, timing);
 
@@ -195,17 +202,15 @@ impl Workbench {
             && tab.buffer.len_lines().max(1) >= 2000;
 
         if let Some(trigger) = edit_trigger {
+            let trigger = semantic_tokens_trigger(trigger, eager_refresh);
             let delay = lsp_debounce_duration(timing, LspDebouncePipeline::SemanticTokens, trigger);
             self.lsp_debounce.semantic_tokens = Some(Instant::now() + delay);
             return;
         }
 
         if move_should_schedule {
-            let delay = lsp_debounce_duration(
-                timing,
-                LspDebouncePipeline::SemanticTokens,
-                LspDebounceTrigger::Identifier,
-            );
+            let trigger = semantic_tokens_trigger(LspDebounceTrigger::Identifier, eager_refresh);
+            let delay = lsp_debounce_duration(timing, LspDebouncePipeline::SemanticTokens, trigger);
             self.lsp_debounce.semantic_tokens = Some(Instant::now() + delay);
         }
     }

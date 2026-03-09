@@ -4,9 +4,9 @@ use crate::kernel::language::adapter::{
 };
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::{
-    LspCompletionTriggerKind, LspHoverBlock, LspHoverPayload, LspPosition, LspRange,
-    LspSemanticToken, LspSemanticTokensLegend, LspServerCapabilities, LspServerKind, LspTextEdit,
-    LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspCompletionTriggerKind, LspHoverBlock, LspHoverPayload, LspInsertTextFormat, LspPosition,
+    LspRange, LspSemanticToken, LspSemanticTokensLegend, LspServerCapabilities, LspServerKind,
+    LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{
     CompletionRequestContext, ContextMenuRequest, PendingAction, PendingEditorNavigation,
@@ -220,6 +220,15 @@ fn seed_visible_completion_for_active_tab(
     path: std::path::PathBuf,
     label: &str,
 ) {
+    seed_visible_completion_item_for_active_tab(store, pane, path, test_completion_item(1, label));
+}
+
+fn seed_visible_completion_item_for_active_tab(
+    store: &mut Store,
+    pane: usize,
+    path: std::path::PathBuf,
+    item: LspCompletionItem,
+) {
     let (version, normalization) = {
         let tab = store.state.editor.pane(pane).unwrap().active_tab().unwrap();
         let adapter = adapter_for_tab(tab);
@@ -230,7 +239,6 @@ fn seed_visible_completion_for_active_tab(
         );
         (tab.edit_version, runtime.completion_snapshot())
     };
-    let item = test_completion_item(1, label);
 
     store.state.ui.completion.visible = true;
     store.state.ui.completion.selected = 0;
@@ -3027,6 +3035,111 @@ fn completion_confirm_requests_immediate_refresh_but_clears_preexisting_pending_
 }
 
 #[test]
+fn completion_confirm_keeps_followup_semantic_response_eager_until_first_visible_refresh() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: String::new(),
+    }));
+    let _ = store.dispatch(Action::LspServerCapabilities {
+        server: LspServerKind::RustAnalyzer,
+        root: store.state.workspace_root.clone(),
+        capabilities: LspServerCapabilities {
+            semantic_tokens: true,
+            semantic_tokens_full: true,
+            semantic_tokens_range: false,
+            semantic_tokens_legend: Some(LspSemanticTokensLegend {
+                token_types: vec!["function".to_string()],
+                token_modifiers: Vec::new(),
+            }),
+            ..Default::default()
+        },
+    });
+
+    seed_visible_completion_for_active_tab(&mut store, 0, path.clone(), "println");
+
+    let confirm = store.dispatch(Action::CompletionConfirm);
+    assert!(
+        confirm.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::LspSemanticTokensRequest { .. } | Effect::LspSemanticTokensRangeRequest { .. }
+        )),
+        "completion confirm should request semantic refresh"
+    );
+    assert!(
+        store.state.lsp.eager_semantic_refresh_paths.contains(&path),
+        "completion confirm should arm eager semantic refresh for follow-up edits"
+    );
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('i')));
+    let version_after_identifier = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+
+    let eager = store.dispatch(Action::LspSemanticTokens {
+        path: path.clone(),
+        version: version_after_identifier,
+        tokens: vec![LspSemanticToken {
+            line: 0,
+            start: 0,
+            length: 1,
+            token_type: 0,
+            modifiers: 0,
+        }],
+    });
+    assert!(
+        eager.state_changed,
+        "the first semantic response after completion follow-up typing should flush immediately"
+    );
+    assert!(
+        store
+            .state
+            .editor
+            .pane(0)
+            .and_then(|pane| pane.active_tab())
+            .and_then(|tab| tab.semantic_tokens_lines(0, 1))
+            .is_some(),
+        "the eager semantic response should become visible immediately"
+    );
+    assert!(
+        !store.state.lsp.eager_semantic_refresh_paths.contains(&path),
+        "eager semantic refresh should be consumed after the first visible semantic response"
+    );
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('n')));
+    let version_after_second_identifier = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+
+    let deferred = store.dispatch(Action::LspSemanticTokens {
+        path,
+        version: version_after_second_identifier,
+        tokens: vec![LspSemanticToken {
+            line: 0,
+            start: 0,
+            length: 1,
+            token_type: 0,
+            modifiers: 0,
+        }],
+    });
+    assert!(
+        !deferred.state_changed,
+        "after eager refresh is consumed, plain identifier typing should return to deferred semantic flush"
+    );
+}
+
+#[test]
 fn completion_confirm_renders_dirty_line_with_local_keyword_fallback_before_async_patch() {
     let mut store = new_store();
     store.state.ui.focus = FocusTarget::Editor;
@@ -3092,6 +3205,54 @@ fn completion_confirm_renders_dirty_line_with_local_keyword_fallback_before_asyn
                 | crate::kernel::editor::HighlightKind::KeywordControl
         ) && span.start == 0
             && 0 < span.end
+    }));
+}
+
+#[test]
+fn completion_confirm_seeds_cpp_type_highlight_before_semantic_response() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "ve".to_string(),
+    }));
+    let _ = store.dispatch(Action::Editor(EditorAction::PlaceCursor {
+        pane: 0,
+        row: 0,
+        col: 2,
+        granularity: Granularity::Char,
+    }));
+
+    let mut item = test_completion_item(1, "vector");
+    item.kind = serde_json::to_value(lsp_types::CompletionItemKind::CLASS)
+        .ok()
+        .and_then(|value| value.as_u64())
+        .map(|value| value as u32);
+    item.insert_text_format = LspInsertTextFormat::Snippet;
+    item.insert_text = "vector<$0>".to_string();
+    seed_visible_completion_item_for_active_tab(&mut store, 0, path, item);
+
+    let _ = store.dispatch(Action::CompletionConfirm);
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('i')));
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('n')));
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('t')));
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("open tab exists");
+    assert_eq!(tab.buffer.text(), "vector<int>");
+
+    let semantic = tab
+        .semantic_tokens_line(0)
+        .expect("completion confirm should seed a visible semantic line");
+    assert!(semantic.iter().any(|token| {
+        token.semantic_kind == Some(crate::kernel::editor::HighlightKind::Type)
+            && token.text.contains("vector")
     }));
 }
 

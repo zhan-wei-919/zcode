@@ -1022,6 +1022,22 @@ impl super::super::Store {
                 };
 
                 let encoding = lsp_position_encoding_for_path(&self.state, &path);
+                let matched_tabs = self
+                    .state
+                    .editor
+                    .panes
+                    .iter()
+                    .flat_map(|pane| pane.tabs.iter())
+                    .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
+                    .count();
+                if matched_tabs == 0 {
+                    return super::super::DispatchResult {
+                        effects: second_pass_effect(),
+                        state_changed: false,
+                    };
+                }
+
+                let eager_flush = self.state.lsp.eager_semantic_refresh_paths.contains(&path);
                 let stamp = PayloadStamp {
                     version,
                     item_count: tokens.len(),
@@ -1036,21 +1052,9 @@ impl super::super::Store {
                     .copied()
                     == Some(stamp)
                 {
-                    return super::super::DispatchResult {
-                        effects: second_pass_effect(),
-                        state_changed: false,
-                    };
-                }
-
-                let matched_tabs = self
-                    .state
-                    .editor
-                    .panes
-                    .iter()
-                    .flat_map(|pane| pane.tabs.iter())
-                    .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
-                    .count();
-                if matched_tabs == 0 {
+                    if eager_flush {
+                        self.clear_eager_semantic_refresh_for_path(&path);
+                    }
                     return super::super::DispatchResult {
                         effects: second_pass_effect(),
                         state_changed: false,
@@ -1069,7 +1073,7 @@ impl super::super::Store {
                 let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticToken>>> =
                     None;
                 let mut changed = false;
-                let defer_flush = self.is_semantic_flush_deferred(&path, version);
+                let defer_flush = !eager_flush && self.is_semantic_flush_deferred(&path, version);
 
                 for pane in &mut self.state.editor.panes {
                     for tab in &mut pane.tabs {
@@ -1105,6 +1109,9 @@ impl super::super::Store {
                     .payload_fingerprints
                     .semantic_full_by_path
                     .insert(path.clone(), stamp);
+                if eager_flush {
+                    self.clear_eager_semantic_refresh_for_path(&path);
+                }
 
                 super::super::DispatchResult {
                     effects: second_pass_effect(),
@@ -1149,6 +1156,22 @@ impl super::super::Store {
                 }
 
                 let encoding = lsp_position_encoding_for_path(&self.state, &path);
+                let matched_tabs = self
+                    .state
+                    .editor
+                    .panes
+                    .iter()
+                    .flat_map(|pane| pane.tabs.iter())
+                    .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
+                    .count();
+                if matched_tabs == 0 {
+                    return super::super::DispatchResult {
+                        effects: second_pass_effect(),
+                        state_changed: false,
+                    };
+                }
+
+                let eager_flush = self.state.lsp.eager_semantic_refresh_paths.contains(&path);
                 let stamp = RangePayloadStamp {
                     version,
                     item_count: tokens.len(),
@@ -1165,21 +1188,9 @@ impl super::super::Store {
                     .copied()
                     == Some(stamp)
                 {
-                    return super::super::DispatchResult {
-                        effects: second_pass_effect(),
-                        state_changed: false,
-                    };
-                }
-
-                let matched_tabs = self
-                    .state
-                    .editor
-                    .panes
-                    .iter()
-                    .flat_map(|pane| pane.tabs.iter())
-                    .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
-                    .count();
-                if matched_tabs == 0 {
+                    if eager_flush {
+                        self.clear_eager_semantic_refresh_for_path(&path);
+                    }
                     return super::super::DispatchResult {
                         effects: second_pass_effect(),
                         state_changed: false,
@@ -1198,7 +1209,7 @@ impl super::super::Store {
                 let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticToken>>> =
                     None;
                 let mut changed = false;
-                let defer_flush = self.is_semantic_flush_deferred(&path, version);
+                let defer_flush = !eager_flush && self.is_semantic_flush_deferred(&path, version);
 
                 for pane in &mut self.state.editor.panes {
                     for tab in &mut pane.tabs {
@@ -1233,6 +1244,9 @@ impl super::super::Store {
                     .payload_fingerprints
                     .semantic_range_by_path
                     .insert(path.clone(), stamp);
+                if eager_flush {
+                    self.clear_eager_semantic_refresh_for_path(&path);
+                }
 
                 super::super::DispatchResult {
                     effects: second_pass_effect(),

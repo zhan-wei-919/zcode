@@ -118,6 +118,21 @@ pub(super) fn collect_fallback_spans(
                 line_start = false;
                 continue;
             }
+            let mut lookahead = end;
+            while lookahead < bytes.len() && matches!(bytes[lookahead], b' ' | b'\t') {
+                lookahead += 1;
+            }
+            if bytes.get(lookahead) == Some(&b'[') {
+                out.push(AbsHighlightSpan {
+                    start: start_byte + i,
+                    end: start_byte + end,
+                    kind: HighlightKind::Variable,
+                    depth: 0,
+                });
+                i = end;
+                line_start = false;
+                continue;
+            }
         }
 
         line_start = bytes[i] == b'\n';
@@ -305,6 +320,9 @@ fn classify_identifier_in_expression(node: Node<'_>) -> Option<HighlightKind> {
     match parent.kind() {
         "call_expression" if node_is_field(parent, "function", node) => {
             Some(HighlightKind::Function)
+        }
+        "subscript_expression" if node_is_field(parent, "argument", node) => {
+            Some(HighlightKind::Variable)
         }
         "template_function" if node_is_field(parent, "name", node) => {
             classify_name_container(parent)

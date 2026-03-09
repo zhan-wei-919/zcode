@@ -950,6 +950,41 @@ int process(Config& cfg) {\n\
 }
 
 #[test]
+fn test_highlight_cpp_subscript_base_identifier_in_incomplete_assignment() {
+    let src = "\
+void f() {\n\
+    left[]\n\
+    left[0] = \n\
+}\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.cpp"), &rope).expect("cpp syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, rope.len_lines());
+
+    let line_subscript = rope.line(1).to_string();
+    let line_subscript = line_subscript.trim_end_matches(['\n', '\r']);
+    let idx_subscript = line_subscript.find("left").unwrap();
+    assert!(
+        spans[1].iter().any(|s| {
+            s.kind == HighlightKind::Variable && s.start <= idx_subscript && idx_subscript < s.end
+        }),
+        "expected Variable for `left[]`, got: {:?}",
+        spans[1]
+    );
+
+    let line_assignment = rope.line(2).to_string();
+    let line_assignment = line_assignment.trim_end_matches(['\n', '\r']);
+    let idx_assignment = line_assignment.find("left").unwrap();
+    assert!(
+        spans[2].iter().any(|s| {
+            s.kind == HighlightKind::Variable && s.start <= idx_assignment && idx_assignment < s.end
+        }),
+        "expected Variable for `left[0] =`, got: {:?}",
+        spans[2]
+    );
+}
+
+#[test]
 fn test_highlight_header_defaults_to_cpp() {
     let src = "class A {};\n";
     let rope = Rope::from_str(src);
