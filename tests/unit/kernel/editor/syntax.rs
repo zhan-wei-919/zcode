@@ -793,6 +793,56 @@ fn test_highlight_c_bare_preprocessor_marker() {
 }
 
 #[test]
+fn test_highlight_c_structured_names() {
+    let src = "\
+typedef struct {\n\
+    int count;\n\
+} Config;\n\
+\n\
+static int process(const Config *cfg) {\n\
+    int value = cfg->count;\n\
+    return process(cfg);\n\
+}\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.c"), &rope).expect("c syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, rope.len_lines());
+    let lines: Vec<&str> = src.lines().collect();
+
+    let line_field = lines[1];
+    let idx_field = line_field.find("count").unwrap();
+    assert!(spans[1].iter().any(|s| {
+        s.kind == HighlightKind::Property && s.start <= idx_field && idx_field < s.end
+    }));
+
+    let line_fn = lines[4];
+    let idx_process = line_fn.find("process").unwrap();
+    let idx_cfg = line_fn.find("cfg").unwrap();
+    assert!(spans[4].iter().any(|s| {
+        s.kind == HighlightKind::Function && s.start <= idx_process && idx_process < s.end
+    }));
+    assert!(spans[4]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Parameter && s.start <= idx_cfg && idx_cfg < s.end));
+
+    let line_var = lines[5];
+    let idx_value = line_var.find("value").unwrap();
+    let idx_count = line_var.find("count").unwrap();
+    assert!(spans[5].iter().any(|s| {
+        s.kind == HighlightKind::Variable && s.start <= idx_value && idx_value < s.end
+    }));
+    assert!(spans[5].iter().any(|s| {
+        s.kind == HighlightKind::Property && s.start <= idx_count && idx_count < s.end
+    }));
+
+    let line_call = lines[6];
+    let idx_call = line_call.find("process").unwrap();
+    assert!(spans[6]
+        .iter()
+        .any(|s| { s.kind == HighlightKind::Function && s.start <= idx_call && idx_call < s.end }));
+}
+
+#[test]
 fn test_highlight_cpp_comment_string_keyword_and_in_string_or_comment() {
     let src = "class A { public: bool ok = true; };\n";
     let rope = Rope::from_str(src);
@@ -813,6 +863,90 @@ fn test_highlight_cpp_comment_string_keyword_and_in_string_or_comment() {
     assert!(spans[0]
         .iter()
         .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_true && idx_true < s.end));
+}
+
+#[test]
+fn test_highlight_cpp_structured_names_and_keyword_control() {
+    let src = "\
+namespace app {\n\
+class Config {\n\
+public:\n\
+    int count;\n\
+};\n\
+\n\
+int process(Config& cfg) {\n\
+    if (cfg.count > 0) {\n\
+        cfg.count = std::to_string(cfg.count).size();\n\
+        return cfg.count;\n\
+    }\n\
+    return 0;\n\
+}\n\
+}\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.cpp"), &rope).expect("cpp syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, rope.len_lines());
+    let lines: Vec<&str> = src.lines().collect();
+
+    let line_namespace = lines[0];
+    let idx_app = line_namespace.find("app").unwrap();
+    assert!(spans[0]
+        .iter()
+        .any(|s| { s.kind == HighlightKind::Namespace && s.start <= idx_app && idx_app < s.end }));
+
+    let line_field = lines[3];
+    let idx_field = line_field.find("count").unwrap();
+    assert!(spans[3].iter().any(|s| {
+        s.kind == HighlightKind::Property && s.start <= idx_field && idx_field < s.end
+    }));
+
+    let line_fn = lines[6];
+    let idx_process = line_fn.find("process").unwrap();
+    let idx_cfg = line_fn.find("cfg").unwrap();
+    assert!(spans[6].iter().any(|s| {
+        s.kind == HighlightKind::Function && s.start <= idx_process && idx_process < s.end
+    }));
+    assert!(spans[6]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Parameter && s.start <= idx_cfg && idx_cfg < s.end));
+
+    let line_if = lines[7];
+    let idx_if = line_if.find("if").unwrap();
+    let idx_prop = line_if.find("count").unwrap();
+    assert!(
+        spans[7].iter().any(|s| {
+            s.kind == HighlightKind::KeywordControl && s.start <= idx_if && idx_if < s.end
+        }),
+        "expected KeywordControl for `if`, got: {:?}",
+        spans[7]
+    );
+    assert!(
+        spans[7].iter().any(|s| {
+            s.kind == HighlightKind::Property && s.start <= idx_prop && idx_prop < s.end
+        }),
+        "expected Property for `count`, got: {:?}",
+        spans[7]
+    );
+
+    let line_call = lines[8];
+    let idx_std = line_call.find("std").unwrap();
+    let idx_to_string = line_call.find("to_string").unwrap();
+    let idx_count = line_call.find("count").unwrap();
+    assert!(spans[8]
+        .iter()
+        .any(|s| { s.kind == HighlightKind::Namespace && s.start <= idx_std && idx_std < s.end }));
+    assert!(spans[8].iter().any(|s| {
+        s.kind == HighlightKind::Function && s.start <= idx_to_string && idx_to_string < s.end
+    }));
+    assert!(spans[8].iter().any(|s| {
+        s.kind == HighlightKind::Property && s.start <= idx_count && idx_count < s.end
+    }));
+
+    let line_return = lines[9];
+    let idx_return = line_return.find("return").unwrap();
+    assert!(spans[9].iter().any(|s| {
+        s.kind == HighlightKind::KeywordControl && s.start <= idx_return && idx_return < s.end
+    }));
 }
 
 #[test]

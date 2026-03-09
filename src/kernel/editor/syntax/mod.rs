@@ -1174,12 +1174,12 @@ fn classify_node(language: LanguageId, node: Node<'_>, rope: &Rope) -> Option<Hi
                 return Some(kind);
             }
         }
-        LanguageId::C => {
-            if let Some(kind) = c::classify(kind) {
+        LanguageId::C | LanguageId::Cpp => {
+            if let Some(kind) = c::classify(node, rope, language) {
                 return Some(kind);
             }
         }
-        LanguageId::Cpp | LanguageId::Java => {}
+        LanguageId::Java => {}
         LanguageId::Sql => {
             if let Some(kind) = sql::classify(kind) {
                 return Some(kind);
