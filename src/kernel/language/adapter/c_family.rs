@@ -3,11 +3,11 @@ use crate::kernel::editor::EditorTabState;
 use crate::kernel::language::adapter::editing::BRACE_LANGUAGE_EDITING_POLICY;
 use crate::kernel::language::adapter::syntax_bridge::{syntax_facts_for_tab, SYNTAX_BRIDGE};
 use crate::kernel::language::adapter::{
-    apply_callable_completion_fallback, apply_trailing_space_completion_fallback,
-    default_context_allows_completion, default_prefix_bounds, default_should_close_on_command,
-    default_triggered_by_insert, language_features, normalize_server_completion_text,
-    CompletionBehavior, CompletionContext, IncludeContext, LanguageAdapter, LanguageEditingPolicy,
-    LanguageFeatures, LanguageRuntimeContext, LineContext, MemberAccessKind, TextEditPlan,
+    apply_callable_completion_fallback, default_context_allows_completion, default_prefix_bounds,
+    default_should_close_on_command, default_triggered_by_insert, language_features,
+    normalize_server_completion_text, CompletionBehavior, CompletionContext, IncludeContext,
+    LanguageAdapter, LanguageEditingPolicy, LanguageFeatures, LanguageRuntimeContext, LineContext,
+    MemberAccessKind, TextEditPlan,
 };
 use crate::kernel::language::LanguageId;
 use crate::kernel::services::ports::{LspCompletionItem, LspInsertTextFormat};
@@ -163,7 +163,7 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
             apply_callable_completion_fallback(plan, context.item)
         };
 
-        apply_trailing_space_completion_fallback(plan, context.item)
+        plan
     }
 
     fn fallback_completion_items(
@@ -267,26 +267,56 @@ fn directive_completion_state(tab: &EditorTabState) -> DirectiveCompletionState 
 
 fn directive_keyword_completion_items() -> Vec<LspCompletionItem> {
     [
-        ("include", "preprocessor directive", "#include header"),
-        ("define", "preprocessor directive", "#define macro"),
-        ("ifdef", "preprocessor directive", "#ifdef symbol"),
-        ("ifndef", "preprocessor directive", "#ifndef symbol"),
-        ("if", "preprocessor directive", "#if expression"),
-        ("elif", "preprocessor directive", "#elif expression"),
-        ("else", "preprocessor directive", "#else"),
-        ("endif", "preprocessor directive", "#endif"),
-        ("pragma", "preprocessor directive", "#pragma option"),
-        ("undef", "preprocessor directive", "#undef symbol"),
-        ("error", "preprocessor directive", "#error message"),
-        ("line", "preprocessor directive", "#line number"),
+        (
+            "include",
+            "include ",
+            "preprocessor directive",
+            "#include header",
+        ),
+        (
+            "define",
+            "define ",
+            "preprocessor directive",
+            "#define macro",
+        ),
+        ("ifdef", "ifdef ", "preprocessor directive", "#ifdef symbol"),
+        (
+            "ifndef",
+            "ifndef ",
+            "preprocessor directive",
+            "#ifndef symbol",
+        ),
+        ("if", "if ", "preprocessor directive", "#if expression"),
+        (
+            "elif",
+            "elif ",
+            "preprocessor directive",
+            "#elif expression",
+        ),
+        ("else", "else", "preprocessor directive", "#else"),
+        ("endif", "endif", "preprocessor directive", "#endif"),
+        (
+            "pragma",
+            "pragma ",
+            "preprocessor directive",
+            "#pragma option",
+        ),
+        ("undef", "undef ", "preprocessor directive", "#undef symbol"),
+        (
+            "error",
+            "error ",
+            "preprocessor directive",
+            "#error message",
+        ),
+        ("line", "line ", "preprocessor directive", "#line number"),
     ]
     .into_iter()
     .enumerate()
-    .map(|(idx, (label, detail, documentation))| {
+    .map(|(idx, (label, insert_text, detail, documentation))| {
         synthetic_completion_item(SyntheticCompletionSpec {
             id: 0xC000_0000_0000_0000 + idx as u64,
             label: label.to_string(),
-            insert_text: label.to_string(),
+            insert_text: insert_text.to_string(),
             kind: Some(14),
             detail: Some(detail.to_string()),
             documentation: Some(documentation.to_string()),

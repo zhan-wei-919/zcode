@@ -921,20 +921,6 @@ pub(crate) fn apply_callable_completion_fallback(
     plan
 }
 
-pub(crate) fn apply_trailing_space_completion_fallback(
-    mut plan: TextEditPlan,
-    item: &LspCompletionItem,
-) -> TextEditPlan {
-    if !plan.has_cursor_or_selection()
-        && should_append_trailing_space(item)
-        && !plan.text.ends_with(' ')
-    {
-        plan.text.push(' ');
-    }
-
-    plan
-}
-
 pub(crate) fn default_normalize_completion_item(context: &CompletionContext<'_>) -> TextEditPlan {
     normalize_server_completion_text(context)
 }
@@ -1157,19 +1143,6 @@ fn language_code_fence(language: LanguageId) -> &'static str {
         LanguageId::Bash => "bash",
         LanguageId::Markdown => "markdown",
     }
-}
-
-pub(crate) fn should_append_trailing_space(item: &LspCompletionItem) -> bool {
-    if !matches!(item.kind, Some(14)) {
-        return false;
-    }
-
-    let text = item.insert_text.as_str();
-    if text.is_empty() || text.ends_with(' ') {
-        return false;
-    }
-
-    text.chars().all(|ch| ch == '_' || ch.is_alphanumeric())
 }
 
 fn should_append_callable_parentheses(item: &LspCompletionItem) -> bool {

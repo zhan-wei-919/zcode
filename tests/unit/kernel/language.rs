@@ -229,6 +229,25 @@ fn callable_item(label: &str) -> LspCompletionItem {
     }
 }
 
+fn keyword_item(label: &str) -> LspCompletionItem {
+    LspCompletionItem {
+        id: 2,
+        label: label.to_string(),
+        detail: None,
+        kind: Some(14),
+        documentation: None,
+        insert_text: label.to_string(),
+        insert_text_format: LspInsertTextFormat::PlainText,
+        insert_range: None,
+        replace_range: None,
+        sort_text: None,
+        filter_text: None,
+        additional_text_edits: Vec::new(),
+        command: None,
+        data: None,
+    }
+}
+
 fn normalize_plan(
     tab: &crate::kernel::editor::EditorTabState,
     item: &LspCompletionItem,
@@ -244,6 +263,22 @@ fn normalize_plan(
             item,
         ),
     )
+}
+
+fn fallback_item(tab: &crate::kernel::editor::EditorTabState, label: &str) -> LspCompletionItem {
+    let adapter = crate::kernel::language::adapter_for(tab.language());
+    let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+        tab.language(),
+        tab,
+        adapter.syntax().syntax_facts(tab),
+    );
+
+    adapter
+        .completion_protocol()
+        .fallback_completion_items(&runtime)
+        .into_iter()
+        .find(|item| item.label == label)
+        .unwrap_or_else(|| panic!("missing fallback completion item: {label}"))
 }
 
 fn normalize_snapshot_plan(
@@ -331,6 +366,47 @@ fn c_family_snapshot_matches_live_callable_fallback() {
     assert_eq!(snapshot, live);
     assert_eq!(snapshot.text, "printf()");
     assert_eq!(snapshot.cursor, Some("printf(".chars().count()));
+}
+
+#[test]
+fn c_family_adapter_does_not_append_trailing_space_to_keywords() {
+    let tab = test_tab("main.cpp", "vec", 3);
+    let plan = normalize_plan(&tab, &keyword_item("int"));
+
+    assert_eq!(plan.text, "int");
+    assert_eq!(plan.cursor, None);
+    assert_eq!(
+        plan.strategy,
+        crate::kernel::language::TextEditStrategy::PlainText
+    );
+}
+
+#[test]
+fn c_family_adapter_does_not_append_trailing_space_in_template_arguments() {
+    let content = "std::vector<".to_string();
+    let tab = test_tab("main.cpp", &content, content.chars().count());
+    let plan = normalize_plan(&tab, &keyword_item("int"));
+
+    assert_eq!(plan.text, "int");
+    assert_eq!(plan.cursor, None);
+    assert_eq!(
+        plan.strategy,
+        crate::kernel::language::TextEditStrategy::PlainText
+    );
+}
+
+#[test]
+fn c_family_directive_fallback_items_keep_required_space() {
+    let tab = test_tab("main.cpp", "#", 1);
+    let item = fallback_item(&tab, "include");
+    let plan = normalize_plan(&tab, &item);
+
+    assert_eq!(plan.text, "include ");
+    assert_eq!(plan.cursor, None);
+    assert_eq!(
+        plan.strategy,
+        crate::kernel::language::TextEditStrategy::PlainText
+    );
 }
 
 #[test]
