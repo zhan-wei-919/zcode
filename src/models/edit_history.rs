@@ -1,11 +1,3 @@
-//! 编辑历史管理
-//!
-//! 采用 DAG 结构存储历史：
-//! - 每个操作有唯一 ID 和父指针
-//! - HEAD 指向当前状态
-//! - 历史永不丢失，Undo 后新编辑会创建分支
-//! - .ops 文件 append-only，崩溃恢复简单
-
 use super::edit_op::{EditOp, OpId};
 use ropey::Rope;
 use rustc_hash::FxHashMap;
