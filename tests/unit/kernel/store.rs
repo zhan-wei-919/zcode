@@ -23,6 +23,16 @@ fn new_store() -> Store {
     Store::new(AppState::new(root, tree, EditorConfig::default()))
 }
 
+fn sem_tok(
+    text: &str,
+    kind: Option<crate::kernel::editor::HighlightKind>,
+) -> crate::kernel::editor::SemanticToken {
+    crate::kernel::editor::SemanticToken {
+        text: text.into(),
+        semantic_kind: kind,
+    }
+}
+
 #[test]
 fn hover_preview_includes_definition_and_implementation() {
     let mut store = new_store();
@@ -2961,6 +2971,207 @@ fn semantic_tokens_response_is_deferred_until_boundary_after_identifier_input() 
             .is_some(),
         "边界输入后新的语义响应应可见"
     );
+}
+
+#[test]
+fn cursor_move_flush_preserves_sticky_semantic_kind_on_active_line() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("sticky.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: "cin >> value\n".to_string(),
+    }));
+
+    let version = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .and_then(|pane| pane.active_tab_mut())
+            .expect("open tab exists");
+        tab.buffer.set_cursor(0, 6);
+        let _ = tab.set_semantic_highlight(
+            version,
+            vec![vec![
+                sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
+                sem_tok(" >> value", None),
+            ]],
+        );
+        let _ = tab.set_pending_semantic_highlight_from_slice(
+            version,
+            &[vec![sem_tok("cin >> value", None)]],
+        );
+    }
+
+    let _ = store.dispatch(Action::RunCommand(Command::CursorRight));
+
+    let expected = vec![
+        sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
+        sem_tok(" >> value", None),
+    ];
+    let row = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .and_then(|tab| tab.semantic_tokens_line(0))
+        .expect("semantic row should remain visible");
+    assert_eq!(row, expected.as_slice());
+}
+
+#[test]
+fn semantic_tokens_full_empty_response_preserves_sticky_kind_left_of_cursor() {
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("sticky.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "cin >> value\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::LspServerCapabilities {
+        server: LspServerKind::RustAnalyzer,
+        root: store.state.workspace_root.clone(),
+        capabilities: LspServerCapabilities {
+            semantic_tokens: true,
+            semantic_tokens_full: true,
+            semantic_tokens_range: false,
+            semantic_tokens_legend: Some(LspSemanticTokensLegend::default()),
+            ..Default::default()
+        },
+    });
+
+    let version = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .and_then(|pane| pane.active_tab_mut())
+            .expect("open tab exists");
+        tab.buffer.set_cursor(0, 7);
+        let _ = tab.set_semantic_highlight(
+            version,
+            vec![
+                vec![
+                    sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
+                    sem_tok(" >> value", None),
+                ],
+                Vec::new(),
+            ],
+        );
+    }
+
+    let _ = store.dispatch(Action::LspSemanticTokens {
+        path,
+        version,
+        tokens: Vec::new(),
+    });
+    let expected = vec![
+        sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
+        sem_tok(" >> value", None),
+    ];
+    let row = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .and_then(|tab| tab.semantic_tokens_line(0))
+        .expect("semantic row should remain visible");
+    assert_eq!(row, expected.as_slice());
+}
+
+#[test]
+fn semantic_tokens_range_empty_response_preserves_sticky_kind_left_of_cursor() {
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("sticky.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "cin >> value\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::LspServerCapabilities {
+        server: LspServerKind::RustAnalyzer,
+        root: store.state.workspace_root.clone(),
+        capabilities: LspServerCapabilities {
+            semantic_tokens: true,
+            semantic_tokens_full: true,
+            semantic_tokens_range: true,
+            semantic_tokens_legend: Some(LspSemanticTokensLegend::default()),
+            ..Default::default()
+        },
+    });
+
+    let version = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .and_then(|pane| pane.active_tab_mut())
+            .expect("open tab exists");
+        tab.buffer.set_cursor(0, 7);
+        let _ = tab.set_semantic_highlight(
+            version,
+            vec![vec![
+                sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
+                sem_tok(" >> value", None),
+            ]],
+        );
+    }
+
+    let result = store.dispatch(Action::LspSemanticTokensRange {
+        path,
+        version,
+        range: LspRange {
+            start: LspPosition {
+                line: 0,
+                character: 0,
+            },
+            end: LspPosition {
+                line: 1,
+                character: 0,
+            },
+        },
+        tokens: Vec::new(),
+    });
+
+    assert!(
+        !result.state_changed,
+        "sticky merge should keep the visible semantic row unchanged"
+    );
+    let expected = vec![
+        sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
+        sem_tok(" >> value", None),
+    ];
+    let row = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .and_then(|tab| tab.semantic_tokens_line(0))
+        .expect("semantic row should remain visible");
+    assert_eq!(row, expected.as_slice());
 }
 
 #[test]

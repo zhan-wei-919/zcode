@@ -1074,33 +1074,33 @@ impl super::super::Store {
                     None;
                 let mut changed = false;
                 let defer_flush = !eager_flush && self.is_semantic_flush_deferred(&path, version);
+                let active_pane_idx = self.state.ui.editor_layout.active_pane;
 
-                for pane in &mut self.state.editor.panes {
-                    for tab in &mut pane.tabs {
+                for (pane_idx, pane) in self.state.editor.panes.iter_mut().enumerate() {
+                    let active_tab_idx = pane.active;
+                    for (tab_idx, tab) in pane.tabs.iter_mut().enumerate() {
                         if tab.path.as_ref() != Some(&path) || tab.edit_version != version {
                             continue;
                         }
 
-                        if tokens.is_empty() {
-                            let _ = tab.set_pending_semantic_highlight_from_slice(version, &[]);
-                        } else {
-                            if snapshot_lines.is_none() {
-                                snapshot_lines = Some(semantic_token_lines_from_tokens(
-                                    tab.buffer.rope(),
-                                    &tokens,
-                                    &legend,
-                                    encoding,
-                                ));
-                            }
+                        if snapshot_lines.is_none() {
+                            snapshot_lines = Some(semantic_token_lines_from_tokens(
+                                tab.buffer.rope(),
+                                &tokens,
+                                &legend,
+                                encoding,
+                            ));
+                        }
 
-                            if let Some(lines) = snapshot_lines.as_ref() {
-                                let _ =
-                                    tab.set_pending_semantic_highlight_from_slice(version, lines);
-                            }
+                        if let Some(lines) = snapshot_lines.as_ref() {
+                            let _ = tab.set_pending_semantic_highlight_from_slice(version, lines);
                         }
 
                         if !defer_flush {
-                            changed |= tab.flush_pending_semantic_highlight();
+                            let is_active_tab =
+                                pane_idx == active_pane_idx && tab_idx == active_tab_idx;
+                            changed |=
+                                Self::flush_pending_semantic_highlight_for_tab(tab, is_active_tab);
                         }
                     }
                 }
@@ -1210,9 +1210,11 @@ impl super::super::Store {
                     None;
                 let mut changed = false;
                 let defer_flush = !eager_flush && self.is_semantic_flush_deferred(&path, version);
+                let active_pane_idx = self.state.ui.editor_layout.active_pane;
 
-                for pane in &mut self.state.editor.panes {
-                    for tab in &mut pane.tabs {
+                for (pane_idx, pane) in self.state.editor.panes.iter_mut().enumerate() {
+                    let active_tab_idx = pane.active;
+                    for (tab_idx, tab) in pane.tabs.iter_mut().enumerate() {
                         if tab.path.as_ref() != Some(&path) || tab.edit_version != version {
                             continue;
                         }
@@ -1235,7 +1237,10 @@ impl super::super::Store {
                         }
 
                         if !defer_flush {
-                            changed |= tab.flush_pending_semantic_highlight();
+                            let is_active_tab =
+                                pane_idx == active_pane_idx && tab_idx == active_tab_idx;
+                            changed |=
+                                Self::flush_pending_semantic_highlight_for_tab(tab, is_active_tab);
                         }
                     }
                 }

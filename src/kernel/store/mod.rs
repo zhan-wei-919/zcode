@@ -1,5 +1,7 @@
 use crate::core::Command;
-use crate::kernel::editor::{EditorTabState, HighlightKind, ReloadCause, SemanticToken};
+use crate::kernel::editor::{
+    EditorTabState, HighlightKind, PendingSemanticLine, ReloadCause, SemanticToken,
+};
 use crate::kernel::services::ports::{
     LspCompletionTriggerContext, LspPosition, LspRange, LspTextEdit, LspWorkspaceEdit,
     LspWorkspaceFileEdit,
@@ -44,6 +46,7 @@ use intel::lsp::{
     lsp_position_to_byte_offset, lsp_range_for_full_lines, lsp_request_target,
     lsp_server_capabilities_for_path, problem_byte_offset,
 };
+use intel::semantic::reconcile_pending_semantic_row;
 use search::search_open_target;
 use util::{
     bottom_panel_tabs, find_open_tab, is_lsp_source_path, next_bottom_panel_tab,
@@ -600,16 +603,65 @@ impl Store {
             .is_some_and(|deferred_version| *deferred_version == version)
     }
 
+    fn reconcile_pending_semantic_for_active_line(tab: &mut EditorTabState) {
+        let (row, col) = tab.buffer.cursor();
+        let Some(line_slice) = tab.buffer.line_slice(row) else {
+            return;
+        };
+
+        let line_owned = line_slice.to_string();
+        let line = line_owned.strip_suffix('\n').unwrap_or(&line_owned);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        let line_start_char = tab.buffer.rope().line_to_char(row);
+        let cursor_char = tab
+            .buffer
+            .pos_to_char((row, col))
+            .saturating_sub(line_start_char);
+        let cursor_byte = byte_offset_for_char_offset(line, cursor_char);
+        let merged_row = {
+            let current = tab.semantic_tokens_line(row);
+            match tab.pending_semantic_line(row) {
+                PendingSemanticLine::Uncovered => None,
+                PendingSemanticLine::Covered(pending) => {
+                    reconcile_pending_semantic_row(line, current, pending, cursor_byte)
+                }
+            }
+        };
+        let Some(merged_row) = merged_row else {
+            return;
+        };
+
+        let merged_lines = [merged_row];
+        let _ = tab.set_pending_semantic_highlight_range_from_slice(
+            tab.edit_version,
+            row,
+            &merged_lines,
+        );
+    }
+
+    fn flush_pending_semantic_highlight_for_tab(
+        tab: &mut EditorTabState,
+        is_active_tab: bool,
+    ) -> bool {
+        if is_active_tab {
+            Self::reconcile_pending_semantic_for_active_line(tab);
+        }
+        tab.flush_pending_semantic_highlight()
+    }
+
     fn flush_pending_semantic_highlights_for_path(&mut self, path: &Path) -> bool {
         self.clear_semantic_flush_defer_for_path(path);
 
+        let active_pane_idx = self.state.ui.editor_layout.active_pane;
         let mut changed = false;
-        for pane in &mut self.state.editor.panes {
-            for tab in &mut pane.tabs {
+        for (pane_idx, pane) in self.state.editor.panes.iter_mut().enumerate() {
+            let active_tab_idx = pane.active;
+            for (tab_idx, tab) in pane.tabs.iter_mut().enumerate() {
                 if tab.path.as_deref() != Some(path) {
                     continue;
                 }
-                changed |= tab.flush_pending_semantic_highlight();
+                let is_active_tab = pane_idx == active_pane_idx && tab_idx == active_tab_idx;
+                changed |= Self::flush_pending_semantic_highlight_for_tab(tab, is_active_tab);
             }
         }
         changed

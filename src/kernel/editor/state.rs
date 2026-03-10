@@ -220,6 +220,11 @@ pub struct EditorTabState {
     pub(super) syntax_highlight_pending_version: Option<u64>,
 }
 
+pub(crate) enum PendingSemanticLine<'a> {
+    Uncovered,
+    Covered(&'a [SemanticToken]),
+}
+
 impl std::fmt::Debug for EditorTabState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EditorTabState")
@@ -850,6 +855,17 @@ impl EditorTabState {
 
         semantic.replace_range(start_line, end_line_exclusive, lines.to_vec());
         true
+    }
+
+    pub(crate) fn pending_semantic_line(&self, line: usize) -> PendingSemanticLine<'_> {
+        let Some(semantic) = self.pending_semantic_highlight.as_ref() else {
+            return PendingSemanticLine::Uncovered;
+        };
+
+        match semantic.line(line) {
+            Some(tokens) => PendingSemanticLine::Covered(tokens),
+            None => PendingSemanticLine::Uncovered,
+        }
     }
 
     pub(crate) fn flush_pending_semantic_highlight(&mut self) -> bool {

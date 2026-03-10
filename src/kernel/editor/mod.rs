@@ -12,6 +12,7 @@ mod viewport;
 
 pub use crate::kernel::language::LanguageId;
 pub use action::EditorAction;
+pub(crate) use state::PendingSemanticLine;
 pub(crate) use state::SnippetTabstop;
 pub use state::{
     DiskSnapshot, DiskState, EditorPaneState, EditorState, EditorTabState, EditorViewportState,

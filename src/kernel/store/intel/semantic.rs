@@ -408,9 +408,149 @@ fn tokens_concat_len(tokens: &[SemanticToken]) -> usize {
     tokens.iter().map(|t| t.text.len()).sum()
 }
 
+#[derive(Clone, Copy)]
+struct SemanticRowSegment<'a> {
+    start: usize,
+    end: usize,
+    kind: Option<HighlightKind>,
+    text: &'a str,
+}
+
+pub(in crate::kernel::store) fn reconcile_pending_semantic_row(
+    line: &str,
+    current: Option<&[SemanticToken]>,
+    pending: &[SemanticToken],
+    cursor_byte: usize,
+) -> Option<Vec<SemanticToken>> {
+    if tokens_concat_len(pending) != line.len() {
+        return None;
+    }
+
+    let current_segments = semantic_row_segments(current.unwrap_or(&[]));
+    let pending_segments = semantic_row_segments(pending);
+    let mut boundaries =
+        Vec::with_capacity(current_segments.len() * 2 + pending_segments.len() * 2 + 2);
+    boundaries.push(0);
+    boundaries.push(line.len());
+    boundaries.extend(
+        current_segments
+            .iter()
+            .flat_map(|seg| [seg.start.min(line.len()), seg.end.min(line.len())]),
+    );
+    boundaries.extend(
+        pending_segments
+            .iter()
+            .flat_map(|seg| [seg.start.min(line.len()), seg.end.min(line.len())]),
+    );
+    boundaries.sort_unstable();
+    boundaries.dedup();
+
+    let mut merged = Vec::with_capacity(boundaries.len().saturating_sub(1));
+    let mut current_idx = 0usize;
+    let mut pending_idx = 0usize;
+    for window in boundaries.windows(2) {
+        let start = window[0];
+        let end = window[1];
+        if end <= start {
+            continue;
+        }
+
+        while current_idx < current_segments.len() && current_segments[current_idx].end <= start {
+            current_idx += 1;
+        }
+        while pending_idx < pending_segments.len() && pending_segments[pending_idx].end <= start {
+            pending_idx += 1;
+        }
+
+        let current_segment = current_segments
+            .get(current_idx)
+            .copied()
+            .filter(|seg| seg.start <= start && end <= seg.end);
+        let pending_segment = pending_segments
+            .get(pending_idx)
+            .copied()
+            .filter(|seg| seg.start <= start && end <= seg.end);
+
+        let pending_kind = pending_segment.and_then(|seg| seg.kind);
+        let current_kind = current_segment.and_then(|seg| seg.kind);
+        let merged_kind = if pending_kind.is_some() {
+            pending_kind
+        } else if current_kind.is_some()
+            && end <= cursor_byte
+            && current_kind.is_some_and(sticky_semantic_kind)
+            && current_segment_matches_line(current_segment, start, end, line)
+        {
+            current_kind
+        } else {
+            None
+        };
+
+        merged.push(SemanticToken {
+            text: line[start..end].into(),
+            semantic_kind: merged_kind,
+        });
+    }
+
+    merge_adjacent_semantic_tokens(&mut merged);
+    (merged != pending).then_some(merged)
+}
+
+fn semantic_row_segments(tokens: &[SemanticToken]) -> Vec<SemanticRowSegment<'_>> {
+    let mut segments = Vec::with_capacity(tokens.len());
+    let mut start = 0usize;
+    for token in tokens {
+        let end = start + token.text.len();
+        segments.push(SemanticRowSegment {
+            start,
+            end,
+            kind: token.semantic_kind,
+            text: token.text.as_str(),
+        });
+        start = end;
+    }
+    segments
+}
+
+fn current_segment_matches_line(
+    segment: Option<SemanticRowSegment<'_>>,
+    start: usize,
+    end: usize,
+    line: &str,
+) -> bool {
+    let Some(segment) = segment else {
+        return false;
+    };
+    let rel_start = start.saturating_sub(segment.start);
+    let rel_end = rel_start + end.saturating_sub(start);
+    segment.text.get(rel_start..rel_end) == line.get(start..end)
+}
+
+fn sticky_semantic_kind(kind: HighlightKind) -> bool {
+    matches!(
+        kind,
+        HighlightKind::Type
+            | HighlightKind::Namespace
+            | HighlightKind::Function
+            | HighlightKind::Method
+            | HighlightKind::Variable
+            | HighlightKind::Parameter
+            | HighlightKind::Property
+            | HighlightKind::Constant
+            | HighlightKind::EnumMember
+            | HighlightKind::Macro
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sem_tok(text: &str, kind: Option<HighlightKind>) -> SemanticToken {
+        SemanticToken {
+            text: text.into(),
+            semantic_kind: kind,
+        }
+    }
 
     #[test]
     fn semantic_token_class_maps_to_type() {
@@ -518,6 +658,51 @@ mod tests {
         assert_eq!(
             highlight_kind_for_semantic_token("decorator", 0, &LspSemanticTokensLegend::default()),
             Some(HighlightKind::Attribute)
+        );
+    }
+
+    #[test]
+    fn reconcile_pending_row_preserves_sticky_kind_left_of_cursor() {
+        let line = "cin >> value";
+        let current = vec![
+            sem_tok("cin", Some(HighlightKind::Variable)),
+            sem_tok(" >> value", None),
+        ];
+        let pending = vec![sem_tok(line, None)];
+
+        let merged = reconcile_pending_semantic_row(line, Some(&current), &pending, 7)
+            .expect("row should be rewritten");
+
+        assert_eq!(merged, current);
+    }
+
+    #[test]
+    fn reconcile_pending_row_does_not_preserve_right_of_cursor() {
+        let line = "cin >> value";
+        let current = vec![
+            sem_tok("cin >> ", None),
+            sem_tok("value", Some(HighlightKind::Variable)),
+        ];
+        let pending = vec![sem_tok(line, None)];
+
+        assert!(
+            reconcile_pending_semantic_row(line, Some(&current), &pending, 7).is_none(),
+            "right-of-cursor sticky preservation should not apply"
+        );
+    }
+
+    #[test]
+    fn reconcile_pending_row_does_not_preserve_text_mismatch() {
+        let line = "cout >> value";
+        let current = vec![
+            sem_tok("cin", Some(HighlightKind::Variable)),
+            sem_tok(" >> value", None),
+        ];
+        let pending = vec![sem_tok(line, None)];
+
+        assert!(
+            reconcile_pending_semantic_row(line, Some(&current), &pending, 8).is_none(),
+            "stale visible text should not be preserved"
         );
     }
 }

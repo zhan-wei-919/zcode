@@ -128,6 +128,58 @@ fn invalidate_semantic_highlight_keeps_visible_and_clears_pending_on_edit() {
 }
 
 #[test]
+fn pending_semantic_line_returns_uncovered_for_rows_outside_pending_range() {
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "first\nsecond\n",
+        &config,
+    );
+
+    let version = tab.edit_version;
+    let _ = tab.set_pending_semantic_highlight_range_from_slice(
+        version,
+        1,
+        &[vec![sem_tok("second", Some(HighlightKind::Variable))]],
+    );
+
+    assert!(matches!(
+        tab.pending_semantic_line(0),
+        PendingSemanticLine::Uncovered
+    ));
+    assert!(matches!(
+        tab.pending_semantic_line(1),
+        PendingSemanticLine::Covered(tokens)
+            if tokens == [sem_tok("second", Some(HighlightKind::Variable))]
+    ));
+}
+
+#[test]
+fn pending_semantic_line_distinguishes_covered_empty_line_from_uncovered() {
+    use crate::kernel::services::ports::EditorConfig;
+    use std::path::PathBuf;
+
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "\n", &config);
+
+    let version = tab.edit_version;
+    let _ = tab.set_pending_semantic_highlight_from_slice(version, &[Vec::new()]);
+
+    assert!(matches!(
+        tab.pending_semantic_line(0),
+        PendingSemanticLine::Covered(tokens) if tokens.is_empty()
+    ));
+    assert!(matches!(
+        tab.pending_semantic_line(1),
+        PendingSemanticLine::Uncovered
+    ));
+}
+
+#[test]
 fn syntax_cache_clears_multiline_edit_spans_until_async_patch() {
     use crate::kernel::services::ports::EditorConfig;
     use std::path::PathBuf;
