@@ -521,6 +521,32 @@ impl Store {
         }
     }
 
+    fn reconcile_signature_help_visibility(&mut self) -> bool {
+        if !self.state.ui.signature_help.is_active() {
+            return false;
+        }
+
+        let keep_open = self
+            .state
+            .editor
+            .pane(self.state.ui.editor_layout.active_pane)
+            .and_then(|pane| pane.active_tab())
+            .is_some_and(|tab| {
+                let adapter = adapter_for_tab(tab);
+                let runtime = completion_runtime_context(&self.state, tab, adapter);
+                adapter
+                    .interaction()
+                    .signature_help_should_keep_open(&runtime)
+            });
+
+        if keep_open {
+            return false;
+        }
+
+        self.state.ui.signature_help = super::state::SignatureHelpPopupState::default();
+        true
+    }
+
     fn active_editor_file_path(&self) -> Option<std::path::PathBuf> {
         let active_pane = self.state.ui.editor_layout.active_pane;
         self.state
@@ -909,6 +935,7 @@ impl Store {
                         result.state_changed |= self.sync_explorer_selection_to_path(path);
                     }
                 }
+                result.state_changed |= self.reconcile_signature_help_visibility();
                 result
             }
             Action::OpenPath(path) => DispatchResult {
@@ -968,7 +995,8 @@ impl Store {
                     effects,
                     state_changed: pane != prev
                         || prev_focus != FocusTarget::Editor
-                        || completion_changed,
+                        || completion_changed
+                        || self.reconcile_signature_help_visibility(),
                 }
             }
             Action::EditorSetSplitRatio { ratio } => {

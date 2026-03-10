@@ -9,7 +9,8 @@ use serde_json::Value;
 use tempfile::tempdir;
 use zcode::app::Workbench;
 use zcode::core::event::{
-    InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
 };
 use zcode::kernel::editor::HighlightKind;
 use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
@@ -3093,6 +3094,85 @@ fn test_signature_help_closes_after_cursor_leaves_call() {
         assert!(workbench.state().ui.signature_help.request.is_none());
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn test_signature_help_closes_after_mouse_moves_cursor_outside_call() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
+    assert!(
+        stub_path.is_file(),
+        "stub binary missing at {}",
+        stub_path.display()
+    );
+
+    let dir = tempdir().unwrap();
+    let a_path = dir.path().join("a.rs");
+    let trace_path = dir.path().join("lsp_trace.txt");
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
+        .remove("ZCODE_LSP_ARGS")
+        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
+
+    std::fs::write(&a_path, "\nlet outside_target = 1;\n").unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: a_path.clone(),
+        content: std::fs::read_to_string(&a_path).unwrap(),
+    });
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state()
+            .lsp
+            .server_capabilities
+            .keys()
+            .any(|k| k.server == LspServerKind::RustAnalyzer)
+    });
+
+    for ch in "String::from".chars() {
+        let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+    }
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Char('('),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
+        w.state().ui.signature_help.display_text().is_some()
+    });
+
+    let (call_x, call_y) =
+        find_text_position(&mut workbench, 120, 40, "String::from").expect("call rendered");
+    let target_x = call_x;
+    let target_y = call_y.saturating_add(1);
+
+    let _ = workbench.handle_input(&InputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: target_x,
+        row: target_y,
+        modifiers: KeyModifiers::NONE,
+    }));
+
+    drain_runtime_messages(&mut workbench, &rx);
+    workbench.tick();
+
+    assert!(
+        !workbench.state().ui.signature_help.visible,
+        "signature help popup did not close after mouse move: {:?}",
+        workbench.state().ui.signature_help
+    );
+    assert!(workbench.state().ui.signature_help.request.is_none());
 }
 
 #[test]
