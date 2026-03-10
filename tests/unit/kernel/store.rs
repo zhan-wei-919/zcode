@@ -2098,6 +2098,57 @@ fn cpp_hash_directive_context_allows_completion() {
 }
 
 #[test]
+fn cpp_define_macro_name_space_closes_directive_completion_popup() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let content = "#define LEFT".to_string();
+
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: content.clone(),
+    }));
+
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    let normalization = {
+        let tab = store.state.editor.pane(0).unwrap().active_tab().unwrap();
+        runtime_for_tab(tab).completion_snapshot()
+    };
+
+    store.state.ui.completion.visible = true;
+    store.state.ui.completion.selected = 0;
+    store.state.ui.completion.all_items = vec![
+        test_completion_item(1, "define").into(),
+        test_completion_item(2, "line").into(),
+    ];
+    store.state.ui.completion.rebuild_index_by_id();
+    store.state.ui.completion.visible_indices = vec![0, 1];
+    store.state.ui.completion.request = Some(CompletionRequestContext {
+        pane: 0,
+        path,
+        version: 0,
+        normalization,
+    });
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar(' ')));
+
+    assert!(!store.state.ui.completion.visible);
+    assert_eq!(store.state.ui.completion.visible_len(), 0);
+    assert!(store.state.ui.completion.request.is_none());
+}
+
+#[test]
 fn cpp_include_empty_lsp_completion_falls_back_to_delimiters() {
     let mut store = new_store();
     store.state.ui.focus = FocusTarget::Editor;

@@ -244,7 +244,6 @@ fn include_bounds(tab: &EditorTabState) -> Option<(usize, usize)> {
 
 fn directive_completion_state(tab: &EditorTabState) -> DirectiveCompletionState {
     match syntax_facts_for_tab(tab).line_context {
-        LineContext::Directive => DirectiveCompletionState::DirectiveName,
         LineContext::Include(IncludeContext {
             bounds: Some(_), ..
         }) => DirectiveCompletionState::IncludePath,
@@ -253,13 +252,54 @@ fn directive_completion_state(tab: &EditorTabState) -> DirectiveCompletionState 
             delimiter: None,
         }) => DirectiveCompletionState::IncludeBeforeDelimiter,
         LineContext::Include(_) => DirectiveCompletionState::IncludeClosed,
-        LineContext::Import | LineContext::None => {
-            if is_hash_at_line_start(tab) {
-                DirectiveCompletionState::DirectiveName
-            } else {
-                DirectiveCompletionState::None
-            }
+        LineContext::Directive | LineContext::Import | LineContext::None => {
+            non_include_directive_completion_state(tab)
         }
+    }
+}
+
+fn non_include_directive_completion_state(tab: &EditorTabState) -> DirectiveCompletionState {
+    let rope = tab.buffer.rope();
+    let cursor = crate::kernel::language::adapter::cursor_char_offset(tab).min(rope.len_chars());
+    let row = rope.char_to_line(cursor);
+    let line_start = rope.line_to_char(row);
+
+    let mut idx = line_start;
+    while idx < cursor && matches!(rope.char(idx), ' ' | '\t') {
+        idx = idx.saturating_add(1);
+    }
+
+    if idx >= cursor || rope.char(idx) != '#' {
+        return DirectiveCompletionState::None;
+    }
+    idx = idx.saturating_add(1);
+
+    while idx < cursor && matches!(rope.char(idx), ' ' | '\t') {
+        idx = idx.saturating_add(1);
+    }
+
+    if idx >= cursor {
+        return DirectiveCompletionState::DirectiveName;
+    }
+
+    let token_start = idx;
+    while idx < cursor {
+        let ch = rope.char(idx);
+        if ch == '_' || ch.is_ascii_alphanumeric() {
+            idx = idx.saturating_add(1);
+            continue;
+        }
+        break;
+    }
+
+    if idx == token_start {
+        return DirectiveCompletionState::None;
+    }
+
+    if idx == cursor {
+        DirectiveCompletionState::DirectiveName
+    } else {
+        DirectiveCompletionState::None
     }
 }
 
