@@ -936,23 +936,11 @@ exit 0
 
     let plan_c = default_launch_plan(LanguageId::C, workspace_root, workspace_root);
     assert_eq!(plan_c.command, Some(clangd.to_string_lossy().to_string()));
-    assert_eq!(
-        plan_c.args,
-        vec![
-            "--fallback-style={BasedOnStyle: LLVM, IndentWidth: 4, TabWidth: 4, UseTab: Never}"
-                .to_string()
-        ]
-    );
+    assert_eq!(plan_c.args, vec!["--fallback-style=WebKit".to_string()]);
 
     let plan_cpp = default_launch_plan(LanguageId::Cpp, workspace_root, workspace_root);
     assert_eq!(plan_cpp.command, Some(clangd.to_string_lossy().to_string()));
-    assert_eq!(
-        plan_cpp.args,
-        vec![
-            "--fallback-style={BasedOnStyle: LLVM, IndentWidth: 4, TabWidth: 4, UseTab: Never}"
-                .to_string()
-        ]
-    );
+    assert_eq!(plan_cpp.args, vec!["--fallback-style=WebKit".to_string()]);
 
     let plan_java = default_launch_plan(LanguageId::Java, workspace_root, workspace_root);
     assert_eq!(plan_java.command, Some(jdtls.to_string_lossy().to_string()));

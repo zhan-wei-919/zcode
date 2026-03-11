@@ -127,8 +127,7 @@ static TYPESCRIPT_LANGUAGE_SERVER_LSP_LAUNCH_POLICY: TypeScriptLanguageServerLau
 static CLANGD_LSP_LAUNCH_POLICY: ClangdLspLaunchPolicy = ClangdLspLaunchPolicy;
 static JDTLS_LSP_LAUNCH_POLICY: JdtlsLspLaunchPolicy = JdtlsLspLaunchPolicy;
 
-const CLANGD_FALLBACK_STYLE_ARG: &str =
-    "--fallback-style={BasedOnStyle: LLVM, IndentWidth: 4, TabWidth: 4, UseTab: Never}";
+const CLANGD_FALLBACK_STYLE_ARG: &str = "--fallback-style=WebKit";
 
 pub(crate) fn launch_policy_for(server: Option<LspServerKind>) -> &'static dyn LspLaunchPolicy {
     match server {
