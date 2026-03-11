@@ -1404,6 +1404,43 @@ fn test_highlight_html_tags_and_attributes() {
 }
 
 #[test]
+fn test_highlight_html_embedded_css_and_js_raw_text() {
+    let src = "<style>\n.main { color: red; }\n</style>\n<script>\nconst answer = greet(42);\n</script>\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.html"), &rope).expect("html syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, rope.len_lines());
+
+    let css_line = ".main { color: red; }";
+    let idx_selector = css_line.find(".main").unwrap() + 1;
+    let idx_property = css_line.find("color").unwrap();
+    assert!(spans[1]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Type && s.start <= idx_selector && idx_selector < s.end));
+    assert!(spans[1].iter().any(|s| {
+        s.kind == HighlightKind::Variable && s.start <= idx_property && idx_property < s.end
+    }));
+
+    let js_line = "const answer = greet(42);";
+    let idx_const = js_line.find("const").unwrap();
+    let idx_answer = js_line.find("answer").unwrap();
+    let idx_greet = js_line.find("greet").unwrap();
+    let idx_number = js_line.find("42").unwrap();
+    assert!(spans[4]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Keyword && s.start <= idx_const && idx_const < s.end));
+    assert!(spans[4]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Variable && s.start <= idx_answer && idx_answer < s.end));
+    assert!(spans[4]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Function && s.start <= idx_greet && idx_greet < s.end));
+    assert!(spans[4]
+        .iter()
+        .any(|s| s.kind == HighlightKind::Number && s.start <= idx_number && idx_number < s.end));
+}
+
+#[test]
 fn test_highlight_xml_tags_and_attributes() {
     let src = r#"<root attr="val"><child/></root>"#;
     let rope = Rope::from_str(src);

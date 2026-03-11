@@ -19,7 +19,7 @@ use ropey::Rope;
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::path::Path;
-use tree_sitter::{InputEdit, Node, Parser, Point, Tree};
+use tree_sitter::{InputEdit, Language as TsLanguage, Node, Parser, Point, Tree};
 use unicode_xid::UnicodeXID;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -240,31 +240,8 @@ impl SyntaxDocument {
 
     fn new(language: LanguageId, rope: &Rope) -> Option<Self> {
         let mut parser = Parser::new();
-        match language {
-            LanguageId::Rust => parser.set_language(tree_sitter_rust::language()).ok()?,
-            LanguageId::Go => parser.set_language(tree_sitter_go::language()).ok()?,
-            LanguageId::Python => parser.set_language(tree_sitter_python::language()).ok()?,
-            LanguageId::C => parser.set_language(tree_sitter_c::language()).ok()?,
-            LanguageId::Cpp => parser.set_language(tree_sitter_cpp::language()).ok()?,
-            LanguageId::Java => parser.set_language(tree_sitter_java::language()).ok()?,
-            LanguageId::JavaScript | LanguageId::Jsx => parser
-                .set_language(tree_sitter_javascript::language())
-                .ok()?,
-            LanguageId::TypeScript => parser
-                .set_language(tree_sitter_typescript::language_typescript())
-                .ok()?,
-            LanguageId::Tsx => parser
-                .set_language(tree_sitter_typescript::language_tsx())
-                .ok()?,
-            LanguageId::Json => parser.set_language(tree_sitter_json::language()).ok()?,
-            LanguageId::Yaml => parser.set_language(tree_sitter_yaml::language()).ok()?,
-            LanguageId::Html => parser.set_language(tree_sitter_html::language()).ok()?,
-            LanguageId::Xml => parser.set_language(tree_sitter_xml::language_xml()).ok()?,
-            LanguageId::Css => parser.set_language(tree_sitter_css::language()).ok()?,
-            LanguageId::Toml => parser.set_language(tree_sitter_toml::language()).ok()?,
-            LanguageId::Sql => parser.set_language(db3_sqlparser::language()).ok()?,
-            LanguageId::Bash => parser.set_language(tree_sitter_bash::language()).ok()?,
-            LanguageId::Markdown => return None,
+        if !configure_parser_language(&mut parser, language) {
+            return None;
         }
 
         let tree = parse_rope(&mut parser, rope, None)?;
@@ -609,38 +586,7 @@ pub fn highlight_snippet(language: LanguageId, text: &str) -> Vec<Vec<HighlightS
     let rope = Rope::from_str(text);
     let total_lines = rope.len_lines().max(1);
 
-    let mut parser = Parser::new();
-    let language_set = match language {
-        LanguageId::Rust => parser.set_language(tree_sitter_rust::language()).is_ok(),
-        LanguageId::Go => parser.set_language(tree_sitter_go::language()).is_ok(),
-        LanguageId::Python => parser.set_language(tree_sitter_python::language()).is_ok(),
-        LanguageId::C => parser.set_language(tree_sitter_c::language()).is_ok(),
-        LanguageId::Cpp => parser.set_language(tree_sitter_cpp::language()).is_ok(),
-        LanguageId::Java => parser.set_language(tree_sitter_java::language()).is_ok(),
-        LanguageId::JavaScript | LanguageId::Jsx => parser
-            .set_language(tree_sitter_javascript::language())
-            .is_ok(),
-        LanguageId::TypeScript => parser
-            .set_language(tree_sitter_typescript::language_typescript())
-            .is_ok(),
-        LanguageId::Tsx => parser
-            .set_language(tree_sitter_typescript::language_tsx())
-            .is_ok(),
-        LanguageId::Json => parser.set_language(tree_sitter_json::language()).is_ok(),
-        LanguageId::Yaml => parser.set_language(tree_sitter_yaml::language()).is_ok(),
-        LanguageId::Html => parser.set_language(tree_sitter_html::language()).is_ok(),
-        LanguageId::Xml => parser.set_language(tree_sitter_xml::language_xml()).is_ok(),
-        LanguageId::Css => parser.set_language(tree_sitter_css::language()).is_ok(),
-        LanguageId::Toml => parser.set_language(tree_sitter_toml::language()).is_ok(),
-        LanguageId::Sql => parser.set_language(db3_sqlparser::language()).is_ok(),
-        LanguageId::Bash => parser.set_language(tree_sitter_bash::language()).is_ok(),
-        LanguageId::Markdown => false,
-    };
-    if !language_set {
-        return vec![Vec::new(); total_lines];
-    }
-
-    let Some(tree) = parse_rope(&mut parser, &rope, None) else {
+    let Some(tree) = parse_tree(language, &rope) else {
         return vec![Vec::new(); total_lines];
     };
 
@@ -648,6 +594,44 @@ pub fn highlight_snippet(language: LanguageId, text: &str) -> Vec<Vec<HighlightS
     let end_byte = rope.len_bytes();
     let spans = collect_highlights(language, &tree, &rope, start_byte, end_byte);
     project_abs_spans_to_lines(&rope, 0, total_lines, &spans)
+}
+
+fn parser_language(language: LanguageId) -> Option<TsLanguage> {
+    match language {
+        LanguageId::Rust => Some(tree_sitter_rust::language()),
+        LanguageId::Go => Some(tree_sitter_go::language()),
+        LanguageId::Python => Some(tree_sitter_python::language()),
+        LanguageId::C => Some(tree_sitter_c::language()),
+        LanguageId::Cpp => Some(tree_sitter_cpp::language()),
+        LanguageId::Java => Some(tree_sitter_java::language()),
+        LanguageId::JavaScript | LanguageId::Jsx => Some(tree_sitter_javascript::language()),
+        LanguageId::TypeScript => Some(tree_sitter_typescript::language_typescript()),
+        LanguageId::Tsx => Some(tree_sitter_typescript::language_tsx()),
+        LanguageId::Json => Some(tree_sitter_json::language()),
+        LanguageId::Yaml => Some(tree_sitter_yaml::language()),
+        LanguageId::Html => Some(tree_sitter_html::language()),
+        LanguageId::Xml => Some(tree_sitter_xml::language_xml()),
+        LanguageId::Css => Some(tree_sitter_css::language()),
+        LanguageId::Toml => Some(tree_sitter_toml::language()),
+        LanguageId::Sql => Some(db3_sqlparser::language()),
+        LanguageId::Bash => Some(tree_sitter_bash::language()),
+        LanguageId::Markdown => None,
+    }
+}
+
+fn configure_parser_language(parser: &mut Parser, language: LanguageId) -> bool {
+    let Some(grammar) = parser_language(language) else {
+        return false;
+    };
+    parser.set_language(grammar).is_ok()
+}
+
+fn parse_tree(language: LanguageId, rope: &Rope) -> Option<Tree> {
+    let mut parser = Parser::new();
+    if !configure_parser_language(&mut parser, language) {
+        return None;
+    }
+    parse_rope(&mut parser, rope, None)
 }
 
 fn parse_rope(parser: &mut Parser, rope: &Rope, old_tree: Option<&Tree>) -> Option<Tree> {
@@ -880,6 +864,7 @@ fn collect_highlights(
             c::collect_fallback_spans(rope, start_byte, end_byte, &normalized)
         }
         LanguageId::Sql => sql::collect_fallback_spans(rope, start_byte, end_byte, &normalized),
+        LanguageId::Html => collect_html_embedded_spans(tree, rope, start_byte, end_byte),
         _ => Vec::new(),
     };
     if !supplemental.is_empty() {
@@ -888,6 +873,95 @@ fn collect_highlights(
     }
 
     normalized
+}
+
+fn collect_html_embedded_spans(
+    tree: &Tree,
+    rope: &Rope,
+    start_byte: usize,
+    end_byte: usize,
+) -> Vec<AbsHighlightSpan> {
+    let root = tree.root_node();
+    let mut stack = vec![root];
+    let mut spans = Vec::new();
+
+    while let Some(node) = stack.pop() {
+        let node_start = node.start_byte();
+        let node_end = node.end_byte();
+        if node_end <= start_byte || node_start >= end_byte {
+            continue;
+        }
+
+        let embedded_language = match node.kind() {
+            "script_element" => Some(LanguageId::JavaScript),
+            "style_element" => Some(LanguageId::Css),
+            _ => None,
+        };
+        if let Some(embedded_language) = embedded_language {
+            collect_html_raw_text_spans(
+                node,
+                embedded_language,
+                rope,
+                start_byte,
+                end_byte,
+                &mut spans,
+            );
+            continue;
+        }
+
+        let child_count = node.child_count();
+        for i in (0..child_count).rev() {
+            if let Some(child) = node.child(i) {
+                stack.push(child);
+            }
+        }
+    }
+
+    spans
+}
+
+fn collect_html_raw_text_spans(
+    element: Node<'_>,
+    language: LanguageId,
+    rope: &Rope,
+    start_byte: usize,
+    end_byte: usize,
+    out: &mut Vec<AbsHighlightSpan>,
+) {
+    let Some(raw_text) = (0..element.child_count())
+        .filter_map(|index| element.child(index))
+        .find(|child| child.kind() == "raw_text")
+    else {
+        return;
+    };
+
+    let raw_start = raw_text.start_byte();
+    let raw_end = raw_text.end_byte();
+    if raw_end <= start_byte || raw_start >= end_byte {
+        return;
+    }
+
+    let start_char = rope.byte_to_char(raw_start);
+    let end_char = rope.byte_to_char(raw_end);
+    let embedded_text = rope.slice(start_char..end_char).to_string();
+    let embedded_rope = Rope::from_str(embedded_text.as_str());
+    let Some(embedded_tree) = parse_tree(language, &embedded_rope) else {
+        return;
+    };
+
+    let embedded_spans = collect_highlights(
+        language,
+        &embedded_tree,
+        &embedded_rope,
+        0,
+        embedded_rope.len_bytes(),
+    );
+    out.extend(embedded_spans.into_iter().map(|span| AbsHighlightSpan {
+        start: raw_start + span.start,
+        end: raw_start + span.end,
+        kind: span.kind,
+        depth: span.depth.saturating_add(1),
+    }));
 }
 
 fn normalize_overlapping_highlight_spans(
