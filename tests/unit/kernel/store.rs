@@ -1844,6 +1844,59 @@ fn lsp_completion_resolve_updates_insert_payload_fields() {
 }
 
 #[test]
+fn lsp_completion_requests_resolve_for_documented_unresolved_selected_item() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "map.ins\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::RunCommand(Command::CursorLineEnd));
+    let _ = store.dispatch(Action::RunCommand(Command::LspCompletion));
+
+    let result = store.dispatch(Action::LspCompletion {
+        items: vec![LspCompletionItem {
+            id: 7,
+            label: "insert".to_string(),
+            detail: Some("fn insert".to_string()),
+            kind: Some(2),
+            documentation: Some("docs already present".to_string()),
+            insert_text: "insert($1, $2)$0".to_string(),
+            insert_text_format: LspInsertTextFormat::Snippet,
+            insert_range: None,
+            replace_range: None,
+            sort_text: None,
+            filter_text: None,
+            additional_text_edits: Vec::new(),
+            command: None,
+            data: Some(serde_json::json!({ "id": 7 })),
+        }],
+        is_incomplete: false,
+    });
+
+    assert!(
+        result.effects.iter().any(|effect| matches!(
+            effect,
+            Effect::LspCompletionResolveRequest { item }
+                if item.id == 7 && item.data.is_some()
+        )),
+        "expected selected unresolved completion to request resolve even when docs are present"
+    );
+    assert_eq!(store.state.ui.completion.resolve_inflight, Some(7));
+    assert!(matches!(
+        store
+            .state
+            .ui
+            .completion
+            .selected_item()
+            .map(|item| item.resolve_state),
+        Some(crate::kernel::language::CompletionResolveState::Resolving)
+    ));
+}
+
+#[test]
 fn lsp_completion_resolved_uses_request_snapshot_when_tab_is_gone() {
     let mut store = new_store();
     store.state.ui.focus = FocusTarget::Editor;
@@ -3629,6 +3682,19 @@ fn snippet_tab_navigation_moves_between_placeholders() {
         .expect("tab exists");
     assert!(tab.buffer.selection().is_none());
     assert_eq!(tab.buffer.cursor(), (0, 15));
+    assert!(tab.snippet_active_range().is_some());
+
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('x')));
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("tab exists");
+    assert_eq!(tab.buffer.text(), "fn name(arg) { x }");
+    assert!(tab.snippet_active_range().is_none());
+    assert!(tab.buffer.selection().is_none());
+    assert_eq!(tab.buffer.cursor(), (0, 16));
 
     let _ = store.dispatch(Action::RunCommand(Command::InsertTab));
     let tab = store
@@ -3637,7 +3703,7 @@ fn snippet_tab_navigation_moves_between_placeholders() {
         .pane(0)
         .and_then(|pane| pane.active_tab())
         .expect("tab exists");
-    assert_eq!(tab.buffer.text(), "fn name(arg) { \t }");
+    assert_eq!(tab.buffer.text(), "fn name(arg) { x\t }");
 }
 
 #[test]

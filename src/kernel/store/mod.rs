@@ -359,14 +359,6 @@ impl Store {
         ) {
             return false;
         }
-        if record
-            .entry
-            .documentation
-            .as_ref()
-            .is_some_and(|d| !d.trim().is_empty())
-        {
-            return false;
-        }
         if self.state.ui.completion.resolve_inflight == Some(record.entry.id) {
             return false;
         }

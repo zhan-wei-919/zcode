@@ -324,6 +324,46 @@ fn rust_adapter_does_not_synthesize_callable_fallback() {
 }
 
 #[test]
+fn rust_adapter_enhances_fn_keyword_snippet_with_return_placeholder() {
+    let tab = test_tab("main.rs", "fn", 2);
+    let item = LspCompletionItem {
+        id: 3,
+        label: "fn".to_string(),
+        detail: None,
+        kind: Some(14),
+        documentation: None,
+        insert_text: "fn $1($2) {\n    $0\n}".to_string(),
+        insert_text_format: LspInsertTextFormat::Snippet,
+        insert_range: None,
+        replace_range: None,
+        sort_text: None,
+        filter_text: None,
+        additional_text_edits: Vec::new(),
+        command: None,
+        data: None,
+    };
+
+    let plan = normalize_plan(&tab, &item);
+    assert_eq!(plan.text, "fn name(args) -> Ret {\n    \n}");
+    assert_eq!(plan.selection, Some((3, 7)));
+    assert_eq!(plan.cursor, Some(7));
+    assert_eq!(
+        plan.strategy,
+        crate::kernel::language::TextEditStrategy::SynthesizedSnippet
+    );
+    assert_eq!(
+        plan.tabstops
+            .iter()
+            .map(|tabstop| tabstop.index)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3, 0]
+    );
+
+    let snapshot = normalize_snapshot_plan(&tab, &item);
+    assert_eq!(snapshot, plan);
+}
+
+#[test]
 fn c_family_adapter_applies_callable_fallback_in_normal_context() {
     let tab = test_tab("main.cpp", "pri", 3);
     let plan = normalize_plan(&tab, &callable_item("printf"));

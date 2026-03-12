@@ -1,4 +1,4 @@
-use crate::kernel::language::{CompletionResolveState, HoverSectionModel};
+use crate::kernel::language::HoverSectionModel;
 use crate::kernel::services::ports::{
     LspClientKey, LspHoverPayload, LspHoverPreviewPayload, LspPosition, LspPositionEncoding,
     LspRange, LspResourceOp, LspServerCapabilities, LspTextEdit, LspWorkspaceEdit,
@@ -1527,25 +1527,7 @@ impl super::super::Store {
 
                 let mut effects = Vec::new();
                 if let Some(record) = self.state.ui.completion.selected_record().cloned() {
-                    if matches!(
-                        record.entry.resolve_state,
-                        CompletionResolveState::Unresolved
-                    ) && record
-                        .entry
-                        .documentation
-                        .as_ref()
-                        .is_none_or(|d| d.trim().is_empty())
-                    {
-                        self.state.ui.completion.resolve_inflight = Some(record.entry.id);
-                        let _ = self
-                            .state
-                            .ui
-                            .completion
-                            .set_resolve_state(record.entry.id, CompletionResolveState::Resolving);
-                        effects.push(Effect::LspCompletionResolveRequest {
-                            item: Box::new(record.raw),
-                        });
-                    }
+                    let _ = self.maybe_request_completion_resolve_for_record(&record, &mut effects);
                 }
                 super::super::DispatchResult {
                     effects,

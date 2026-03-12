@@ -429,6 +429,13 @@ impl EditorTabState {
             return;
         }
 
+        // `$0` is the final cursor landing point, not an editable placeholder that should
+        // keep snippet mode alive while the user types real content.
+        if active.index == 0 {
+            self.snippet_session = None;
+            return;
+        }
+
         let delta = inserted_len as isize - deleted_len as isize;
         if delta == 0 {
             return;

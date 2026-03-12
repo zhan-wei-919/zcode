@@ -1019,6 +1019,232 @@ fn test_real_pyright_hover_and_completion_smoke() {
 }
 
 #[test]
+#[ignore]
+fn test_real_rust_analyzer_completion_preserves_placeholder_text() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(
+            "zcode::kernel::services::adapters::lsp=debug",
+        ))
+        .with_test_writer()
+        .try_init();
+
+    if !has_command_in_path("rust-analyzer") {
+        eprintln!("skip: rust-analyzer not found on PATH");
+        return;
+    }
+
+    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
+        .remove("ZCODE_DISABLE_LSP")
+        .remove("ZCODE_LSP_COMMAND")
+        .remove("ZCODE_LSP_ARGS")
+        .remove("ZCODE_LSP_STUB_TRACE_PATH")
+        .remove("ZCODE_LSP_STUB_DISABLE_OPTIONAL");
+
+    let dir = tempdir().unwrap();
+    let cargo_toml = dir.path().join("Cargo.toml");
+    let src_dir = dir.path().join("src");
+    let main_rs = src_dir.join("main.rs");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::write(
+        &cargo_toml,
+        "[package]\nname = \"ra-snippet-smoke\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &main_rs,
+        concat!(
+            "use std::collections::HashMap;\n",
+            "\n",
+            "fn main() {\n",
+            "    let mut map: HashMap<String, i32> = HashMap::new();\n",
+            "    map.ins\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+
+    let (runtime, rx) = create_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    assert!(workbench.has_lsp_service());
+
+    workbench.handle_message(AppMessage::FileLoaded {
+        path: main_rs.clone(),
+        content: std::fs::read_to_string(&main_rs).unwrap(),
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Right,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(20), |w| {
+        w.state()
+            .lsp
+            .server_capabilities
+            .keys()
+            .any(|k| k.server == LspServerKind::RustAnalyzer)
+    });
+
+    for _ in 0..4 {
+        let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Down,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+    }
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::End,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    let completion = KeyEvent {
+        code: KeyCode::Char(' '),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+    };
+    let completion_deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let _ = workbench.handle_input(&InputEvent::Key(completion));
+        let wait_slice = Duration::from_millis(750);
+        let slice_start = Instant::now();
+        loop {
+            drain_runtime_messages(&mut workbench, &rx);
+            workbench.tick();
+            let completion = &workbench.state().ui.completion;
+            if completion.visible && completion.visible_len() > 0 {
+                break;
+            }
+            if slice_start.elapsed() >= wait_slice {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let completion = &workbench.state().ui.completion;
+        if completion.visible && completion.visible_len() > 0 {
+            break;
+        }
+        if Instant::now() >= completion_deadline {
+            panic!("timeout waiting for visible rust-analyzer completions");
+        }
+    }
+
+    let visible_items = (0..workbench.state().ui.completion.visible_len())
+        .filter_map(|i| {
+            workbench
+                .state()
+                .ui
+                .completion
+                .visible_record(i)
+                .map(|item| {
+                    (
+                        i,
+                        item.entry.label.clone(),
+                        item.raw.insert_text.clone(),
+                        item.entry.commit.insert.text.clone(),
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    eprintln!("[e2e] rust-analyzer visible completions: {visible_items:#?}");
+
+    let Some(target_visible_idx) =
+        visible_items
+            .iter()
+            .find_map(|(idx, label, raw, normalized)| {
+                let is_target = label.contains("insert")
+                    || raw.contains("insert")
+                    || normalized.contains("insert");
+                is_target.then_some(*idx)
+            })
+    else {
+        panic!("expected an insert completion item, got: {visible_items:#?}");
+    };
+
+    while workbench.state().ui.completion.selected != target_visible_idx {
+        let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Down,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+    }
+
+    if let Some(item) = workbench.state().ui.completion.selected_record() {
+        eprintln!(
+            "[e2e] selected completion label={:?} raw_insert={:?} normalized_insert={:?} data_present={} resolve_state={:?}",
+            item.entry.label,
+            item.raw.insert_text,
+            item.entry.commit.insert.text,
+            item.raw.data.is_some(),
+            item.entry.resolve_state,
+        );
+    }
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(20), |w| {
+        let Some(item) = w.state().ui.completion.selected_record() else {
+            return false;
+        };
+
+        item.entry.label.contains("insert")
+            && item.raw.insert_text_format
+                == zcode::kernel::services::ports::LspInsertTextFormat::Snippet
+            && item.entry.commit.insert.text.contains("insert(")
+            && !item.entry.commit.insert.text.contains("insert(, )")
+    });
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    drive_until(&mut workbench, &rx, Duration::from_secs(20), |w| {
+        w.state()
+            .editor
+            .pane(0)
+            .and_then(|pane| pane.active_tab())
+            .is_some_and(|tab| tab.buffer.text().contains("map.insert("))
+    });
+
+    let tab = workbench
+        .state()
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("active tab");
+    let buffer_text = tab.buffer.text();
+    let inserted_line = buffer_text
+        .lines()
+        .find(|line| line.contains("map.insert("))
+        .expect("inserted line");
+    let args = inserted_line
+        .split("map.insert(")
+        .nth(1)
+        .and_then(|rest| rest.split(')').next())
+        .expect("argument list");
+    let parts = args.split(", ").collect::<Vec<_>>();
+    assert_eq!(
+        parts.len(),
+        2,
+        "expected two placeholder arguments: {inserted_line}"
+    );
+    assert!(
+        parts.iter().all(|part| part
+            .chars()
+            .any(|ch| ch.is_ascii_alphanumeric() || ch == '_')),
+        "expected placeholder text to be preserved, got: {inserted_line}"
+    );
+    assert!(
+        tab.buffer.selection().is_some(),
+        "expected first placeholder to stay selected: {inserted_line}"
+    );
+}
+
+#[test]
 fn test_optional_lsp_requests_are_gated_by_capabilities() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
