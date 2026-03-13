@@ -23,12 +23,14 @@ fn new_store() -> Store {
     Store::new(AppState::new(root, tree, EditorConfig::default()))
 }
 
-fn sem_tok(
-    text: &str,
+fn sem_seg(
+    start: usize,
+    end: usize,
     kind: Option<crate::kernel::editor::HighlightKind>,
-) -> crate::kernel::editor::SemanticToken {
-    crate::kernel::editor::SemanticToken {
-        text: text.into(),
+) -> crate::kernel::editor::SemanticSegment {
+    crate::kernel::editor::SemanticSegment {
+        start,
+        end,
         semantic_kind: kind,
     }
 }
@@ -3039,7 +3041,7 @@ fn semantic_tokens_response_is_deferred_until_boundary_after_identifier_input() 
             .editor
             .pane(0)
             .and_then(|pane| pane.active_tab())
-            .and_then(|tab| tab.semantic_tokens_lines(0, 1))
+            .and_then(|tab| tab.semantic_segments_lines(0, 1))
             .is_none(),
         "非边界输入后不应出现语义高亮"
     );
@@ -3071,7 +3073,7 @@ fn semantic_tokens_response_is_deferred_until_boundary_after_identifier_input() 
             .editor
             .pane(0)
             .and_then(|pane| pane.active_tab())
-            .and_then(|tab| tab.semantic_tokens_lines(0, 1))
+            .and_then(|tab| tab.semantic_segments_lines(0, 1))
             .is_some(),
         "边界输入后新的语义响应应可见"
     );
@@ -3106,28 +3108,28 @@ fn cursor_move_flush_preserves_sticky_semantic_kind_on_active_line() {
         let _ = tab.set_semantic_highlight(
             version,
             vec![vec![
-                sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
-                sem_tok(" >> value", None),
+                sem_seg(0, 3, Some(crate::kernel::editor::HighlightKind::Variable)),
+                sem_seg(3, "cin >> value".len(), None),
             ]],
         );
         let _ = tab.set_pending_semantic_highlight_from_slice(
             version,
-            &[vec![sem_tok("cin >> value", None)]],
+            &[vec![sem_seg(0, "cin >> value".len(), None)]],
         );
     }
 
     let _ = store.dispatch(Action::RunCommand(Command::CursorRight));
 
     let expected = vec![
-        sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
-        sem_tok(" >> value", None),
+        sem_seg(0, 3, Some(crate::kernel::editor::HighlightKind::Variable)),
+        sem_seg(3, "cin >> value".len(), None),
     ];
     let row = store
         .state
         .editor
         .pane(0)
         .and_then(|pane| pane.active_tab())
-        .and_then(|tab| tab.semantic_tokens_line(0))
+        .and_then(|tab| tab.semantic_segments_line(0))
         .expect("semantic row should remain visible");
     assert_eq!(row, expected.as_slice());
 }
@@ -3172,8 +3174,8 @@ fn semantic_tokens_full_empty_response_preserves_sticky_kind_left_of_cursor() {
             version,
             vec![
                 vec![
-                    sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
-                    sem_tok(" >> value", None),
+                    sem_seg(0, 3, Some(crate::kernel::editor::HighlightKind::Variable)),
+                    sem_seg(3, "cin >> value".len(), None),
                 ],
                 Vec::new(),
             ],
@@ -3186,15 +3188,15 @@ fn semantic_tokens_full_empty_response_preserves_sticky_kind_left_of_cursor() {
         tokens: Vec::new(),
     });
     let expected = vec![
-        sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
-        sem_tok(" >> value", None),
+        sem_seg(0, 3, Some(crate::kernel::editor::HighlightKind::Variable)),
+        sem_seg(3, "cin >> value".len(), None),
     ];
     let row = store
         .state
         .editor
         .pane(0)
         .and_then(|pane| pane.active_tab())
-        .and_then(|tab| tab.semantic_tokens_line(0))
+        .and_then(|tab| tab.semantic_segments_line(0))
         .expect("semantic row should remain visible");
     assert_eq!(row, expected.as_slice());
 }
@@ -3238,8 +3240,8 @@ fn semantic_tokens_range_empty_response_preserves_sticky_kind_left_of_cursor() {
         let _ = tab.set_semantic_highlight(
             version,
             vec![vec![
-                sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
-                sem_tok(" >> value", None),
+                sem_seg(0, 3, Some(crate::kernel::editor::HighlightKind::Variable)),
+                sem_seg(3, "cin >> value".len(), None),
             ]],
         );
     }
@@ -3265,15 +3267,15 @@ fn semantic_tokens_range_empty_response_preserves_sticky_kind_left_of_cursor() {
         "sticky merge should keep the visible semantic row unchanged"
     );
     let expected = vec![
-        sem_tok("cin", Some(crate::kernel::editor::HighlightKind::Variable)),
-        sem_tok(" >> value", None),
+        sem_seg(0, 3, Some(crate::kernel::editor::HighlightKind::Variable)),
+        sem_seg(3, "cin >> value".len(), None),
     ];
     let row = store
         .state
         .editor
         .pane(0)
         .and_then(|pane| pane.active_tab())
-        .and_then(|tab| tab.semantic_tokens_line(0))
+        .and_then(|tab| tab.semantic_segments_line(0))
         .expect("semantic row should remain visible");
     assert_eq!(row, expected.as_slice());
 }
@@ -3312,8 +3314,9 @@ fn completion_confirm_requests_immediate_refresh_but_clears_preexisting_pending_
         .and_then(|pane| pane.active_tab())
         .map(|tab| tab.edit_version)
         .expect("open tab exists");
-    let pending_lines = vec![vec![crate::kernel::editor::SemanticToken {
-        text: "println".into(),
+    let pending_lines = vec![vec![crate::kernel::editor::SemanticSegment {
+        start: 0,
+        end: "println".len(),
         semantic_kind: Some(crate::kernel::editor::HighlightKind::Function),
     }]];
     {
@@ -3324,7 +3327,7 @@ fn completion_confirm_requests_immediate_refresh_but_clears_preexisting_pending_
             .and_then(|pane| pane.active_tab_mut())
             .expect("open tab exists");
         let _ = tab.set_pending_semantic_highlight_from_slice(version, &pending_lines);
-        assert!(tab.semantic_tokens_lines(0, 1).is_none());
+        assert!(tab.semantic_segments_lines(0, 1).is_none());
     }
 
     let result = store.dispatch(Action::CompletionConfirm);
@@ -3344,7 +3347,7 @@ fn completion_confirm_requests_immediate_refresh_but_clears_preexisting_pending_
         .and_then(|pane| pane.active_tab())
         .expect("open tab exists");
     assert!(
-        tab.semantic_tokens_lines(0, 1).is_none(),
+        tab.semantic_segments_lines(0, 1).is_none(),
         "the preexisting pending semantic snapshot is cleared by the edit before confirm-time flush runs"
     );
 }
@@ -3419,7 +3422,7 @@ fn completion_confirm_keeps_followup_semantic_response_eager_until_first_visible
             .editor
             .pane(0)
             .and_then(|pane| pane.active_tab())
-            .and_then(|tab| tab.semantic_tokens_lines(0, 1))
+            .and_then(|tab| tab.semantic_segments_lines(0, 1))
             .is_some(),
         "the eager semantic response should become visible immediately"
     );
@@ -3563,11 +3566,15 @@ fn completion_confirm_seeds_cpp_type_highlight_before_semantic_response() {
     assert_eq!(tab.buffer.text(), "vector<int>");
 
     let semantic = tab
-        .semantic_tokens_line(0)
+        .semantic_segments_line(0)
         .expect("completion confirm should seed a visible semantic line");
+    let line = tab.buffer.rope().line(0).to_string();
+    let line = line.trim_end_matches(['\n', '\r']);
     assert!(semantic.iter().any(|token| {
         token.semantic_kind == Some(crate::kernel::editor::HighlightKind::Type)
-            && token.text.contains("vector")
+            && line
+                .get(token.start..token.end)
+                .is_some_and(|text| text.contains("vector"))
     }));
 }
 

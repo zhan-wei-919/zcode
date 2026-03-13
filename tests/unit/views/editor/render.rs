@@ -1,7 +1,8 @@
 use super::*;
+use crate::core::command::Command;
 use crate::kernel::editor::{
-    EditorPaneState, EditorTabState, HighlightKind, HighlightSpan, SearchBarMode, SnippetTabstop,
-    TabId,
+    EditorPaneState, EditorTabState, HighlightKind, HighlightSpan, SearchBarMode, SemanticSegment,
+    SnippetTabstop, TabId,
 };
 use crate::kernel::services::ports::{EditorConfig, Match};
 use crate::models::{Granularity, Selection};
@@ -16,6 +17,14 @@ fn default_render_options(show_vertical_scrollbar: bool) -> crate::views::Editor
     crate::views::EditorPaneRenderOptions {
         show_vertical_scrollbar,
         ..Default::default()
+    }
+}
+
+fn sem_seg(start: usize, end: usize, kind: Option<HighlightKind>) -> SemanticSegment {
+    SemanticSegment {
+        start,
+        end,
+        semantic_kind: kind,
     }
 }
 
@@ -297,6 +306,137 @@ fn paint_editor_pane_snippet_placeholder_background_highlights_active_tabstop() 
     assert_eq!(highlighted.symbol, "n");
     assert_eq!(highlighted.style.bg, Some(theme.palette_selected_bg));
     assert_eq!(untouched.style.bg, Some(theme.editor_bg));
+}
+
+#[test]
+fn paint_editor_pane_does_not_extend_stale_semantic_span_after_placeholder_replacement() {
+    let config = EditorConfig::default();
+    let mut pane = EditorPaneState::new(&config);
+
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("snippet.txt"),
+        "fn name(args)",
+        &config,
+    );
+    let _ = tab.set_semantic_highlight(
+        0,
+        vec![vec![
+            sem_seg(0, 2, Some(HighlightKind::Keyword)),
+            sem_seg(2, 3, None),
+            sem_seg(3, 7, Some(HighlightKind::Function)),
+            sem_seg(7, 8, None),
+            sem_seg(8, 12, Some(HighlightKind::Parameter)),
+            sem_seg(12, 13, None),
+        ]],
+    );
+
+    tab.begin_snippet_session(
+        0,
+        vec![
+            SnippetTabstop {
+                index: 1,
+                start: 3,
+                end: 7,
+            },
+            SnippetTabstop {
+                index: 2,
+                start: 8,
+                end: 12,
+            },
+            SnippetTabstop {
+                index: 0,
+                start: 13,
+                end: 13,
+            },
+        ],
+    );
+    tab.buffer
+        .set_selection(Some(Selection::new((0, 3), Granularity::Char)));
+    tab.buffer.update_selection_cursor((0, 7));
+    tab.buffer.set_cursor(0, 7);
+
+    let _ = tab.apply_command(Command::InsertChar('n'), 0, &config);
+
+    let line = tab.buffer.rope().line(0).to_string();
+    assert_eq!(line, "fn n(args)");
+
+    let semantic_segments = tab.semantic_segments_line(0).expect("semantic row");
+    assert_eq!(
+        semantic_segments,
+        [
+            sem_seg(0, 2, Some(HighlightKind::Keyword)),
+            sem_seg(2, 5, None),
+            sem_seg(5, 9, Some(HighlightKind::Parameter)),
+            sem_seg(9, 10, None),
+        ]
+    );
+
+    pane.tabs.push(tab);
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
+    let theme = Theme::default();
+    let mut painter = Painter::new();
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &theme,
+        default_render_options(true),
+        None,
+    );
+
+    let mut backend = TestBackend::new(layout.area.w, layout.area.h);
+    backend.draw(layout.area, painter.cmds());
+    let buf = backend.buffer();
+
+    let y = layout.content_area.y;
+    let open_paren = buf.cell(layout.content_area.x + 4, y).unwrap();
+    assert_eq!(open_paren.symbol, "(");
+    assert_eq!(
+        open_paren.style.fg,
+        Some(theme.palette_fg),
+        "stale semantic token should not extend function highlight past edited placeholder"
+    );
+}
+
+#[test]
+fn paint_editor_pane_ignores_invalid_semantic_row_and_uses_syntax_fallback() {
+    let config = EditorConfig::default();
+    let mut pane = EditorPaneState::new(&config);
+    let mut tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "if value", &config);
+    let _ = tab.set_semantic_highlight(0, vec![vec![sem_seg(1, 3, Some(HighlightKind::Function))]]);
+    pane.tabs.push(tab);
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
+    let theme = Theme::default();
+    let mut painter = Painter::new();
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &theme,
+        default_render_options(true),
+        None,
+    );
+
+    let mut backend = TestBackend::new(layout.area.w, layout.area.h);
+    backend.draw(layout.area, painter.cmds());
+    let buf = backend.buffer();
+
+    let y = layout.content_area.y;
+    let if_cell = buf.cell(layout.content_area.x, y).unwrap();
+    assert_eq!(if_cell.symbol, "i");
+    assert_eq!(
+        if_cell.style.fg,
+        Some(theme.syntax_fg(SyntaxColorGroup::KeywordControl)),
+        "invalid semantic rows should be ignored so syntax fallback remains visible",
+    );
 }
 
 #[test]
@@ -643,72 +783,54 @@ fn paint_editor_tabs_truncate_titles_with_ellipsis_in_narrow_width() {
 }
 
 #[test]
-fn semantic_kind_cached_respects_token_boundaries() {
-    let tokens = vec![
-        SemanticToken {
-            text: "ab".into(),
-            semantic_kind: None,
-        },
-        SemanticToken {
-            text: "cde".into(),
-            semantic_kind: Some(HighlightKind::Comment),
-        },
-        SemanticToken {
-            text: "f".into(),
-            semantic_kind: None,
-        },
+fn semantic_kind_cached_respects_segment_boundaries() {
+    let segments = vec![
+        sem_seg(0, 2, None),
+        sem_seg(2, 5, Some(HighlightKind::Comment)),
+        sem_seg(5, 6, None),
     ];
 
-    let mut state = SemanticTokenCacheState::default();
-    assert_eq!(semantic_kind_cached(&tokens, &mut state, 0), None);
+    let mut state = SemanticSegmentCacheState::default();
+    assert_eq!(semantic_kind_cached(&segments, &mut state, 0), None);
     assert_eq!(
-        semantic_kind_cached(&tokens, &mut state, 2),
+        semantic_kind_cached(&segments, &mut state, 2),
         Some(HighlightKind::Comment)
     );
     assert_eq!(
-        semantic_kind_cached(&tokens, &mut state, 4),
+        semantic_kind_cached(&segments, &mut state, 4),
         Some(HighlightKind::Comment)
     );
-    assert_eq!(semantic_kind_cached(&tokens, &mut state, 5), None);
+    assert_eq!(semantic_kind_cached(&segments, &mut state, 5), None);
 }
 
 #[test]
-fn semantic_kind_cached_advances_across_gaps() {
-    let tokens = vec![
-        SemanticToken {
-            text: "ab".into(),
-            semantic_kind: Some(HighlightKind::Keyword),
-        },
-        SemanticToken {
-            text: "cd".into(),
-            semantic_kind: None,
-        },
-        SemanticToken {
-            text: "efg".into(),
-            semantic_kind: Some(HighlightKind::String),
-        },
+fn semantic_kind_cached_advances_across_none_segments() {
+    let segments = vec![
+        sem_seg(0, 2, Some(HighlightKind::Keyword)),
+        sem_seg(2, 4, None),
+        sem_seg(4, 7, Some(HighlightKind::String)),
     ];
 
-    let mut state = SemanticTokenCacheState::default();
+    let mut state = SemanticSegmentCacheState::default();
     assert_eq!(
-        semantic_kind_cached(&tokens, &mut state, 0),
+        semantic_kind_cached(&segments, &mut state, 0),
         Some(HighlightKind::Keyword)
     );
     assert_eq!(
-        semantic_kind_cached(&tokens, &mut state, 1),
+        semantic_kind_cached(&segments, &mut state, 1),
         Some(HighlightKind::Keyword)
     );
-    assert_eq!(semantic_kind_cached(&tokens, &mut state, 2), None);
-    assert_eq!(semantic_kind_cached(&tokens, &mut state, 3), None);
+    assert_eq!(semantic_kind_cached(&segments, &mut state, 2), None);
+    assert_eq!(semantic_kind_cached(&segments, &mut state, 3), None);
     assert_eq!(
-        semantic_kind_cached(&tokens, &mut state, 4),
+        semantic_kind_cached(&segments, &mut state, 4),
         Some(HighlightKind::String)
     );
     assert_eq!(
-        semantic_kind_cached(&tokens, &mut state, 6),
+        semantic_kind_cached(&segments, &mut state, 6),
         Some(HighlightKind::String)
     );
-    assert_eq!(semantic_kind_cached(&tokens, &mut state, 7), None);
+    assert_eq!(semantic_kind_cached(&segments, &mut state, 7), None);
 }
 
 #[test]
@@ -719,23 +841,17 @@ fn semantic_kind_cached_distinguishes_keyword_control_from_keyword() {
         theme.syntax_fg(SyntaxColorGroup::KeywordControl)
     );
 
-    let tokens = vec![
-        SemanticToken {
-            text: "a".into(),
-            semantic_kind: Some(HighlightKind::Keyword),
-        },
-        SemanticToken {
-            text: "b".into(),
-            semantic_kind: Some(HighlightKind::KeywordControl),
-        },
+    let segments = vec![
+        sem_seg(0, 1, Some(HighlightKind::Keyword)),
+        sem_seg(1, 2, Some(HighlightKind::KeywordControl)),
     ];
-    let mut state = SemanticTokenCacheState::default();
+    let mut state = SemanticSegmentCacheState::default();
     assert_eq!(
-        semantic_kind_cached(&tokens, &mut state, 0),
+        semantic_kind_cached(&segments, &mut state, 0),
         Some(HighlightKind::Keyword)
     );
     assert_eq!(
-        semantic_kind_cached(&tokens, &mut state, 1),
+        semantic_kind_cached(&segments, &mut state, 1),
         Some(HighlightKind::KeywordControl)
     );
 }
@@ -743,18 +859,15 @@ fn semantic_kind_cached_distinguishes_keyword_control_from_keyword() {
 #[test]
 fn semantic_keyword_should_not_override_keyword_control() {
     let theme = Theme::default();
-    let semantic_tokens = vec![SemanticToken {
-        text: "if".into(),
-        semantic_kind: Some(HighlightKind::Keyword),
-    }];
+    let semantic_segments = vec![sem_seg(0, 2, Some(HighlightKind::Keyword))];
 
     let syntax_kind = Some(HighlightKind::KeywordControl);
-    let mut semantic_state = SemanticTokenCacheState::default();
+    let mut semantic_state = SemanticSegmentCacheState::default();
     let mut highlight_style = None;
     let opaque = syntax_kind.is_some_and(|kind| kind.is_opaque());
     if !opaque {
         highlight_style =
-            semantic_kind_cached(&semantic_tokens, &mut semantic_state, 0).map(|kind| {
+            semantic_kind_cached(&semantic_segments, &mut semantic_state, 0).map(|kind| {
                 crate::ui::core::style::Style::default().fg(theme.syntax_fg(kind.color_group()))
             });
     }
@@ -774,18 +887,15 @@ fn semantic_keyword_should_not_override_keyword_control() {
 #[test]
 fn semantic_can_override_non_opaque_syntax() {
     let theme = Theme::default();
-    let semantic_tokens = vec![SemanticToken {
-        text: "if".into(),
-        semantic_kind: Some(HighlightKind::Function),
-    }];
+    let semantic_segments = vec![sem_seg(0, 2, Some(HighlightKind::Function))];
 
     let syntax_kind = Some(HighlightKind::Keyword);
-    let mut semantic_state = SemanticTokenCacheState::default();
+    let mut semantic_state = SemanticSegmentCacheState::default();
     let mut highlight_style = None;
     let opaque = syntax_kind.is_some_and(|kind| kind.is_opaque());
     if !opaque {
         highlight_style =
-            semantic_kind_cached(&semantic_tokens, &mut semantic_state, 0).map(|kind| {
+            semantic_kind_cached(&semantic_segments, &mut semantic_state, 0).map(|kind| {
                 crate::ui::core::style::Style::default().fg(theme.syntax_fg(kind.color_group()))
             });
     }

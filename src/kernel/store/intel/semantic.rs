@@ -1,16 +1,16 @@
-use crate::kernel::editor::{HighlightKind, HighlightSpan, SemanticToken};
+use crate::kernel::editor::{HighlightKind, HighlightSpan, SemanticSegment};
 use crate::kernel::services::ports::{
     LspPositionEncoding, LspSemanticToken, LspSemanticTokensLegend,
 };
 
 use super::lsp::lsp_col_to_char_offset_in_line;
 
-pub(super) fn semantic_token_lines_from_tokens(
+pub(super) fn semantic_segment_lines_from_tokens(
     rope: &ropey::Rope,
     tokens: &[LspSemanticToken],
     legend: &LspSemanticTokensLegend,
     encoding: LspPositionEncoding,
-) -> Vec<Vec<SemanticToken>> {
+) -> Vec<Vec<SemanticSegment>> {
     let total_lines = rope.len_lines().max(1);
     let mut lines: Vec<Vec<HighlightSpan>> = vec![Vec::new(); total_lines];
     let mut needs_sort = vec![false; total_lines];
@@ -74,17 +74,17 @@ pub(super) fn semantic_token_lines_from_tokens(
         merge_adjacent_highlight_spans(line_spans);
     }
 
-    spans_to_semantic_tokens_full(rope, &lines)
+    spans_to_semantic_segments_full(rope, &lines)
 }
 
-pub(super) fn semantic_token_lines_from_tokens_range(
+pub(super) fn semantic_segment_lines_from_tokens_range(
     rope: &ropey::Rope,
     tokens: &[LspSemanticToken],
     legend: &LspSemanticTokensLegend,
     encoding: LspPositionEncoding,
     start_line: usize,
     end_line_exclusive: usize,
-) -> Vec<Vec<SemanticToken>> {
+) -> Vec<Vec<SemanticSegment>> {
     if start_line >= end_line_exclusive {
         return Vec::new();
     }
@@ -159,7 +159,7 @@ pub(super) fn semantic_token_lines_from_tokens_range(
         merge_adjacent_highlight_spans(line_spans);
     }
 
-    spans_to_semantic_tokens_range(rope, start_line, &lines)
+    spans_to_semantic_segments_range(rope, start_line, &lines)
 }
 
 fn map_semantic_token_type(token_type: &str) -> (Option<HighlightKind>, bool) {
@@ -281,12 +281,12 @@ fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
     spans.truncate(write);
 }
 
-fn spans_to_semantic_tokens_full(
+fn spans_to_semantic_segments_full(
     rope: &ropey::Rope,
     spans_by_line: &[Vec<HighlightSpan>],
-) -> Vec<Vec<SemanticToken>> {
+) -> Vec<Vec<SemanticSegment>> {
     let total_lines = rope.len_lines().max(1);
-    let mut out: Vec<Vec<SemanticToken>> = Vec::with_capacity(total_lines);
+    let mut out: Vec<Vec<SemanticSegment>> = Vec::with_capacity(total_lines);
     for line_index in 0..total_lines {
         let slice = rope.line(line_index);
         let line_cow = slice.as_str().map_or_else(
@@ -299,19 +299,22 @@ fn spans_to_semantic_tokens_full(
             .get(line_index)
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
-        let tokens = semantic_tokens_for_line(line, spans);
-        debug_assert_eq!(tokens_concat_len(&tokens), line.len());
-        out.push(tokens);
+        let segments = semantic_segments_for_line(line, spans);
+        debug_assert!(semantic_segments_cover_line(
+            segments.as_slice(),
+            line.len()
+        ));
+        out.push(segments);
     }
     out
 }
 
-fn spans_to_semantic_tokens_range(
+fn spans_to_semantic_segments_range(
     rope: &ropey::Rope,
     start_line: usize,
     spans_by_row: &[Vec<HighlightSpan>],
-) -> Vec<Vec<SemanticToken>> {
-    let mut out: Vec<Vec<SemanticToken>> = Vec::with_capacity(spans_by_row.len());
+) -> Vec<Vec<SemanticSegment>> {
+    let mut out: Vec<Vec<SemanticSegment>> = Vec::with_capacity(spans_by_row.len());
     for (row_idx, spans) in spans_by_row.iter().enumerate() {
         let line_index = start_line.saturating_add(row_idx);
         let slice = rope.line(line_index);
@@ -321,19 +324,22 @@ fn spans_to_semantic_tokens_range(
         );
         let line = line_cow.strip_suffix('\n').unwrap_or(&line_cow);
         let line = line.strip_suffix('\r').unwrap_or(line);
-        let tokens = semantic_tokens_for_line(line, spans);
-        debug_assert_eq!(tokens_concat_len(&tokens), line.len());
-        out.push(tokens);
+        let segments = semantic_segments_for_line(line, spans);
+        debug_assert!(semantic_segments_cover_line(
+            segments.as_slice(),
+            line.len()
+        ));
+        out.push(segments);
     }
     out
 }
 
-fn semantic_tokens_for_line(line: &str, spans: &[HighlightSpan]) -> Vec<SemanticToken> {
+fn semantic_segments_for_line(line: &str, spans: &[HighlightSpan]) -> Vec<SemanticSegment> {
     if line.is_empty() {
         return Vec::new();
     }
 
-    let mut tokens: Vec<SemanticToken> = Vec::new();
+    let mut segments: Vec<SemanticSegment> = Vec::new();
     let mut cursor = 0usize;
     let len = line.len();
 
@@ -350,62 +356,73 @@ fn semantic_tokens_for_line(line: &str, spans: &[HighlightSpan]) -> Vec<Semantic
 
         let start = start.max(cursor);
         if start > cursor {
-            let gap = &line[cursor..start];
-            if !gap.is_empty() {
-                tokens.push(SemanticToken {
-                    text: gap.into(),
-                    semantic_kind: None,
-                });
-            }
+            segments.push(SemanticSegment {
+                start: cursor,
+                end: start,
+                semantic_kind: None,
+            });
         }
 
         if end > start {
-            let text = &line[start..end];
-            if !text.is_empty() {
-                tokens.push(SemanticToken {
-                    text: text.into(),
-                    semantic_kind: Some(span.kind),
-                });
-            }
+            segments.push(SemanticSegment {
+                start,
+                end,
+                semantic_kind: Some(span.kind),
+            });
             cursor = end;
         }
     }
 
     if cursor < len {
-        let tail = &line[cursor..];
-        if !tail.is_empty() {
-            tokens.push(SemanticToken {
-                text: tail.into(),
-                semantic_kind: None,
-            });
-        }
+        segments.push(SemanticSegment {
+            start: cursor,
+            end: len,
+            semantic_kind: None,
+        });
     }
 
-    merge_adjacent_semantic_tokens(&mut tokens);
-    tokens
+    merge_adjacent_semantic_segments(&mut segments);
+    segments
 }
 
-fn merge_adjacent_semantic_tokens(tokens: &mut Vec<SemanticToken>) {
-    if tokens.len() < 2 {
+pub(crate) fn merge_adjacent_semantic_segments(segments: &mut Vec<SemanticSegment>) {
+    if segments.len() < 2 {
         return;
     }
 
     let mut write = 1usize;
-    for read in 1..tokens.len() {
-        let tok = tokens[read].clone();
-        let prev = &mut tokens[write - 1];
-        if prev.semantic_kind == tok.semantic_kind {
-            prev.text.push_str(tok.text.as_str());
+    for read in 1..segments.len() {
+        let seg = segments[read];
+        let prev = &mut segments[write - 1];
+        if prev.semantic_kind == seg.semantic_kind && prev.end >= seg.start {
+            prev.end = prev.end.max(seg.end);
         } else {
-            tokens[write] = tok;
+            segments[write] = seg;
             write += 1;
         }
     }
-    tokens.truncate(write);
+    segments.truncate(write);
 }
 
-fn tokens_concat_len(tokens: &[SemanticToken]) -> usize {
-    tokens.iter().map(|t| t.text.len()).sum()
+fn semantic_segments_cover_line(segments: &[SemanticSegment], line_len: usize) -> bool {
+    if line_len == 0 {
+        return segments.is_empty();
+    }
+    let Some(first) = segments.first() else {
+        return false;
+    };
+    if first.start != 0 {
+        return false;
+    }
+
+    let mut cursor = 0usize;
+    for seg in segments {
+        if seg.start != cursor || seg.end <= seg.start || seg.end > line_len {
+            return false;
+        }
+        cursor = seg.end;
+    }
+    cursor == line_len
 }
 
 #[derive(Clone, Copy)]
@@ -413,16 +430,16 @@ struct SemanticRowSegment<'a> {
     start: usize,
     end: usize,
     kind: Option<HighlightKind>,
-    text: &'a str,
+    _marker: std::marker::PhantomData<&'a ()>,
 }
 
 pub(in crate::kernel::store) fn reconcile_pending_semantic_row(
     line: &str,
-    current: Option<&[SemanticToken]>,
-    pending: &[SemanticToken],
+    current: Option<&[SemanticSegment]>,
+    pending: &[SemanticSegment],
     cursor_byte: usize,
-) -> Option<Vec<SemanticToken>> {
-    if tokens_concat_len(pending) != line.len() {
+) -> Option<Vec<SemanticSegment>> {
+    if !semantic_segments_cover_line(pending, line.len()) {
         return None;
     }
 
@@ -478,51 +495,34 @@ pub(in crate::kernel::store) fn reconcile_pending_semantic_row(
         } else if current_kind.is_some()
             && end <= cursor_byte
             && current_kind.is_some_and(sticky_semantic_kind)
-            && current_segment_matches_line(current_segment, start, end, line)
         {
             current_kind
         } else {
             None
         };
 
-        merged.push(SemanticToken {
-            text: line[start..end].into(),
+        merged.push(SemanticSegment {
+            start,
+            end,
             semantic_kind: merged_kind,
         });
     }
 
-    merge_adjacent_semantic_tokens(&mut merged);
+    merge_adjacent_semantic_segments(&mut merged);
     (merged != pending).then_some(merged)
 }
 
-fn semantic_row_segments(tokens: &[SemanticToken]) -> Vec<SemanticRowSegment<'_>> {
-    let mut segments = Vec::with_capacity(tokens.len());
-    let mut start = 0usize;
-    for token in tokens {
-        let end = start + token.text.len();
-        segments.push(SemanticRowSegment {
-            start,
-            end,
-            kind: token.semantic_kind,
-            text: token.text.as_str(),
+fn semantic_row_segments(segments: &[SemanticSegment]) -> Vec<SemanticRowSegment<'_>> {
+    let mut out = Vec::with_capacity(segments.len());
+    for segment in segments {
+        out.push(SemanticRowSegment {
+            start: segment.start,
+            end: segment.end,
+            kind: segment.semantic_kind,
+            _marker: std::marker::PhantomData,
         });
-        start = end;
     }
-    segments
-}
-
-fn current_segment_matches_line(
-    segment: Option<SemanticRowSegment<'_>>,
-    start: usize,
-    end: usize,
-    line: &str,
-) -> bool {
-    let Some(segment) = segment else {
-        return false;
-    };
-    let rel_start = start.saturating_sub(segment.start);
-    let rel_end = rel_start + end.saturating_sub(start);
-    segment.text.get(rel_start..rel_end) == line.get(start..end)
+    out
 }
 
 fn sticky_semantic_kind(kind: HighlightKind) -> bool {
@@ -545,9 +545,10 @@ fn sticky_semantic_kind(kind: HighlightKind) -> bool {
 mod tests {
     use super::*;
 
-    fn sem_tok(text: &str, kind: Option<HighlightKind>) -> SemanticToken {
-        SemanticToken {
-            text: text.into(),
+    fn sem_seg(start: usize, end: usize, kind: Option<HighlightKind>) -> SemanticSegment {
+        SemanticSegment {
+            start,
+            end,
             semantic_kind: kind,
         }
     }
@@ -665,10 +666,10 @@ mod tests {
     fn reconcile_pending_row_preserves_sticky_kind_left_of_cursor() {
         let line = "cin >> value";
         let current = vec![
-            sem_tok("cin", Some(HighlightKind::Variable)),
-            sem_tok(" >> value", None),
+            sem_seg(0, 3, Some(HighlightKind::Variable)),
+            sem_seg(3, line.len(), None),
         ];
-        let pending = vec![sem_tok(line, None)];
+        let pending = vec![sem_seg(0, line.len(), None)];
 
         let merged = reconcile_pending_semantic_row(line, Some(&current), &pending, 7)
             .expect("row should be rewritten");
@@ -680,10 +681,10 @@ mod tests {
     fn reconcile_pending_row_does_not_preserve_right_of_cursor() {
         let line = "cin >> value";
         let current = vec![
-            sem_tok("cin >> ", None),
-            sem_tok("value", Some(HighlightKind::Variable)),
+            sem_seg(0, 7, None),
+            sem_seg(7, line.len(), Some(HighlightKind::Variable)),
         ];
-        let pending = vec![sem_tok(line, None)];
+        let pending = vec![sem_seg(0, line.len(), None)];
 
         assert!(
             reconcile_pending_semantic_row(line, Some(&current), &pending, 7).is_none(),
@@ -692,17 +693,17 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_pending_row_does_not_preserve_text_mismatch() {
+    fn reconcile_pending_row_rejects_invalid_pending_partition() {
         let line = "cout >> value";
         let current = vec![
-            sem_tok("cin", Some(HighlightKind::Variable)),
-            sem_tok(" >> value", None),
+            sem_seg(0, 4, Some(HighlightKind::Variable)),
+            sem_seg(4, line.len(), None),
         ];
-        let pending = vec![sem_tok(line, None)];
+        let pending = vec![sem_seg(1, line.len(), None)];
 
         assert!(
             reconcile_pending_semantic_row(line, Some(&current), &pending, 8).is_none(),
-            "stale visible text should not be preserved"
+            "pending rows must already be a valid partition of the current line"
         );
     }
 }

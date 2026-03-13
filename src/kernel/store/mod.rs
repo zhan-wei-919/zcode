@@ -1,6 +1,6 @@
 use crate::core::Command;
 use crate::kernel::editor::{
-    EditorTabState, HighlightKind, PendingSemanticLine, ReloadCause, SemanticToken,
+    EditorTabState, HighlightKind, PendingSemanticLine, ReloadCause, SemanticSegment,
 };
 use crate::kernel::services::ports::{
     LspCompletionTriggerContext, LspPosition, LspRange, LspTextEdit, LspWorkspaceEdit,
@@ -212,30 +212,33 @@ fn completion_seed_matches_boundary(line: &str, start: usize, end: usize) -> boo
     prev_ok && next_ok
 }
 
-fn semantic_tokens_for_completion_span(
+fn semantic_segments_for_completion_span(
     line: &str,
     start: usize,
     end: usize,
     kind: HighlightKind,
-) -> Vec<SemanticToken> {
-    let mut tokens = Vec::with_capacity(3);
+) -> Vec<SemanticSegment> {
+    let mut segments = Vec::with_capacity(3);
     if start > 0 {
-        tokens.push(SemanticToken {
-            text: line[..start].into(),
+        segments.push(SemanticSegment {
+            start: 0,
+            end: start,
             semantic_kind: None,
         });
     }
-    tokens.push(SemanticToken {
-        text: line[start..end].into(),
+    segments.push(SemanticSegment {
+        start,
+        end,
         semantic_kind: Some(kind),
     });
     if end < line.len() {
-        tokens.push(SemanticToken {
-            text: line[end..].into(),
+        segments.push(SemanticSegment {
+            start: end,
+            end: line.len(),
             semantic_kind: None,
         });
     }
-    tokens
+    segments
 }
 
 fn seed_completion_semantic_highlight(
@@ -285,8 +288,8 @@ fn seed_completion_semantic_highlight(
     };
 
     let end = start + head.len();
-    let tokens = semantic_tokens_for_completion_span(line, start, end, kind);
-    tab.set_pending_semantic_highlight_range_from_slice(tab.edit_version, row, &[tokens])
+    let segments = semantic_segments_for_completion_span(line, start, end, kind);
+    tab.set_pending_semantic_highlight_range_from_slice(tab.edit_version, row, &[segments])
 }
 
 pub struct Store {
@@ -611,7 +614,7 @@ impl Store {
             .saturating_sub(line_start_char);
         let cursor_byte = byte_offset_for_char_offset(line, cursor_char);
         let merged_row = {
-            let current = tab.semantic_tokens_line(row);
+            let current = tab.semantic_segments_line(row);
             match tab.pending_semantic_line(row) {
                 PendingSemanticLine::Uncovered => None,
                 PendingSemanticLine::Covered(pending) => {

@@ -26,7 +26,9 @@ use super::completion::{
     completion_runtime_context, filtered_completion_indices, language_runtime_context,
     normalize_completion_record, sort_completion_items,
 };
-use super::semantic::{semantic_token_lines_from_tokens, semantic_token_lines_from_tokens_range};
+use super::semantic::{
+    semantic_segment_lines_from_tokens, semantic_segment_lines_from_tokens_range,
+};
 
 #[cfg(test)]
 static LSP_CAPABILITY_LOOKUP_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -1070,7 +1072,7 @@ impl super::super::Store {
                     };
                 };
 
-                let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticToken>>> =
+                let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticSegment>>> =
                     None;
                 let mut changed = false;
                 let defer_flush = !eager_flush && self.is_semantic_flush_deferred(&path, version);
@@ -1084,7 +1086,7 @@ impl super::super::Store {
                         }
 
                         if snapshot_lines.is_none() {
-                            snapshot_lines = Some(semantic_token_lines_from_tokens(
+                            snapshot_lines = Some(semantic_segment_lines_from_tokens(
                                 tab.buffer.rope(),
                                 &tokens,
                                 &legend,
@@ -1206,7 +1208,7 @@ impl super::super::Store {
                     };
                 };
 
-                let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticToken>>> =
+                let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticSegment>>> =
                     None;
                 let mut changed = false;
                 let defer_flush = !eager_flush && self.is_semantic_flush_deferred(&path, version);
@@ -1220,7 +1222,7 @@ impl super::super::Store {
                         }
 
                         if snapshot_lines.is_none() {
-                            snapshot_lines = Some(semantic_token_lines_from_tokens_range(
+                            snapshot_lines = Some(semantic_segment_lines_from_tokens_range(
                                 tab.buffer.rope(),
                                 &tokens,
                                 &legend,

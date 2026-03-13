@@ -2930,16 +2930,19 @@ fn test_semantic_tokens_apply_expected_highlight_kinds() {
         let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
             return false;
         };
-        let Some(lines) = tab.semantic_tokens_lines(0, 1) else {
+        let Some(lines) = tab.semantic_segments_lines(0, 1) else {
             return false;
         };
-        lines.first().is_some_and(|tokens| {
-            tokens
-                .iter()
-                .any(|t| t.semantic_kind == Some(HighlightKind::Keyword) && t.text.as_str() == "fn")
-                && tokens.iter().any(|t| {
-                    t.semantic_kind == Some(HighlightKind::Function) && t.text.as_str() == "main"
-                })
+        let line = tab.buffer.rope().line(0).to_string();
+        let line = line.trim_end_matches(['\n', '\r']);
+        lines.first().is_some_and(|segments| {
+            segments.iter().any(|segment| {
+                segment.semantic_kind == Some(HighlightKind::Keyword)
+                    && line.get(segment.start..segment.end) == Some("fn")
+            }) && segments.iter().any(|segment| {
+                segment.semantic_kind == Some(HighlightKind::Function)
+                    && line.get(segment.start..segment.end) == Some("main")
+            })
         })
     });
 }
@@ -3206,16 +3209,19 @@ fn test_semantic_tokens_range_is_used_for_large_files() {
         let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
             return false;
         };
-        let Some(lines) = tab.semantic_tokens_lines(0, 1) else {
+        let Some(lines) = tab.semantic_segments_lines(0, 1) else {
             return false;
         };
-        lines.first().is_some_and(|tokens| {
-            tokens
-                .iter()
-                .any(|t| t.semantic_kind == Some(HighlightKind::Keyword) && t.text.as_str() == "fn")
-                && tokens.iter().any(|t| {
-                    t.semantic_kind == Some(HighlightKind::Function) && t.text.as_str() == "main"
-                })
+        let line = tab.buffer.rope().line(0).to_string();
+        let line = line.trim_end_matches(['\n', '\r']);
+        lines.first().is_some_and(|segments| {
+            segments.iter().any(|segment| {
+                segment.semantic_kind == Some(HighlightKind::Keyword)
+                    && line.get(segment.start..segment.end) == Some("fn")
+            }) && segments.iter().any(|segment| {
+                segment.semantic_kind == Some(HighlightKind::Function)
+                    && line.get(segment.start..segment.end) == Some("main")
+            })
         })
     });
 
@@ -3230,7 +3236,7 @@ fn test_semantic_tokens_range_is_used_for_large_files() {
             .editor
             .pane(0)
             .and_then(|pane| pane.active_tab())
-            .and_then(|tab| tab.semantic_tokens_lines(0, 1))
+            .and_then(|tab| tab.semantic_segments_lines(0, 1))
             .is_some(),
         "semantic highlight should remain visible while new semantic response is pending"
     );

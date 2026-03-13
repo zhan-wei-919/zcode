@@ -1,24 +1,23 @@
-use super::super::syntax::{HighlightKind, HighlightSpan, SemanticToken};
+use super::super::syntax::{HighlightKind, HighlightSpan, SemanticSegment};
 use super::*;
 
 fn span(start: usize, end: usize, kind: HighlightKind) -> HighlightSpan {
     HighlightSpan { start, end, kind }
 }
 
-fn sem_tok(text: &str, kind: Option<HighlightKind>) -> SemanticToken {
-    SemanticToken {
-        text: text.into(),
+fn sem_seg(start: usize, end: usize, kind: Option<HighlightKind>) -> SemanticSegment {
+    SemanticSegment {
+        start,
+        end,
         semantic_kind: kind,
     }
 }
 
-fn make_lines(start: usize, len: usize) -> Vec<Vec<SemanticToken>> {
+fn make_lines(start: usize, len: usize) -> Vec<Vec<SemanticSegment>> {
     (0..len)
         .map(|i| {
-            vec![sem_tok(
-                &format!("L{}", start.saturating_add(i)),
-                Some(HighlightKind::Keyword),
-            )]
+            let label = format!("L{}", start.saturating_add(i));
+            vec![sem_seg(0, label.len(), Some(HighlightKind::Keyword))]
         })
         .collect()
 }
@@ -47,7 +46,7 @@ fn replace_range_updates_inside_single_segment() {
 
     state.replace_range(3, 5, make_lines(100, 2));
 
-    let mut expected: Vec<Vec<SemanticToken>> = Vec::new();
+    let mut expected: Vec<Vec<SemanticSegment>> = Vec::new();
     expected.extend(make_lines(0, 3));
     expected.extend(make_lines(100, 2));
     expected.extend(make_lines(5, 5));
@@ -69,7 +68,7 @@ fn replace_range_bridges_gap_and_merges_segments() {
 
     state.replace_range(1, 6, make_lines(100, 5));
 
-    let mut expected: Vec<Vec<SemanticToken>> = Vec::new();
+    let mut expected: Vec<Vec<SemanticSegment>> = Vec::new();
     expected.extend(make_lines(0, 1));
     expected.extend(make_lines(100, 5));
     expected.extend(make_lines(6, 2));
@@ -91,7 +90,7 @@ fn replace_range_inserts_in_gap_and_merges_with_neighbors() {
 
     state.replace_range(2, 5, make_lines(100, 3));
 
-    let mut expected: Vec<Vec<SemanticToken>> = Vec::new();
+    let mut expected: Vec<Vec<SemanticSegment>> = Vec::new();
     expected.extend(make_lines(0, 2));
     expected.extend(make_lines(100, 3));
     expected.extend(make_lines(5, 2));
@@ -110,7 +109,11 @@ fn invalidate_semantic_highlight_keeps_visible_and_clears_pending_on_edit() {
     let mut tab =
         EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "foobar\n", &config);
 
-    let lines = vec![vec![sem_tok("foobar", Some(HighlightKind::Function))]];
+    let lines = vec![vec![sem_seg(
+        0,
+        "foobar".len(),
+        Some(HighlightKind::Function),
+    )]];
     let _ = tab.set_semantic_highlight(0, lines.clone());
     let _ = tab.set_pending_semantic_highlight_from_slice(0, &lines);
     assert!(tab.semantic_highlight.is_some());
@@ -124,7 +127,17 @@ fn invalidate_semantic_highlight_keeps_visible_and_clears_pending_on_edit() {
     tab.invalidate_semantic_highlight_on_edit(&op);
     assert!(tab.semantic_highlight.is_some());
     assert!(tab.pending_semantic_highlight.is_none());
-    assert!(tab.semantic_tokens_line(0).is_some());
+    assert_eq!(
+        tab.semantic_segments_line(0),
+        Some(
+            [
+                sem_seg(0, 3, Some(HighlightKind::Function)),
+                sem_seg(3, 4, None),
+                sem_seg(4, 7, Some(HighlightKind::Function)),
+            ]
+            .as_slice()
+        )
+    );
 }
 
 #[test]
@@ -144,7 +157,11 @@ fn pending_semantic_line_returns_uncovered_for_rows_outside_pending_range() {
     let _ = tab.set_pending_semantic_highlight_range_from_slice(
         version,
         1,
-        &[vec![sem_tok("second", Some(HighlightKind::Variable))]],
+        &[vec![sem_seg(
+            0,
+            "second".len(),
+            Some(HighlightKind::Variable),
+        )]],
     );
 
     assert!(matches!(
@@ -154,7 +171,7 @@ fn pending_semantic_line_returns_uncovered_for_rows_outside_pending_range() {
     assert!(matches!(
         tab.pending_semantic_line(1),
         PendingSemanticLine::Covered(tokens)
-            if tokens == [sem_tok("second", Some(HighlightKind::Variable))]
+            if tokens == [sem_seg(0, "second".len(), Some(HighlightKind::Variable))]
     ));
 }
 
