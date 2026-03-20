@@ -1,6 +1,6 @@
 <div align="center">
 
-# zcode
+# zcode  
 
 [![Rust](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
@@ -95,8 +95,8 @@ Default key mappings are as follows:
   * `Ctrl + h`: Open Replace
   * `F3` / `Ctrl + g`: Find Next
   * `Shift + F3` / `Ctrl + Shift + g`: Find Previous
-  * `Ctrl + \`: Split Editor Vertically
-  * `Ctrl + Shift + \`: Close Split
+  * `Ctrl + \\`: Split Editor Vertically
+  * `Ctrl + Shift + \\`: Close Split
   * `Ctrl + Shift + e`: Focus Explorer
   * `Ctrl + Shift + f`: Focus Global Search
 
