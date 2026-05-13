@@ -21,7 +21,7 @@ impl ActivityItem {
     pub(super) fn icon(self) -> char {
         match self {
             ActivityItem::Explorer => '\u{f07b}',
-            ActivityItem::Panel => '\u{2630}',
+            ActivityItem::Panel => '\u{f120}',
             ActivityItem::Palette => '\u{f11c}',
             ActivityItem::Git => '\u{e0a0}',
             ActivityItem::Settings => '\u{f013}',
