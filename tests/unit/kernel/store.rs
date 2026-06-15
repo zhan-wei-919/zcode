@@ -3280,6 +3280,102 @@ fn semantic_tokens_range_empty_response_preserves_sticky_kind_left_of_cursor() {
     assert_eq!(row, expected.as_slice());
 }
 
+// A ranged semantic-tokens response only covers part of the document. Applying it must
+// not drop the committed highlight on lines outside the range — otherwise every line the
+// server didn't re-send turns plain until a full response arrives (the same wipe as the
+// completion flicker, reached through the range path).
+#[test]
+fn semantic_tokens_range_keeps_committed_highlight_outside_range() {
+    let mut store = new_store();
+    let path = store.state.workspace_root.join("ranged.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "alpha\nbeta\ngamma\n".to_string(),
+    }));
+    let _ = store.dispatch(Action::LspServerCapabilities {
+        server: LspServerKind::RustAnalyzer,
+        root: store.state.workspace_root.clone(),
+        capabilities: LspServerCapabilities {
+            semantic_tokens: true,
+            semantic_tokens_full: true,
+            semantic_tokens_range: true,
+            semantic_tokens_legend: Some(LspSemanticTokensLegend::default()),
+            ..Default::default()
+        },
+    });
+
+    let version = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .and_then(|pane| pane.active_tab_mut())
+            .expect("open tab exists");
+        let _ = tab.set_semantic_highlight(
+            version,
+            vec![
+                vec![sem_seg(
+                    0,
+                    5,
+                    Some(crate::kernel::editor::HighlightKind::Variable),
+                )],
+                vec![sem_seg(
+                    0,
+                    4,
+                    Some(crate::kernel::editor::HighlightKind::Variable),
+                )],
+                vec![sem_seg(
+                    0,
+                    5,
+                    Some(crate::kernel::editor::HighlightKind::Variable),
+                )],
+            ],
+        );
+    }
+
+    // Response covers only line 1.
+    let _ = store.dispatch(Action::LspSemanticTokensRange {
+        path,
+        version,
+        range: LspRange {
+            start: LspPosition {
+                line: 1,
+                character: 0,
+            },
+            end: LspPosition {
+                line: 2,
+                character: 0,
+            },
+        },
+        tokens: Vec::new(),
+    });
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("open tab exists");
+    assert!(
+        tab.semantic_segments_line(0)
+            .is_some_and(|row| row.iter().any(|seg| seg.semantic_kind.is_some())),
+        "line 0 lies outside the ranged response and must keep its committed highlight"
+    );
+    assert!(
+        tab.semantic_segments_line(2)
+            .is_some_and(|row| row.iter().any(|seg| seg.semantic_kind.is_some())),
+        "line 2 lies outside the ranged response and must keep its committed highlight"
+    );
+}
+
 #[test]
 fn completion_confirm_requests_immediate_refresh_but_clears_preexisting_pending_semantic() {
     let mut store = new_store();
@@ -3576,6 +3672,151 @@ fn completion_confirm_seeds_cpp_type_highlight_before_semantic_response() {
                 .get(token.start..token.end)
                 .is_some_and(|text| text.contains("vector"))
     }));
+}
+
+// Reproduces the reported flicker: accepting a completion makes already-highlighted
+// code turn plain (white) before the async semantic refresh repaints it. Two distinct
+// wipes are exercised here:
+//   1. other lines: the confirm-time flush must not replace the whole committed
+//      semantic state with the single seeded line.
+//   2. the edited line itself: the completed token must be colored *on top of* the
+//      reconciled line, preserving every other token that was already highlighted,
+//      instead of rebuilding the line as [none][token][none].
+#[test]
+fn completion_confirm_keeps_semantic_highlight_on_unedited_lines() {
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let path = store.state.workspace_root.join("main.cpp");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        // line 1 holds unrelated, already-highlighted tokens on *both* sides of the
+        // completion prefix ("ve"): `x` before the cursor and `y` after it. Both must
+        // survive the edit, so the sticky-before-cursor heuristic alone is not enough.
+        content: "Widget w;\nx ve y".to_string(),
+    }));
+    let _ = store.dispatch(Action::Editor(EditorAction::PlaceCursor {
+        pane: 0,
+        row: 1,
+        col: 4,
+        granularity: Granularity::Char,
+    }));
+
+    // Commit a full-document semantic snapshot: both lines are already highlighted,
+    // mirroring a clangd semantic-tokens response that arrived before the edit.
+    let version = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .map(|tab| tab.edit_version)
+        .expect("open tab exists");
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .and_then(|pane| pane.active_tab_mut())
+            .expect("open tab exists");
+        let _ = tab.set_semantic_highlight(
+            version,
+            vec![
+                vec![crate::kernel::editor::SemanticSegment {
+                    start: 0,
+                    end: "Widget".len(),
+                    semantic_kind: Some(crate::kernel::editor::HighlightKind::Type),
+                }],
+                vec![
+                    crate::kernel::editor::SemanticSegment {
+                        start: 0,
+                        end: "x".len(),
+                        semantic_kind: Some(crate::kernel::editor::HighlightKind::Variable),
+                    },
+                    crate::kernel::editor::SemanticSegment {
+                        // `y` sits after the completion prefix (byte 5..6 of "x ve y").
+                        start: "x ve ".len(),
+                        end: "x ve y".len(),
+                        semantic_kind: Some(crate::kernel::editor::HighlightKind::Variable),
+                    },
+                ],
+            ],
+        );
+        assert!(
+            tab.semantic_segments_line(0).is_some(),
+            "test setup: line 0 starts highlighted"
+        );
+    }
+
+    let mut item = test_completion_item(1, "vector");
+    item.kind = serde_json::to_value(lsp_types::CompletionItemKind::CLASS)
+        .ok()
+        .and_then(|value| value.as_u64())
+        .map(|value| value as u32);
+    seed_visible_completion_item_for_active_tab(&mut store, 0, path, item);
+
+    let _ = store.dispatch(Action::CompletionConfirm);
+
+    let tab = store
+        .state
+        .editor
+        .pane(0)
+        .and_then(|pane| pane.active_tab())
+        .expect("open tab exists");
+    assert_eq!(
+        tab.buffer.rope().line(0).to_string().trim_end(),
+        "Widget w;"
+    );
+    assert_eq!(
+        tab.buffer.rope().line(1).to_string().trim_end(),
+        "x vector y"
+    );
+
+    // (1) the untouched line keeps its existing semantic color.
+    let line0 = tab
+        .semantic_segments_line(0)
+        .expect("line 0 semantic highlight must survive a completion on another line");
+    assert!(
+        line0.iter().any(|seg| {
+            seg.semantic_kind == Some(crate::kernel::editor::HighlightKind::Type)
+                && seg.start == 0
+                && seg.end >= "Widget".len()
+        }),
+        "line 0's Type highlight on `Widget` must be preserved, got {line0:?}"
+    );
+
+    // (2) the edited line keeps the unrelated tokens on both sides of the cursor *and*
+    // colors the completed identifier — none should wait for the async refresh.
+    let line1 = tab
+        .semantic_segments_line(1)
+        .expect("line 1 semantic highlight must exist after confirm");
+    assert!(
+        line1.iter().any(|seg| {
+            seg.semantic_kind == Some(crate::kernel::editor::HighlightKind::Variable)
+                && seg.start == 0
+                && seg.end == "x".len()
+        }),
+        "the `x` token before the cursor must keep its Variable color, got {line1:?}"
+    );
+    let vector_start = "x ".len();
+    let vector_end = "x vector".len();
+    assert!(
+        line1.iter().any(|seg| {
+            seg.semantic_kind == Some(crate::kernel::editor::HighlightKind::Type)
+                && seg.start <= vector_start
+                && seg.end >= vector_end
+        }),
+        "the completed `vector` token must be colored as Type, got {line1:?}"
+    );
+    let y_start = "x vector ".len();
+    let y_end = "x vector y".len();
+    assert!(
+        line1.iter().any(|seg| {
+            seg.semantic_kind == Some(crate::kernel::editor::HighlightKind::Variable)
+                && seg.start <= y_start
+                && seg.end >= y_end
+        }),
+        "the `y` token after the cursor must keep its Variable color, got {line1:?}"
+    );
 }
 
 #[test]

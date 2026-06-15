@@ -1,7 +1,5 @@
 use crate::core::Command;
-use crate::kernel::editor::{
-    EditorTabState, HighlightKind, PendingSemanticLine, ReloadCause, SemanticSegment,
-};
+use crate::kernel::editor::{EditorTabState, HighlightKind, PendingSemanticLine, ReloadCause};
 use crate::kernel::services::ports::{
     LspCompletionTriggerContext, LspPosition, LspRange, LspTextEdit, LspWorkspaceEdit,
     LspWorkspaceFileEdit,
@@ -212,35 +210,6 @@ fn completion_seed_matches_boundary(line: &str, start: usize, end: usize) -> boo
     prev_ok && next_ok
 }
 
-fn semantic_segments_for_completion_span(
-    line: &str,
-    start: usize,
-    end: usize,
-    kind: HighlightKind,
-) -> Vec<SemanticSegment> {
-    let mut segments = Vec::with_capacity(3);
-    if start > 0 {
-        segments.push(SemanticSegment {
-            start: 0,
-            end: start,
-            semantic_kind: None,
-        });
-    }
-    segments.push(SemanticSegment {
-        start,
-        end,
-        semantic_kind: Some(kind),
-    });
-    if end < line.len() {
-        segments.push(SemanticSegment {
-            start: end,
-            end: line.len(),
-            semantic_kind: None,
-        });
-    }
-    segments
-}
-
 fn seed_completion_semantic_highlight(
     tab: &mut EditorTabState,
     inserted_text: &str,
@@ -288,8 +257,7 @@ fn seed_completion_semantic_highlight(
     };
 
     let end = start + head.len();
-    let segments = semantic_segments_for_completion_span(line, start, end, kind);
-    tab.set_pending_semantic_highlight_range_from_slice(tab.edit_version, row, &[segments])
+    tab.seed_completion_token_semantic_kind(row, start, end, line.len(), kind)
 }
 
 pub struct Store {

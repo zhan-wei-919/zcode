@@ -11,7 +11,7 @@ use unicode_xid::UnicodeXID;
 
 use super::syntax::SyntaxDocument;
 use super::syntax_highlight_cache::AsyncSyntaxHighlightCache;
-use super::{viewport, HighlightSpan, LanguageId, SemanticSegment};
+use super::{viewport, HighlightKind, HighlightSpan, LanguageId, SemanticSegment};
 
 type SharedSyntaxHighlightLines = Arc<Vec<Arc<Vec<HighlightSpan>>>>;
 
@@ -868,6 +868,31 @@ impl EditorTabState {
         true
     }
 
+    /// Color a just-accepted completion identifier (`[start_byte, end_byte)` on `row`)
+    /// with `kind`, layered on top of the already edit-reconciled committed segments for
+    /// that line. Every other token on the line keeps its color, so accepting a
+    /// completion never blanks the edited line while the async semantic refresh is in
+    /// flight. Staged as a pending range so the normal flush path merges it in.
+    pub(crate) fn seed_completion_token_semantic_kind(
+        &mut self,
+        row: usize,
+        start_byte: usize,
+        end_byte: usize,
+        line_len: usize,
+        kind: HighlightKind,
+    ) -> bool {
+        if end_byte <= start_byte {
+            return false;
+        }
+        let current = self
+            .semantic_segments_line(row)
+            .map(<[SemanticSegment]>::to_vec)
+            .unwrap_or_default();
+        let overlaid =
+            overlay_semantic_kind_on_line(&current, line_len, start_byte, end_byte, kind);
+        self.set_pending_semantic_highlight_range_from_slice(self.edit_version, row, &[overlaid])
+    }
+
     pub(crate) fn pending_semantic_line(&self, line: usize) -> PendingSemanticLine<'_> {
         let Some(semantic) = self.pending_semantic_highlight.as_ref() else {
             return PendingSemanticLine::Uncovered;
@@ -884,12 +909,31 @@ impl EditorTabState {
             return false;
         };
 
-        let changed = match self.semantic_highlight.as_ref() {
-            Some(current) => !current.visually_eq(&pending),
-            None => pending.has_any_semantic_kinds(),
+        let Some(current) = self.semantic_highlight.as_mut() else {
+            // Nothing committed yet: adopt the pending snapshot wholesale.
+            let changed = pending.has_any_semantic_kinds();
+            self.semantic_highlight = Some(pending);
+            return changed;
         };
 
-        self.semantic_highlight = Some(pending);
+        // Merge each pending segment into the committed state by line range, keeping
+        // every line the pending snapshot does not cover. A full-document pending is a
+        // single 0..n segment, so this still replaces everything in that case; a partial
+        // (ranged completion seed, or a server `semantic_tokens/range` response) no
+        // longer wipes the lines outside its range.
+        let mut changed = false;
+        for seg in &pending.segments {
+            let end_line_exclusive = seg.end_line_exclusive();
+            let same = current
+                .lines(seg.start_line, end_line_exclusive)
+                .is_some_and(|existing| existing == seg.lines.as_slice());
+            changed |= !same;
+        }
+        current.version = pending.version;
+        for seg in pending.segments {
+            let end_line_exclusive = seg.end_line_exclusive();
+            current.replace_range(seg.start_line, end_line_exclusive, seg.lines);
+        }
         changed
     }
 
@@ -1356,10 +1400,6 @@ impl SemanticHighlightState {
             && self.segments[0].lines.as_slice() == lines
     }
 
-    fn visually_eq(&self, other: &Self) -> bool {
-        self.segments == other.segments
-    }
-
     fn has_any_semantic_kinds(&self) -> bool {
         self.segments.iter().any(|seg| {
             seg.lines
@@ -1718,6 +1758,45 @@ fn reconcile_semantic_segments_for_single_line_edit(
         });
     }
 
+    normalize_semantic_segments_for_line(next, line_len)
+}
+
+/// Layer a single semantic `kind` over `[start, end)` on a line, preserving every other
+/// token in `current`. The overlapped portions of existing segments are trimmed to the
+/// edges of the new span; everything else is kept verbatim, then re-normalized.
+fn overlay_semantic_kind_on_line(
+    current: &[SemanticSegment],
+    line_len: usize,
+    start: usize,
+    end: usize,
+    kind: HighlightKind,
+) -> Vec<SemanticSegment> {
+    let mut next = Vec::with_capacity(current.len().saturating_add(3));
+    for segment in current {
+        if segment.end <= start || segment.start >= end {
+            next.push(*segment);
+            continue;
+        }
+        if segment.start < start {
+            next.push(SemanticSegment {
+                start: segment.start,
+                end: start,
+                semantic_kind: segment.semantic_kind,
+            });
+        }
+        if segment.end > end {
+            next.push(SemanticSegment {
+                start: end,
+                end: segment.end,
+                semantic_kind: segment.semantic_kind,
+            });
+        }
+    }
+    next.push(SemanticSegment {
+        start,
+        end,
+        semantic_kind: Some(kind),
+    });
     normalize_semantic_segments_for_line(next, line_len)
 }
 
