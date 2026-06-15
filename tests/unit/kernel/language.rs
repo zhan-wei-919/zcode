@@ -25,6 +25,8 @@ fn from_path_maps_all_supported_extensions() {
         ("a.hh", Some(LanguageId::Cpp)),
         ("a.hxx", Some(LanguageId::Cpp)),
         ("a.h", Some(LanguageId::Cpp)),
+        ("a.cu", Some(LanguageId::Cpp)),
+        ("a.cuh", Some(LanguageId::Cpp)),
         ("a.java", Some(LanguageId::Java)),
         ("a.json", Some(LanguageId::Json)),
         ("a.yaml", Some(LanguageId::Yaml)),

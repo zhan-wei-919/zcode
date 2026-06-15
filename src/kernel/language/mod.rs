@@ -50,7 +50,12 @@ impl LanguageId {
             "ts" | "mts" | "cts" => Some(Self::TypeScript),
             "tsx" => Some(Self::Tsx),
             "c" => Some(Self::C),
-            "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "h++" | "h" => Some(Self::Cpp),
+            // CUDA (.cu/.cuh) is a C++ superset: clangd recognizes the .cu path as CUDA
+            // and tree-sitter-cpp parses it, so route it through Cpp instead of a
+            // dedicated variant that would alias C++ behavior everywhere.
+            "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "h++" | "h" | "cu" | "cuh" => {
+                Some(Self::Cpp)
+            }
             "java" => Some(Self::Java),
             "json" => Some(Self::Json),
             "yaml" | "yml" => Some(Self::Yaml),
