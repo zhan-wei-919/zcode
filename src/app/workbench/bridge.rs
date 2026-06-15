@@ -109,7 +109,8 @@ impl Workbench {
                 .extend(std::iter::repeat_with(|| None).take(desired - current));
         }
 
-        self.editor_mouse
+        self.interaction
+            .editor_mouse
             .resize_with(desired, super::mouse_tracker::EditorMouseTracker::new);
         self.sync_markdown_views();
     }
@@ -632,7 +633,7 @@ impl Workbench {
         };
 
         let open_paths_version = self.store.state().editor.open_paths_version;
-        if open_paths_version == self.file_watcher_open_paths_version {
+        if open_paths_version == self.lsp_sync.file_watcher_open_paths_version {
             return;
         }
 
@@ -645,7 +646,7 @@ impl Workbench {
             .flat_map(|pane| pane.tabs.iter())
             .filter_map(|tab| tab.path.as_deref());
         watcher.sync_open_files(paths);
-        self.file_watcher_open_paths_version = open_paths_version;
+        self.lsp_sync.file_watcher_open_paths_version = open_paths_version;
     }
 
     fn sync_lsp(&mut self) {
@@ -654,7 +655,7 @@ impl Workbench {
         };
 
         let open_paths_version = self.store.state().editor.open_paths_version;
-        if open_paths_version != self.lsp_open_paths_version {
+        if open_paths_version != self.lsp_sync.open_paths_version {
             let mut current_paths = FxHashSet::default();
             let mut newly_open = Vec::new();
 
@@ -667,13 +668,13 @@ impl Workbench {
                         continue;
                     }
                     current_paths.insert(path.clone());
-                    if !self.lsp_open_paths.contains(path) {
+                    if !self.lsp_sync.open_paths.contains(path) {
                         newly_open.push((path.clone(), tab));
                     }
                 }
             }
 
-            for path in self.lsp_open_paths.difference(&current_paths) {
+            for path in self.lsp_sync.open_paths.difference(&current_paths) {
                 service.close_document(path);
             }
 
@@ -681,8 +682,8 @@ impl Workbench {
                 service.sync_document(&path, tab.edit_version, None, || tab.buffer.text());
             }
 
-            self.lsp_open_paths_version = open_paths_version;
-            self.lsp_open_paths = current_paths;
+            self.lsp_sync.open_paths_version = open_paths_version;
+            self.lsp_sync.open_paths = current_paths;
         }
 
         let pane = self.store.state().ui.editor_layout.active_pane;

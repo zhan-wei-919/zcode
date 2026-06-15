@@ -203,9 +203,9 @@ impl Workbench {
                             drained += 1;
                             changed |= self.dispatch_kernel(action);
                             if is_progress_end {
-                                self.lsp_debounce.semantic_tokens = Some(Instant::now());
-                                self.lsp_debounce.inlay_hints = Some(Instant::now());
-                                self.lsp_debounce.folding_range = Some(Instant::now());
+                                self.lsp_sync.debounce.semantic_tokens = Some(Instant::now());
+                                self.lsp_sync.debounce.inlay_hints = Some(Instant::now());
+                                self.lsp_sync.debounce.folding_range = Some(Instant::now());
                             }
                         }
                     }
@@ -289,6 +289,7 @@ impl Workbench {
         // Idle hover should be driven by the last mouse position within the editor content.
         // Cursor-based hover remains available via the explicit `LspHover` command.
         let Some(target) = self
+            .ui
             .hover_popup
             .target
             .filter(|t| self.store.state().editor.pane(t.pane).is_some())
@@ -358,11 +359,11 @@ impl Workbench {
 
         let (line, column) = lsp_position_from_buffer_pos(tab, buf_pos, encoding);
         let key = (path.clone(), line, column, tab.edit_version);
-        if self.hover_popup.last_request.as_ref() == Some(&key) {
+        if self.ui.hover_popup.last_request.as_ref() == Some(&key) {
             return false;
         }
-        self.hover_popup.last_request = Some(key);
-        self.hover_popup.last_anchor = anchor;
+        self.ui.hover_popup.last_request = Some(key);
+        self.ui.hover_popup.last_anchor = anchor;
 
         if let Some(service) = self
             .kernel_services
@@ -385,14 +386,14 @@ impl Workbench {
     }
 
     fn poll_semantic_tokens_debounce(&mut self) -> bool {
-        let Some(deadline) = self.lsp_debounce.semantic_tokens else {
+        let Some(deadline) = self.lsp_sync.debounce.semantic_tokens else {
             return false;
         };
         if Instant::now() < deadline {
             return false;
         }
 
-        self.lsp_debounce.semantic_tokens = None;
+        self.lsp_sync.debounce.semantic_tokens = None;
 
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;
@@ -409,14 +410,14 @@ impl Workbench {
     }
 
     fn poll_inlay_hints_debounce(&mut self) -> bool {
-        let Some(deadline) = self.lsp_debounce.inlay_hints else {
+        let Some(deadline) = self.lsp_sync.debounce.inlay_hints else {
             return false;
         };
         if Instant::now() < deadline {
             return false;
         }
 
-        self.lsp_debounce.inlay_hints = None;
+        self.lsp_sync.debounce.inlay_hints = None;
 
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;
@@ -433,14 +434,14 @@ impl Workbench {
     }
 
     fn poll_folding_range_debounce(&mut self) -> bool {
-        let Some(deadline) = self.lsp_debounce.folding_range else {
+        let Some(deadline) = self.lsp_sync.debounce.folding_range else {
             return false;
         };
         if Instant::now() < deadline {
             return false;
         }
 
-        self.lsp_debounce.folding_range = None;
+        self.lsp_sync.debounce.folding_range = None;
 
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;
@@ -541,9 +542,6 @@ impl Workbench {
         let terminal_color_support =
             crate::ui::core::color_support::detect_terminal_color_support();
         theme.apply_settings(&settings.theme);
-        let core_theme = crate::app::theme::to_core_theme(&theme);
-        let ui_theme =
-            crate::ui::core::theme_adapter::adapt_theme(&core_theme, terminal_color_support);
 
         let _ = self.store.dispatch(KernelAction::EditorConfigUpdated {
             config: editor_config.clone(),
@@ -569,14 +567,12 @@ impl Workbench {
             }
 
             if service.reconfigure(global_override, lsp_server_overrides) {
-                self.lsp_open_paths.clear();
-                self.lsp_open_paths_version = 0;
+                self.lsp_sync.open_paths.clear();
+                self.lsp_sync.open_paths_version = 0;
             }
         }
 
-        self.theme = theme;
-        self.ui_theme = ui_theme;
-        self.terminal_color_support = terminal_color_support;
+        self.theme.set(theme, terminal_color_support);
         self.last_settings_modified = self
             .settings_path
             .as_ref()
@@ -589,8 +585,8 @@ impl Workbench {
         if self.store.state().ui.focus != FocusTarget::BottomPanel
             || self.store.state().ui.bottom_panel.active_tab != BottomPanelTab::Terminal
         {
-            if self.terminal_cursor_visible {
-                self.terminal_cursor_visible = false;
+            if self.ui.terminal_cursor_visible {
+                self.ui.terminal_cursor_visible = false;
                 return true;
             }
             return false;
@@ -601,8 +597,8 @@ impl Workbench {
         };
 
         if session.scroll_offset > 0 {
-            if self.terminal_cursor_visible {
-                self.terminal_cursor_visible = false;
+            if self.ui.terminal_cursor_visible {
+                self.ui.terminal_cursor_visible = false;
                 return true;
             }
             return false;
@@ -611,17 +607,17 @@ impl Workbench {
         #[cfg(feature = "terminal")]
         {
             if session.parser.screen().hide_cursor() {
-                if self.terminal_cursor_visible {
-                    self.terminal_cursor_visible = false;
+                if self.ui.terminal_cursor_visible {
+                    self.ui.terminal_cursor_visible = false;
                     return true;
                 }
                 return false;
             }
         }
 
-        if self.terminal_cursor_last_blink.elapsed() >= super::TERMINAL_CURSOR_BLINK_INTERVAL {
-            self.terminal_cursor_last_blink = Instant::now();
-            self.terminal_cursor_visible = !self.terminal_cursor_visible;
+        if self.ui.terminal_cursor_last_blink.elapsed() >= super::TERMINAL_CURSOR_BLINK_INTERVAL {
+            self.ui.terminal_cursor_last_blink = Instant::now();
+            self.ui.terminal_cursor_visible = !self.ui.terminal_cursor_visible;
             return true;
         }
 
@@ -715,7 +711,7 @@ impl Workbench {
     fn build_theme_settings(&self) -> crate::kernel::services::ports::ThemeSettings {
         use crate::kernel::editor::SyntaxColorGroup;
         use crate::ui::core::theme_adapter::color_to_hex;
-        let t = &self.theme;
+        let t = &self.theme.source;
         let mut settings = crate::kernel::services::ports::ThemeSettings {
             focus_border: color_to_hex(t.focus_border),
             inactive_border: color_to_hex(t.inactive_border),

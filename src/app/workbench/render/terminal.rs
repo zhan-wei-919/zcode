@@ -40,11 +40,11 @@ fn style_for_terminal_cell(cell: &vt100::Cell) -> UiStyle {
 }
 
 pub(super) fn cursor_position_terminal(workbench: &Workbench) -> Option<(u16, u16)> {
-    if !workbench.terminal_cursor_visible {
+    if !workbench.ui.terminal_cursor_visible {
         return None;
     }
 
-    let panel = workbench.layout_cache.bottom_panel_area?;
+    let panel = workbench.frame_layout.bottom_panel_area?;
     if panel.w == 0 || panel.h <= 1 {
         return None;
     }
@@ -92,7 +92,7 @@ impl Workbench {
 
         #[cfg(feature = "terminal")]
         {
-            let selection = self.terminal_selection?;
+            let selection = self.interaction.terminal_selection?;
             if selection.is_empty() {
                 return None;
             }
@@ -139,7 +139,7 @@ impl Workbench {
     }
 
     fn paint_terminal_selection_overlay(&self, painter: &mut Painter, area: UiRect) {
-        let Some(selection) = self.terminal_selection else {
+        let Some(selection) = self.interaction.terminal_selection else {
             return;
         };
         if selection.is_empty() {
@@ -148,8 +148,8 @@ impl Workbench {
 
         let (start, end) = selection.normalized();
         let style = UiStyle::default()
-            .bg(self.ui_theme.palette_selected_bg)
-            .fg(self.ui_theme.palette_selected_fg);
+            .bg(self.theme.core.palette_selected_bg)
+            .fg(self.theme.core.palette_selected_fg);
 
         for row in start.row..=end.row {
             let y = area.y.saturating_add(row);
@@ -186,7 +186,7 @@ impl Workbench {
         }
 
         let Some(session_id) = self.store.state().terminal.active_session().map(|s| s.id) else {
-            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            let style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
             painter.text_clipped(
                 Pos::new(area.x, area.y),
                 "Terminal starting...",
@@ -236,7 +236,7 @@ impl Workbench {
 
         #[cfg(not(feature = "terminal"))]
         {
-            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            let style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
             painter.text_clipped(Pos::new(area.x, area.y), "Terminal disabled", style, area);
         }
     }

@@ -68,8 +68,8 @@ impl Workbench {
 
         let text = format!("{} | {} | {}", mode, cursor_info, active);
         let style = UiStyle::default()
-            .bg(self.ui_theme.statusbar_bg)
-            .fg(self.ui_theme.palette_fg);
+            .bg(self.theme.core.statusbar_bg)
+            .fg(self.theme.core.palette_fg);
         painter.fill_rect(area, style);
         painter.text_clipped(Pos::new(area.x, area.y), text, style, area);
     }

@@ -26,7 +26,7 @@ impl Workbench {
         &mut self,
         event: &MouseEvent,
     ) -> EventResult {
-        let Some(panel_area) = self.layout_cache.bottom_panel_area else {
+        let Some(panel_area) = self.frame_layout.bottom_panel_area else {
             return EventResult::Ignored;
         };
         if !util::rect_contains(panel_area, event.column, event.row) {
@@ -69,11 +69,12 @@ impl Workbench {
                 let active_tab = self.store.state().ui.bottom_panel.active_tab.clone();
                 if active_tab == BottomPanelTab::Terminal {
                     if let Some(cell) = self.terminal_cell_from_mouse(content_area, event) {
-                        self.terminal_selection = Some(super::super::TerminalSelection {
-                            anchor: cell,
-                            cursor: cell,
-                        });
-                        self.terminal_selecting = true;
+                        self.interaction.terminal_selection =
+                            Some(super::super::TerminalSelection {
+                                anchor: cell,
+                                cursor: cell,
+                            });
+                        self.interaction.terminal_selecting = true;
                         return EventResult::Consumed;
                     }
                     return EventResult::Ignored;
@@ -135,6 +136,7 @@ impl Workbench {
                     let now = Instant::now();
                     let double_click_ms = self.store.state().editor.config.double_click_ms;
                     let is_double = self
+                        .ui
                         .click_tracker
                         .problems
                         .map(|(last_time, last_row)| {
@@ -145,9 +147,9 @@ impl Workbench {
                         .unwrap_or(false);
 
                     if is_double {
-                        self.click_tracker.problems = None;
+                        self.ui.click_tracker.problems = None;
                     } else {
-                        self.click_tracker.problems = Some((now, row));
+                        self.ui.click_tracker.problems = Some((now, row));
                     }
 
                     let _ = self.dispatch_kernel(KernelAction::ProblemsClickRow { row });
@@ -174,6 +176,7 @@ impl Workbench {
                     let now = Instant::now();
                     let double_click_ms = self.store.state().editor.config.double_click_ms;
                     let is_double = self
+                        .ui
                         .click_tracker
                         .locations
                         .map(|(last_time, last_row)| {
@@ -184,9 +187,9 @@ impl Workbench {
                         .unwrap_or(false);
 
                     if is_double {
-                        self.click_tracker.locations = None;
+                        self.ui.click_tracker.locations = None;
                     } else {
-                        self.click_tracker.locations = Some((now, row));
+                        self.ui.click_tracker.locations = Some((now, row));
                     }
 
                     let _ = self.dispatch_kernel(KernelAction::LocationsClickRow { row });
@@ -213,6 +216,7 @@ impl Workbench {
                     let now = Instant::now();
                     let double_click_ms = self.store.state().editor.config.double_click_ms;
                     let is_double = self
+                        .ui
                         .click_tracker
                         .symbols
                         .map(|(last_time, last_row)| {
@@ -223,9 +227,9 @@ impl Workbench {
                         .unwrap_or(false);
 
                     if is_double {
-                        self.click_tracker.symbols = None;
+                        self.ui.click_tracker.symbols = None;
                     } else {
-                        self.click_tracker.symbols = Some((now, row));
+                        self.ui.click_tracker.symbols = Some((now, row));
                     }
 
                     let _ = self.dispatch_kernel(KernelAction::SymbolsClickRow { row });
@@ -252,6 +256,7 @@ impl Workbench {
                     let now = Instant::now();
                     let double_click_ms = self.store.state().editor.config.double_click_ms;
                     let is_double = self
+                        .ui
                         .click_tracker
                         .code_actions
                         .map(|(last_time, last_row)| {
@@ -262,9 +267,9 @@ impl Workbench {
                         .unwrap_or(false);
 
                     if is_double {
-                        self.click_tracker.code_actions = None;
+                        self.ui.click_tracker.code_actions = None;
                     } else {
-                        self.click_tracker.code_actions = Some((now, row));
+                        self.ui.click_tracker.code_actions = Some((now, row));
                     }
 
                     let _ = self.dispatch_kernel(KernelAction::CodeActionsClickRow { row });
@@ -281,11 +286,11 @@ impl Workbench {
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
-                    if !self.terminal_selecting {
+                    if !self.interaction.terminal_selecting {
                         return EventResult::Ignored;
                     }
                     if let Some(cell) = self.terminal_cell_from_mouse(content_area, event) {
-                        if let Some(selection) = self.terminal_selection.as_mut() {
+                        if let Some(selection) = self.interaction.terminal_selection.as_mut() {
                             selection.cursor = cell;
                         }
                         return EventResult::Consumed;
@@ -295,9 +300,9 @@ impl Workbench {
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
-                    self.terminal_selecting = false;
+                    self.interaction.terminal_selecting = false;
                     if let Some(cell) = self.terminal_cell_from_mouse(content_area, event) {
-                        if let Some(selection) = self.terminal_selection.as_mut() {
+                        if let Some(selection) = self.interaction.terminal_selection.as_mut() {
                             selection.cursor = cell;
                         }
                     }
@@ -310,8 +315,8 @@ impl Workbench {
                     if let Some(id) = self.store.state().terminal.active_session().map(|s| s.id) {
                         let _ = self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: 3 });
                     }
-                    self.terminal_selection = None;
-                    self.terminal_selecting = false;
+                    self.interaction.terminal_selection = None;
+                    self.interaction.terminal_selecting = false;
                     return EventResult::Consumed;
                 }
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::SearchResults {
@@ -349,8 +354,8 @@ impl Workbench {
                         let _ =
                             self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: -3 });
                     }
-                    self.terminal_selection = None;
-                    self.terminal_selecting = false;
+                    self.interaction.terminal_selection = None;
+                    self.interaction.terminal_selecting = false;
                     return EventResult::Consumed;
                 }
                 if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::SearchResults {

@@ -20,7 +20,7 @@ use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusT
 use crate::models::build_file_tree;
 use crate::tui::view::{EventResult, View};
 use crate::ui::backend::Backend;
-use crate::ui::core::color_support::{detect_terminal_color_support, TerminalColorSupport};
+use crate::ui::core::color_support::detect_terminal_color_support;
 use crate::ui::core::geom::Rect;
 use crate::views::doc::RenderCache as DocRenderCache;
 use crate::views::{ExplorerView, SearchView};
@@ -41,11 +41,14 @@ mod mouse_tracker;
 mod paint;
 mod palette;
 mod render;
+mod state;
 #[cfg(test)]
 #[path = "../../../tests/unit/app/workbench.rs"]
 mod tests;
 mod tick;
 mod util;
+
+use state::{FrameLayout, InteractionState, LspSyncState, RenderCache, ThemeState, UiDisplayState};
 
 const STATUS_HEIGHT: u16 = 1;
 const ACTIVITY_BAR_WIDTH: u16 = 3;
@@ -165,13 +168,6 @@ struct CompletionDocState {
 }
 
 #[derive(Debug, Default)]
-struct LspDebounceState {
-    semantic_tokens: Option<Instant>,
-    inlay_hints: Option<Instant>,
-    folding_range: Option<Instant>,
-}
-
-#[derive(Debug, Default)]
 struct ClickTracker {
     problems: Option<(Instant, usize)>,
     locations: Option<(Instant, usize)>,
@@ -246,23 +242,6 @@ struct ViewportCache {
     applied_terminal_panel_size: Option<(u16, u16)>,
 }
 
-#[derive(Debug, Default)]
-struct LayoutCache {
-    render_area: Option<Rect>,
-    activity_bar_area: Option<Rect>,
-    sidebar_area: Option<Rect>,
-    sidebar_tabs_area: Option<Rect>,
-    sidebar_content_area: Option<Rect>,
-    sidebar_container_area: Option<Rect>,
-    git_panel_area: Option<Rect>,
-    git_branch_areas: Vec<(String, Rect)>,
-    bottom_panel_splitter_area: Option<Rect>,
-    bottom_panel_area: Option<Rect>,
-    editor_areas: Vec<Rect>,
-    editor_inner_areas: Vec<Rect>,
-    editor_container_area: Option<Rect>,
-}
-
 pub struct Workbench {
     store: Store,
     explorer: ExplorerView,
@@ -276,43 +255,24 @@ pub struct Workbench {
     last_settings_check: Instant,
     last_settings_modified: Option<SystemTime>,
     last_input_at: Instant,
-    hover_popup: HoverPopupRenderState,
-    completion_doc: CompletionDocState,
-    lsp_debounce: LspDebounceState,
-    file_save_versions: FxHashMap<(usize, PathBuf), u64>,
-    lsp_open_paths_version: u64,
-    lsp_open_paths: FxHashSet<PathBuf>,
-    file_watcher_open_paths_version: u64,
-    theme: UiTheme,
-    ui_theme: crate::ui::core::theme::Theme,
-    terminal_color_support: TerminalColorSupport,
+    ui: UiDisplayState,
+    lsp_sync: LspSyncState,
+    theme: ThemeState,
     ui_runtime: crate::ui::core::runtime::UiRuntime,
     ui_tree: crate::ui::core::tree::UiTree,
     runtime: AsyncRuntime,
     kernel_services: KernelServiceHost,
     global_search_task: Option<GlobalSearchTask>,
     global_search_rx: Option<Receiver<GlobalSearchMessage>>,
-    layout_cache: LayoutCache,
-    viewport_cache: ViewportCache,
-    terminal_cursor_visible: bool,
-    terminal_cursor_last_blink: Instant,
-    editor_split_dragging: bool,
-    sidebar_split_dragging: bool,
-    bottom_panel_split_dragging: bool,
-    editor_scrollbar_drag: Option<EditorScrollbarDragState>,
-    editor_scrollbar_hover: Option<usize>,
-    terminal_selection: Option<TerminalSelection>,
-    terminal_selecting: bool,
-    click_tracker: ClickTracker,
-    editor_mouse: Vec<mouse_tracker::EditorMouseTracker>,
+    frame_layout: FrameLayout,
+    render_cache: RenderCache,
+    interaction: InteractionState,
     pending_definition_highlight: Option<PendingDefinitionHighlight>,
     definition_jump_highlight: Option<DefinitionJumpHighlight>,
-    markdown_views: FxHashMap<TabId, crate::views::editor::markdown_cache::MarkdownViewState>,
     pending_restart: Option<PendingRestart>,
     pending_theme_save_deadline: Option<Instant>,
     pending_completion_rank_save_deadline: Option<Instant>,
     file_watcher: Option<FileWatcherService>,
-    theme_editor_layout: ThemeEditorLayoutCache,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -468,10 +428,6 @@ impl Workbench {
         let lsp_open_paths_version = store.state().editor.open_paths_version;
         let file_watcher_open_paths_version = store.state().editor.open_paths_version;
 
-        let core_theme = crate::app::theme::to_core_theme(&theme);
-        let ui_theme =
-            crate::ui::core::theme_adapter::adapt_theme(&core_theme, terminal_color_support);
-
         let mut workbench = Self {
             store,
             explorer: ExplorerView::new(),
@@ -485,44 +441,36 @@ impl Workbench {
             last_settings_check: Instant::now(),
             last_settings_modified,
             last_input_at: Instant::now(),
-            hover_popup: HoverPopupRenderState::default(),
-            completion_doc: CompletionDocState::default(),
-            lsp_debounce: LspDebounceState::default(),
-            file_save_versions: FxHashMap::default(),
-            lsp_open_paths_version,
-            lsp_open_paths: FxHashSet::default(),
-            file_watcher_open_paths_version,
-            theme,
-            ui_theme,
-            terminal_color_support,
+            ui: UiDisplayState::new(Instant::now()),
+            lsp_sync: LspSyncState {
+                open_paths_version: lsp_open_paths_version,
+                file_watcher_open_paths_version,
+                ..LspSyncState::default()
+            },
+            theme: ThemeState::new(theme, terminal_color_support),
             ui_runtime: crate::ui::core::runtime::UiRuntime::new(),
             ui_tree: crate::ui::core::tree::UiTree::new(),
             runtime,
             kernel_services,
             global_search_task: None,
             global_search_rx: None,
-            layout_cache: LayoutCache::default(),
-            viewport_cache: ViewportCache {
-                editor_content_sizes: vec![(0, 0); panes],
-                applied_editor_content_sizes: vec![(0, 0); panes],
-                ..ViewportCache::default()
+            frame_layout: FrameLayout::default(),
+            render_cache: RenderCache {
+                viewport: ViewportCache {
+                    editor_content_sizes: vec![(0, 0); panes],
+                    applied_editor_content_sizes: vec![(0, 0); panes],
+                    ..ViewportCache::default()
+                },
+                ..RenderCache::default()
             },
-            terminal_cursor_visible: true,
-            terminal_cursor_last_blink: Instant::now(),
-            editor_split_dragging: false,
-            sidebar_split_dragging: false,
-            bottom_panel_split_dragging: false,
-            editor_scrollbar_drag: None,
-            editor_scrollbar_hover: None,
-            terminal_selection: None,
-            terminal_selecting: false,
-            click_tracker: ClickTracker::default(),
-            editor_mouse: (0..panes)
-                .map(|_| mouse_tracker::EditorMouseTracker::new())
-                .collect(),
+            interaction: InteractionState {
+                editor_mouse: (0..panes)
+                    .map(|_| mouse_tracker::EditorMouseTracker::new())
+                    .collect(),
+                ..InteractionState::default()
+            },
             pending_definition_highlight: None,
             definition_jump_highlight: None,
-            markdown_views: FxHashMap::default(),
             pending_restart: None,
             pending_theme_save_deadline: None,
             pending_completion_rank_save_deadline: None,
@@ -533,7 +481,6 @@ impl Workbench {
                     None
                 }
             },
-            theme_editor_layout: ThemeEditorLayoutCache::default(),
         };
 
         if git_enabled() {
@@ -570,7 +517,8 @@ impl Workbench {
     }
 
     fn hover_popup_view_height(&self) -> usize {
-        self.hover_popup
+        self.ui
+            .hover_popup
             .last_area
             .map(|a| a.h.saturating_sub(2) as usize)
             .unwrap_or(0)
@@ -578,32 +526,34 @@ impl Workbench {
 
     fn scroll_hover_popup_by(&mut self, delta_lines: isize) -> bool {
         let view_h = self.hover_popup_view_height();
-        if view_h == 0 || self.hover_popup.total_lines <= view_h {
+        if view_h == 0 || self.ui.hover_popup.total_lines <= view_h {
             return false;
         }
 
-        let max_scroll = self.hover_popup.total_lines.saturating_sub(view_h);
+        let max_scroll = self.ui.hover_popup.total_lines.saturating_sub(view_h);
         let next = if delta_lines < 0 {
-            self.hover_popup
+            self.ui
+                .hover_popup
                 .scroll
                 .saturating_sub(delta_lines.unsigned_abs())
         } else {
-            (self.hover_popup.scroll + delta_lines as usize).min(max_scroll)
+            (self.ui.hover_popup.scroll + delta_lines as usize).min(max_scroll)
         };
 
-        if next == self.hover_popup.scroll {
+        if next == self.ui.hover_popup.scroll {
             return false;
         }
-        self.hover_popup.scroll = next;
+        self.ui.hover_popup.scroll = next;
         true
     }
 
     fn reset_hover_popup_scroll(&mut self) {
-        self.hover_popup.scroll = 0;
+        self.ui.hover_popup.scroll = 0;
     }
 
     fn completion_doc_view_height(&self) -> usize {
-        self.completion_doc
+        self.ui
+            .completion_doc
             .last_area
             .map(|a| a.h.saturating_sub(2) as usize)
             .unwrap_or(0)
@@ -611,28 +561,29 @@ impl Workbench {
 
     fn scroll_completion_doc_by(&mut self, delta_lines: isize) -> bool {
         let view_h = self.completion_doc_view_height();
-        if view_h == 0 || self.completion_doc.total_lines <= view_h {
+        if view_h == 0 || self.ui.completion_doc.total_lines <= view_h {
             return false;
         }
 
-        let max_scroll = self.completion_doc.total_lines.saturating_sub(view_h);
+        let max_scroll = self.ui.completion_doc.total_lines.saturating_sub(view_h);
         let next = if delta_lines < 0 {
-            self.completion_doc
+            self.ui
+                .completion_doc
                 .scroll
                 .saturating_sub(delta_lines.unsigned_abs())
         } else {
-            (self.completion_doc.scroll + delta_lines as usize).min(max_scroll)
+            (self.ui.completion_doc.scroll + delta_lines as usize).min(max_scroll)
         };
 
-        if next == self.completion_doc.scroll {
+        if next == self.ui.completion_doc.scroll {
             return false;
         }
-        self.completion_doc.scroll = next;
+        self.ui.completion_doc.scroll = next;
         true
     }
 
     fn reset_completion_doc_scroll(&mut self) {
-        self.completion_doc.scroll = 0;
+        self.ui.completion_doc.scroll = 0;
     }
 
     pub(super) fn open_settings(&mut self) {
@@ -687,13 +638,14 @@ impl Workbench {
             } => {
                 let save_key = (pane, path.clone());
                 if self
+                    .lsp_sync
                     .file_save_versions
                     .get(&save_key)
                     .is_some_and(|last| *last > version)
                 {
                     return;
                 }
-                self.file_save_versions.insert(save_key, version);
+                self.lsp_sync.file_save_versions.insert(save_key, version);
 
                 if success {
                     if let Some(watcher) = self.file_watcher.as_mut() {
@@ -781,8 +733,8 @@ impl Workbench {
                 let _ = self.dispatch_kernel(KernelAction::TerminalSpawned { id, title });
             }
             AppMessage::TerminalOutput { id, bytes } => {
-                self.terminal_selection = None;
-                self.terminal_selecting = false;
+                self.interaction.terminal_selection = None;
+                self.interaction.terminal_selecting = false;
                 let _ = self.dispatch_kernel(KernelAction::TerminalOutput { id, bytes });
             }
             AppMessage::TerminalExited { id, code } => {
@@ -886,11 +838,12 @@ impl Workbench {
         edit_version: u64,
     ) {
         if !is_markdown {
-            self.markdown_views.remove(&tab_id);
+            self.render_cache.markdown_views.remove(&tab_id);
             return;
         }
 
         let view = self
+            .render_cache
             .markdown_views
             .entry(tab_id)
             .or_insert_with(|| crate::views::editor::markdown_cache::MarkdownViewState::new(rope));
@@ -901,7 +854,7 @@ impl Workbench {
         let (tab_id, edit_version, rope) = {
             let tab = self.store.state().editor.pane(pane)?.active_tab()?;
             if !tab.is_markdown() {
-                self.markdown_views.remove(&tab.id);
+                self.render_cache.markdown_views.remove(&tab.id);
                 return None;
             }
             (tab.id, tab.edit_version, tab.buffer.rope().clone())
@@ -914,11 +867,14 @@ impl Workbench {
         &self,
         tab_id: TabId,
     ) -> Option<&crate::views::editor::markdown::MarkdownDocument> {
-        self.markdown_views.get(&tab_id).map(|view| view.doc())
+        self.render_cache
+            .markdown_views
+            .get(&tab_id)
+            .map(|view| view.doc())
     }
 
     fn sync_markdown_views(&mut self) {
-        if self.markdown_views.is_empty() {
+        if self.render_cache.markdown_views.is_empty() {
             return;
         }
 
@@ -928,7 +884,8 @@ impl Workbench {
                 open.insert(tab.id);
             }
         }
-        self.markdown_views
+        self.render_cache
+            .markdown_views
             .retain(|tab_id, _| open.contains(tab_id));
     }
 }

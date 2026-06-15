@@ -23,7 +23,7 @@ impl Workbench {
             event,
             InputEvent::Mouse(me)
                 if self.store.state().ui.hover.is_active()
-                    && self.hover_popup.last_area.is_some_and(|a| {
+                    && self.ui.hover_popup.last_area.is_some_and(|a| {
                         super::super::util::rect_contains(a, me.column, me.row)
                     })
                     && matches!(
@@ -38,16 +38,16 @@ impl Workbench {
 
         self.last_input_at = Instant::now();
         if !preserve_hover {
-            self.hover_popup.last_request = None;
-            self.hover_popup.last_anchor = None;
+            self.ui.hover_popup.last_request = None;
+            self.ui.hover_popup.last_anchor = None;
         }
-        self.lsp_debounce.inlay_hints = None;
-        self.lsp_debounce.folding_range = None;
+        self.lsp_sync.debounce.inlay_hints = None;
+        self.lsp_sync.debounce.folding_range = None;
         if self.store.state().ui.focus == FocusTarget::BottomPanel
             && self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal
         {
-            self.terminal_cursor_visible = true;
-            self.terminal_cursor_last_blink = Instant::now();
+            self.ui.terminal_cursor_visible = true;
+            self.ui.terminal_cursor_last_blink = Instant::now();
         }
 
         if !preserve_hover {
@@ -145,11 +145,11 @@ impl Workbench {
             match (key_event.code, key_event.modifiers) {
                 (KeyCode::Esc, _) => {
                     let _ = self.dispatch_kernel(KernelAction::CompletionClose);
-                    self.completion_doc.scroll = 0;
-                    self.completion_doc.total_lines = 0;
-                    self.completion_doc.key = None;
-                    self.completion_doc.last_area = None;
-                    self.completion_doc.render_cache.clear();
+                    self.ui.completion_doc.scroll = 0;
+                    self.ui.completion_doc.total_lines = 0;
+                    self.ui.completion_doc.key = None;
+                    self.ui.completion_doc.last_area = None;
+                    self.ui.completion_doc.render_cache.clear();
                     return EventResult::Consumed;
                 }
                 (KeyCode::Tab, _) => {
@@ -215,11 +215,11 @@ impl Workbench {
 
                     // Completion session ends; reset doc scroll for the next popup.
                     if !self.store.state().ui.completion.visible {
-                        self.completion_doc.scroll = 0;
-                        self.completion_doc.total_lines = 0;
-                        self.completion_doc.key = None;
-                        self.completion_doc.last_area = None;
-                        self.completion_doc.render_cache.clear();
+                        self.ui.completion_doc.scroll = 0;
+                        self.ui.completion_doc.total_lines = 0;
+                        self.ui.completion_doc.key = None;
+                        self.ui.completion_doc.last_area = None;
+                        self.ui.completion_doc.render_cache.clear();
                     }
                     return EventResult::Consumed;
                 }
@@ -288,7 +288,7 @@ impl Workbench {
             self.maybe_schedule_inlay_hints_debounce(&cmd_for_schedule);
             self.maybe_schedule_folding_range_debounce(&cmd_for_schedule);
             if cmd_for_schedule == Command::OpenThemeEditor {
-                self.theme_editor_layout.ansi_cursor = None;
+                self.render_cache.theme_editor_layout.ansi_cursor = None;
                 self.sync_theme_editor_hsl();
             }
             if self.store.state().ui.should_quit {
@@ -378,11 +378,11 @@ impl Workbench {
 
     fn handle_theme_editor_key(&mut self, key_event: &KeyEvent) -> EventResult {
         let focus = self.store.state().ui.theme_editor.focus;
-        let color_support = self.terminal_color_support;
+        let color_support = self.theme.color_support;
 
         match (key_event.code, key_event.modifiers) {
             (KeyCode::Esc, _) => {
-                self.theme_editor_layout.ansi_cursor = None;
+                self.render_cache.theme_editor_layout.ansi_cursor = None;
                 let _ = self.dispatch_kernel(KernelAction::ThemeEditorClose);
                 EventResult::Consumed
             }
@@ -602,10 +602,10 @@ impl Workbench {
         let col = event.column;
         let row = event.row;
 
-        match self.terminal_color_support {
+        match self.theme.color_support {
             crate::ui::core::color_support::TerminalColorSupport::TrueColor => {
                 // Check Hue Bar
-                if let Some(area) = self.theme_editor_layout.hue_bar_area {
+                if let Some(area) = self.render_cache.theme_editor_layout.hue_bar_area {
                     if col >= area.x
                         && col < area.x + area.w
                         && row >= area.y
@@ -623,7 +623,7 @@ impl Workbench {
                 }
 
                 // Check SV Palette
-                if let Some(area) = self.theme_editor_layout.sv_palette_area {
+                if let Some(area) = self.render_cache.theme_editor_layout.sv_palette_area {
                     if col >= area.x
                         && col < area.x + area.w
                         && row >= area.y
@@ -648,7 +648,7 @@ impl Workbench {
             }
             crate::ui::core::color_support::TerminalColorSupport::Ansi256
             | crate::ui::core::color_support::TerminalColorSupport::Ansi16 => {
-                if let Some(area) = self.theme_editor_layout.sv_palette_area {
+                if let Some(area) = self.render_cache.theme_editor_layout.sv_palette_area {
                     if col >= area.x
                         && col < area.x + area.w
                         && row >= area.y
@@ -661,9 +661,10 @@ impl Workbench {
                             rel_row,
                             area.w,
                             area.h,
-                            self.terminal_color_support,
+                            self.theme.color_support,
                         ) {
-                            self.theme_editor_layout.ansi_cursor = Some((rel_col, rel_row));
+                            self.render_cache.theme_editor_layout.ansi_cursor =
+                                Some((rel_col, rel_row));
                             let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetFocus {
                                 focus: ThemeEditorFocus::SvPalette,
                             });
@@ -678,7 +679,7 @@ impl Workbench {
         }
 
         // Check Language Bar
-        if let Some(area) = self.theme_editor_layout.language_bar_area {
+        if let Some(area) = self.render_cache.theme_editor_layout.language_bar_area {
             if col >= area.x
                 && col < area.x + area.w
                 && row >= area.y
@@ -702,7 +703,7 @@ impl Workbench {
         }
 
         // Check Token List
-        if let Some(area) = self.theme_editor_layout.token_list_area {
+        if let Some(area) = self.render_cache.theme_editor_layout.token_list_area {
             if col >= area.x
                 && col < area.x + area.w
                 && row >= area.y
@@ -733,7 +734,7 @@ impl Workbench {
     pub(in super::super) fn apply_theme_editor_color(&mut self) {
         let te = &self.store.state().ui.theme_editor;
         let token = te.selected_token;
-        let (r, g, b) = match self.terminal_color_support {
+        let (r, g, b) = match self.theme.color_support {
             crate::ui::core::color_support::TerminalColorSupport::TrueColor => {
                 crate::app::theme::hsl_to_rgb(te.hue, te.saturation, te.lightness)
             }
@@ -751,30 +752,28 @@ impl Workbench {
         let color = crate::ui::core::style::Color::Rgb(r, g, b);
 
         if let Some(group) = token.syntax_color_group() {
-            self.theme.set_syntax_color(group, color);
+            self.theme.source.set_syntax_color(group, color);
         } else {
             match token {
                 crate::kernel::state::ThemeEditorToken::EditorBg => {
-                    self.theme.editor_bg = color;
+                    self.theme.source.editor_bg = color;
                 }
                 crate::kernel::state::ThemeEditorToken::SidebarBg => {
-                    self.theme.sidebar_bg = color;
+                    self.theme.source.sidebar_bg = color;
                 }
                 crate::kernel::state::ThemeEditorToken::ActivityBg => {
-                    self.theme.activity_bg = color;
+                    self.theme.source.activity_bg = color;
                 }
                 crate::kernel::state::ThemeEditorToken::PopupBg => {
-                    self.theme.popup_bg = color;
+                    self.theme.source.popup_bg = color;
                 }
                 crate::kernel::state::ThemeEditorToken::StatusbarBg => {
-                    self.theme.statusbar_bg = color;
+                    self.theme.source.statusbar_bg = color;
                 }
                 _ => {}
             }
         }
-        let core_theme = crate::app::theme::to_core_theme(&self.theme);
-        self.ui_theme =
-            crate::ui::core::theme_adapter::adapt_theme(&core_theme, self.terminal_color_support);
+        self.theme.refresh_core();
 
         // Schedule debounced save
         self.pending_theme_save_deadline =
@@ -805,12 +804,12 @@ impl Workbench {
                 lightness: l,
             });
 
-            if self.terminal_color_support
+            if self.theme.color_support
                 != crate::ui::core::color_support::TerminalColorSupport::TrueColor
             {
                 if let Color::Indexed(index) = crate::ui::core::theme_adapter::map_color_to_support(
                     Color::Rgb(r, g, b),
-                    self.terminal_color_support,
+                    self.theme.color_support,
                 ) {
                     let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetAnsiIndex { index });
                 }
@@ -823,15 +822,17 @@ impl Workbench {
     pub(in super::super) fn sync_theme_editor_hsl(&mut self) {
         let token = self.store.state().ui.theme_editor.selected_token;
         let color = if let Some(group) = token.syntax_color_group() {
-            self.theme.syntax_colors[group as usize]
+            self.theme.source.syntax_colors[group as usize]
         } else {
             match token {
-                crate::kernel::state::ThemeEditorToken::EditorBg => self.theme.editor_bg,
-                crate::kernel::state::ThemeEditorToken::SidebarBg => self.theme.sidebar_bg,
-                crate::kernel::state::ThemeEditorToken::ActivityBg => self.theme.activity_bg,
-                crate::kernel::state::ThemeEditorToken::PopupBg => self.theme.popup_bg,
-                crate::kernel::state::ThemeEditorToken::StatusbarBg => self.theme.statusbar_bg,
-                _ => self.theme.editor_bg,
+                crate::kernel::state::ThemeEditorToken::EditorBg => self.theme.source.editor_bg,
+                crate::kernel::state::ThemeEditorToken::SidebarBg => self.theme.source.sidebar_bg,
+                crate::kernel::state::ThemeEditorToken::ActivityBg => self.theme.source.activity_bg,
+                crate::kernel::state::ThemeEditorToken::PopupBg => self.theme.source.popup_bg,
+                crate::kernel::state::ThemeEditorToken::StatusbarBg => {
+                    self.theme.source.statusbar_bg
+                }
+                _ => self.theme.source.editor_bg,
             }
         };
 
@@ -843,12 +844,12 @@ impl Workbench {
                 lightness: l,
             });
 
-            if self.terminal_color_support
+            if self.theme.color_support
                 != crate::ui::core::color_support::TerminalColorSupport::TrueColor
             {
                 if let Color::Indexed(index) = crate::ui::core::theme_adapter::map_color_to_support(
                     Color::Rgb(r, g, b),
-                    self.terminal_color_support,
+                    self.theme.color_support,
                 ) {
                     let _ = self.dispatch_kernel(KernelAction::ThemeEditorSetAnsiIndex { index });
                 }
@@ -860,7 +861,7 @@ impl Workbench {
         let cur = self.store.state().ui.theme_editor.ansi_index;
         let shift = mods.contains(KeyModifiers::SHIFT);
 
-        let next = match self.terminal_color_support {
+        let next = match self.theme.color_support {
             crate::ui::core::color_support::TerminalColorSupport::TrueColor => cur,
             crate::ui::core::color_support::TerminalColorSupport::Ansi16 => {
                 let idx = (cur % 16) as i16;

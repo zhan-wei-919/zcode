@@ -17,11 +17,11 @@ impl Workbench {
         }
 
         let base = UiStyle::default()
-            .bg(self.ui_theme.activity_bg)
-            .fg(self.ui_theme.activity_fg);
+            .bg(self.theme.core.activity_bg)
+            .fg(self.theme.core.activity_fg);
         let active_style = UiStyle::default()
-            .bg(self.ui_theme.activity_active_bg)
-            .fg(self.ui_theme.activity_active_fg)
+            .bg(self.theme.core.activity_active_bg)
+            .fg(self.theme.core.activity_active_fg)
             .add_mod(Mod::BOLD);
 
         let state = self.store.state();
@@ -79,8 +79,8 @@ impl Workbench {
 
     pub(super) fn render_sidebar(&mut self, backend: &mut dyn Backend, area: UiRect) {
         if area.is_empty() {
-            self.layout_cache.sidebar_tabs_area = None;
-            self.layout_cache.sidebar_content_area = None;
+            self.frame_layout.sidebar_tabs_area = None;
+            self.frame_layout.sidebar_content_area = None;
             return;
         }
 
@@ -109,47 +109,47 @@ impl Workbench {
                 },
             });
 
-            let hovered =
-                self.ui_runtime.hovered() == Some(splitter_id) || self.sidebar_split_dragging;
+            let hovered = self.ui_runtime.hovered() == Some(splitter_id)
+                || self.interaction.sidebar_split_dragging;
             let fg = if hovered {
-                self.ui_theme.focus_border
+                self.theme.core.focus_border
             } else {
-                self.ui_theme.separator
+                self.theme.core.separator
             };
-            let style = UiStyle::default().bg(self.ui_theme.sidebar_bg).fg(fg);
+            let style = UiStyle::default().bg(self.theme.core.sidebar_bg).fg(fg);
             for dx in 0..sep.w {
                 painter.vline(Pos::new(sep.x.saturating_add(dx), sep.y), sep.h, '│', style);
             }
         }
 
         if inner.is_empty() {
-            self.layout_cache.sidebar_tabs_area = None;
-            self.layout_cache.sidebar_content_area = None;
+            self.frame_layout.sidebar_tabs_area = None;
+            self.frame_layout.sidebar_content_area = None;
             backend.draw(ui_full, painter.cmds());
             return;
         }
 
         // Clear the sidebar background so old content doesn't leak through on partial redraws.
-        painter.fill_rect(inner, UiStyle::default().bg(self.ui_theme.sidebar_bg));
+        painter.fill_rect(inner, UiStyle::default().bg(self.theme.core.sidebar_bg));
 
         let tab_height = 1u16;
         if inner.h <= tab_height {
-            self.layout_cache.sidebar_tabs_area = Some(inner);
-            self.layout_cache.sidebar_content_area = None;
+            self.frame_layout.sidebar_tabs_area = Some(inner);
+            self.frame_layout.sidebar_content_area = None;
             backend.draw(ui_full, painter.cmds());
             return;
         }
 
         let (tabs_area, content_area) = inner.split_top(tab_height);
 
-        self.layout_cache.sidebar_tabs_area = Some(tabs_area);
-        self.layout_cache.sidebar_content_area = Some(content_area);
+        self.frame_layout.sidebar_tabs_area = Some(tabs_area);
+        self.frame_layout.sidebar_content_area = Some(content_area);
 
         let active_tab = self.store.state().ui.sidebar_tab;
         let tab_active = UiStyle::default()
-            .fg(self.ui_theme.header_fg)
+            .fg(self.theme.core.header_fg)
             .add_mod(Mod::BOLD);
-        let tab_inactive = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+        let tab_inactive = UiStyle::default().fg(self.theme.core.palette_muted_fg);
 
         let explorer_style = if active_tab == SidebarTab::Explorer {
             tab_active
@@ -164,7 +164,7 @@ impl Workbench {
 
         let ui_tabs = tabs_area;
         if !ui_tabs.is_empty() {
-            painter.fill_rect(ui_tabs, UiStyle::default().bg(self.ui_theme.sidebar_bg));
+            painter.fill_rect(ui_tabs, UiStyle::default().bg(self.theme.core.sidebar_bg));
 
             const EXPLORER_LABEL: &str = " EXPLORER ";
             const SEARCH_LABEL: &str = " SEARCH ";
@@ -180,8 +180,8 @@ impl Workbench {
 
         match active_tab {
             SidebarTab::Explorer => {
-                self.layout_cache.git_panel_area = None;
-                self.layout_cache.git_branch_areas.clear();
+                self.frame_layout.git_panel_area = None;
+                self.frame_layout.git_branch_areas.clear();
 
                 let (show_git_panel, branches_len) = {
                     let state = self.store.state();
@@ -224,7 +224,7 @@ impl Workbench {
                         active_open_file_id,
                         scroll_offset: explorer_state.scroll_offset,
                         git_status_by_id: &explorer_state.git_status_by_id,
-                        theme: &self.ui_theme,
+                        theme: &self.theme.core,
                     },
                 );
                 push_explorer_nodes(
@@ -246,7 +246,7 @@ impl Workbench {
                 let search_state = &self.store.state().search;
                 let ui_area = content_area;
                 self.search_view
-                    .paint(&mut painter, ui_area, search_state, &self.ui_theme);
+                    .paint(&mut painter, ui_area, search_state, &self.theme.core);
             }
         }
 

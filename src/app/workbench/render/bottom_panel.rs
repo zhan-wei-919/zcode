@@ -13,8 +13,8 @@ impl Workbench {
         }
 
         let base_style = UiStyle::default()
-            .bg(self.ui_theme.sidebar_bg)
-            .fg(self.ui_theme.palette_fg);
+            .bg(self.theme.core.sidebar_bg)
+            .fg(self.theme.core.palette_fg);
         painter.fill_rect(area, base_style);
 
         let tabs_h = 1.min(area.h);
@@ -54,9 +54,9 @@ impl Workbench {
         }
 
         let tab_active = UiStyle::default()
-            .fg(self.ui_theme.header_fg)
+            .fg(self.theme.core.header_fg)
             .add_mod(Mod::BOLD);
-        let tab_inactive = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+        let tab_inactive = UiStyle::default().fg(self.theme.core.palette_muted_fg);
 
         let y = area.y;
         let mut x = area.x;
@@ -85,7 +85,7 @@ impl Workbench {
         let problems_state = &self.store.state().problems;
         let problems = problems_state.items();
         if problems.is_empty() {
-            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            let style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
             painter.text_clipped(Pos::new(area.x, area.y), "No problems", style, area);
             return;
         }
@@ -118,17 +118,17 @@ impl Workbench {
             let is_selected = i == selected;
             let marker = if is_selected { ">" } else { " " };
             let marker_style = UiStyle::default().fg(if is_selected {
-                self.ui_theme.focus_border
+                self.theme.core.focus_border
             } else {
-                self.ui_theme.palette_muted_fg
+                self.theme.core.palette_muted_fg
             });
             let severity_style = match item.severity {
-                ProblemSeverity::Error => UiStyle::default().fg(self.ui_theme.error_fg),
-                ProblemSeverity::Warning => UiStyle::default().fg(self.ui_theme.warning_fg),
+                ProblemSeverity::Error => UiStyle::default().fg(self.theme.core.error_fg),
+                ProblemSeverity::Warning => UiStyle::default().fg(self.theme.core.warning_fg),
                 ProblemSeverity::Information => {
-                    UiStyle::default().fg(self.ui_theme.palette_muted_fg)
+                    UiStyle::default().fg(self.theme.core.palette_muted_fg)
                 }
-                ProblemSeverity::Hint => UiStyle::default().fg(self.ui_theme.palette_muted_fg),
+                ProblemSeverity::Hint => UiStyle::default().fg(self.theme.core.palette_muted_fg),
             };
 
             let row_clip = UiRect::new(area.x, y, area.w, 1);
@@ -139,7 +139,7 @@ impl Workbench {
             x = x.saturating_add(1);
 
             let file_info = format!("{}:{}:{} ", file_name, line, col);
-            let file_style = UiStyle::default().fg(self.ui_theme.accent_fg);
+            let file_style = UiStyle::default().fg(self.theme.core.accent_fg);
             painter.text_clipped(Pos::new(x, y), file_info.as_str(), file_style, row_clip);
             x = x.saturating_add(file_info.width().min(u16::MAX as usize) as u16);
 
@@ -167,7 +167,7 @@ impl Workbench {
         let locations_state = &self.store.state().locations;
         let locations = locations_state.items();
         if locations.is_empty() {
-            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            let style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
             painter.text_clipped(Pos::new(area.x, area.y), "No locations", style, area);
             return;
         }
@@ -199,9 +199,9 @@ impl Workbench {
             let is_selected = i == selected;
             let marker = if is_selected { ">" } else { " " };
             let marker_style = UiStyle::default().fg(if is_selected {
-                self.ui_theme.focus_border
+                self.theme.core.focus_border
             } else {
-                self.ui_theme.palette_muted_fg
+                self.theme.core.palette_muted_fg
             });
 
             let row_clip = UiRect::new(area.x, y, area.w, 1);
@@ -212,7 +212,7 @@ impl Workbench {
             x = x.saturating_add(1);
 
             let file_info = format!("{}:{}:{} ", file_name, line, col);
-            let file_style = UiStyle::default().fg(self.ui_theme.accent_fg);
+            let file_style = UiStyle::default().fg(self.theme.core.accent_fg);
             painter.text_clipped(Pos::new(x, y), file_info.as_str(), file_style, row_clip);
         }
     }
@@ -228,7 +228,7 @@ impl Workbench {
         let actions_state = &self.store.state().code_actions;
         let actions = actions_state.items();
         if actions.is_empty() {
-            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            let style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
             painter.text_clipped(Pos::new(area.x, area.y), "No actions", style, area);
             return;
         }
@@ -247,17 +247,17 @@ impl Workbench {
             let is_selected = i == selected;
             let marker = if is_selected { ">" } else { " " };
             let marker_style = UiStyle::default().fg(if is_selected {
-                self.ui_theme.focus_border
+                self.theme.core.focus_border
             } else {
-                self.ui_theme.palette_muted_fg
+                self.theme.core.palette_muted_fg
             });
 
             let title_style = if action.is_preferred {
                 UiStyle::default()
-                    .fg(self.ui_theme.accent_fg)
+                    .fg(self.theme.core.accent_fg)
                     .add_mod(Mod::BOLD)
             } else {
-                UiStyle::default().fg(self.ui_theme.palette_fg)
+                UiStyle::default().fg(self.theme.core.palette_fg)
             };
 
             let row_clip = UiRect::new(area.x, y, area.w, 1);
@@ -281,7 +281,7 @@ impl Workbench {
         let symbols_state = &self.store.state().symbols;
         let symbols = symbols_state.items();
         if symbols.is_empty() {
-            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            let style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
             painter.text_clipped(Pos::new(area.x, area.y), "No symbols", style, area);
             return;
         }
@@ -307,9 +307,9 @@ impl Workbench {
             let is_selected = i == selected;
             let marker = if is_selected { ">" } else { " " };
             let marker_style = UiStyle::default().fg(if is_selected {
-                self.ui_theme.focus_border
+                self.theme.core.focus_border
             } else {
-                self.ui_theme.palette_muted_fg
+                self.theme.core.palette_muted_fg
             });
 
             let kind = symbol_kind_label(item.kind);
@@ -324,12 +324,12 @@ impl Workbench {
             x = x.saturating_add(1);
 
             let file_info = format!("{}:{}:{} ", file_name, line, col);
-            let file_style = UiStyle::default().fg(self.ui_theme.accent_fg);
+            let file_style = UiStyle::default().fg(self.theme.core.accent_fg);
             painter.text_clipped(Pos::new(x, y), file_info.as_str(), file_style, row_clip);
             x = x.saturating_add(file_info.width().min(u16::MAX as usize) as u16);
 
             let kind_text = format!("[{}] ", kind);
-            let kind_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            let kind_style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
             painter.text_clipped(Pos::new(x, y), kind_text.as_str(), kind_style, row_clip);
             x = x.saturating_add(kind_text.width().min(u16::MAX as usize) as u16);
 
@@ -341,14 +341,14 @@ impl Workbench {
             );
             x = x.saturating_add(indent.width().min(u16::MAX as usize) as u16);
 
-            let name_style = UiStyle::default().fg(self.ui_theme.palette_fg);
+            let name_style = UiStyle::default().fg(self.theme.core.palette_fg);
             painter.text_clipped(Pos::new(x, y), item.name.as_str(), name_style, row_clip);
             x = x.saturating_add(item.name.as_str().width().min(u16::MAX as usize) as u16);
 
             if let Some(detail) = item.detail.as_deref().filter(|s| !s.is_empty()) {
                 painter.text_clipped(Pos::new(x, y), " ", UiStyle::default(), row_clip);
                 x = x.saturating_add(1);
-                let detail_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+                let detail_style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
                 painter.text_clipped(Pos::new(x, y), detail, detail_style, row_clip);
             }
         }
@@ -363,7 +363,7 @@ impl Workbench {
             return;
         }
 
-        let border_style = UiStyle::default().fg(self.ui_theme.focus_border);
+        let border_style = UiStyle::default().fg(self.theme.core.focus_border);
         painter.border(area, border_style, BorderKind::Plain);
 
         let inner = UiRect::new(
@@ -377,7 +377,7 @@ impl Workbench {
         }
 
         if self.logs.is_empty() {
-            let style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+            let style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
             painter.text_clipped(Pos::new(inner.x, inner.y), "No logs yet", style, inner);
             return;
         }
@@ -440,7 +440,7 @@ impl Workbench {
             "Enter search term in Search sidebar".to_string()
         };
 
-        let summary_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+        let summary_style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
         painter.text_clipped(
             Pos::new(summary_area.x, summary_area.y),
             summary,
@@ -482,9 +482,9 @@ impl Workbench {
             let is_selected = i == selected;
             let marker = if is_selected { ">" } else { " " };
             let marker_style = UiStyle::default().fg(if is_selected {
-                self.ui_theme.focus_border
+                self.theme.core.focus_border
             } else {
-                self.ui_theme.palette_muted_fg
+                self.theme.core.palette_muted_fg
             });
             let row_clip = UiRect::new(list_area.x, y, list_area.w, 1);
             let mut x = list_area.x;
@@ -515,12 +515,12 @@ impl Workbench {
                     );
                     x = x.saturating_add(icon_text.width().min(u16::MAX as usize) as u16);
 
-                    let file_style = UiStyle::default().fg(self.ui_theme.accent_fg);
+                    let file_style = UiStyle::default().fg(self.theme.core.accent_fg);
                     painter.text_clipped(Pos::new(x, y), file_name.as_str(), file_style, row_clip);
                     x = x.saturating_add(file_name.width().min(u16::MAX as usize) as u16);
 
                     let count_text = format!(" ({})", match_count);
-                    let count_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+                    let count_style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
                     painter.text_clipped(
                         Pos::new(x, y),
                         count_text.as_str(),
@@ -542,7 +542,7 @@ impl Workbench {
                     x = x.saturating_add(2);
 
                     let line_text = format!("L{}:", match_info.line + 1);
-                    let line_style = UiStyle::default().fg(self.ui_theme.palette_muted_fg);
+                    let line_style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
                     painter.text_clipped(Pos::new(x, y), line_text.as_str(), line_style, row_clip);
                     x = x.saturating_add(line_text.width().min(u16::MAX as usize) as u16);
 
@@ -550,7 +550,7 @@ impl Workbench {
                     x = x.saturating_add(1);
 
                     let col_text = format!("col {}", match_info.col + 1);
-                    let col_style = UiStyle::default().fg(self.ui_theme.header_fg);
+                    let col_style = UiStyle::default().fg(self.theme.core.header_fg);
                     painter.text_clipped(Pos::new(x, y), col_text.as_str(), col_style, row_clip);
                 }
             }

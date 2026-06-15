@@ -14,15 +14,16 @@ use crate::ui::core::tree::Sense;
 
 impl Workbench {
     fn editor_pane_at(&self, x: u16, y: u16) -> Option<usize> {
-        self.layout_cache
-            .editor_areas
+        self.frame_layout
+            .editor
+            .outer_areas
             .iter()
             .enumerate()
             .find_map(|(i, area)| util::rect_contains(*area, x, y).then_some(i))
     }
 
     fn handle_activity_bar_click(&mut self, event: &MouseEvent) -> bool {
-        let Some(area) = self.layout_cache.activity_bar_area else {
+        let Some(area) = self.frame_layout.activity_bar_area else {
             return false;
         };
         let row = event.row.saturating_sub(area.y);
@@ -73,7 +74,7 @@ impl Workbench {
     }
 
     fn handle_sidebar_tabs_click(&mut self, event: &MouseEvent) -> bool {
-        let Some(area) = self.layout_cache.sidebar_tabs_area else {
+        let Some(area) = self.frame_layout.sidebar_tabs_area else {
             return false;
         };
 
@@ -91,26 +92,26 @@ impl Workbench {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if self
-                    .layout_cache
+                    .frame_layout
                     .bottom_panel_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     return self
                         .dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
                 } else if self
-                    .layout_cache
+                    .frame_layout
                     .activity_bar_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     return self.handle_activity_bar_click(event);
                 } else if self
-                    .layout_cache
+                    .frame_layout
                     .sidebar_tabs_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     return self.handle_sidebar_tabs_click(event);
                 } else if self
-                    .layout_cache
+                    .frame_layout
                     .sidebar_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
@@ -125,14 +126,14 @@ impl Workbench {
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 if self
-                    .layout_cache
+                    .frame_layout
                     .bottom_panel_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
                     return self
                         .dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
                 } else if self
-                    .layout_cache
+                    .frame_layout
                     .sidebar_area
                     .is_some_and(|a| util::rect_contains(a, event.column, event.row))
                 {
@@ -168,7 +169,7 @@ impl Workbench {
                 return None;
             }
 
-            self.editor_split_dragging = true;
+            self.interaction.editor_split_dragging = true;
             let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::FocusEditor));
             self.update_editor_split_ratio(event.column, event.row);
             return Some(EventResult::Consumed);
@@ -176,7 +177,7 @@ impl Workbench {
 
         // While dragging, keep feeding events to the UI runtime (capture/threshold handling),
         // but only apply updates for the splitter drag session.
-        if !self.editor_split_dragging {
+        if !self.interaction.editor_split_dragging {
             return None;
         }
 
@@ -199,7 +200,7 @@ impl Workbench {
         }
 
         if matches!(event.kind, MouseEventKind::Up(MouseButton::Left)) {
-            self.editor_split_dragging = false;
+            self.interaction.editor_split_dragging = false;
             handled = true;
         }
 
@@ -217,9 +218,9 @@ impl Workbench {
             .finish();
 
         if !self.store.state().ui.sidebar_visible
-            || self.layout_cache.sidebar_container_area.is_none()
+            || self.frame_layout.sidebar_container_area.is_none()
         {
-            self.sidebar_split_dragging = false;
+            self.interaction.sidebar_split_dragging = false;
             return None;
         }
 
@@ -231,12 +232,12 @@ impl Workbench {
                 return None;
             }
 
-            self.sidebar_split_dragging = true;
+            self.interaction.sidebar_split_dragging = true;
             self.update_sidebar_width(event.column);
             return Some(EventResult::Consumed);
         }
 
-        if !self.sidebar_split_dragging {
+        if !self.interaction.sidebar_split_dragging {
             return None;
         }
 
@@ -259,7 +260,7 @@ impl Workbench {
         }
 
         if matches!(event.kind, MouseEventKind::Up(MouseButton::Left)) {
-            self.sidebar_split_dragging = false;
+            self.interaction.sidebar_split_dragging = false;
             handled = true;
         }
 
@@ -277,10 +278,10 @@ impl Workbench {
             .finish();
 
         if !self.store.state().ui.bottom_panel.visible
-            || self.layout_cache.bottom_panel_splitter_area.is_none()
-            || self.layout_cache.render_area.is_none()
+            || self.frame_layout.bottom_panel_splitter_area.is_none()
+            || self.frame_layout.render_area.is_none()
         {
-            self.bottom_panel_split_dragging = false;
+            self.interaction.bottom_panel_split_dragging = false;
             return None;
         }
 
@@ -291,12 +292,12 @@ impl Workbench {
                 return None;
             }
 
-            self.bottom_panel_split_dragging = true;
+            self.interaction.bottom_panel_split_dragging = true;
             self.update_bottom_panel_height_ratio(event.row);
             return Some(EventResult::Consumed);
         }
 
-        if !self.bottom_panel_split_dragging {
+        if !self.interaction.bottom_panel_split_dragging {
             return None;
         }
 
@@ -319,7 +320,7 @@ impl Workbench {
         }
 
         if matches!(event.kind, MouseEventKind::Up(MouseButton::Left)) {
-            self.bottom_panel_split_dragging = false;
+            self.interaction.bottom_panel_split_dragging = false;
             handled = true;
         }
 
@@ -327,7 +328,7 @@ impl Workbench {
     }
 
     fn update_editor_split_ratio(&mut self, column: u16, row: u16) {
-        let Some(area) = self.layout_cache.editor_container_area else {
+        let Some(area) = self.frame_layout.editor.container_area else {
             return;
         };
 
@@ -339,7 +340,7 @@ impl Workbench {
     }
 
     fn update_sidebar_width(&mut self, column: u16) {
-        let Some(area) = self.layout_cache.sidebar_container_area else {
+        let Some(area) = self.frame_layout.sidebar_container_area else {
             return;
         };
         if area.w == 0 {
@@ -353,7 +354,7 @@ impl Workbench {
     }
 
     fn update_bottom_panel_height_ratio(&mut self, row: u16) {
-        let Some(area) = self.layout_cache.render_area else {
+        let Some(area) = self.frame_layout.render_area else {
             return;
         };
         let body_h = area.h.saturating_sub(super::STATUS_HEIGHT);

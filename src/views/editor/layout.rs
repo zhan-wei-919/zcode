@@ -1,6 +1,81 @@
 use crate::kernel::editor::EditorPaneState;
 use crate::kernel::services::ports::EditorConfig;
+use crate::kernel::SplitDirection;
 use crate::ui::core::geom::Rect;
+
+/// 编辑器各 pane 的外层/内层矩形与分隔线位置（纯几何）。
+/// `outer`/`inner` 与 pane 索引对齐，目前恒等；render 消费 `outer`、interaction 消费 `inner`。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneRects {
+    pub outer: Vec<Rect>,
+    pub inner: Vec<Rect>,
+    pub separator: Option<(Rect, SplitDirection)>,
+}
+
+/// 复刻 `render_editor_panes` 的切分逻辑，但只算几何，不绘制、不注册节点、不同步 viewport。
+/// 让 render 与 interaction 消费同一份 pane 几何，避免 interaction 依赖渲染输出快照。
+///
+/// 仅在 `panes == 2` 且可用宽/高 >= 3 时才真正分屏；其余情况（单 pane、>2、退化尺寸）
+/// 返回铺满 `area` 的单一矩形、无分隔线。`active_pane` 不影响矩形，故不作入参。
+pub fn compute_pane_rects(
+    area: Rect,
+    panes: usize,
+    direction: SplitDirection,
+    split_ratio: u16,
+) -> PaneRects {
+    let single = PaneRects {
+        outer: vec![area],
+        inner: vec![area],
+        separator: None,
+    };
+
+    if panes != 2 {
+        return single;
+    }
+
+    match direction {
+        SplitDirection::Vertical => {
+            let available = area.w;
+            if available < 3 {
+                return single;
+            }
+            let total = available.saturating_sub(1);
+            let mut left_width = ((total as u32) * (split_ratio as u32) / 1000) as u16;
+            left_width = left_width.clamp(1, total.saturating_sub(1));
+            let right_width = total.saturating_sub(left_width);
+
+            let left_area = Rect::new(area.x, area.y, left_width, area.h);
+            let sep_area = Rect::new(area.x + left_width, area.y, 1, area.h);
+            let right_area = Rect::new(area.x + left_width + 1, area.y, right_width, area.h);
+
+            PaneRects {
+                outer: vec![left_area, right_area],
+                inner: vec![left_area, right_area],
+                separator: Some((sep_area, SplitDirection::Vertical)),
+            }
+        }
+        SplitDirection::Horizontal => {
+            let available = area.h;
+            if available < 3 {
+                return single;
+            }
+            let total = available.saturating_sub(1);
+            let mut top_height = ((total as u32) * (split_ratio as u32) / 1000) as u16;
+            top_height = top_height.clamp(1, total.saturating_sub(1));
+            let bottom_height = total.saturating_sub(top_height);
+
+            let top_area = Rect::new(area.x, area.y, area.w, top_height);
+            let sep_area = Rect::new(area.x, area.y + top_height, area.w, 1);
+            let bottom_area = Rect::new(area.x, area.y + top_height + 1, area.w, bottom_height);
+
+            PaneRects {
+                outer: vec![top_area, bottom_area],
+                inner: vec![top_area, bottom_area],
+                separator: Some((sep_area, SplitDirection::Horizontal)),
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VerticalScrollbarMetrics {

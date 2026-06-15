@@ -12,8 +12,8 @@ use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, SplitDrop};
 use crate::views::doc;
 use crate::views::editor::markdown::MarkdownDocument;
 use crate::views::{
-    compute_editor_pane_layout, compute_tab_row_layout, cursor_position_editor, paint_editor_pane,
-    EditorPaneLayout, EditorPaneRenderOptions, TransientRowHighlight,
+    compute_editor_pane_layout, compute_pane_rects, compute_tab_row_layout, cursor_position_editor,
+    paint_editor_pane, EditorPaneLayout, EditorPaneRenderOptions, TransientRowHighlight,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -42,17 +42,17 @@ impl Workbench {
     }
 
     pub(super) fn paint_hover_popup(&mut self, painter: &mut Painter, area: UiRect) {
-        self.hover_popup.last_area = None;
-        self.hover_popup.total_lines = 0;
+        self.ui.hover_popup.last_area = None;
+        self.ui.hover_popup.total_lines = 0;
 
         let Some(text) = self.store.state().ui.hover.display_text() else {
-            self.hover_popup.scroll = 0;
-            self.hover_popup.render_cache.clear();
+            self.ui.hover_popup.scroll = 0;
+            self.ui.hover_popup.render_cache.clear();
             return;
         };
 
         let active_pane = self.store.state().ui.editor_layout.active_pane;
-        let pane_area = match self.layout_cache.editor_areas.get(active_pane) {
+        let pane_area = match self.frame_layout.editor.outer_areas.get(active_pane) {
             Some(area) => *area,
             None => return,
         };
@@ -64,7 +64,7 @@ impl Workbench {
             let config = &self.store.state().editor.config;
             compute_editor_pane_layout(pane_area, pane_state, config)
         };
-        let (cx, cy) = if let Some((x, y)) = self.hover_popup.last_anchor {
+        let (cx, cy) = if let Some((x, y)) = self.ui.hover_popup.last_anchor {
             (x, y)
         } else {
             let config = &self.store.state().editor.config;
@@ -88,7 +88,7 @@ impl Workbench {
             let inner_w = (natural_w.min(u16::MAX as usize) as u16)
                 .clamp(1, 120)
                 .min(max_inner_w);
-            let (key, rendered, hit) = self.hover_popup.render_cache.get_or_render(
+            let (key, rendered, hit) = self.ui.hover_popup.render_cache.get_or_render(
                 text.as_str(),
                 inner_w,
                 MAX_DOC_RENDER_LINES,
@@ -101,7 +101,7 @@ impl Workbench {
             self.reset_hover_popup_scroll();
         }
         debug_assert_eq!(cache_key.width, inner_w);
-        self.hover_popup.total_lines = total_lines;
+        self.ui.hover_popup.total_lines = total_lines;
 
         let desired_width = inner_w.saturating_add(2).max(3);
 
@@ -154,11 +154,11 @@ impl Workbench {
         }
 
         let popup_area = UiRect::new(x, y, width, height);
-        self.hover_popup.last_area = Some(popup_area);
+        self.ui.hover_popup.last_area = Some(popup_area);
 
         let base_style = UiStyle::default()
-            .bg(self.ui_theme.popup_bg)
-            .fg(self.ui_theme.palette_fg);
+            .bg(self.theme.core.popup_bg)
+            .fg(self.theme.core.palette_fg);
         painter.fill_rect(popup_area, base_style);
 
         let inner = popup_area.inset(Insets::all(1));
@@ -167,15 +167,15 @@ impl Workbench {
         }
 
         let view_h = inner.h as usize;
-        self.hover_popup.scroll =
-            doc::clamp_scroll_offset(self.hover_popup.scroll, total_lines, view_h);
+        self.ui.hover_popup.scroll =
+            doc::clamp_scroll_offset(self.ui.hover_popup.scroll, total_lines, view_h);
         doc::paint_doc_lines(
             painter,
             inner,
             rendered.as_slice(),
-            &self.ui_theme,
+            &self.theme.core,
             base_style,
-            self.hover_popup.scroll,
+            self.ui.hover_popup.scroll,
             tab_size,
         );
     }
@@ -187,7 +187,7 @@ impl Workbench {
         };
 
         let active_pane = self.store.state().ui.editor_layout.active_pane;
-        let pane_area = match self.layout_cache.editor_areas.get(active_pane) {
+        let pane_area = match self.frame_layout.editor.outer_areas.get(active_pane) {
             Some(area) => *area,
             None => return,
         };
@@ -253,8 +253,8 @@ impl Workbench {
 
         let popup_area = UiRect::new(x, y, width, height);
         let base_style = UiStyle::default()
-            .bg(self.ui_theme.popup_bg)
-            .fg(self.ui_theme.palette_fg);
+            .bg(self.theme.core.popup_bg)
+            .fg(self.theme.core.palette_fg);
         painter.fill_rect(popup_area, base_style);
 
         let inner = popup_area.inset(Insets::all(1));
@@ -263,7 +263,7 @@ impl Workbench {
         }
 
         let wrapped = wrap_lines(&lines, inner.w, inner.h as usize);
-        let text_style = UiStyle::default().fg(self.ui_theme.palette_fg);
+        let text_style = UiStyle::default().fg(self.theme.core.palette_fg);
         for (idx, line) in wrapped.into_iter().enumerate() {
             let y = inner.y.saturating_add(idx.min(u16::MAX as usize) as u16);
             if y >= inner.bottom() {
@@ -275,14 +275,14 @@ impl Workbench {
     }
 
     pub(super) fn paint_completion_popup(&mut self, painter: &mut Painter, area: UiRect) {
-        self.completion_doc.last_area = None;
-        self.completion_doc.total_lines = 0;
+        self.ui.completion_doc.last_area = None;
+        self.ui.completion_doc.total_lines = 0;
 
         let completion = &self.store.state().ui.completion;
         if !completion.visible || completion.visible_len() == 0 {
-            self.completion_doc.scroll = 0;
-            self.completion_doc.key = None;
-            self.completion_doc.render_cache.clear();
+            self.ui.completion_doc.scroll = 0;
+            self.ui.completion_doc.key = None;
+            self.ui.completion_doc.render_cache.clear();
             return;
         }
 
@@ -293,10 +293,11 @@ impl Workbench {
             .map(|req| req.pane)
             .unwrap_or(active_pane);
         let pane_area = match self
-            .layout_cache
-            .editor_areas
+            .frame_layout
+            .editor
+            .outer_areas
             .get(pane)
-            .or_else(|| self.layout_cache.editor_areas.get(active_pane))
+            .or_else(|| self.frame_layout.editor.outer_areas.get(active_pane))
         {
             Some(area) => *area,
             None => return,
@@ -390,8 +391,8 @@ impl Workbench {
 
         let popup_area = UiRect::new(x, y, width, height);
         let base_style = UiStyle::default()
-            .bg(self.ui_theme.popup_bg)
-            .fg(self.ui_theme.palette_fg);
+            .bg(self.theme.core.popup_bg)
+            .fg(self.theme.core.palette_fg);
         painter.fill_rect(popup_area, base_style);
 
         let inner = popup_area;
@@ -399,25 +400,25 @@ impl Workbench {
             return;
         }
 
-        let selected_bg = UiStyle::default().bg(self.ui_theme.palette_selected_bg);
+        let selected_bg = UiStyle::default().bg(self.theme.core.palette_selected_bg);
         let marker_selected = UiStyle::default()
-            .fg(self.ui_theme.focus_border)
-            .bg(self.ui_theme.palette_selected_bg);
+            .fg(self.theme.core.focus_border)
+            .bg(self.theme.core.palette_selected_bg);
         let marker_normal = UiStyle::default()
-            .fg(self.ui_theme.palette_muted_fg)
-            .bg(self.ui_theme.popup_bg);
+            .fg(self.theme.core.palette_muted_fg)
+            .bg(self.theme.core.popup_bg);
         let label_style_normal = UiStyle::default()
-            .fg(self.ui_theme.palette_fg)
-            .bg(self.ui_theme.popup_bg);
+            .fg(self.theme.core.palette_fg)
+            .bg(self.theme.core.popup_bg);
         let label_style_selected = UiStyle::default()
-            .fg(self.ui_theme.palette_fg)
-            .bg(self.ui_theme.palette_selected_bg);
+            .fg(self.theme.core.palette_fg)
+            .bg(self.theme.core.palette_selected_bg);
         let detail_style_normal = UiStyle::default()
-            .fg(self.ui_theme.palette_muted_fg)
-            .bg(self.ui_theme.popup_bg);
+            .fg(self.theme.core.palette_muted_fg)
+            .bg(self.theme.core.popup_bg);
         let detail_style_selected = UiStyle::default()
-            .fg(self.ui_theme.palette_muted_fg)
-            .bg(self.ui_theme.palette_selected_bg);
+            .fg(self.theme.core.palette_muted_fg)
+            .bg(self.theme.core.palette_selected_bg);
 
         for (idx, (is_selected, marker, label, detail)) in rows.into_iter().enumerate() {
             let y = inner.y.saturating_add(idx.min(u16::MAX as usize) as u16);
@@ -472,11 +473,11 @@ impl Workbench {
             version: req.version,
             selected,
         });
-        if self.completion_doc.key.as_ref() != doc_key.as_ref() {
-            self.completion_doc.scroll = 0;
-            self.completion_doc.render_cache.clear();
+        if self.ui.completion_doc.key.as_ref() != doc_key.as_ref() {
+            self.ui.completion_doc.scroll = 0;
+            self.ui.completion_doc.render_cache.clear();
         }
-        self.completion_doc.key = doc_key;
+        self.ui.completion_doc.key = doc_key;
 
         // Documentation panel (Helix-like): show docs for the currently selected item.
         let doc_text = completion.visible_item(selected).and_then(|item| {
@@ -505,11 +506,12 @@ impl Workbench {
                 .min(avail_inner_w);
 
             let (_cache_key, rendered, _cache_hit) = self
+                .ui
                 .completion_doc
                 .render_cache
                 .get_or_render(doc_text, inner_w, MAX_DOC_RENDER_LINES);
             let total_lines = rendered.len();
-            self.completion_doc.total_lines = total_lines;
+            self.ui.completion_doc.total_lines = total_lines;
 
             let desired_h = total_lines.min(u16::MAX as usize).max(1) as u16;
             let desired_w = inner_w.max(1);
@@ -533,8 +535,8 @@ impl Workbench {
             // Draw separator between completion list and side doc panel.
             if place_side && doc_area_max.w > 1 {
                 let sep_style = UiStyle::default()
-                    .fg(self.ui_theme.separator)
-                    .bg(self.ui_theme.popup_bg);
+                    .fg(self.theme.core.separator)
+                    .bg(self.theme.core.popup_bg);
                 for row in 0..popup_area.h {
                     let sy = popup_area.y.saturating_add(row);
                     if sy >= area.bottom() {
@@ -549,7 +551,7 @@ impl Workbench {
 
             painter.fill_rect(doc_area_max, base_style);
 
-            self.completion_doc.last_area = Some(doc_area_max);
+            self.ui.completion_doc.last_area = Some(doc_area_max);
 
             let inner = doc_area_max;
             if inner.is_empty() {
@@ -557,19 +559,19 @@ impl Workbench {
             }
 
             let view_h = inner.h as usize;
-            self.completion_doc.scroll =
-                doc::clamp_scroll_offset(self.completion_doc.scroll, total_lines, view_h);
+            self.ui.completion_doc.scroll =
+                doc::clamp_scroll_offset(self.ui.completion_doc.scroll, total_lines, view_h);
             doc::paint_doc_lines(
                 painter,
                 inner,
                 rendered.as_slice(),
-                &self.ui_theme,
+                &self.theme.core,
                 base_style,
-                self.completion_doc.scroll,
+                self.ui.completion_doc.scroll,
                 tab_size,
             );
         } else {
-            self.completion_doc.render_cache.clear();
+            self.ui.completion_doc.render_cache.clear();
         }
     }
 
@@ -590,7 +592,7 @@ impl Workbench {
             layout,
             pane_state,
             config,
-            &self.ui_theme,
+            &self.theme.core,
             options,
             markdown,
         );
@@ -604,6 +606,7 @@ impl Workbench {
         }
 
         if self
+            .interaction
             .editor_scrollbar_drag
             .is_some_and(|drag| drag.pane == pane)
         {
@@ -611,7 +614,7 @@ impl Workbench {
         }
 
         self.store.state().ui.focus == crate::kernel::FocusTarget::Editor
-            && self.editor_scrollbar_hover == Some(pane)
+            && self.interaction.editor_scrollbar_hover == Some(pane)
     }
 
     fn definition_jump_row_highlight_for_pane(&self, pane: usize) -> Option<TransientRowHighlight> {
@@ -641,358 +644,37 @@ impl Workbench {
 
     pub(super) fn render_editor_panes(&mut self, backend: &mut dyn Backend, area: UiRect) {
         let panes = self.store.state().ui.editor_layout.panes.max(1);
-        let hovered = self.store.state().ui.hovered_tab;
-        let workspace_empty = self.store.state().explorer.rows.is_empty();
-        self.layout_cache.editor_areas.clear();
-        self.layout_cache.editor_areas.reserve(panes.min(2));
-        self.layout_cache.editor_inner_areas.clear();
-        self.layout_cache.editor_inner_areas.reserve(panes.min(2));
-        self.viewport_cache
+        let direction = self.store.state().ui.editor_layout.split_direction;
+        let split_ratio = self.store.state().ui.editor_layout.split_ratio;
+
+        let rects = compute_pane_rects(area, panes, direction, split_ratio);
+
+        // 帧布局契约：几何一次性前置写入，render 与 interaction 共享同一份。
+        self.frame_layout.editor.container_area = (!area.is_empty()).then_some(area);
+        self.frame_layout.editor.outer_areas.clear();
+        self.frame_layout
+            .editor
+            .outer_areas
+            .extend_from_slice(&rects.outer);
+        self.frame_layout.editor.inner_areas.clear();
+        self.frame_layout
+            .editor
+            .inner_areas
+            .extend_from_slice(&rects.inner);
+
+        self.render_cache
+            .viewport
             .editor_content_sizes
             .resize_with(panes, || (0, 0));
-        self.viewport_cache
+        self.render_cache
+            .viewport
             .applied_editor_content_sizes
             .resize_with(panes, || (0, 0));
-        self.layout_cache.editor_container_area = (!area.is_empty()).then_some(area);
-        let hovered_for_pane = |p: usize| hovered.filter(|(hp, _)| *hp == p).map(|(_, i)| i);
-        let transient_row_highlights = (0..panes)
-            .map(|p| self.definition_jump_row_highlight_for_pane(p))
-            .collect::<Vec<_>>();
-        let pane_options = |p: usize| EditorPaneRenderOptions {
-            hovered_tab: hovered_for_pane(p),
-            workspace_empty,
-            show_vertical_scrollbar: false,
-            transient_row_highlight: transient_row_highlights.get(p).copied().flatten(),
-        };
 
-        match panes {
-            1 => {
-                self.editor_split_dragging = false;
-                self.layout_cache.editor_areas.push(area);
-                self.layout_cache.editor_inner_areas.push(area);
-
-                let layout = {
-                    let Some(pane_state) = self.store.state().editor.pane(0) else {
-                        return;
-                    };
-                    let config = &self.store.state().editor.config;
-                    compute_editor_pane_layout(area, pane_state, config)
-                };
-                self.sync_editor_viewport_size(0, &layout);
-                let md_tab_id = self.ensure_markdown_view_for_active_tab(0);
-                if let Some(pane_state) = self.store.state().editor.pane(0) {
-                    push_editor_area_node(&mut self.ui_tree, 0, &layout);
-                    push_editor_tab_nodes(
-                        &mut self.ui_tree,
-                        0,
-                        &layout,
-                        pane_state,
-                        hovered_for_pane(0),
-                    );
-                    push_editor_split_drop_zones(&mut self.ui_tree, 0, &layout);
-                    let markdown = md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
-                    self.draw_editor_pane(
-                        backend,
-                        0,
-                        &layout,
-                        pane_state,
-                        markdown,
-                        pane_options(0),
-                    );
-                }
-            }
-            2 => {
-                let direction = self.store.state().ui.editor_layout.split_direction;
-                match direction {
-                    SplitDirection::Vertical => {
-                        let available = area.w;
-                        if available < 3 {
-                            self.editor_split_dragging = false;
-                            self.layout_cache.editor_areas.push(area);
-                            self.layout_cache.editor_inner_areas.push(area);
-
-                            let active = self.store.state().ui.editor_layout.active_pane.min(1);
-                            let layout = {
-                                let Some(pane_state) = self.store.state().editor.pane(active)
-                                else {
-                                    return;
-                                };
-                                let config = &self.store.state().editor.config;
-                                compute_editor_pane_layout(area, pane_state, config)
-                            };
-                            self.sync_editor_viewport_size(active, &layout);
-                            let md_tab_id = self.ensure_markdown_view_for_active_tab(active);
-                            if let Some(pane_state) = self.store.state().editor.pane(active) {
-                                push_editor_area_node(&mut self.ui_tree, active, &layout);
-                                push_editor_tab_nodes(
-                                    &mut self.ui_tree,
-                                    active,
-                                    &layout,
-                                    pane_state,
-                                    hovered_for_pane(active),
-                                );
-                                let markdown =
-                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
-                                self.draw_editor_pane(
-                                    backend,
-                                    active,
-                                    &layout,
-                                    pane_state,
-                                    markdown,
-                                    pane_options(active),
-                                );
-                            }
-                            return;
-                        }
-
-                        let total = available.saturating_sub(1);
-                        let ratio = self.store.state().ui.editor_layout.split_ratio;
-                        let mut left_width = ((total as u32) * (ratio as u32) / 1000) as u16;
-                        left_width = left_width.clamp(1, total.saturating_sub(1));
-                        let right_width = total.saturating_sub(left_width);
-
-                        let left_area = UiRect::new(area.x, area.y, left_width, area.h);
-                        let sep_area = UiRect::new(area.x + left_width, area.y, 1, area.h);
-                        let right_area =
-                            UiRect::new(area.x + left_width + 1, area.y, right_width, area.h);
-                        self.register_editor_splitter_node(sep_area, SplitDirection::Vertical);
-
-                        self.layout_cache.editor_areas.push(left_area);
-                        self.layout_cache.editor_areas.push(right_area);
-
-                        // Split separator: avoid box borders (more nvim-like), just paint a 1-cell bar.
-                        if !sep_area.is_empty() {
-                            let mut painter = Painter::new();
-                            let style = UiStyle::default()
-                                .fg(self.ui_theme.separator)
-                                .bg(self.ui_theme.editor_bg);
-                            for dx in 0..sep_area.w {
-                                painter.vline(
-                                    Pos::new(sep_area.x.saturating_add(dx), sep_area.y),
-                                    sep_area.h,
-                                    '│',
-                                    style,
-                                );
-                            }
-                            backend.draw(sep_area, painter.cmds());
-                        }
-
-                        let left_inner = left_area;
-                        self.layout_cache.editor_inner_areas.push(left_inner);
-                        if !left_inner.is_empty() {
-                            let layout = {
-                                let Some(pane_state) = self.store.state().editor.pane(0) else {
-                                    return;
-                                };
-                                let config = &self.store.state().editor.config;
-                                compute_editor_pane_layout(left_inner, pane_state, config)
-                            };
-                            self.sync_editor_viewport_size(0, &layout);
-                            let md_tab_id = self.ensure_markdown_view_for_active_tab(0);
-                            if let Some(pane_state) = self.store.state().editor.pane(0) {
-                                push_editor_area_node(&mut self.ui_tree, 0, &layout);
-                                push_editor_tab_nodes(
-                                    &mut self.ui_tree,
-                                    0,
-                                    &layout,
-                                    pane_state,
-                                    hovered_for_pane(0),
-                                );
-                                let markdown =
-                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
-                                self.draw_editor_pane(
-                                    backend,
-                                    0,
-                                    &layout,
-                                    pane_state,
-                                    markdown,
-                                    pane_options(0),
-                                );
-                            }
-                        }
-
-                        let right_inner = right_area;
-                        self.layout_cache.editor_inner_areas.push(right_inner);
-                        if !right_inner.is_empty() {
-                            let layout = {
-                                let Some(pane_state) = self.store.state().editor.pane(1) else {
-                                    return;
-                                };
-                                let config = &self.store.state().editor.config;
-                                compute_editor_pane_layout(right_inner, pane_state, config)
-                            };
-                            self.sync_editor_viewport_size(1, &layout);
-                            let md_tab_id = self.ensure_markdown_view_for_active_tab(1);
-                            if let Some(pane_state) = self.store.state().editor.pane(1) {
-                                push_editor_area_node(&mut self.ui_tree, 1, &layout);
-                                push_editor_tab_nodes(
-                                    &mut self.ui_tree,
-                                    1,
-                                    &layout,
-                                    pane_state,
-                                    hovered_for_pane(1),
-                                );
-                                let markdown =
-                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
-                                self.draw_editor_pane(
-                                    backend,
-                                    1,
-                                    &layout,
-                                    pane_state,
-                                    markdown,
-                                    pane_options(1),
-                                );
-                            }
-                        }
-                    }
-                    SplitDirection::Horizontal => {
-                        let available = area.h;
-                        if available < 3 {
-                            self.editor_split_dragging = false;
-                            self.layout_cache.editor_areas.push(area);
-                            self.layout_cache.editor_inner_areas.push(area);
-
-                            let active = self.store.state().ui.editor_layout.active_pane.min(1);
-                            let layout = {
-                                let Some(pane_state) = self.store.state().editor.pane(active)
-                                else {
-                                    return;
-                                };
-                                let config = &self.store.state().editor.config;
-                                compute_editor_pane_layout(area, pane_state, config)
-                            };
-                            self.sync_editor_viewport_size(active, &layout);
-                            let md_tab_id = self.ensure_markdown_view_for_active_tab(active);
-                            if let Some(pane_state) = self.store.state().editor.pane(active) {
-                                push_editor_area_node(&mut self.ui_tree, active, &layout);
-                                push_editor_tab_nodes(
-                                    &mut self.ui_tree,
-                                    active,
-                                    &layout,
-                                    pane_state,
-                                    hovered_for_pane(active),
-                                );
-                                let markdown =
-                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
-                                self.draw_editor_pane(
-                                    backend,
-                                    active,
-                                    &layout,
-                                    pane_state,
-                                    markdown,
-                                    pane_options(active),
-                                );
-                            }
-                            return;
-                        }
-
-                        let total = available.saturating_sub(1);
-                        let ratio = self.store.state().ui.editor_layout.split_ratio;
-                        let mut top_height = ((total as u32) * (ratio as u32) / 1000) as u16;
-                        top_height = top_height.clamp(1, total.saturating_sub(1));
-                        let bottom_height = total.saturating_sub(top_height);
-
-                        let top_area = UiRect::new(area.x, area.y, area.w, top_height);
-                        let sep_area = UiRect::new(area.x, area.y + top_height, area.w, 1);
-                        let bottom_area =
-                            UiRect::new(area.x, area.y + top_height + 1, area.w, bottom_height);
-                        self.register_editor_splitter_node(sep_area, SplitDirection::Horizontal);
-
-                        self.layout_cache.editor_areas.push(top_area);
-                        self.layout_cache.editor_areas.push(bottom_area);
-
-                        // Split separator: avoid box borders (more nvim-like), just paint a 1-cell bar.
-                        if !sep_area.is_empty() {
-                            let mut painter = Painter::new();
-                            let style = UiStyle::default()
-                                .fg(self.ui_theme.separator)
-                                .bg(self.ui_theme.editor_bg);
-                            for dy in 0..sep_area.h {
-                                painter.hline(
-                                    Pos::new(sep_area.x, sep_area.y.saturating_add(dy)),
-                                    sep_area.w,
-                                    '─',
-                                    style,
-                                );
-                            }
-                            backend.draw(sep_area, painter.cmds());
-                        }
-
-                        let top_inner = top_area;
-                        self.layout_cache.editor_inner_areas.push(top_inner);
-                        if !top_inner.is_empty() {
-                            let layout = {
-                                let Some(pane_state) = self.store.state().editor.pane(0) else {
-                                    return;
-                                };
-                                let config = &self.store.state().editor.config;
-                                compute_editor_pane_layout(top_inner, pane_state, config)
-                            };
-                            self.sync_editor_viewport_size(0, &layout);
-                            let md_tab_id = self.ensure_markdown_view_for_active_tab(0);
-                            if let Some(pane_state) = self.store.state().editor.pane(0) {
-                                push_editor_area_node(&mut self.ui_tree, 0, &layout);
-                                push_editor_tab_nodes(
-                                    &mut self.ui_tree,
-                                    0,
-                                    &layout,
-                                    pane_state,
-                                    hovered_for_pane(0),
-                                );
-                                let markdown =
-                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
-                                self.draw_editor_pane(
-                                    backend,
-                                    0,
-                                    &layout,
-                                    pane_state,
-                                    markdown,
-                                    pane_options(0),
-                                );
-                            }
-                        }
-
-                        let bottom_inner = bottom_area;
-                        self.layout_cache.editor_inner_areas.push(bottom_inner);
-                        if !bottom_inner.is_empty() {
-                            let layout = {
-                                let Some(pane_state) = self.store.state().editor.pane(1) else {
-                                    return;
-                                };
-                                let config = &self.store.state().editor.config;
-                                compute_editor_pane_layout(bottom_inner, pane_state, config)
-                            };
-                            self.sync_editor_viewport_size(1, &layout);
-                            let md_tab_id = self.ensure_markdown_view_for_active_tab(1);
-                            if let Some(pane_state) = self.store.state().editor.pane(1) {
-                                push_editor_area_node(&mut self.ui_tree, 1, &layout);
-                                push_editor_tab_nodes(
-                                    &mut self.ui_tree,
-                                    1,
-                                    &layout,
-                                    pane_state,
-                                    hovered_for_pane(1),
-                                );
-                                let markdown =
-                                    md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
-                                self.draw_editor_pane(
-                                    backend,
-                                    1,
-                                    &layout,
-                                    pane_state,
-                                    markdown,
-                                    pane_options(1),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {
-                self.editor_split_dragging = false;
-                self.layout_cache.editor_areas.push(area);
-                self.layout_cache.editor_inner_areas.push(area);
-
+        match rects.separator {
+            None => {
+                // 无分隔线 = 单一可视 pane（panes==1 / 退化尺寸 / panes>2），不可能拖拽分割线。
+                self.interaction.editor_split_dragging = false;
                 let active = self
                     .store
                     .state()
@@ -1000,36 +682,109 @@ impl Workbench {
                     .editor_layout
                     .active_pane
                     .min(panes - 1);
-                let layout = {
-                    let Some(pane_state) = self.store.state().editor.pane(active) else {
-                        return;
-                    };
-                    let config = &self.store.state().editor.config;
-                    compute_editor_pane_layout(area, pane_state, config)
-                };
-                self.sync_editor_viewport_size(active, &layout);
-                let md_tab_id = self.ensure_markdown_view_for_active_tab(active);
-                if let Some(pane_state) = self.store.state().editor.pane(active) {
-                    push_editor_area_node(&mut self.ui_tree, active, &layout);
-                    push_editor_tab_nodes(
-                        &mut self.ui_tree,
-                        active,
-                        &layout,
-                        pane_state,
-                        hovered_for_pane(active),
+                // 仅真正单 pane（panes==1）注册 split drop zones，与原行为一致。
+                let with_drop_zones = panes == 1;
+                self.render_one_editor_pane(backend, active, rects.inner[0], with_drop_zones);
+            }
+            Some((sep_area, dir)) => {
+                self.register_editor_splitter_node(sep_area, dir);
+                self.draw_split_separator(backend, sep_area, dir);
+
+                // inner_areas[0] = 左/上 = pane 0；inner_areas[1] = 右/下 = pane 1。
+                let pane0_inner = rects.inner[0];
+                if !pane0_inner.is_empty()
+                    && !self.render_one_editor_pane(backend, 0, pane0_inner, false)
+                {
+                    return;
+                }
+                let pane1_inner = rects.inner[1];
+                if !pane1_inner.is_empty() {
+                    self.render_one_editor_pane(backend, 1, pane1_inner, false);
+                }
+            }
+        }
+    }
+
+    /// 渲染单个 editor pane：计算内部布局、同步 viewport、注册节点并绘制。
+    /// 返回 false 表示该 pane 状态缺失（调用方据此中止，复刻原 `else { return }` 语义）。
+    fn render_one_editor_pane(
+        &mut self,
+        backend: &mut dyn Backend,
+        pane: usize,
+        inner: UiRect,
+        with_drop_zones: bool,
+    ) -> bool {
+        let layout = {
+            let Some(pane_state) = self.store.state().editor.pane(pane) else {
+                return false;
+            };
+            let config = &self.store.state().editor.config;
+            compute_editor_pane_layout(inner, pane_state, config)
+        };
+        self.sync_editor_viewport_size(pane, &layout);
+        let md_tab_id = self.ensure_markdown_view_for_active_tab(pane);
+        let hovered_tab = self
+            .store
+            .state()
+            .ui
+            .hovered_tab
+            .filter(|(hp, _)| *hp == pane)
+            .map(|(_, i)| i);
+        if let Some(pane_state) = self.store.state().editor.pane(pane) {
+            push_editor_area_node(&mut self.ui_tree, pane, &layout);
+            push_editor_tab_nodes(&mut self.ui_tree, pane, &layout, pane_state, hovered_tab);
+            if with_drop_zones {
+                push_editor_split_drop_zones(&mut self.ui_tree, pane, &layout);
+            }
+            let options = EditorPaneRenderOptions {
+                hovered_tab,
+                workspace_empty: self.store.state().explorer.rows.is_empty(),
+                show_vertical_scrollbar: false,
+                transient_row_highlight: self.definition_jump_row_highlight_for_pane(pane),
+            };
+            let markdown = md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
+            self.draw_editor_pane(backend, pane, &layout, pane_state, markdown, options);
+        }
+        true
+    }
+
+    /// 绘制分屏分隔线：垂直分屏画竖线、水平分屏画横线（不画方框，更接近 nvim 风格）。
+    fn draw_split_separator(
+        &self,
+        backend: &mut dyn Backend,
+        sep_area: UiRect,
+        direction: SplitDirection,
+    ) {
+        if sep_area.is_empty() {
+            return;
+        }
+        let style = UiStyle::default()
+            .fg(self.theme.core.separator)
+            .bg(self.theme.core.editor_bg);
+        let mut painter = Painter::new();
+        match direction {
+            SplitDirection::Vertical => {
+                for dx in 0..sep_area.w {
+                    painter.vline(
+                        Pos::new(sep_area.x.saturating_add(dx), sep_area.y),
+                        sep_area.h,
+                        '│',
+                        style,
                     );
-                    let markdown = md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
-                    self.draw_editor_pane(
-                        backend,
-                        active,
-                        &layout,
-                        pane_state,
-                        markdown,
-                        pane_options(active),
+                }
+            }
+            SplitDirection::Horizontal => {
+                for dy in 0..sep_area.h {
+                    painter.hline(
+                        Pos::new(sep_area.x, sep_area.y.saturating_add(dy)),
+                        sep_area.w,
+                        '─',
+                        style,
                     );
                 }
             }
         }
+        backend.draw(sep_area, painter.cmds());
     }
 }
 

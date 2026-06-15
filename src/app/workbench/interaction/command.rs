@@ -204,14 +204,14 @@ impl Workbench {
         if let Some(trigger) = edit_trigger {
             let trigger = semantic_tokens_trigger(trigger, eager_refresh);
             let delay = lsp_debounce_duration(timing, LspDebouncePipeline::SemanticTokens, trigger);
-            self.lsp_debounce.semantic_tokens = Some(Instant::now() + delay);
+            self.lsp_sync.debounce.semantic_tokens = Some(Instant::now() + delay);
             return;
         }
 
         if move_should_schedule {
             let trigger = semantic_tokens_trigger(LspDebounceTrigger::Identifier, eager_refresh);
             let delay = lsp_debounce_duration(timing, LspDebouncePipeline::SemanticTokens, trigger);
-            self.lsp_debounce.semantic_tokens = Some(Instant::now() + delay);
+            self.lsp_sync.debounce.semantic_tokens = Some(Instant::now() + delay);
         }
     }
 
@@ -261,7 +261,7 @@ impl Workbench {
 
         if let Some(trigger) = edit_trigger {
             let delay = lsp_debounce_duration(timing, LspDebouncePipeline::InlayHints, trigger);
-            self.lsp_debounce.inlay_hints = Some(Instant::now() + delay);
+            self.lsp_sync.debounce.inlay_hints = Some(Instant::now() + delay);
             return;
         }
 
@@ -271,7 +271,7 @@ impl Workbench {
                 LspDebouncePipeline::InlayHints,
                 LspDebounceTrigger::Identifier,
             );
-            self.lsp_debounce.inlay_hints = Some(Instant::now() + delay);
+            self.lsp_sync.debounce.inlay_hints = Some(Instant::now() + delay);
         }
     }
 
@@ -312,7 +312,7 @@ impl Workbench {
 
         if let Some(trigger) = edit_trigger {
             let delay = lsp_debounce_duration(timing, LspDebouncePipeline::FoldingRange, trigger);
-            self.lsp_debounce.folding_range = Some(Instant::now() + delay);
+            self.lsp_sync.debounce.folding_range = Some(Instant::now() + delay);
         }
     }
 }

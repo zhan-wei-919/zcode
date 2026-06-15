@@ -80,7 +80,7 @@ fn mouse_with_modifiers(
 }
 
 fn activity_bar_slot_pos(workbench: &Workbench, index: u16) -> Option<(u16, u16)> {
-    let area = workbench.layout_cache.activity_bar_area?;
+    let area = workbench.frame_layout.activity_bar_area?;
     let slot_h = util::activity_slot_height(area.h).max(1);
     let slot_top = area.y.saturating_add(index.saturating_mul(slot_h));
     if slot_top >= area.bottom() {
@@ -102,7 +102,7 @@ fn bottom_panel_activity_pos(workbench: &Workbench) -> Option<(u16, u16)> {
 
 fn search_bar_button_pos(workbench: &Workbench, button: SearchBarHitResult) -> Option<(u16, u16)> {
     let state = workbench.store.state();
-    let area = *workbench.layout_cache.editor_inner_areas.first()?;
+    let area = *workbench.frame_layout.editor.inner_areas.first()?;
     let pane = state.editor.pane(0)?;
     let layout = compute_editor_pane_layout(area, pane, &state.editor.config);
     let search = layout.search_area?;
@@ -299,7 +299,7 @@ fn test_bottom_panel_activity_highlight_follows_visibility() {
     let _ = workbench.flush_post_render_sync();
     assert_eq!(
         backend.buffer().cell(x, y).expect("activity cell").style.bg,
-        Some(workbench.ui_theme.activity_bg)
+        Some(workbench.theme.core.activity_bg)
     );
 
     let _ = workbench.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
@@ -313,7 +313,7 @@ fn test_bottom_panel_activity_highlight_follows_visibility() {
     let _ = workbench.flush_post_render_sync();
     assert_eq!(
         backend.buffer().cell(x, y).expect("activity cell").style.bg,
-        Some(workbench.ui_theme.activity_active_bg)
+        Some(workbench.theme.core.activity_active_bg)
     );
 }
 
@@ -633,7 +633,7 @@ fn test_drag_sidebar_splitter_updates_sidebar_width() {
     ));
 
     let container = workbench
-        .layout_cache
+        .frame_layout
         .sidebar_container_area
         .expect("sidebar container");
     let desired = drag_x.saturating_sub(container.x).saturating_add(1);
@@ -643,7 +643,7 @@ fn test_drag_sidebar_splitter_updates_sidebar_width() {
 
     render_once(&mut workbench, 120, 40);
     assert_eq!(
-        workbench.layout_cache.sidebar_area.expect("sidebar area").w,
+        workbench.frame_layout.sidebar_area.expect("sidebar area").w,
         expected
     );
 }
@@ -664,8 +664,9 @@ fn test_command_palette_visible_mouse_down_does_not_steal_focus() {
     );
 
     let editor_area = *workbench
-        .layout_cache
-        .editor_inner_areas
+        .frame_layout
+        .editor
+        .inner_areas
         .first()
         .expect("editor area");
     let click_x = editor_area.x.saturating_add(1);
@@ -1541,7 +1542,7 @@ fn test_explorer_highlights_active_open_file_when_another_row_is_selected() {
     let active_cell = buf
         .cell(active_rect.x, active_rect.y)
         .expect("active row cell");
-    assert_eq!(active_cell.style.fg, Some(workbench.ui_theme.header_fg));
+    assert_eq!(active_cell.style.fg, Some(workbench.theme.core.header_fg));
     assert!(active_cell
         .style
         .mods
@@ -1552,7 +1553,7 @@ fn test_explorer_highlights_active_open_file_when_another_row_is_selected() {
         .expect("selected row cell");
     assert_eq!(
         selected_cell.style.bg,
-        Some(workbench.ui_theme.palette_selected_bg)
+        Some(workbench.theme.core.palette_selected_bg)
     );
 }
 
@@ -1642,7 +1643,7 @@ fn test_terminal_mouse_scroll_up_moves_into_history() {
     let _ = workbench.dispatch_kernel(KernelAction::TerminalOutput { id, bytes });
 
     let panel = workbench
-        .layout_cache
+        .frame_layout
         .bottom_panel_area
         .expect("bottom panel area");
     let x = panel.x.saturating_add(2);
@@ -1744,7 +1745,7 @@ fn test_terminal_drag_selection_highlights_cells() {
 
     render_once(&mut workbench, 120, 40);
     let panel = workbench
-        .layout_cache
+        .frame_layout
         .bottom_panel_area
         .expect("bottom panel area");
     let y = panel.y.saturating_add(1);
@@ -1762,7 +1763,10 @@ fn test_terminal_drag_selection_highlights_cells() {
         .buffer()
         .cell(panel.x.saturating_add(2), y)
         .expect("selection cell");
-    assert_eq!(cell.style.bg, Some(workbench.ui_theme.palette_selected_bg));
+    assert_eq!(
+        cell.style.bg,
+        Some(workbench.theme.core.palette_selected_bg)
+    );
 }
 
 #[test]
@@ -1791,7 +1795,7 @@ fn test_terminal_renders_ansi_colors_from_vt100_cells() {
     workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
 
     let panel = workbench
-        .layout_cache
+        .frame_layout
         .bottom_panel_area
         .expect("bottom panel area");
     let y = panel.y.saturating_add(1);
@@ -1829,7 +1833,7 @@ fn test_terminal_selection_text_trims_line_tail_spaces() {
         bytes: b"abc   \n".to_vec(),
     });
 
-    workbench.terminal_selection = Some(super::TerminalSelection {
+    workbench.interaction.terminal_selection = Some(super::TerminalSelection {
         anchor: super::TerminalCellPos { row: 0, col: 0 },
         cursor: super::TerminalCellPos { row: 0, col: 5 },
     });
@@ -1890,14 +1894,14 @@ fn test_theme_editor_sync_hsl_supports_indexed_colors() {
     let (runtime, _rx) = create_test_runtime();
     let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
 
-    workbench.theme.syntax_colors[SyntaxColorGroup::Comment as usize] = Color::Indexed(65);
+    workbench.theme.source.syntax_colors[SyntaxColorGroup::Comment as usize] = Color::Indexed(65);
     assert_eq!(
         workbench.store.state().ui.theme_editor.selected_token,
         crate::kernel::state::ThemeEditorToken::Comment
     );
     assert_eq!(
         crate::ui::core::theme_adapter::color_to_rgb(
-            workbench.theme.syntax_colors[SyntaxColorGroup::Comment as usize],
+            workbench.theme.source.syntax_colors[SyntaxColorGroup::Comment as usize],
         ),
         crate::ui::core::theme_adapter::color_to_rgb(Color::Indexed(65))
     );
@@ -1933,8 +1937,7 @@ fn test_theme_editor_ui_theme_uses_ansi_fallback_when_not_truecolor() {
     let (runtime, _rx) = create_test_runtime();
     let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
 
-    workbench.terminal_color_support =
-        crate::ui::core::color_support::TerminalColorSupport::Ansi256;
+    workbench.theme.color_support = crate::ui::core::color_support::TerminalColorSupport::Ansi256;
     let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetHue { hue: 120 });
     let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetSaturationLightness {
         saturation: 100,
@@ -1944,11 +1947,11 @@ fn test_theme_editor_ui_theme_uses_ansi_fallback_when_not_truecolor() {
     workbench.apply_theme_editor_color();
 
     assert!(matches!(
-        workbench.theme.syntax_colors[SyntaxColorGroup::Comment as usize],
+        workbench.theme.source.syntax_colors[SyntaxColorGroup::Comment as usize],
         Color::Rgb(..)
     ));
     assert!(matches!(
-        workbench.ui_theme.syntax_fg(SyntaxColorGroup::Comment),
+        workbench.theme.core.syntax_fg(SyntaxColorGroup::Comment),
         Color::Indexed(_)
     ));
 }
@@ -1959,8 +1962,7 @@ fn test_theme_editor_apply_color_updates_preview_in_ansi256_mode() {
     let (runtime, _rx) = create_test_runtime();
     let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
 
-    workbench.terminal_color_support =
-        crate::ui::core::color_support::TerminalColorSupport::Ansi256;
+    workbench.theme.color_support = crate::ui::core::color_support::TerminalColorSupport::Ansi256;
 
     // Pick a concrete ANSI256 color and ensure the preview uses it.
     let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetAnsiIndex { index: 196 });
@@ -1968,7 +1970,7 @@ fn test_theme_editor_apply_color_updates_preview_in_ansi256_mode() {
     workbench.apply_theme_editor_color();
 
     assert_eq!(
-        workbench.ui_theme.syntax_fg(SyntaxColorGroup::Comment),
+        workbench.theme.core.syntax_fg(SyntaxColorGroup::Comment),
         Color::Indexed(196)
     );
 }
@@ -1979,13 +1981,13 @@ fn test_theme_editor_ansi_palette_marker_tracks_mouse_cell() {
     let (runtime, _rx) = create_test_runtime();
     let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
 
-    workbench.terminal_color_support =
-        crate::ui::core::color_support::TerminalColorSupport::Ansi256;
+    workbench.theme.color_support = crate::ui::core::color_support::TerminalColorSupport::Ansi256;
     let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorOpen);
 
     let mut backend = TestBackend::new(200, 60);
     workbench.render(&mut backend, Rect::new(0, 0, 200, 60));
     let area = workbench
+        .render_cache
         .theme_editor_layout
         .sv_palette_area
         .expect("sv palette area");
@@ -2577,8 +2579,9 @@ fn test_context_menu_visible_mouse_events_do_not_steal_focus() {
     assert_eq!(workbench.store.state().ui.focus, FocusTarget::BottomPanel);
 
     let editor_area = *workbench
-        .layout_cache
-        .editor_inner_areas
+        .frame_layout
+        .editor
+        .inner_areas
         .first()
         .expect("editor area");
     let menu_x = editor_area.x.saturating_add(1);
@@ -2633,8 +2636,9 @@ fn test_editor_right_click_selects_word_under_cursor_for_context_actions() {
     let (click_x, click_y) = {
         let state = workbench.store.state();
         let area = *workbench
-            .layout_cache
-            .editor_inner_areas
+            .frame_layout
+            .editor
+            .inner_areas
             .first()
             .expect("editor area");
         let pane = state.editor.pane(0).expect("pane");
@@ -2698,8 +2702,9 @@ fn test_editor_right_click_inside_selection_keeps_existing_selection() {
     let (drag_start_x, drag_end_x, right_click_x, click_y) = {
         let state = workbench.store.state();
         let area = *workbench
-            .layout_cache
-            .editor_inner_areas
+            .frame_layout
+            .editor
+            .inner_areas
             .first()
             .expect("editor area");
         let pane = state.editor.pane(0).expect("pane");
@@ -2799,8 +2804,9 @@ fn test_editor_drag_overflow_keeps_horizontal_follow_on_later_drag() {
 
     let (start_x, start_y, overflow_drag_y, inside_drag_y, far_right_x) = {
         let area = *workbench
-            .layout_cache
-            .editor_inner_areas
+            .frame_layout
+            .editor
+            .inner_areas
             .first()
             .expect("editor area");
         let state = workbench.store.state();
@@ -2880,8 +2886,9 @@ fn test_markdown_checkbox_click_toggles_task_marker() {
 
     let (x, y) = {
         let area = *workbench
-            .layout_cache
-            .editor_inner_areas
+            .frame_layout
+            .editor
+            .inner_areas
             .first()
             .expect("editor area");
         let state = workbench.store.state();
@@ -2928,8 +2935,9 @@ fn test_shift_scroll_down_moves_editor_horizontally() {
 
     let (x, y, line_before) = {
         let area = *workbench
-            .layout_cache
-            .editor_inner_areas
+            .frame_layout
+            .editor
+            .inner_areas
             .first()
             .expect("editor area");
         let state = workbench.store.state();
@@ -2982,8 +2990,9 @@ fn test_editor_vertical_scrollbar_shows_only_on_right_edge_hover() {
 
     let (scrollbar, hover_y) = {
         let area = *workbench
-            .layout_cache
-            .editor_inner_areas
+            .frame_layout
+            .editor
+            .inner_areas
             .first()
             .expect("editor area");
         let state = workbench.store.state();
@@ -3056,8 +3065,9 @@ fn test_editor_vertical_scrollbar_drag_updates_line_offset_without_selection() {
 
     let (thumb_x, down_y, drag_y) = {
         let area = *workbench
-            .layout_cache
-            .editor_inner_areas
+            .frame_layout
+            .editor
+            .inner_areas
             .first()
             .expect("editor area");
         let state = workbench.store.state();
@@ -3195,4 +3205,31 @@ fn test_lsp_definition_highlight_is_deferred_until_target_file_opens() {
 
     assert!(workbench.tick());
     assert!(workbench.definition_jump_highlight.is_none());
+}
+
+#[test]
+fn test_vertical_split_frame_layout_tiles_container() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::SplitEditorVertical));
+    render_once(&mut workbench, 120, 40);
+
+    let editor = &workbench.frame_layout.editor;
+    // 几何前置填充：两个 pane 的 outer/inner 都已写入，与 panes 数一致。
+    assert_eq!(editor.outer_areas.len(), 2);
+    assert_eq!(editor.inner_areas.len(), 2);
+    assert_eq!(editor.outer_areas, editor.inner_areas);
+
+    let container = editor.container_area.expect("container area");
+    let left = editor.inner_areas[0];
+    let right = editor.inner_areas[1];
+
+    // 左 + 1 列分隔线 + 右 恰好铺满容器宽度，且不重叠。
+    assert_eq!(left.x, container.x);
+    assert_eq!(left.w + 1 + right.w, container.w);
+    assert_eq!(right.x, left.right() + 1);
+    assert_eq!(left.h, container.h);
+    assert_eq!(right.h, container.h);
 }

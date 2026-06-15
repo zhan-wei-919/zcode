@@ -18,26 +18,26 @@ impl Workbench {
             return;
         }
 
-        self.layout_cache.git_panel_area = Some(area);
+        self.frame_layout.git_panel_area = Some(area);
 
         let ui_area = area;
 
         let base_style = UiStyle::default()
-            .bg(self.ui_theme.sidebar_bg)
-            .fg(self.ui_theme.palette_fg);
+            .bg(self.theme.core.sidebar_bg)
+            .fg(self.theme.core.palette_fg);
         painter.fill_rect(ui_area, base_style);
 
         let sep_style = UiStyle::default()
-            .bg(self.ui_theme.sidebar_bg)
-            .fg(self.ui_theme.separator);
+            .bg(self.theme.core.sidebar_bg)
+            .fg(self.theme.core.separator);
         let sep_row = UiRect::new(area.x, area.y, area.w, 1.min(area.h));
         if sep_row.w > 0 {
             painter.hline(Pos::new(sep_row.x, sep_row.y), sep_row.w, '─', sep_style);
         }
 
         let active_style = UiStyle::default()
-            .bg(self.ui_theme.palette_selected_bg)
-            .fg(self.ui_theme.palette_selected_fg)
+            .bg(self.theme.core.palette_selected_bg)
+            .fg(self.theme.core.palette_selected_fg)
             .add_mod(Mod::BOLD);
         let inactive_style = base_style;
 
@@ -95,7 +95,7 @@ impl Workbench {
             let line_area = UiRect::new(area.x, y, area.w, 1);
             painter.fill_rect(line_area, style);
             painter.text_clipped(Pos::new(area.x, y), label, style, line_area);
-            self.layout_cache
+            self.frame_layout
                 .git_branch_areas
                 .push((branch.to_string(), UiRect::new(area.x, y, area.w, 1)));
         }

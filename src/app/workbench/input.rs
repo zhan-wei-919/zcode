@@ -59,7 +59,7 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
     // This prevents record_user_input from clearing the hover state.
     if let InputEvent::Mouse(me) = event {
         if workbench.store.state().ui.hover.is_active() {
-            if let Some(area) = workbench.hover_popup.last_area {
+            if let Some(area) = workbench.ui.hover_popup.last_area {
                 if util::rect_contains(area, me.column, me.row) {
                     match me.kind {
                         MouseEventKind::ScrollUp => {

@@ -15,8 +15,8 @@ pub use hit_test::{
     SearchBarHitResult, TabHitResult,
 };
 pub use layout::{
-    compute_editor_pane_layout, vertical_scrollbar_metrics, EditorPaneLayout,
-    VerticalScrollbarMetrics,
+    compute_editor_pane_layout, compute_pane_rects, vertical_scrollbar_metrics, EditorPaneLayout,
+    PaneRects, VerticalScrollbarMetrics,
 };
 pub use render::{
     cursor_position_editor, paint_editor_pane, EditorPaneRenderOptions, TransientRowHighlight,

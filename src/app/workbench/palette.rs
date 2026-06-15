@@ -15,14 +15,14 @@ pub(super) fn render(workbench: &Workbench, painter: &mut Painter, area: UiRect)
     }
 
     let base_style = UiStyle::default()
-        .bg(workbench.ui_theme.popup_bg)
-        .fg(workbench.ui_theme.palette_fg);
-    let muted_style = UiStyle::default().fg(workbench.ui_theme.palette_muted_fg);
+        .bg(workbench.theme.core.popup_bg)
+        .fg(workbench.theme.core.palette_fg);
+    let muted_style = UiStyle::default().fg(workbench.theme.core.palette_muted_fg);
     let selected_style = UiStyle::default()
-        .bg(workbench.ui_theme.palette_selected_bg)
-        .fg(workbench.ui_theme.palette_selected_fg);
+        .bg(workbench.theme.core.palette_selected_bg)
+        .fg(workbench.theme.core.palette_selected_fg);
     let title_style = UiStyle::default()
-        .fg(workbench.ui_theme.header_fg)
+        .fg(workbench.theme.core.header_fg)
         .add_mod(Mod::BOLD);
 
     painter.fill_rect(popup_area, base_style);
@@ -126,7 +126,7 @@ pub(super) fn render(workbench: &Workbench, painter: &mut Painter, area: UiRect)
 }
 
 pub(super) fn cursor(workbench: &Workbench) -> Option<(u16, u16)> {
-    let area = workbench.layout_cache.render_area?;
+    let area = workbench.frame_layout.render_area?;
     let popup_area = util::centered_rect(90, 10, area);
 
     let query = &workbench.store.state().ui.command_palette.query;

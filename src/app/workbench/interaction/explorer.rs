@@ -21,7 +21,7 @@ impl Workbench {
         let _scope = perf::scope("input.mouse.explorer");
         let in_tree = self.explorer.contains(event.column, event.row);
         let in_git = self
-            .layout_cache
+            .frame_layout
             .git_panel_area
             .is_some_and(|a| util::rect_contains(a, event.column, event.row));
 
@@ -42,7 +42,7 @@ impl Workbench {
             MouseEventKind::Down(MouseButton::Left) => {
                 if in_git {
                     let Some((branch, _)) = self
-                        .layout_cache
+                        .frame_layout
                         .git_branch_areas
                         .iter()
                         .find(|(_, rect)| util::rect_contains(*rect, event.column, event.row))

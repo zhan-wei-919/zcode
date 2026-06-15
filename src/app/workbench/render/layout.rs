@@ -23,8 +23,8 @@ use crate::views::{
 
 pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area: Rect) {
     let _scope = perf::scope("render.frame");
-    workbench.layout_cache.render_area = Some(area);
-    workbench.layout_cache.bottom_panel_splitter_area = None;
+    workbench.frame_layout.render_area = Some(area);
+    workbench.frame_layout.bottom_panel_splitter_area = None;
     workbench.ui_tree.clear();
 
     let (body_area, status_area) = area.split_bottom(super::super::STATUS_HEIGHT);
@@ -38,7 +38,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
 
     let (activity_area, content_area) = body_area.split_left(super::super::ACTIVITY_BAR_WIDTH);
 
-    workbench.layout_cache.activity_bar_area = (!activity_area.is_empty()).then_some(activity_area);
+    workbench.frame_layout.activity_bar_area = (!activity_area.is_empty()).then_some(activity_area);
     if !activity_area.is_empty() {
         let _scope = perf::scope("render.activity");
         let mut painter = Painter::new();
@@ -69,17 +69,17 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
                 (main_area, splitter_area, panel_area)
             }
         } else {
-            workbench.bottom_panel_split_dragging = false;
+            workbench.interaction.bottom_panel_split_dragging = false;
             (content_area, None, None)
         };
 
-    workbench.layout_cache.bottom_panel_splitter_area = bottom_panel_splitter_area;
-    workbench.layout_cache.bottom_panel_area = bottom_panel_area;
+    workbench.frame_layout.bottom_panel_splitter_area = bottom_panel_splitter_area;
+    workbench.frame_layout.bottom_panel_area = bottom_panel_area;
 
     let (_sidebar_area, editor_area) = if workbench.store.state().ui.sidebar_visible
         && main_area.w > 0
     {
-        workbench.layout_cache.sidebar_container_area = Some(main_area);
+        workbench.frame_layout.sidebar_container_area = Some(main_area);
 
         let available = main_area.w;
         let desired = workbench
@@ -91,29 +91,29 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         let sidebar_width = super::super::util::clamp_sidebar_width(available, desired);
         let (sidebar_area, editor_area) = main_area.split_left(sidebar_width);
 
-        workbench.layout_cache.sidebar_area = (!sidebar_area.is_empty()).then_some(sidebar_area);
+        workbench.frame_layout.sidebar_area = (!sidebar_area.is_empty()).then_some(sidebar_area);
 
         if !sidebar_area.is_empty() {
             let _scope = perf::scope("render.sidebar");
             workbench.render_sidebar(backend, sidebar_area);
         } else {
-            workbench.layout_cache.sidebar_tabs_area = None;
-            workbench.layout_cache.sidebar_content_area = None;
+            workbench.frame_layout.sidebar_tabs_area = None;
+            workbench.frame_layout.sidebar_content_area = None;
         }
 
         (sidebar_area, editor_area)
     } else {
-        workbench.layout_cache.sidebar_area = None;
-        workbench.layout_cache.sidebar_tabs_area = None;
-        workbench.layout_cache.sidebar_content_area = None;
-        workbench.layout_cache.sidebar_container_area = None;
-        workbench.sidebar_split_dragging = false;
+        workbench.frame_layout.sidebar_area = None;
+        workbench.frame_layout.sidebar_tabs_area = None;
+        workbench.frame_layout.sidebar_content_area = None;
+        workbench.frame_layout.sidebar_container_area = None;
+        workbench.interaction.sidebar_split_dragging = false;
         (Rect::default(), main_area)
     };
 
     if workbench.store.state().ui.theme_editor.visible {
         // Fill editor area with editor_bg so theme changes are visible behind the controls.
-        let bg_style = UiStyle::default().bg(workbench.ui_theme.editor_bg);
+        let bg_style = UiStyle::default().bg(workbench.theme.core.editor_bg);
         let mut bg_painter = Painter::new();
         bg_painter.fill_rect(editor_area, bg_style);
         backend.draw(editor_area, bg_painter.cmds());
@@ -123,14 +123,14 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
             &mut painter,
             editor_area,
             &workbench.store.state().ui.theme_editor,
-            &workbench.ui_theme,
-            workbench.terminal_color_support,
-            workbench.theme_editor_layout.ansi_cursor,
+            &workbench.theme.core,
+            workbench.theme.color_support,
+            workbench.render_cache.theme_editor_layout.ansi_cursor,
         );
-        workbench.theme_editor_layout.token_list_area = areas.token_list;
-        workbench.theme_editor_layout.hue_bar_area = areas.hue_bar;
-        workbench.theme_editor_layout.sv_palette_area = areas.sv_palette;
-        workbench.theme_editor_layout.language_bar_area = areas.language_bar;
+        workbench.render_cache.theme_editor_layout.token_list_area = areas.token_list;
+        workbench.render_cache.theme_editor_layout.hue_bar_area = areas.hue_bar;
+        workbench.render_cache.theme_editor_layout.sv_palette_area = areas.sv_palette;
+        workbench.render_cache.theme_editor_layout.language_bar_area = areas.language_bar;
         backend.draw(editor_area, painter.cmds());
     } else {
         let _scope = perf::scope("render.editors");
@@ -160,13 +160,13 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         });
 
         let hovered = workbench.ui_runtime.hovered() == Some(splitter_id)
-            || workbench.bottom_panel_split_dragging;
+            || workbench.interaction.bottom_panel_split_dragging;
         let fg = if hovered {
-            workbench.ui_theme.focus_border
+            workbench.theme.core.focus_border
         } else {
-            workbench.ui_theme.separator
+            workbench.theme.core.separator
         };
-        let style = UiStyle::default().fg(fg).bg(workbench.ui_theme.editor_bg);
+        let style = UiStyle::default().fg(fg).bg(workbench.theme.core.editor_bg);
         let mut painter = Painter::new();
         painter.hline(
             Pos::new(splitter_area.x, splitter_area.y),
@@ -280,7 +280,13 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
         };
 
         if let Some(label) = label {
-            paint_drag_chip(&mut painter, area, pos, label.as_str(), &workbench.ui_theme);
+            paint_drag_chip(
+                &mut painter,
+                area,
+                pos,
+                label.as_str(),
+                &workbench.theme.core,
+            );
         }
     }
 
@@ -304,13 +310,7 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
             DropIntent::TabToTabBar { to_pane: pane } => {
                 if let Some(pos) = workbench.ui_runtime.last_pos() {
                     if let Some(pane_state) = workbench.store.state().editor.pane(pane) {
-                        if let Some(to_area) = workbench
-                            .layout_cache
-                            .editor_inner_areas
-                            .get(pane)
-                            .copied()
-                            .or_else(|| workbench.layout_cache.editor_inner_areas.first().copied())
-                        {
+                        if let Some(to_area) = workbench.frame_layout.editor.inner(pane) {
                             let config = &workbench.store.state().editor.config;
                             let layout = compute_editor_pane_layout(to_area, pane_state, config);
                             let hovered_to = workbench
@@ -330,8 +330,8 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
                                     insertion_index,
                                 ) {
                                     let marker_style = UiStyle::default()
-                                        .bg(workbench.ui_theme.focus_border)
-                                        .fg(workbench.ui_theme.palette_fg);
+                                        .bg(workbench.theme.core.focus_border)
+                                        .fg(workbench.theme.core.palette_fg);
                                     painter.style_rect(
                                         Rect::new(x, layout.tab_area.y, 1, 1),
                                         marker_style,
@@ -345,19 +345,13 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
             DropIntent::ExplorerToExplorerFolder { .. }
             | DropIntent::ExplorerToExplorerRow { .. } => {
                 let highlight = UiStyle::default()
-                    .bg(workbench.ui_theme.palette_selected_bg)
-                    .fg(workbench.ui_theme.palette_selected_fg);
+                    .bg(workbench.theme.core.palette_selected_bg)
+                    .fg(workbench.theme.core.palette_selected_fg);
                 painter.style_rect(target.rect, highlight);
             }
             DropIntent::ExplorerToEditorArea { pane } => {
                 if let Some(pane_state) = workbench.store.state().editor.pane(pane) {
-                    if let Some(to_area) = workbench
-                        .layout_cache
-                        .editor_inner_areas
-                        .get(pane)
-                        .copied()
-                        .or_else(|| workbench.layout_cache.editor_inner_areas.first().copied())
-                    {
+                    if let Some(to_area) = workbench.frame_layout.editor.inner(pane) {
                         let config = &workbench.store.state().editor.config;
                         let layout = compute_editor_pane_layout(to_area, pane_state, config);
 
@@ -365,8 +359,8 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
                         let rect = layout.tab_area;
                         if !rect.is_empty() {
                             let highlight = UiStyle::default()
-                                .bg(workbench.ui_theme.palette_selected_bg)
-                                .fg(workbench.ui_theme.palette_selected_fg);
+                                .bg(workbench.theme.core.palette_selected_bg)
+                                .fg(workbench.theme.core.palette_selected_fg);
                             painter.style_rect(rect, highlight);
                         }
                     }
@@ -374,8 +368,8 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
             }
             DropIntent::TabToSplit { drop } => {
                 let highlight = UiStyle::default()
-                    .bg(workbench.ui_theme.palette_selected_bg)
-                    .fg(workbench.ui_theme.palette_selected_fg);
+                    .bg(workbench.theme.core.palette_selected_bg)
+                    .fg(workbench.theme.core.palette_selected_fg);
                 painter.style_rect(target.rect, highlight);
 
                 let label = match drop {
@@ -492,7 +486,7 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
         }
         FocusTarget::Editor => {
             let pane = workbench.store.state().ui.editor_layout.active_pane;
-            let area = *workbench.layout_cache.editor_inner_areas.get(pane)?;
+            let area = workbench.frame_layout.editor.inner(pane)?;
             let pane_state = workbench.store.state().editor.pane(pane)?;
             let config = &workbench.store.state().editor.config;
             let layout = compute_editor_pane_layout(area, pane_state, config);

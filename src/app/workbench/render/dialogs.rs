@@ -26,8 +26,8 @@ pub(super) fn render_confirm_dialog(workbench: &Workbench, painter: &mut Painter
     let dialog_area = UiRect::new(x, y, width, height);
 
     let base_style = UiStyle::default()
-        .bg(workbench.ui_theme.popup_bg)
-        .fg(workbench.ui_theme.palette_fg);
+        .bg(workbench.theme.core.popup_bg)
+        .fg(workbench.theme.core.palette_fg);
     painter.fill_rect(dialog_area, base_style);
 
     let inner = UiRect::new(
@@ -41,7 +41,7 @@ pub(super) fn render_confirm_dialog(workbench: &Workbench, painter: &mut Painter
     }
 
     let title_style = UiStyle::default()
-        .fg(workbench.ui_theme.header_fg)
+        .fg(workbench.theme.core.header_fg)
         .add_mod(Mod::BOLD);
     painter.text_clipped(Pos::new(inner.x, inner.y), "Confirm", title_style, inner);
 
@@ -59,8 +59,8 @@ pub(super) fn render_confirm_dialog(workbench: &Workbench, painter: &mut Painter
         let mut x = inner.x;
         let y = inner.y + 2;
 
-        let accent = UiStyle::default().fg(workbench.ui_theme.accent_fg);
-        let muted = UiStyle::default().fg(workbench.ui_theme.palette_muted_fg);
+        let accent = UiStyle::default().fg(workbench.theme.core.accent_fg);
+        let muted = UiStyle::default().fg(workbench.theme.core.palette_muted_fg);
 
         let parts: [(&str, UiStyle); 4] = [
             ("[Enter]", accent),
@@ -105,18 +105,18 @@ pub(super) fn render_context_menu(workbench: &mut Workbench, painter: &mut Paint
 
     let styles = MenuStyles {
         base: UiStyle::default()
-            .bg(workbench.ui_theme.popup_bg)
-            .fg(workbench.ui_theme.palette_fg),
+            .bg(workbench.theme.core.popup_bg)
+            .fg(workbench.theme.core.palette_fg),
         border: None,
         selected: UiStyle::default()
-            .bg(workbench.ui_theme.palette_selected_bg)
-            .fg(workbench.ui_theme.palette_selected_fg),
+            .bg(workbench.theme.core.palette_selected_bg)
+            .fg(workbench.theme.core.palette_selected_fg),
         disabled: UiStyle::default()
-            .bg(workbench.ui_theme.popup_bg)
-            .fg(workbench.ui_theme.palette_muted_fg),
+            .bg(workbench.theme.core.popup_bg)
+            .fg(workbench.theme.core.palette_muted_fg),
         separator: UiStyle::default()
-            .bg(workbench.ui_theme.popup_bg)
-            .fg(workbench.ui_theme.separator),
+            .bg(workbench.theme.core.popup_bg)
+            .fg(workbench.theme.core.separator),
     };
 
     let mut ui = Ui::new(area, painter, &mut workbench.ui_tree);
@@ -148,13 +148,13 @@ pub(super) fn render_input_dialog(workbench: &Workbench, painter: &mut Painter, 
     }
 
     let base_style = UiStyle::default()
-        .bg(workbench.ui_theme.popup_bg)
-        .fg(workbench.ui_theme.palette_fg);
-    let muted_style = UiStyle::default().fg(workbench.ui_theme.palette_muted_fg);
+        .bg(workbench.theme.core.popup_bg)
+        .fg(workbench.theme.core.palette_fg);
+    let muted_style = UiStyle::default().fg(workbench.theme.core.palette_muted_fg);
     let title_style = UiStyle::default()
-        .fg(workbench.ui_theme.header_fg)
+        .fg(workbench.theme.core.header_fg)
         .add_mod(Mod::BOLD);
-    let error_style = UiStyle::default().fg(workbench.ui_theme.error_fg);
+    let error_style = UiStyle::default().fg(workbench.theme.core.error_fg);
 
     painter.fill_rect(popup_area, base_style);
 
@@ -208,7 +208,7 @@ pub(super) fn render_input_dialog(workbench: &Workbench, painter: &mut Painter, 
     }
 
     if inner.h >= 4 {
-        let accent = UiStyle::default().fg(workbench.ui_theme.accent_fg);
+        let accent = UiStyle::default().fg(workbench.theme.core.accent_fg);
 
         let parts: [(&str, UiStyle); 4] = [
             ("[Enter]", accent),
@@ -229,7 +229,7 @@ pub(super) fn render_input_dialog(workbench: &Workbench, painter: &mut Painter, 
 }
 
 pub(super) fn input_dialog_cursor(workbench: &Workbench) -> Option<(u16, u16)> {
-    let area = workbench.layout_cache.render_area?;
+    let area = workbench.frame_layout.render_area?;
     let dialog = &workbench.store.state().ui.input_dialog;
     if !dialog.visible {
         return None;

@@ -93,8 +93,9 @@ impl MouseDispatchPlan {
 
 fn editor_pane_at(workbench: &Workbench, x: u16, y: u16) -> Option<usize> {
     workbench
-        .layout_cache
-        .editor_areas
+        .frame_layout
+        .editor
+        .outer_areas
         .iter()
         .enumerate()
         .find_map(|(index, area)| util::rect_contains(*area, x, y).then_some(index))
@@ -104,25 +105,25 @@ fn focus_plan_for_area(workbench: &Workbench, event: &MouseEvent) -> Option<Focu
     match event.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             if workbench
-                .layout_cache
+                .frame_layout
                 .bottom_panel_area
                 .is_some_and(|a| util::rect_contains(a, event.column, event.row))
             {
                 Some(FocusPlan::BottomPanel)
             } else if workbench
-                .layout_cache
+                .frame_layout
                 .activity_bar_area
                 .is_some_and(|a| util::rect_contains(a, event.column, event.row))
             {
                 Some(FocusPlan::ActivityBar)
             } else if workbench
-                .layout_cache
+                .frame_layout
                 .sidebar_tabs_area
                 .is_some_and(|a| util::rect_contains(a, event.column, event.row))
             {
                 Some(FocusPlan::SidebarTabs)
             } else if workbench
-                .layout_cache
+                .frame_layout
                 .sidebar_area
                 .is_some_and(|a| util::rect_contains(a, event.column, event.row))
             {
@@ -134,13 +135,13 @@ fn focus_plan_for_area(workbench: &Workbench, event: &MouseEvent) -> Option<Focu
         }
         MouseEventKind::Down(MouseButton::Right) => {
             if workbench
-                .layout_cache
+                .frame_layout
                 .bottom_panel_area
                 .is_some_and(|a| util::rect_contains(a, event.column, event.row))
             {
                 Some(FocusPlan::BottomPanel)
             } else if workbench
-                .layout_cache
+                .frame_layout
                 .sidebar_area
                 .is_some_and(|a| util::rect_contains(a, event.column, event.row))
             {
@@ -164,9 +165,9 @@ fn split_target(workbench: &Workbench, event: &MouseEvent) -> Option<MouseTarget
         .push_str("sidebar_splitter")
         .finish();
     if hit.is_some_and(|node| node.id == sidebar_splitter)
-        || workbench.sidebar_split_dragging
+        || workbench.interaction.sidebar_split_dragging
             && workbench.store.state().ui.sidebar_visible
-            && workbench.layout_cache.sidebar_container_area.is_some()
+            && workbench.frame_layout.sidebar_container_area.is_some()
     {
         return Some(MouseTarget::SidebarSplitter);
     }
@@ -175,9 +176,9 @@ fn split_target(workbench: &Workbench, event: &MouseEvent) -> Option<MouseTarget
         .push_str("bottom_panel_splitter")
         .finish();
     if hit.is_some_and(|node| node.id == bottom_panel_splitter)
-        || workbench.bottom_panel_split_dragging
+        || workbench.interaction.bottom_panel_split_dragging
             && workbench.store.state().ui.bottom_panel.visible
-            && workbench.layout_cache.bottom_panel_splitter_area.is_some()
+            && workbench.frame_layout.bottom_panel_splitter_area.is_some()
     {
         return Some(MouseTarget::BottomPanelSplitter);
     }
@@ -185,7 +186,9 @@ fn split_target(workbench: &Workbench, event: &MouseEvent) -> Option<MouseTarget
     let editor_splitter = IdPath::root("workbench")
         .push_str("editor_splitter")
         .finish();
-    if hit.is_some_and(|node| node.id == editor_splitter) || workbench.editor_split_dragging {
+    if hit.is_some_and(|node| node.id == editor_splitter)
+        || workbench.interaction.editor_split_dragging
+    {
         return Some(MouseTarget::EditorSplitter);
     }
 

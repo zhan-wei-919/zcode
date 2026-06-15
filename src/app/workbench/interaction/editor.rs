@@ -30,7 +30,7 @@ impl Workbench {
         let _scope = perf::scope("input.mouse.editor");
         let active_pane = self.store.state().ui.editor_layout.active_pane;
 
-        let pane = if let Some(drag) = self.editor_scrollbar_drag {
+        let pane = if let Some(drag) = self.interaction.editor_scrollbar_drag {
             drag.pane
         } else if self.store.state().editor.pane(active_pane).is_some() {
             active_pane
@@ -38,13 +38,8 @@ impl Workbench {
             0
         };
 
-        let area = self
-            .layout_cache
-            .editor_inner_areas
-            .get(pane)
-            .copied()
-            .or_else(|| self.layout_cache.editor_inner_areas.first().copied());
-        let Some(area) = area else {
+        // `pane` 已钳定为有效 pane（见上），直接取其内层矩形；无布局时返回 None 即忽略。
+        let Some(area) = self.frame_layout.editor.inner(pane) else {
             return EventResult::Ignored;
         };
 
@@ -86,7 +81,7 @@ impl Workbench {
                 | MouseEventKind::ScrollRight
         ) {
             let pointer = Pos::new(event.column, event.row);
-            self.editor_scrollbar_hover = layout
+            self.interaction.editor_scrollbar_hover = layout
                 .v_scrollbar_area
                 .filter(|area| area.contains(pointer))
                 .map(|_| pane);
@@ -94,7 +89,7 @@ impl Workbench {
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                self.editor_scrollbar_drag = None;
+                self.interaction.editor_scrollbar_drag = None;
 
                 if let Some(result) =
                     hit_test_search_bar(&layout, &pane_state.search_bar, event.column, event.row)
@@ -150,7 +145,7 @@ impl Workbench {
                                 let track_top = metrics.track_area.y;
                                 let thumb_top = metrics.thumb_area.y.saturating_sub(track_top);
                                 let grab_offset = row.saturating_sub(thumb_top);
-                                self.editor_scrollbar_drag =
+                                self.interaction.editor_scrollbar_drag =
                                     Some(super::super::EditorScrollbarDragState {
                                         pane,
                                         grab_offset,
@@ -162,7 +157,7 @@ impl Workbench {
                                 let target_offset =
                                     metrics.line_offset_for_pointer_row(pointer_row, grab_offset);
                                 let _ = self.scroll_editor_to_line_offset(pane, target_offset);
-                                self.editor_scrollbar_drag =
+                                self.interaction.editor_scrollbar_drag =
                                     Some(super::super::EditorScrollbarDragState {
                                         pane,
                                         grab_offset,
@@ -188,12 +183,12 @@ impl Workbench {
                             };
                             if let Some(col) = col {
                                 // Ensure per-pane tracker exists
-                                while self.editor_mouse.len() <= pane {
-                                    self.editor_mouse.push(
+                                while self.interaction.editor_mouse.len() <= pane {
+                                    self.interaction.editor_mouse.push(
                                         super::super::mouse_tracker::EditorMouseTracker::new(),
                                     );
                                 }
-                                let granularity = self.editor_mouse[pane].click(
+                                let granularity = self.interaction.editor_mouse[pane].click(
                                     event.column,
                                     event.row,
                                     Instant::now(),
@@ -205,7 +200,7 @@ impl Workbench {
                                     let _ = self.dispatch_kernel(KernelAction::Editor(
                                         EditorAction::AddCursorAt { pane, row, col },
                                     ));
-                                    self.editor_mouse[pane].stop_drag();
+                                    self.interaction.editor_mouse[pane].stop_drag();
                                     return EventResult::Consumed;
                                 }
 
@@ -226,7 +221,7 @@ impl Workbench {
                                                 text: text.to_string(),
                                             },
                                         ));
-                                        self.editor_mouse[pane].stop_drag();
+                                        self.interaction.editor_mouse[pane].stop_drag();
                                         return EventResult::Consumed;
                                     }
                                 }
@@ -276,7 +271,7 @@ impl Workbench {
             }
             MouseEventKind::Down(MouseButton::Right) => EventResult::Consumed,
             MouseEventKind::Drag(MouseButton::Left) => {
-                if let Some(drag) = self.editor_scrollbar_drag {
+                if let Some(drag) = self.interaction.editor_scrollbar_drag {
                     if drag.pane == pane {
                         if let Some(metrics) = scrollbar_metrics {
                             let target_offset =
@@ -299,11 +294,12 @@ impl Workbench {
 
                 if let Some(hit) = hit_test_editor_mouse_drag(&layout, event.column, event.row) {
                     // Ensure per-pane tracker exists
-                    while self.editor_mouse.len() <= pane {
-                        self.editor_mouse
+                    while self.interaction.editor_mouse.len() <= pane {
+                        self.interaction
+                            .editor_mouse
                             .push(super::super::mouse_tracker::EditorMouseTracker::new());
                     }
-                    if !self.editor_mouse[pane].dragging() {
+                    if !self.interaction.editor_mouse[pane].dragging() {
                         return EventResult::Consumed;
                     }
 
@@ -367,7 +363,7 @@ impl Workbench {
                 EventResult::Ignored
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if self.editor_scrollbar_drag.take().is_some() {
+                if self.interaction.editor_scrollbar_drag.take().is_some() {
                     return EventResult::Consumed;
                 }
 
@@ -424,14 +420,9 @@ impl Workbench {
                                     else {
                                         continue;
                                     };
-                                    let Some(to_area) = self
-                                        .layout_cache
-                                        .editor_inner_areas
-                                        .get(to_pane)
-                                        .copied()
-                                        .or_else(|| {
-                                            self.layout_cache.editor_inner_areas.first().copied()
-                                        })
+                                    // to_pane 来自真实 EditorArea 节点的 drop intent，其内层矩形必然已写入；
+                                    // 越界则跳过，不再静默回退到 pane 0（避免投放到错误 pane）。
+                                    let Some(to_area) = self.frame_layout.editor.inner(to_pane)
                                     else {
                                         continue;
                                     };
@@ -516,11 +507,12 @@ impl Workbench {
                 }
 
                 // Ensure per-pane tracker exists
-                while self.editor_mouse.len() <= pane {
-                    self.editor_mouse
+                while self.interaction.editor_mouse.len() <= pane {
+                    self.interaction
+                        .editor_mouse
                         .push(super::super::mouse_tracker::EditorMouseTracker::new());
                 }
-                self.editor_mouse[pane].stop_drag();
+                self.interaction.editor_mouse[pane].stop_drag();
                 let _ =
                     self.dispatch_kernel(KernelAction::Editor(EditorAction::EndSelectionGesture {
                         pane,
@@ -654,7 +646,7 @@ impl Workbench {
                         None
                     };
 
-                self.hover_popup.target = idle_target;
+                self.ui.hover_popup.target = idle_target;
 
                 if let Some(index) =
                     hit_test_tab_hover(&layout, pane_state, event.column, event.row, hovered_idx)
@@ -669,6 +661,7 @@ impl Workbench {
             MouseEventKind::ScrollUp => {
                 if self.store.state().ui.completion.visible
                     && self
+                        .ui
                         .completion_doc
                         .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
@@ -679,6 +672,7 @@ impl Workbench {
                 }
                 if self.store.state().ui.hover.is_active()
                     && self
+                        .ui
                         .hover_popup
                         .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
@@ -702,6 +696,7 @@ impl Workbench {
             MouseEventKind::ScrollDown => {
                 if self.store.state().ui.completion.visible
                     && self
+                        .ui
                         .completion_doc
                         .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
@@ -712,6 +707,7 @@ impl Workbench {
                 }
                 if self.store.state().ui.hover.is_active()
                     && self
+                        .ui
                         .hover_popup
                         .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
@@ -735,6 +731,7 @@ impl Workbench {
             MouseEventKind::ScrollLeft => {
                 if self.store.state().ui.completion.visible
                     && self
+                        .ui
                         .completion_doc
                         .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
@@ -743,6 +740,7 @@ impl Workbench {
                 }
                 if self.store.state().ui.hover.is_active()
                     && self
+                        .ui
                         .hover_popup
                         .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
@@ -759,6 +757,7 @@ impl Workbench {
             MouseEventKind::ScrollRight => {
                 if self.store.state().ui.completion.visible
                     && self
+                        .ui
                         .completion_doc
                         .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
@@ -767,6 +766,7 @@ impl Workbench {
                 }
                 if self.store.state().ui.hover.is_active()
                     && self
+                        .ui
                         .hover_popup
                         .last_area
                         .is_some_and(|a| util::rect_contains(a, event.column, event.row))
