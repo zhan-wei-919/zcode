@@ -8,8 +8,8 @@ use crate::kernel::services::adapters::lsp::LspServerCommandOverride;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::kernel::services::adapters::{
-    ClipboardService, ConfigService, FileService, FileWatcherService, GlobalSearchService,
-    GlobalSearchTask, KeybindingContext, KeybindingService, LspService, SearchService, SearchTask,
+    ClipboardService, ConfigService, FileWatcherService, GlobalSearchService, GlobalSearchTask,
+    KeybindingContext, KeybindingService, LspService, SearchService, SearchTask,
 };
 use crate::kernel::services::ports::{
     EditorConfig, GlobalSearchMessage, LspServerKind, SearchMessage,
@@ -26,7 +26,6 @@ use crate::views::ExplorerView;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
-use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 mod bridge;
@@ -316,9 +315,7 @@ impl Workbench {
 
         let terminal_color_support = detect_terminal_color_support();
 
-        let executor: Arc<dyn crate::kernel::services::ports::AsyncExecutor> =
-            Arc::new(runtime.tokio_handle());
-        let mut kernel_services = KernelServiceHost::new(executor);
+        let mut kernel_services = KernelServiceHost::new();
         if let Some(wakeup) = wakeup {
             kernel_services.set_wakeup(wakeup);
         }
@@ -326,7 +323,6 @@ impl Workbench {
         let _ = kernel_services.register(SearchService::new(runtime.tokio_handle().clone()));
         let _ = kernel_services.register(GlobalSearchService::new(runtime.tokio_handle().clone()));
         let _ = kernel_services.register(ConfigService::with_editor_config(editor_config.clone()));
-        let _ = kernel_services.register(FileService::new());
         let _ = kernel_services.register(keybindings);
         if lsp_enabled() {
             let ctx = kernel_services.context();

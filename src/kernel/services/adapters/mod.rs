@@ -3,7 +3,6 @@
 pub mod backup;
 pub mod clipboard;
 pub mod config;
-pub mod file;
 pub mod file_watcher;
 pub mod keybinding;
 pub mod lsp;
@@ -18,7 +17,6 @@ pub use backup::{
 };
 pub use clipboard::{ClipboardError, ClipboardService};
 pub use config::ConfigService;
-pub use file::{FileService, LocalFileProvider};
 pub use file_watcher::{FileWatchEvent, FileWatcherService};
 pub use keybinding::{KeybindingContext, KeybindingService};
 pub use lsp::LspService;

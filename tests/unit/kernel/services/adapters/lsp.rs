@@ -1,7 +1,6 @@
 use super::*;
 use crate::kernel::language::adapter::adapter_for;
 use crate::kernel::language::{LanguageId, LspLaunchContext, LspLaunchPlan};
-use crate::kernel::services::ports::{AsyncExecutor, BoxFuture};
 use crate::kernel::services::KernelServiceHost;
 use lsp_server::Message;
 #[cfg(unix)]
@@ -76,13 +75,7 @@ fn default_launch_plan(
 fn ready_lsp_client_for_request_tests(
     server: LspServerKind,
 ) -> (LspClient, std::sync::mpsc::Receiver<Message>) {
-    struct NoopExecutor;
-
-    impl AsyncExecutor for NoopExecutor {
-        fn spawn(&self, _task: BoxFuture) {}
-    }
-
-    let host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let host = KernelServiceHost::new();
     let mut client = LspClient::new(PathBuf::from("."), server, host.context());
 
     let (tx, rx) = std::sync::mpsc::channel::<Message>();
@@ -120,13 +113,7 @@ fn file_url_roundtrip_unix() {
 
 #[test]
 fn lsp_restart_backoff_blocks_ensure_started() {
-    struct NoopExecutor;
-
-    impl AsyncExecutor for NoopExecutor {
-        fn spawn(&self, _task: BoxFuture) {}
-    }
-
-    let host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let host = KernelServiceHost::new();
     let mut client = LspClient::new(
         PathBuf::from("."),
         LspServerKind::RustAnalyzer,
@@ -142,13 +129,7 @@ fn lsp_restart_backoff_blocks_ensure_started() {
 
 #[test]
 fn lsp_restart_backoff_is_capped() {
-    struct NoopExecutor;
-
-    impl AsyncExecutor for NoopExecutor {
-        fn spawn(&self, _task: BoxFuture) {}
-    }
-
-    let host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let host = KernelServiceHost::new();
     let mut client = LspClient::new(
         PathBuf::from("."),
         LspServerKind::RustAnalyzer,
@@ -166,13 +147,7 @@ fn lsp_restart_backoff_is_capped() {
 
 #[test]
 fn semantic_tokens_error_does_not_clear_previous_highlight() {
-    struct NoopExecutor;
-
-    impl AsyncExecutor for NoopExecutor {
-        fn spawn(&self, _task: BoxFuture) {}
-    }
-
-    let mut host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let mut host = KernelServiceHost::new();
     let ctx = host.context();
 
     handle_response(
@@ -197,13 +172,7 @@ fn semantic_tokens_error_does_not_clear_previous_highlight() {
 
 #[test]
 fn semantic_tokens_null_result_does_not_clear_previous_highlight() {
-    struct NoopExecutor;
-
-    impl AsyncExecutor for NoopExecutor {
-        fn spawn(&self, _task: BoxFuture) {}
-    }
-
-    let mut host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let mut host = KernelServiceHost::new();
     let ctx = host.context();
 
     handle_response(
@@ -558,13 +527,7 @@ fn definition_preview_target_uses_location_link_target_range() {
 
 #[test]
 fn hover_definition_preview_for_trait_method_stops_before_next_top_level_item() {
-    struct NoopExecutor;
-
-    impl AsyncExecutor for NoopExecutor {
-        fn spawn(&self, _task: BoxFuture) {}
-    }
-
-    let mut host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let mut host = KernelServiceHost::new();
     let ctx = host.context();
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -644,13 +607,7 @@ struct PressedState {
 #[test]
 fn hover_definition_preview_for_python_function_keeps_decorator_and_stops_before_next_top_level_item(
 ) {
-    struct NoopExecutor;
-
-    impl AsyncExecutor for NoopExecutor {
-        fn spawn(&self, _task: BoxFuture) {}
-    }
-
-    let mut host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let mut host = KernelServiceHost::new();
     let ctx = host.context();
 
     let dir = tempfile::tempdir().expect("tempdir");
@@ -953,12 +910,6 @@ fn resolve_server_command_go_uses_default_semantic_init_options() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _env = EnvRestore::capture();
 
-    struct NoopExecutor;
-
-    impl AsyncExecutor for NoopExecutor {
-        fn spawn(&self, _task: BoxFuture) {}
-    }
-
     let temp = tempfile::tempdir().expect("tempdir");
     let workspace_root = temp.path();
     let go_file = workspace_root.join("main.go");
@@ -978,7 +929,7 @@ fn resolve_server_command_go_uses_default_semantic_init_options() {
     std::env::set_var("GOPATH", &gopath);
     std::env::remove_var("GOBIN");
 
-    let host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let host = KernelServiceHost::new();
     let mut service = LspService::new(workspace_root.to_path_buf(), host.context());
 
     let (language, key) = service
@@ -1000,18 +951,12 @@ fn resolve_server_command_global_override_short_circuits_defaults() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _env = EnvRestore::capture();
 
-    struct NoopExecutor;
-
-    impl AsyncExecutor for NoopExecutor {
-        fn spawn(&self, _task: BoxFuture) {}
-    }
-
     let temp = tempfile::tempdir().expect("tempdir");
     let workspace_root = temp.path();
     let go_file = workspace_root.join("main.go");
     std::fs::write(&go_file, "package main\n").expect("write go file");
 
-    let host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let host = KernelServiceHost::new();
     let mut service = LspService::new(workspace_root.to_path_buf(), host.context())
         .with_command("custom-lsp".to_string(), vec!["--custom".to_string()]);
 
@@ -1032,12 +977,6 @@ fn resolve_server_command_global_override_short_circuits_defaults() {
 fn resolve_server_command_go_prefers_user_init_options() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let _env = EnvRestore::capture();
-
-    struct NoopExecutor;
-
-    impl AsyncExecutor for NoopExecutor {
-        fn spawn(&self, _task: BoxFuture) {}
-    }
 
     let temp = tempfile::tempdir().expect("tempdir");
     let workspace_root = temp.path();
@@ -1068,7 +1007,7 @@ fn resolve_server_command_go_prefers_user_init_options() {
         },
     );
 
-    let host = KernelServiceHost::new(Arc::new(NoopExecutor));
+    let host = KernelServiceHost::new();
     let mut service = LspService::new(workspace_root.to_path_buf(), host.context())
         .with_server_command_overrides(overrides);
 

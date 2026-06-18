@@ -10,7 +10,6 @@ pub struct EditorConfig {
     pub click_slop: u16,
     pub scroll_lines: usize,
     pub show_line_numbers: bool,
-    pub word_wrap: bool,
     pub auto_indent: bool,
     #[serde(default, alias = "formatOnSave")]
     pub format_on_save: bool,
@@ -136,7 +135,6 @@ impl Default for EditorConfig {
             click_slop: 2,
             scroll_lines: 1,
             show_line_numbers: true,
-            word_wrap: false,
             auto_indent: true,
             format_on_save: false,
             show_indent_guides: default_show_indent_guides(),

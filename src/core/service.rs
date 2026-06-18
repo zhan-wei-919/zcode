@@ -74,14 +74,6 @@ impl ServiceRegistry {
             .get_mut(&TypeId::of::<S>())
             .and_then(|s| s.downcast_mut::<S>())
     }
-
-    pub fn contains<S: Service + 'static>(&self) -> bool {
-        self.services.contains_key(&TypeId::of::<S>())
-    }
-
-    pub fn remove<S: Service + 'static>(&mut self) -> Option<Box<dyn Service>> {
-        self.services.remove(&TypeId::of::<S>())
-    }
 }
 
 impl Default for ServiceRegistry {

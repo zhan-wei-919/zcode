@@ -1,16 +1,13 @@
 //! Service ports: traits + data contracts.
 
 pub mod config;
-pub mod file;
+pub mod dir_entry;
 pub mod lsp;
-pub mod runtime;
 pub mod search;
 pub mod settings;
 
 pub use config::EditorConfig;
-pub use file::{
-    DirEntry, DirEntryInfo, FileError, FileMetadata, FileProvider, Result as FileResult,
-};
+pub use dir_entry::DirEntryInfo;
 pub use lsp::{
     LspClientKey, LspCodeAction, LspCommand, LspCompletionItem, LspCompletionTriggerContext,
     LspCompletionTriggerKind, LspFoldingRange, LspHoverBlock, LspHoverPayload,
@@ -20,7 +17,6 @@ pub use lsp::{
     LspSignatureParameter, LspSignatureParameterLabel, LspTextChange, LspTextEdit,
     LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
-pub use runtime::{AsyncExecutor, BoxFuture};
 pub use search::{
     FileMatches, GlobalSearchMessage, Match, Result as SearchResult, SearchError, SearchMessage,
 };

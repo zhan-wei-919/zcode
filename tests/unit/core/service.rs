@@ -73,22 +73,3 @@ fn test_get_nonexistent() {
     let registry = ServiceRegistry::new();
     assert!(registry.get::<TestService>().is_none());
 }
-
-#[test]
-fn test_contains() {
-    let mut registry = ServiceRegistry::new();
-    assert!(!registry.contains::<TestService>());
-
-    registry.register(TestService { value: 1 }).unwrap();
-    assert!(registry.contains::<TestService>());
-}
-
-#[test]
-fn test_remove() {
-    let mut registry = ServiceRegistry::new();
-    registry.register(TestService { value: 1 }).unwrap();
-
-    assert!(registry.contains::<TestService>());
-    registry.remove::<TestService>();
-    assert!(!registry.contains::<TestService>());
-}
