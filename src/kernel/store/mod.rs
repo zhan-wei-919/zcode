@@ -1449,6 +1449,24 @@ impl Store {
             | action @ Action::PaletteBackspace
             | action @ Action::PaletteMoveSelection(_)
             | action @ Action::PaletteClose => self.reduce_palette_action(action),
+            Action::CommandLineAppend(ch) => {
+                if !self.state.ui.command_line.active {
+                    DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: false,
+                    }
+                } else {
+                    let line = &mut self.state.ui.command_line;
+                    let cursor = line.cursor.min(line.input.len());
+                    line.input.insert(cursor, ch);
+                    line.cursor = cursor + ch.len_utf8();
+                    line.selected = 0;
+                    DispatchResult {
+                        effects: Vec::new(),
+                        state_changed: true,
+                    }
+                }
+            }
             Action::SetHoveredTab { pane, index } => {
                 let prev = self.state.ui.hovered_tab;
                 self.state.ui.hovered_tab = Some((pane, index));
@@ -2099,6 +2117,96 @@ impl Store {
 
                 let mut result = self.dispatch_command(cmd);
                 result.state_changed |= palette_closed;
+                return result;
+            }
+            Command::OpenCommandLine => {
+                self.state.ui.command_line.reset();
+                self.state.ui.command_line.active = true;
+                self.state.ui.focus = FocusTarget::CommandLine;
+                state_changed = true;
+            }
+            Command::CommandLineClose => {
+                if self.state.ui.command_line.active {
+                    self.state.ui.command_line.reset();
+                    if self.state.ui.focus == FocusTarget::CommandLine {
+                        self.state.ui.focus = FocusTarget::Editor;
+                    }
+                    state_changed = true;
+                }
+            }
+            Command::CommandLineBackspace => {
+                if self.state.ui.command_line.active {
+                    let line = &mut self.state.ui.command_line;
+                    if line.cursor > 0 && !line.input.is_empty() {
+                        let prev = line.input[..line.cursor]
+                            .char_indices()
+                            .last()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        line.input.drain(prev..line.cursor);
+                        line.cursor = prev;
+                        line.selected = 0;
+                        state_changed = true;
+                    } else {
+                        // 空行退格关闭命令行（vim 习惯）。
+                        self.state.ui.command_line.reset();
+                        if self.state.ui.focus == FocusTarget::CommandLine {
+                            self.state.ui.focus = FocusTarget::Editor;
+                        }
+                        state_changed = true;
+                    }
+                }
+            }
+            Command::CommandLineMoveUp => {
+                if self.state.ui.command_line.active {
+                    let prev = self.state.ui.command_line.selected;
+                    self.state.ui.command_line.selected = prev.saturating_sub(1);
+                    state_changed = self.state.ui.command_line.selected != prev;
+                }
+            }
+            Command::CommandLineMoveDown => {
+                if self.state.ui.command_line.active {
+                    let prev = self.state.ui.command_line.selected;
+                    self.state.ui.command_line.selected = prev.saturating_add(1);
+                    state_changed = self.state.ui.command_line.selected != prev;
+                }
+            }
+            Command::CommandLineConfirm => {
+                if !self.state.ui.command_line.active {
+                    return DispatchResult {
+                        effects,
+                        state_changed: false,
+                    };
+                }
+
+                let input = self.state.ui.command_line.input.trim().to_string();
+                let selected_raw = self.state.ui.command_line.selected;
+                let matches = crate::kernel::palette::match_items(&input);
+
+                self.state.ui.command_line.reset();
+                if self.state.ui.focus == FocusTarget::CommandLine {
+                    self.state.ui.focus = FocusTarget::Editor;
+                }
+
+                // 优先取补全列表的选中项；否则按命令名解析输入。
+                let cmd = if !matches.is_empty() {
+                    let selected = selected_raw.min(matches.len().saturating_sub(1));
+                    Some(matches[selected].command.clone())
+                } else if !input.is_empty() {
+                    Some(Command::from_name(&input))
+                } else {
+                    None
+                };
+
+                let Some(cmd) = cmd else {
+                    return DispatchResult {
+                        effects,
+                        state_changed: true,
+                    };
+                };
+
+                let mut result = self.dispatch_command(cmd);
+                result.state_changed = true;
                 return result;
             }
             Command::ExplorerUp => {

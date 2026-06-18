@@ -69,6 +69,7 @@ pub enum Action {
     PaletteBackspace,
     PaletteMoveSelection(isize),
     PaletteClose,
+    CommandLineAppend(char),
     EditorSetActivePane {
         pane: usize,
     },

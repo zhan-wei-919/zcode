@@ -10,6 +10,7 @@ use crate::ui::core::tree::Sense;
 pub(super) enum MouseTarget {
     ContextMenu,
     CommandPalette,
+    CommandLine,
     Overlay,
     SidebarSplitter,
     ByFocus,
@@ -30,6 +31,7 @@ pub(super) enum FocusPlan {
 pub(super) enum MouseRouteReason {
     ContextMenuModal,
     CommandPaletteModal,
+    CommandLineModal,
     OverlayModal,
     SidebarSplitterHit,
     FocusByArea,
@@ -58,6 +60,7 @@ pub(super) fn mouse_target_from_focus(
         }
         FocusTarget::Editor => MouseTarget::Editor,
         FocusTarget::Overlay => MouseTarget::Overlay,
+        FocusTarget::CommandLine => MouseTarget::CommandLine,
         FocusTarget::CommandPalette => MouseTarget::CommandPalette,
     }
 }
@@ -170,6 +173,13 @@ pub(super) fn plan_mouse_dispatch(workbench: &Workbench, event: &MouseEvent) -> 
         return MouseDispatchPlan::modal(
             MouseTarget::CommandPalette,
             MouseRouteReason::CommandPaletteModal,
+        );
+    }
+
+    if workbench.store.state().ui.command_line.active {
+        return MouseDispatchPlan::modal(
+            MouseTarget::CommandLine,
+            MouseRouteReason::CommandLineModal,
         );
     }
 

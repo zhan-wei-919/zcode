@@ -14,6 +14,7 @@ pub enum KeybindingContext {
     SidebarExplorer,
     SidebarSearch,
     CommandPalette,
+    CommandLine,
     Overlay,
 }
 
@@ -29,6 +30,7 @@ impl KeybindingContext {
                 Some(Self::SidebarSearch)
             }
             "palette" | "commandpalette" | "command_palette" => Some(Self::CommandPalette),
+            "commandline" | "command_line" | "cmdline" => Some(Self::CommandLine),
             "overlay" | "bottompanel" | "panel" => Some(Self::Overlay),
             _ => None,
         }
@@ -42,6 +44,7 @@ pub struct KeybindingService {
     sidebar_explorer: FxHashMap<Key, Command>,
     sidebar_search: FxHashMap<Key, Command>,
     command_palette: FxHashMap<Key, Command>,
+    command_line: FxHashMap<Key, Command>,
     overlay: FxHashMap<Key, Command>,
 }
 
@@ -58,6 +61,7 @@ impl KeybindingService {
             sidebar_explorer: default_sidebar_explorer_keybindings(),
             sidebar_search: default_sidebar_search_keybindings(),
             command_palette: default_command_palette_keybindings(),
+            command_line: default_command_line_keybindings(),
             overlay: default_overlay_keybindings(),
         }
     }
@@ -83,6 +87,9 @@ impl KeybindingService {
                 .command_palette
                 .get(key)
                 .or_else(|| self.global.get(key)),
+            KeybindingContext::CommandLine => {
+                self.command_line.get(key).or_else(|| self.global.get(key))
+            }
             KeybindingContext::Overlay => self.overlay.get(key).or_else(|| self.global.get(key)),
         }
     }
@@ -95,6 +102,7 @@ impl KeybindingService {
             KeybindingContext::SidebarExplorer => &self.sidebar_explorer,
             KeybindingContext::SidebarSearch => &self.sidebar_search,
             KeybindingContext::CommandPalette => &self.command_palette,
+            KeybindingContext::CommandLine => &self.command_line,
             KeybindingContext::Overlay => &self.overlay,
         }
     }
@@ -115,6 +123,7 @@ impl KeybindingService {
             KeybindingContext::SidebarExplorer => &mut self.sidebar_explorer,
             KeybindingContext::SidebarSearch => &mut self.sidebar_search,
             KeybindingContext::CommandPalette => &mut self.command_palette,
+            KeybindingContext::CommandLine => &mut self.command_line,
             KeybindingContext::Overlay => &mut self.overlay,
         }
     }
@@ -159,8 +168,11 @@ fn default_global_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::ctrl(KeyCode::Char('g')), Command::FindNext);
     bindings.insert(Key::ctrl_shift(KeyCode::Char('g')), Command::FindPrev);
 
-    bindings.insert(Key::simple(KeyCode::F(1)), Command::CommandPalette);
-    bindings.insert(Key::ctrl_shift(KeyCode::Char('p')), Command::CommandPalette);
+    bindings.insert(Key::simple(KeyCode::F(1)), Command::OpenCommandLine);
+    bindings.insert(
+        Key::ctrl_shift(KeyCode::Char('p')),
+        Command::OpenCommandLine,
+    );
     bindings.insert(Key::ctrl(KeyCode::Char('b')), Command::ToggleSidebar);
     bindings.insert(Key::ctrl(KeyCode::Char('p')), Command::ToggleSidebarTab);
     bindings.insert(Key::ctrl_shift(KeyCode::Char('e')), Command::FocusExplorer);
@@ -363,6 +375,22 @@ fn default_command_palette_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::simple(KeyCode::Up), Command::PaletteMoveUp);
     bindings.insert(Key::simple(KeyCode::Down), Command::PaletteMoveDown);
     bindings.insert(Key::simple(KeyCode::Enter), Command::PaletteConfirm);
+
+    bindings
+}
+
+fn default_command_line_keybindings() -> FxHashMap<Key, Command> {
+    let mut bindings = FxHashMap::default();
+    bindings.reserve(8);
+
+    bindings.insert(Key::simple(KeyCode::Esc), Command::CommandLineClose);
+    bindings.insert(
+        Key::simple(KeyCode::Backspace),
+        Command::CommandLineBackspace,
+    );
+    bindings.insert(Key::simple(KeyCode::Up), Command::CommandLineMoveUp);
+    bindings.insert(Key::simple(KeyCode::Down), Command::CommandLineMoveDown);
+    bindings.insert(Key::simple(KeyCode::Enter), Command::CommandLineConfirm);
 
     bindings
 }

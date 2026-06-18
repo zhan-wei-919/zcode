@@ -267,6 +267,13 @@ impl Workbench {
                 }
                 _ => EventResult::Ignored,
             },
+            KeybindingContext::CommandLine => match (key_event.code, key_event.modifiers) {
+                (KeyCode::Char(ch), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
+                    let _ = self.dispatch_kernel(KernelAction::CommandLineAppend(ch));
+                    EventResult::Consumed
+                }
+                _ => EventResult::Ignored,
+            },
             // 搜索浮层：顶部 query 行接收字符与退格（telescope 风格的即时过滤）。
             KeybindingContext::Overlay
                 if self.store.state().ui.overlay.active == Some(OverlayKind::Search) =>
@@ -305,6 +312,7 @@ impl Workbench {
                 SidebarTab::Search => KeybindingContext::SidebarSearch,
             },
             FocusTarget::Overlay => KeybindingContext::Overlay,
+            FocusTarget::CommandLine => KeybindingContext::CommandLine,
             FocusTarget::CommandPalette => KeybindingContext::CommandPalette,
             FocusTarget::Editor => {
                 let pane = ui.editor_layout.active_pane;

@@ -24,6 +24,7 @@ pub enum FocusTarget {
     Explorer,
     Editor,
     Overlay,
+    CommandLine,
     CommandPalette,
 }
 
@@ -67,6 +68,22 @@ pub struct CommandPaletteState {
 }
 
 impl CommandPaletteState {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// vim 风格 `:` 命令行：命令与搜索的输入载体，替代命令面板。
+/// `input` 是 `:` 之后键入的内容；`selected` 指向命令名补全列表中的高亮项。
+#[derive(Debug, Clone, Default)]
+pub struct CommandLineState {
+    pub active: bool,
+    pub input: String,
+    pub cursor: usize,
+    pub selected: usize,
+}
+
+impl CommandLineState {
     pub fn reset(&mut self) {
         *self = Self::default();
     }
@@ -496,6 +513,7 @@ pub struct UiState {
     pub focus: FocusTarget,
     pub editor_layout: EditorLayoutState,
     pub command_palette: CommandPaletteState,
+    pub command_line: CommandLineState,
     pub input_dialog: InputDialogState,
     pub context_menu: ContextMenuState,
     pub pending_editor_nav: Option<PendingEditorNavigation>,
@@ -522,6 +540,7 @@ impl Default for UiState {
                 query: String::new(),
                 selected: 0,
             },
+            command_line: CommandLineState::default(),
             input_dialog: InputDialogState::default(),
             context_menu: ContextMenuState::default(),
             pending_editor_nav: None,

@@ -231,6 +231,64 @@ fn test_ctrl_j_opens_diagnostics_overlay() {
 }
 
 #[test]
+fn test_command_line_opens_and_runs_command() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    // F1 唤起 `:` 命令行（无模态时不能用字面 `:`）。
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::F(1),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+    assert!(workbench.store.state().ui.command_line.active);
+    assert_eq!(workbench.focus(), FocusTarget::CommandLine);
+
+    // 输入命令名（匹配 "View: Diagnostics"）后回车执行 → 打开诊断浮层。
+    for ch in "diagnostics".chars() {
+        let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+            code: KeyCode::Char(ch),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+        }));
+    }
+    assert_eq!(workbench.store.state().ui.command_line.input, "diagnostics");
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Enter,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+
+    assert!(!workbench.store.state().ui.command_line.active);
+    assert!(workbench.overlay_visible());
+    assert_eq!(workbench.focus(), FocusTarget::Overlay);
+}
+
+#[test]
+fn test_command_line_escape_closes() {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::F(1),
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+    assert!(workbench.store.state().ui.command_line.active);
+
+    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
+        code: KeyCode::Esc,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+    }));
+    assert!(!workbench.store.state().ui.command_line.active);
+    assert_eq!(workbench.focus(), FocusTarget::Editor);
+}
+
+#[test]
 fn test_activity_bar_removes_search_find_replace_buttons() {
     assert_eq!(
         util::activity_items(),

@@ -97,6 +97,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
     render_drag_preview(workbench, backend, area);
 
     if !workbench.store.state().ui.command_palette.visible
+        && !workbench.store.state().ui.command_line.active
         && !workbench.store.state().ui.overlay.is_visible()
         && !workbench.store.state().ui.input_dialog.visible
         && !workbench.store.state().ui.confirm_dialog.visible
@@ -128,6 +129,14 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         let _scope = perf::scope("render.palette");
         let mut painter = Painter::new();
         palette::render(workbench, &mut painter, area);
+        backend.draw(area, painter.cmds());
+    }
+
+    if workbench.store.state().ui.command_line.active {
+        let _scope = perf::scope("render.command_line");
+        let mut painter = Painter::new();
+        workbench.paint_command_line(&mut painter, status_area);
+        // 补全列表浮在状态栏上方，draw 整屏让其覆盖编辑区。
         backend.draw(area, painter.cmds());
     }
 
@@ -366,6 +375,10 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
         return palette::cursor(workbench);
     }
 
+    if workbench.store.state().ui.command_line.active {
+        return workbench.command_line_cursor();
+    }
+
     match workbench.store.state().ui.focus {
         FocusTarget::Explorer => {
             if workbench.store.state().ui.sidebar_tab == SidebarTab::Search {
@@ -389,6 +402,7 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
             cursor_position_editor(&layout, pane_state, config)
         }
         FocusTarget::Overlay => None,
+        FocusTarget::CommandLine => None,
         FocusTarget::CommandPalette => None,
     }
 }

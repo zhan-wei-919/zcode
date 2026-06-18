@@ -5,6 +5,7 @@ use crate::ui::core::geom::Rect;
 use std::time::Duration;
 use std::time::Instant;
 
+mod command_line;
 mod dialogs;
 mod editor;
 mod git;

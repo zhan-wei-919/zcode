@@ -1592,8 +1592,8 @@ fn test_lsp_range_format_replaces_selection() {
         modifiers: KeyModifiers::NONE,
         kind: KeyEventKind::Press,
     }));
-    assert!(workbench.state().ui.command_palette.visible);
-    assert_eq!(workbench.state().ui.focus, FocusTarget::CommandPalette);
+    assert!(workbench.state().ui.command_line.active);
+    assert_eq!(workbench.state().ui.focus, FocusTarget::CommandLine);
 
     for ch in "format selection".chars() {
         let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
@@ -1654,8 +1654,8 @@ fn test_lsp_document_symbols_populates_symbols_and_jumps_to_item() {
         modifiers: KeyModifiers::NONE,
         kind: KeyEventKind::Press,
     }));
-    assert!(workbench.state().ui.command_palette.visible);
-    assert_eq!(workbench.state().ui.focus, FocusTarget::CommandPalette);
+    assert!(workbench.state().ui.command_line.active);
+    assert_eq!(workbench.state().ui.focus, FocusTarget::CommandLine);
 
     for ch in "document symbols".chars() {
         let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
@@ -1742,8 +1742,8 @@ fn test_lsp_workspace_symbols_opens_selected_item() {
         modifiers: KeyModifiers::NONE,
         kind: KeyEventKind::Press,
     }));
-    assert!(workbench.state().ui.command_palette.visible);
-    assert_eq!(workbench.state().ui.focus, FocusTarget::CommandPalette);
+    assert!(workbench.state().ui.command_line.active);
+    assert_eq!(workbench.state().ui.focus, FocusTarget::CommandLine);
 
     for ch in "workspace symbols".chars() {
         let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
