@@ -101,7 +101,6 @@ fn perf_command_label(command: &Command) -> &'static str {
         Command::LspHover => "kernel.command.lsp_hover",
         Command::LspSignatureHelp => "kernel.command.lsp_signature_help",
         Command::EditorSearchBarBackspace => "kernel.command.editor_search_backspace",
-        Command::GlobalSearchBackspace => "kernel.command.global_search_backspace",
         Command::Find => "kernel.command.find",
         Command::FindNext => "kernel.command.find_next",
         Command::FindPrev => "kernel.command.find_prev",
@@ -987,14 +986,7 @@ impl Store {
             action @ Action::SearchSetViewHeight { .. }
             | action @ Action::SearchAppend(_)
             | action @ Action::SearchBackspace
-            | action @ Action::SearchCursorLeft
-            | action @ Action::SearchCursorRight
-            | action @ Action::SearchToggleCaseSensitive
-            | action @ Action::SearchToggleRegex
-            | action @ Action::SearchMoveSelection { .. }
-            | action @ Action::SearchScroll { .. }
             | action @ Action::SearchClickRow { .. }
-            | action @ Action::SearchStart
             | action @ Action::SearchStarted { .. }
             | action @ Action::SearchMessage(_) => self.reduce_search_action(action),
             Action::ProblemsClickRow { row } => DispatchResult {
@@ -2139,41 +2131,6 @@ impl Store {
                         }],
                         state_changed: changed,
                     };
-                }
-            }
-            Command::GlobalSearchCursorLeft => {
-                if self.state.ui.focus == FocusTarget::Overlay
-                    && self.state.ui.overlay.active == Some(OverlayKind::Search)
-                {
-                    state_changed = self.state.search.cursor_left();
-                }
-            }
-            Command::GlobalSearchCursorRight => {
-                if self.state.ui.focus == FocusTarget::Overlay
-                    && self.state.ui.overlay.active == Some(OverlayKind::Search)
-                {
-                    state_changed = self.state.search.cursor_right();
-                }
-            }
-            Command::GlobalSearchBackspace => {
-                if self.state.ui.focus == FocusTarget::Overlay
-                    && self.state.ui.overlay.active == Some(OverlayKind::Search)
-                {
-                    state_changed = self.state.search.backspace_query();
-                }
-            }
-            Command::GlobalSearchToggleCaseSensitive => {
-                if self.state.ui.focus == FocusTarget::Overlay
-                    && self.state.ui.overlay.active == Some(OverlayKind::Search)
-                {
-                    state_changed = self.state.search.toggle_case_sensitive();
-                }
-            }
-            Command::GlobalSearchToggleRegex => {
-                if self.state.ui.focus == FocusTarget::Overlay
-                    && self.state.ui.overlay.active == Some(OverlayKind::Search)
-                {
-                    state_changed = self.state.search.toggle_regex();
                 }
             }
             Command::SearchResultsMoveUp => {

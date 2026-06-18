@@ -141,50 +141,6 @@ impl SearchState {
         true
     }
 
-    pub fn cursor_left(&mut self) -> bool {
-        if self.query_cursor == 0 {
-            return false;
-        }
-        let prev = self.query[..self.query_cursor]
-            .char_indices()
-            .last()
-            .map(|(i, _)| i)
-            .unwrap_or(0);
-        if prev == self.query_cursor {
-            return false;
-        }
-        self.query_cursor = prev;
-        true
-    }
-
-    pub fn cursor_right(&mut self) -> bool {
-        if self.query_cursor >= self.query.len() {
-            return false;
-        }
-        let slice = &self.query[self.query_cursor..];
-        let mut iter = slice.char_indices();
-        iter.next();
-        let next = iter
-            .next()
-            .map(|(i, _)| self.query_cursor + i)
-            .unwrap_or(self.query.len());
-        if next == self.query_cursor {
-            return false;
-        }
-        self.query_cursor = next;
-        true
-    }
-
-    pub fn toggle_case_sensitive(&mut self) -> bool {
-        self.case_sensitive = !self.case_sensitive;
-        true
-    }
-
-    pub fn toggle_regex(&mut self) -> bool {
-        self.use_regex = !self.use_regex;
-        true
-    }
-
     pub fn set_view_height(&mut self, viewport: SearchViewport, height: usize) -> bool {
         let height = height.max(1);
         let view = self.viewport_mut(viewport);

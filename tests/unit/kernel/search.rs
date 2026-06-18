@@ -41,11 +41,12 @@ fn test_query_editing() {
     assert_eq!(state.query, "hi");
     assert_eq!(state.query_cursor, 2);
 
-    assert!(state.cursor_left());
+    assert!(state.backspace_query());
+    assert_eq!(state.query, "h");
     assert_eq!(state.query_cursor, 1);
 
     assert!(state.backspace_query());
-    assert_eq!(state.query, "i");
+    assert!(state.query.is_empty());
     assert_eq!(state.query_cursor, 0);
 }
 

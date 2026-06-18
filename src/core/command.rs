@@ -115,11 +115,6 @@ pub enum Command {
 
     // ==================== Global Search（侧边栏 Search） ====================
     GlobalSearchStart,
-    GlobalSearchCursorLeft,
-    GlobalSearchCursorRight,
-    GlobalSearchBackspace,
-    GlobalSearchToggleCaseSensitive,
-    GlobalSearchToggleRegex,
 
     // ==================== Search Results（侧边栏/底部面板共享） ====================
     SearchResultsMoveUp,
@@ -260,11 +255,6 @@ impl Command {
             Command::EditorSearchBarReplaceCurrent => "editorSearchBarReplaceCurrent",
             Command::EditorSearchBarReplaceAll => "editorSearchBarReplaceAll",
             Command::GlobalSearchStart => "globalSearchStart",
-            Command::GlobalSearchCursorLeft => "globalSearchCursorLeft",
-            Command::GlobalSearchCursorRight => "globalSearchCursorRight",
-            Command::GlobalSearchBackspace => "globalSearchBackspace",
-            Command::GlobalSearchToggleCaseSensitive => "globalSearchToggleCaseSensitive",
-            Command::GlobalSearchToggleRegex => "globalSearchToggleRegex",
             Command::SearchResultsMoveUp => "searchResultsMoveUp",
             Command::SearchResultsMoveDown => "searchResultsMoveDown",
             Command::SearchResultsScrollUp => "searchResultsScrollUp",
@@ -394,11 +384,6 @@ impl Command {
             "editorSearchBarReplaceCurrent" => Command::EditorSearchBarReplaceCurrent,
             "editorSearchBarReplaceAll" => Command::EditorSearchBarReplaceAll,
             "globalSearchStart" => Command::GlobalSearchStart,
-            "globalSearchCursorLeft" => Command::GlobalSearchCursorLeft,
-            "globalSearchCursorRight" => Command::GlobalSearchCursorRight,
-            "globalSearchBackspace" => Command::GlobalSearchBackspace,
-            "globalSearchToggleCaseSensitive" => Command::GlobalSearchToggleCaseSensitive,
-            "globalSearchToggleRegex" => Command::GlobalSearchToggleRegex,
             "searchResultsMoveUp" => Command::SearchResultsMoveUp,
             "searchResultsMoveDown" => Command::SearchResultsMoveDown,
             "searchResultsScrollUp" => Command::SearchResultsScrollUp,

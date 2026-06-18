@@ -83,23 +83,10 @@ pub enum Action {
     },
     SearchAppend(char),
     SearchBackspace,
-    SearchCursorLeft,
-    SearchCursorRight,
-    SearchToggleCaseSensitive,
-    SearchToggleRegex,
-    SearchMoveSelection {
-        delta: isize,
-        viewport: SearchViewport,
-    },
-    SearchScroll {
-        delta: isize,
-        viewport: SearchViewport,
-    },
     SearchClickRow {
         row: usize,
         viewport: SearchViewport,
     },
-    SearchStart,
     SearchStarted {
         search_id: u64,
     },
