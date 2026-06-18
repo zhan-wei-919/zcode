@@ -3,7 +3,7 @@
 //! 所有 UI 视图组件：
 //! - ExplorerView: 文件浏览器
 //! - Editor: 纯渲染/命中测试
-//! - SearchView: 全局搜索面板（纯渲染）
+//! - doc: 文档/帮助渲染
 
 pub mod doc;
 pub mod editor;

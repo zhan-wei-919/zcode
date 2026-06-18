@@ -113,10 +113,10 @@ pub enum Command {
     EditorSearchBarReplaceCurrent,
     EditorSearchBarReplaceAll,
 
-    // ==================== Global Search（侧边栏 Search） ====================
+    // ==================== Global Search（居中浮层 Search） ====================
     GlobalSearchStart,
 
-    // ==================== Search Results（侧边栏/底部面板共享） ====================
+    // ==================== Search Results（居中浮层） ====================
     SearchResultsMoveUp,
     SearchResultsMoveDown,
     SearchResultsScrollUp,

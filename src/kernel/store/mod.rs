@@ -378,90 +378,6 @@ impl Store {
         }
     }
 
-    fn maybe_close_empty_editor_split(&mut self, _effects: &mut Vec<Effect>) -> bool {
-        // Currently zcode supports at most a single editor split (2 panes).
-        if self.state.ui.editor_layout.panes != 2 {
-            return false;
-        }
-        if self.state.editor.panes.len() < 2 {
-            return false;
-        }
-
-        let pane0_empty = self.state.editor.panes[0].tabs.is_empty();
-        let pane1_empty = self.state.editor.panes[1].tabs.is_empty();
-        if !pane0_empty && !pane1_empty {
-            return false;
-        }
-
-        // Keep the non-empty pane in slot 0 before truncating.
-        if pane0_empty && !pane1_empty {
-            self.state.editor.panes.swap(0, 1);
-        }
-
-        self.state.ui.editor_layout.panes = 1;
-        self.state.ui.editor_layout.active_pane = 0;
-        self.state.ui.focus = FocusTarget::Editor;
-
-        let _ = self.state.editor.ensure_panes(1);
-
-        // Drop any UI state tied to the removed pane(s) to avoid stale indices.
-        if self.state.ui.hovered_tab.is_some_and(|(pane, _)| pane >= 1) {
-            self.state.ui.hovered_tab = None;
-        }
-        if self
-            .state
-            .ui
-            .pending_editor_nav
-            .as_ref()
-            .is_some_and(|nav| nav.pane >= 1)
-        {
-            self.state.ui.pending_editor_nav = None;
-        }
-
-        let should_close_context_menu =
-            self.state
-                .ui
-                .context_menu
-                .request
-                .as_ref()
-                .is_some_and(|req| {
-                    matches!(
-                        req,
-                        super::state::ContextMenuRequest::Tab { pane, .. }
-                            | super::state::ContextMenuRequest::TabBar { pane }
-                            | super::state::ContextMenuRequest::EditorArea { pane }
-                            if *pane >= 1
-                    )
-                });
-        if should_close_context_menu {
-            self.state.ui.context_menu = super::state::ContextMenuState::default();
-        }
-
-        let should_close_confirm = self
-            .state
-            .ui
-            .confirm_dialog
-            .on_confirm
-            .as_ref()
-            .is_some_and(|pending| {
-                matches!(
-                    pending,
-                    super::state::PendingAction::CloseTab { pane, .. }
-                        | super::state::PendingAction::CloseTabsBatch { pane, .. }
-                        if *pane >= 1
-                )
-            });
-        if should_close_confirm {
-            self.state.ui.confirm_dialog = super::state::ConfirmDialogState::default();
-        }
-
-        // Popups are positioned relative to the editor pane; reset them after collapsing.
-        self.state.ui.signature_help = super::state::SignatureHelpPopupState::default();
-        let _ = self.state.ui.completion.close();
-
-        true
-    }
-
     fn reconcile_signature_help_visibility(&mut self) -> bool {
         if !self.state.ui.signature_help.is_active() {
             return false;
@@ -671,13 +587,6 @@ impl Store {
                 } else {
                     false
                 };
-
-                let should_auto_close_editor_split = matches!(
-                    &editor_action,
-                    EditorAction::CloseTabAt { .. }
-                        | EditorAction::CloseTabsById { .. }
-                        | EditorAction::MoveTab { .. }
-                );
 
                 let mut result = match editor_action {
                     EditorAction::OpenFile {
@@ -898,12 +807,7 @@ impl Store {
                     }
                 };
 
-                let editor_changed = result.state_changed;
                 result.state_changed |= completion_changed;
-                if should_auto_close_editor_split && editor_changed {
-                    let collapsed = self.maybe_close_empty_editor_split(&mut result.effects);
-                    result.state_changed |= collapsed;
-                }
 
                 let next_active_file = self.active_editor_file_path();
                 if next_active_file != prev_active_file {
@@ -3374,7 +3278,6 @@ impl Store {
             }
             other => {
                 let pane = self.state.ui.editor_layout.active_pane;
-                let is_close_tab = matches!(other, Command::CloseTab);
                 let should_flush_newline = matches!(other, Command::InsertNewline);
                 let should_flush_tab = matches!(other, Command::InsertTab);
                 let should_flush_cursor_move = other.is_cursor_command();
@@ -3429,10 +3332,6 @@ impl Store {
                     if let Some((path, version)) = self.active_editor_lsp_path_and_version() {
                         self.arm_semantic_flush_defer_for_path(path, version);
                     }
-                }
-
-                if changed && is_close_tab {
-                    state_changed |= self.maybe_close_empty_editor_split(&mut effects);
                 }
 
                 let had_signature_help = self.state.ui.signature_help.is_active();

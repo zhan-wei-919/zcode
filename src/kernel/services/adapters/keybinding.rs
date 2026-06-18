@@ -25,7 +25,7 @@ impl KeybindingContext {
             "searchbar" | "editorsearchbar" | "editor.searchbar" => Some(Self::EditorSearchBar),
             "explorer" | "sidebarexplorer" | "sidebar.explorer" => Some(Self::SidebarExplorer),
             "commandline" | "command_line" | "cmdline" => Some(Self::CommandLine),
-            "overlay" | "bottompanel" | "panel" => Some(Self::Overlay),
+            "overlay" => Some(Self::Overlay),
             _ => None,
         }
     }

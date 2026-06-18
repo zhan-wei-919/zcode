@@ -1,6 +1,6 @@
 //! 帧布局契约：最近一帧渲染产出的几何区域。
 //!
-//! 仅由 render 写入；interaction / mouse / palette 在其后的 tick 读取它来做命中测试与
+//! 仅由 render 写入；interaction / mouse / overlay 在其后的 tick 读取它来做命中测试与
 //! 坐标映射。这是合法的跨帧单向数据流（immediate-mode 纪律）：输入事件映射到 N-1 帧的
 //! 布局——render 与其后输入之间终端不会 resize（resize 会先触发重渲染再处理输入），
 //! 因此读到的几何与屏幕一致。除 render 外不得写入。
