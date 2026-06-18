@@ -15,7 +15,7 @@ use zcode::core::event::{
 use zcode::kernel::editor::HighlightKind;
 use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use zcode::kernel::services::ports::{LspPositionEncoding, LspServerKind};
-use zcode::kernel::{BottomPanelTab, FocusTarget};
+use zcode::kernel::{FocusTarget, OverlayKind};
 use zcode::tui::view::View;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -1408,10 +1408,10 @@ fn test_lsp_references_populates_locations_and_opens_selected_item() {
         kind: KeyEventKind::Press,
     };
     let _ = workbench.handle_input(&InputEvent::Key(refs));
-    assert!(workbench.state().ui.bottom_panel.visible);
+    assert!(workbench.state().ui.overlay.is_visible());
     assert_eq!(
-        workbench.state().ui.bottom_panel.active_tab,
-        BottomPanelTab::Locations
+        workbench.state().ui.overlay.active,
+        Some(OverlayKind::Locations)
     );
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
@@ -1487,12 +1487,12 @@ fn test_lsp_code_action_applies_edit_and_execute_command() {
         kind: KeyEventKind::Press,
     };
     let _ = workbench.handle_input(&InputEvent::Key(code_action));
-    assert!(workbench.state().ui.bottom_panel.visible);
+    assert!(workbench.state().ui.overlay.is_visible());
     assert_eq!(
-        workbench.state().ui.bottom_panel.active_tab,
-        BottomPanelTab::CodeActions
+        workbench.state().ui.overlay.active,
+        Some(OverlayKind::CodeActions)
     );
-    assert_eq!(workbench.state().ui.focus, FocusTarget::BottomPanel);
+    assert_eq!(workbench.state().ui.focus, FocusTarget::Overlay);
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state().code_actions.items().len() >= 2
@@ -1515,8 +1515,8 @@ fn test_lsp_code_action_applies_edit_and_execute_command() {
 
     let _ = workbench.handle_input(&InputEvent::Key(code_action));
     assert_eq!(
-        workbench.state().ui.bottom_panel.active_tab,
-        BottomPanelTab::CodeActions
+        workbench.state().ui.overlay.active,
+        Some(OverlayKind::CodeActions)
     );
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
@@ -1671,12 +1671,12 @@ fn test_lsp_document_symbols_populates_symbols_and_jumps_to_item() {
         kind: KeyEventKind::Press,
     }));
 
-    assert!(workbench.state().ui.bottom_panel.visible);
+    assert!(workbench.state().ui.overlay.is_visible());
     assert_eq!(
-        workbench.state().ui.bottom_panel.active_tab,
-        BottomPanelTab::Symbols
+        workbench.state().ui.overlay.active,
+        Some(OverlayKind::Symbols)
     );
-    assert_eq!(workbench.state().ui.focus, FocusTarget::BottomPanel);
+    assert_eq!(workbench.state().ui.focus, FocusTarget::Overlay);
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state().symbols.items().len() >= 3
@@ -1775,12 +1775,12 @@ fn test_lsp_workspace_symbols_opens_selected_item() {
         kind: KeyEventKind::Press,
     }));
 
-    assert!(workbench.state().ui.bottom_panel.visible);
+    assert!(workbench.state().ui.overlay.is_visible());
     assert_eq!(
-        workbench.state().ui.bottom_panel.active_tab,
-        BottomPanelTab::Symbols
+        workbench.state().ui.overlay.active,
+        Some(OverlayKind::Symbols)
     );
-    assert_eq!(workbench.state().ui.focus, FocusTarget::BottomPanel);
+    assert_eq!(workbench.state().ui.focus, FocusTarget::Overlay);
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state().symbols.items().len() >= 2
@@ -1859,12 +1859,12 @@ fn test_lsp_utf8_position_encoding_applies_workspace_edit_to_unopened_file() {
         kind: KeyEventKind::Press,
     };
     let _ = workbench.handle_input(&InputEvent::Key(code_action));
-    assert!(workbench.state().ui.bottom_panel.visible);
+    assert!(workbench.state().ui.overlay.is_visible());
     assert_eq!(
-        workbench.state().ui.bottom_panel.active_tab,
-        BottomPanelTab::CodeActions
+        workbench.state().ui.overlay.active,
+        Some(OverlayKind::CodeActions)
     );
-    assert_eq!(workbench.state().ui.focus, FocusTarget::BottomPanel);
+    assert_eq!(workbench.state().ui.focus, FocusTarget::Overlay);
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state()

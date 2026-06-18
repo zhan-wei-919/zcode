@@ -13,7 +13,7 @@ impl Workbench {
                 SidebarTab::Search => "Search",
             },
             FocusTarget::Editor => "Editor",
-            FocusTarget::BottomPanel => "Panel",
+            FocusTarget::Overlay => "Overlay",
             FocusTarget::CommandPalette => "Palette",
         }
     }

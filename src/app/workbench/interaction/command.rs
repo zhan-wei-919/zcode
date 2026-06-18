@@ -55,21 +55,6 @@ impl Workbench {
         }
     }
 
-    pub(super) fn copy_logs_to_clipboard(&mut self) {
-        if self.logs.is_empty() {
-            return;
-        }
-
-        let mut text = String::new();
-        for (idx, line) in self.logs.iter().enumerate() {
-            if idx > 0 {
-                text.push('\n');
-            }
-            text.push_str(line);
-        }
-        self.set_clipboard_text(&text);
-    }
-
     pub(in super::super) fn maybe_warn_clipboard_unavailable(&mut self) {
         if self.clipboard_unavailable_warned {
             return;

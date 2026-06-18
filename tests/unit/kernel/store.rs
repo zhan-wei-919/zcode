@@ -391,23 +391,6 @@ fn escape_clears_editor_selection_before_opening_settings() {
 }
 
 #[test]
-fn bottom_panel_height_ratio_clamps_to_valid_range() {
-    let mut store = new_store();
-
-    let result = store.dispatch(Action::BottomPanelSetHeightRatio { ratio: 1 });
-    assert!(result.state_changed);
-    assert_eq!(store.state.ui.bottom_panel.height_ratio, 100);
-
-    let result = store.dispatch(Action::BottomPanelSetHeightRatio { ratio: 999 });
-    assert!(result.state_changed);
-    assert_eq!(store.state.ui.bottom_panel.height_ratio, 900);
-
-    let result = store.dispatch(Action::BottomPanelSetHeightRatio { ratio: 900 });
-    assert!(!result.state_changed);
-    assert_eq!(store.state.ui.bottom_panel.height_ratio, 900);
-}
-
-#[test]
 fn explorer_new_file_flow_creates_effect() {
     let mut store = new_store();
     let result = store.dispatch(Action::RunCommand(Command::ExplorerNewFile));

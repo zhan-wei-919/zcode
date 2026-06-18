@@ -22,7 +22,6 @@ use crate::kernel::services::ports::LspSignatureHelpPayload;
 use crate::kernel::services::ports::LspTextEdit;
 use crate::kernel::services::ports::LspWorkspaceEdit;
 use crate::kernel::services::ports::{LspHoverPayload, LspHoverPreviewPayload};
-use crate::kernel::state::BottomPanelTab;
 use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem};
 
 #[derive(Debug, Clone)]
@@ -107,12 +106,6 @@ pub enum Action {
     ExplorerMovePath {
         from: PathBuf,
         to: PathBuf,
-    },
-    BottomPanelSetActiveTab {
-        tab: BottomPanelTab,
-    },
-    BottomPanelSetHeightRatio {
-        ratio: u16,
     },
     SearchSetViewHeight {
         viewport: SearchViewport,

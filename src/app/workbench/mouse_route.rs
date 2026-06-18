@@ -10,18 +10,16 @@ use crate::ui::core::tree::Sense;
 pub(super) enum MouseTarget {
     ContextMenu,
     CommandPalette,
+    Overlay,
     SidebarSplitter,
-    BottomPanelSplitter,
     ByFocus,
     Explorer,
     Search,
     Editor,
-    BottomPanel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FocusPlan {
-    BottomPanel,
     ActivityBar,
     SidebarTabs,
     SidebarArea,
@@ -32,8 +30,8 @@ pub(super) enum FocusPlan {
 pub(super) enum MouseRouteReason {
     ContextMenuModal,
     CommandPaletteModal,
+    OverlayModal,
     SidebarSplitterHit,
-    BottomPanelSplitterHit,
     FocusByArea,
     FocusDispatch,
     NoRoute,
@@ -59,7 +57,7 @@ pub(super) fn mouse_target_from_focus(
             }
         }
         FocusTarget::Editor => MouseTarget::Editor,
-        FocusTarget::BottomPanel => MouseTarget::BottomPanel,
+        FocusTarget::Overlay => MouseTarget::Overlay,
         FocusTarget::CommandPalette => MouseTarget::CommandPalette,
     }
 }
@@ -101,12 +99,6 @@ fn focus_plan_for_area(workbench: &Workbench, event: &MouseEvent) -> Option<Focu
         MouseEventKind::Down(MouseButton::Left) => {
             if workbench
                 .frame_layout
-                .bottom_panel_area
-                .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-            {
-                Some(FocusPlan::BottomPanel)
-            } else if workbench
-                .frame_layout
                 .activity_bar_area
                 .is_some_and(|a| util::rect_contains(a, event.column, event.row))
             {
@@ -130,12 +122,6 @@ fn focus_plan_for_area(workbench: &Workbench, event: &MouseEvent) -> Option<Focu
         }
         MouseEventKind::Down(MouseButton::Right) => {
             if workbench
-                .frame_layout
-                .bottom_panel_area
-                .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-            {
-                Some(FocusPlan::BottomPanel)
-            } else if workbench
                 .frame_layout
                 .sidebar_area
                 .is_some_and(|a| util::rect_contains(a, event.column, event.row))
@@ -167,17 +153,6 @@ fn split_target(workbench: &Workbench, event: &MouseEvent) -> Option<MouseTarget
         return Some(MouseTarget::SidebarSplitter);
     }
 
-    let bottom_panel_splitter = IdPath::root("workbench")
-        .push_str("bottom_panel_splitter")
-        .finish();
-    if hit.is_some_and(|node| node.id == bottom_panel_splitter)
-        || workbench.interaction.bottom_panel_split_dragging
-            && workbench.store.state().ui.bottom_panel.visible
-            && workbench.frame_layout.bottom_panel_splitter_area.is_some()
-    {
-        return Some(MouseTarget::BottomPanelSplitter);
-    }
-
     None
 }
 
@@ -198,10 +173,13 @@ pub(super) fn plan_mouse_dispatch(workbench: &Workbench, event: &MouseEvent) -> 
         );
     }
 
+    if workbench.store.state().ui.overlay.is_visible() {
+        return MouseDispatchPlan::modal(MouseTarget::Overlay, MouseRouteReason::OverlayModal);
+    }
+
     if let Some(target) = split_target(workbench, event) {
         let reason = match target {
             MouseTarget::SidebarSplitter => MouseRouteReason::SidebarSplitterHit,
-            MouseTarget::BottomPanelSplitter => MouseRouteReason::BottomPanelSplitterHit,
             _ => MouseRouteReason::NoRoute,
         };
         return MouseDispatchPlan {

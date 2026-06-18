@@ -42,14 +42,10 @@ use intel::lsp::{
 };
 use intel::semantic::reconcile_pending_semantic_row;
 use search::search_open_target;
-use util::{
-    bottom_panel_tabs, find_open_tab, is_lsp_source_path, next_bottom_panel_tab,
-    prev_bottom_panel_tab, search_viewport_for_focus,
-};
+use util::{find_open_tab, is_lsp_source_path, search_viewport_for_focus};
 
 use super::{
-    Action, AppState, BottomPanelTab, EditorAction, Effect, FocusTarget, InputDialogKind,
-    SidebarTab,
+    Action, AppState, EditorAction, Effect, FocusTarget, InputDialogKind, OverlayKind, SidebarTab,
 };
 use crate::kernel::language::{
     adapter::adapter_for_tab, adapter_for, CompletionRecord, CompletionResolveState,
@@ -123,7 +119,8 @@ fn perf_command_label(command: &Command) -> &'static str {
         Command::FocusEditor => "kernel.command.focus_editor",
         Command::FocusExplorer => "kernel.command.focus_explorer",
         Command::FocusSearch => "kernel.command.focus_search",
-        Command::FocusBottomPanel => "kernel.command.focus_bottom_panel",
+        Command::OpenDiagnostics => "kernel.command.open_diagnostics",
+        Command::CloseOverlay => "kernel.command.close_overlay",
         Command::CommandPalette => "kernel.command.command_palette",
         Command::Escape => "kernel.command.escape",
         _ => "kernel.command.other",
@@ -272,6 +269,27 @@ impl Store {
             state,
             completion_ranker,
         }
+    }
+
+    /// 打开居中浮层并聚焦它，返回是否发生变化。所有 LSP 列表 / 诊断 / 搜索结果
+    /// 都经此入口呈现，替代旧的常驻底部面板。
+    fn open_overlay(&mut self, kind: OverlayKind) -> bool {
+        let mut changed = self.state.ui.overlay.open(kind);
+        if self.state.ui.focus != FocusTarget::Overlay {
+            self.state.ui.focus = FocusTarget::Overlay;
+            changed = true;
+        }
+        changed
+    }
+
+    /// 关闭浮层，焦点回到编辑区。
+    fn close_overlay(&mut self) -> bool {
+        let mut changed = self.state.ui.overlay.close();
+        if self.state.ui.focus == FocusTarget::Overlay {
+            self.state.ui.focus = FocusTarget::Editor;
+            changed = true;
+        }
+        changed
     }
 
     fn active_tab_adapter(&self) -> &'static dyn crate::kernel::language::LanguageAdapter {
@@ -1029,28 +1047,6 @@ impl Store {
             | action @ Action::ExplorerCollapse
             | action @ Action::ExplorerClickRow { .. }
             | action @ Action::ExplorerMovePath { .. } => self.reduce_explorer_action(action),
-            Action::BottomPanelSetActiveTab { tab } => {
-                let prev_visible = self.state.ui.bottom_panel.visible;
-                let prev = self.state.ui.bottom_panel.active_tab.clone();
-                let next = tab.clone();
-                self.state.ui.bottom_panel.visible = true;
-                self.state.ui.bottom_panel.active_tab = tab;
-                let effects = Vec::new();
-                let state_changed = !prev_visible || prev != next;
-                DispatchResult {
-                    effects,
-                    state_changed,
-                }
-            }
-            Action::BottomPanelSetHeightRatio { ratio } => {
-                let ratio = ratio.clamp(100, 900);
-                let prev = self.state.ui.bottom_panel.height_ratio;
-                self.state.ui.bottom_panel.height_ratio = ratio;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: prev != ratio,
-                }
-            }
             action @ Action::SearchSetViewHeight { .. }
             | action @ Action::SearchAppend(_)
             | action @ Action::SearchBackspace
@@ -2000,10 +1996,8 @@ impl Store {
                 state_changed = true;
             }
             Command::FocusSearch => {
-                self.state.ui.focus = FocusTarget::Explorer;
-                self.state.ui.sidebar_visible = true;
-                self.state.ui.sidebar_tab = SidebarTab::Search;
-                state_changed = true;
+                // 全局搜索改为居中浮层（telescope 风格），不再占用 sidebar 标签。
+                state_changed = self.open_overlay(OverlayKind::Search);
             }
             Command::ToggleSidebarTab => {
                 self.state.ui.focus = FocusTarget::Explorer;
@@ -2018,54 +2012,15 @@ impl Store {
                 self.state.ui.focus = FocusTarget::Editor;
                 state_changed = true;
             }
-            Command::ToggleBottomPanel => {
-                let visible = !self.state.ui.bottom_panel.visible;
-                self.state.ui.bottom_panel.visible = visible;
-                if !visible && self.state.ui.focus == FocusTarget::BottomPanel {
-                    self.state.ui.focus = FocusTarget::Editor;
-                }
-                state_changed = true;
+            Command::OpenDiagnostics => {
+                state_changed = self.open_overlay(OverlayKind::Problems);
                 return DispatchResult {
                     effects,
                     state_changed,
                 };
             }
-            Command::FocusBottomPanel => {
-                self.state.ui.bottom_panel.visible = true;
-                self.state.ui.focus = FocusTarget::BottomPanel;
-                state_changed = true;
-                return DispatchResult {
-                    effects,
-                    state_changed,
-                };
-            }
-            Command::NextBottomPanelTab => {
-                self.state.ui.bottom_panel.visible = true;
-                let tabs = bottom_panel_tabs();
-                if let Some(next) =
-                    next_bottom_panel_tab(&tabs, &self.state.ui.bottom_panel.active_tab)
-                {
-                    if self.state.ui.bottom_panel.active_tab != next {
-                        self.state.ui.bottom_panel.active_tab = next;
-                        state_changed = true;
-                    }
-                }
-                return DispatchResult {
-                    effects,
-                    state_changed,
-                };
-            }
-            Command::PrevBottomPanelTab => {
-                self.state.ui.bottom_panel.visible = true;
-                let tabs = bottom_panel_tabs();
-                if let Some(prev) =
-                    prev_bottom_panel_tab(&tabs, &self.state.ui.bottom_panel.active_tab)
-                {
-                    if self.state.ui.bottom_panel.active_tab != prev {
-                        self.state.ui.bottom_panel.active_tab = prev;
-                        state_changed = true;
-                    }
-                }
+            Command::CloseOverlay => {
+                state_changed = self.close_overlay();
                 return DispatchResult {
                     effects,
                     state_changed,
@@ -2326,10 +2281,11 @@ impl Store {
                 };
             }
             Command::GlobalSearchStart => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Search
-                    && !self.state.search.query.is_empty()
-                {
+                let search_focused = (self.state.ui.focus == FocusTarget::Explorer
+                    && self.state.ui.sidebar_tab == SidebarTab::Search)
+                    || (self.state.ui.focus == FocusTarget::Overlay
+                        && self.state.ui.overlay.active == Some(OverlayKind::Search));
+                if search_focused && !self.state.search.query.is_empty() {
                     let root = self.state.workspace_root.clone();
                     let pattern = self.state.search.query.clone();
                     let case_sensitive = self.state.search.case_sensitive;
@@ -2384,20 +2340,20 @@ impl Store {
             Command::SearchResultsMoveUp => {
                 if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
                     state_changed = self.state.search.move_selection(-1, viewport);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Problems)
                 {
                     state_changed = self.state.problems.move_selection(-1);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::CodeActions
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::CodeActions)
                 {
                     state_changed = self.state.code_actions.move_selection(-1);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Locations
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Locations)
                 {
                     state_changed = self.state.locations.move_selection(-1);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Symbols
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Symbols)
                 {
                     state_changed = self.state.symbols.move_selection(-1);
                 }
@@ -2405,20 +2361,20 @@ impl Store {
             Command::SearchResultsMoveDown => {
                 if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
                     state_changed = self.state.search.move_selection(1, viewport);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Problems)
                 {
                     state_changed = self.state.problems.move_selection(1);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::CodeActions
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::CodeActions)
                 {
                     state_changed = self.state.code_actions.move_selection(1);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Locations
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Locations)
                 {
                     state_changed = self.state.locations.move_selection(1);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Symbols
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Symbols)
                 {
                     state_changed = self.state.symbols.move_selection(1);
                 }
@@ -2426,20 +2382,20 @@ impl Store {
             Command::SearchResultsScrollUp => {
                 if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
                     state_changed = self.state.search.scroll(-3, viewport);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Problems)
                 {
                     state_changed = self.state.problems.scroll(-3);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::CodeActions
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::CodeActions)
                 {
                     state_changed = self.state.code_actions.scroll(-3);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Locations
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Locations)
                 {
                     state_changed = self.state.locations.scroll(-3);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Symbols
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Symbols)
                 {
                     state_changed = self.state.symbols.scroll(-3);
                 }
@@ -2447,20 +2403,20 @@ impl Store {
             Command::SearchResultsScrollDown => {
                 if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
                     state_changed = self.state.search.scroll(3, viewport);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Problems)
                 {
                     state_changed = self.state.problems.scroll(3);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::CodeActions
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::CodeActions)
                 {
                     state_changed = self.state.code_actions.scroll(3);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Locations
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Locations)
                 {
                     state_changed = self.state.locations.scroll(3);
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Symbols
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Symbols)
                 {
                     state_changed = self.state.symbols.scroll(3);
                 }
@@ -2542,8 +2498,8 @@ impl Store {
                         effects: vec![Effect::LoadFile(path)],
                         state_changed: true,
                     };
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Problems
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Problems)
                 {
                     let prev_focus = self.state.ui.focus;
                     let prev_active_pane = self.state.ui.editor_layout.active_pane;
@@ -2621,8 +2577,8 @@ impl Store {
                         effects: vec![Effect::LoadFile(path)],
                         state_changed: true,
                     };
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::CodeActions
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::CodeActions)
                 {
                     let Some(action) = self.state.code_actions.selected().cloned() else {
                         return DispatchResult {
@@ -2656,8 +2612,8 @@ impl Store {
                         effects,
                         state_changed: state_changed || changed,
                     };
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Locations
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Locations)
                 {
                     let prev_focus = self.state.ui.focus;
                     let prev_active_pane = self.state.ui.editor_layout.active_pane;
@@ -2736,8 +2692,8 @@ impl Store {
                         effects: vec![Effect::LoadFile(path)],
                         state_changed: true,
                     };
-                } else if self.state.ui.focus == FocusTarget::BottomPanel
-                    && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Symbols
+                } else if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Symbols)
                 {
                     let prev_focus = self.state.ui.focus;
                     let prev_active_pane = self.state.ui.editor_layout.active_pane;
@@ -3144,14 +3100,7 @@ impl Store {
                     }
 
                     let mut changed = self.state.locations.clear();
-
-                    let prev_visible = self.state.ui.bottom_panel.visible;
-                    let prev_tab = self.state.ui.bottom_panel.active_tab.clone();
-                    self.state.ui.bottom_panel.visible = true;
-                    self.state.ui.bottom_panel.active_tab = BottomPanelTab::Locations;
-                    if !prev_visible || prev_tab != BottomPanelTab::Locations {
-                        changed = true;
-                    }
+                    changed |= self.open_overlay(OverlayKind::Locations);
 
                     return DispatchResult {
                         effects: vec![Effect::LspReferencesRequest { path, line, column }],
@@ -3189,19 +3138,7 @@ impl Store {
                 }
 
                 let mut changed = self.state.symbols.clear();
-
-                let prev_visible = self.state.ui.bottom_panel.visible;
-                let prev_tab = self.state.ui.bottom_panel.active_tab.clone();
-                let prev_focus = self.state.ui.focus;
-                self.state.ui.bottom_panel.visible = true;
-                self.state.ui.bottom_panel.active_tab = BottomPanelTab::Symbols;
-                self.state.ui.focus = FocusTarget::BottomPanel;
-                if !prev_visible
-                    || prev_tab != BottomPanelTab::Symbols
-                    || prev_focus != FocusTarget::BottomPanel
-                {
-                    changed = true;
-                }
+                changed |= self.open_overlay(OverlayKind::Symbols);
 
                 return DispatchResult {
                     effects: vec![Effect::LspDocumentSymbolsRequest { path }],
@@ -3462,19 +3399,7 @@ impl Store {
                     }
 
                     let mut changed = self.state.code_actions.clear();
-
-                    let prev_visible = self.state.ui.bottom_panel.visible;
-                    let prev_tab = self.state.ui.bottom_panel.active_tab.clone();
-                    let prev_focus = self.state.ui.focus;
-                    self.state.ui.bottom_panel.visible = true;
-                    self.state.ui.bottom_panel.active_tab = BottomPanelTab::CodeActions;
-                    self.state.ui.focus = FocusTarget::BottomPanel;
-                    if !prev_visible
-                        || prev_tab != BottomPanelTab::CodeActions
-                        || prev_focus != FocusTarget::BottomPanel
-                    {
-                        changed = true;
-                    }
+                    changed |= self.open_overlay(OverlayKind::CodeActions);
 
                     return DispatchResult {
                         effects: vec![Effect::LspCodeActionRequest { path, line, column }],

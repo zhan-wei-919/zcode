@@ -211,12 +211,12 @@ fn test_toggle_sidebar() {
 }
 
 #[test]
-fn test_toggle_bottom_panel() {
+fn test_ctrl_j_opens_diagnostics_overlay() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
     let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
 
-    assert!(!workbench.bottom_panel_visible());
+    assert!(!workbench.overlay_visible());
 
     let key_event = KeyEvent {
         code: KeyCode::Char('j'),
@@ -226,7 +226,8 @@ fn test_toggle_bottom_panel() {
     let result = workbench.handle_input(&InputEvent::Key(key_event));
 
     assert!(result.is_consumed());
-    assert!(workbench.bottom_panel_visible());
+    assert!(workbench.overlay_visible());
+    assert_eq!(workbench.focus(), FocusTarget::Overlay);
 }
 
 #[test]
@@ -251,34 +252,13 @@ fn test_bottom_panel_activity_click_opens_when_hidden() {
 
     render_once(&mut workbench, 120, 40);
     let (x, y) = bottom_panel_activity_pos(&workbench).expect("bottom panel activity item");
-    assert!(!workbench.bottom_panel_visible());
+    assert!(!workbench.overlay_visible());
 
     let result = workbench.handle_input(&mouse(MouseEventKind::Down(MouseButton::Left), x, y));
 
     assert!(result.is_consumed());
-    assert!(workbench.bottom_panel_visible());
-    assert_eq!(workbench.focus(), FocusTarget::BottomPanel);
-}
-
-#[test]
-fn test_bottom_panel_activity_click_closes_when_visible() {
-    let dir = tempdir().unwrap();
-    let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
-
-    let _ = workbench.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
-        tab: BottomPanelTab::Logs,
-    });
-    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
-
-    render_once(&mut workbench, 120, 40);
-    let (x, y) = bottom_panel_activity_pos(&workbench).expect("bottom panel activity item");
-    assert!(workbench.bottom_panel_visible());
-
-    let result = workbench.handle_input(&mouse(MouseEventKind::Down(MouseButton::Left), x, y));
-
-    assert!(result.is_consumed());
-    assert!(!workbench.bottom_panel_visible());
+    assert!(workbench.overlay_visible());
+    assert_eq!(workbench.focus(), FocusTarget::Overlay);
 }
 
 #[test]
@@ -297,10 +277,7 @@ fn test_bottom_panel_activity_highlight_follows_visibility() {
         Some(workbench.theme.core.activity_bg)
     );
 
-    let _ = workbench.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
-        tab: BottomPanelTab::Logs,
-    });
-    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::OpenDiagnostics));
 
     render_once(&mut workbench, 120, 40);
     let mut backend = TestBackend::new(120, 40);
@@ -506,8 +483,8 @@ fn test_splitter_capture_clears_when_sidebar_hidden_before_mouse_up() {
     let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::ToggleSidebar));
     assert!(!workbench.store.state().ui.sidebar_visible);
 
-    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
-    assert_eq!(workbench.store.state().ui.focus, FocusTarget::BottomPanel);
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::OpenDiagnostics));
+    assert_eq!(workbench.store.state().ui.focus, FocusTarget::Overlay);
 
     let _ = workbench.handle_input(&mouse(MouseEventKind::Up(MouseButton::Left), 0, 0));
 
@@ -1345,66 +1322,6 @@ fn test_explorer_highlights_active_open_file_when_another_row_is_selected() {
 }
 
 #[test]
-fn test_focus_bottom_panel() {
-    let dir = tempdir().unwrap();
-    let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
-
-    assert_eq!(workbench.focus(), FocusTarget::Editor);
-
-    let key_event = KeyEvent {
-        code: KeyCode::Char('j'),
-        modifiers: KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-        kind: KeyEventKind::Press,
-    };
-    let result = workbench.handle_input(&InputEvent::Key(key_event));
-
-    assert!(result.is_consumed());
-    assert!(workbench.bottom_panel_visible());
-    assert_eq!(workbench.focus(), FocusTarget::BottomPanel);
-}
-
-#[test]
-fn test_drag_bottom_panel_splitter_updates_height_ratio() {
-    let dir = tempdir().unwrap();
-    let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
-
-    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::ToggleBottomPanel));
-    render_once(&mut workbench, 120, 40);
-
-    let splitter_id = IdPath::root("workbench")
-        .push_str("bottom_panel_splitter")
-        .finish();
-    let splitter = workbench
-        .ui_tree
-        .node(splitter_id)
-        .expect("bottom panel splitter");
-
-    let start_x = splitter.rect.x.saturating_add(2);
-    let start_y = splitter.rect.y;
-    let drag_y = start_y.saturating_sub(6);
-
-    let _ = workbench.handle_input(&mouse(
-        MouseEventKind::Down(MouseButton::Left),
-        start_x,
-        start_y,
-    ));
-    let _ = workbench.handle_input(&mouse(
-        MouseEventKind::Drag(MouseButton::Left),
-        start_x,
-        drag_y,
-    ));
-    let _ = workbench.handle_input(&mouse(
-        MouseEventKind::Up(MouseButton::Left),
-        start_x,
-        drag_y,
-    ));
-
-    assert_ne!(workbench.store.state().ui.bottom_panel.height_ratio, 333);
-}
-
-#[test]
 fn test_open_file_and_save_runs_async_runtime() {
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("a.txt");
@@ -1947,8 +1864,8 @@ fn test_context_menu_visible_mouse_events_do_not_steal_focus() {
 
     render_once(&mut workbench, 120, 40);
 
-    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
-    assert_eq!(workbench.store.state().ui.focus, FocusTarget::BottomPanel);
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::OpenDiagnostics));
+    assert_eq!(workbench.store.state().ui.focus, FocusTarget::Overlay);
 
     let editor_area = *workbench
         .frame_layout

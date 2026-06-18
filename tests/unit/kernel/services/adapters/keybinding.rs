@@ -39,8 +39,8 @@ fn esc_resolves_to_escape_in_all_contexts() {
         Some(&Command::Escape)
     );
     assert_eq!(
-        service.resolve(KeybindingContext::BottomPanel, &esc),
-        Some(&Command::Escape)
+        service.resolve(KeybindingContext::Overlay, &esc),
+        Some(&Command::CloseOverlay)
     );
 }
 

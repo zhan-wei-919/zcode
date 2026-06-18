@@ -1,79 +1,76 @@
+use super::super::paint::centered_rect_ui;
 use super::super::Workbench;
-use crate::kernel::{BottomPanelTab, ProblemSeverity, SearchResultItem, SearchViewport};
+use crate::kernel::{OverlayKind, ProblemSeverity, SearchResultItem, SearchViewport};
 use crate::ui::core::geom::{Pos, Rect as UiRect};
 use crate::ui::core::painter::{BorderKind, Painter};
 use crate::ui::core::style::{Mod, Style as UiStyle};
 use unicode_width::UnicodeWidthStr;
 
 impl Workbench {
-    pub(super) fn paint_bottom_panel(&mut self, painter: &mut Painter, area: UiRect) {
-        let tab = self.store.state().ui.bottom_panel.active_tab.clone();
-        if area.is_empty() {
+    /// 居中 telescope 浮层：唯一活动的 picker。搜索结果 / 诊断 / 引用 / 符号 / code actions
+    /// 都由它承载，关掉即消失，不占常驻屏幕空间。
+    pub(super) fn paint_overlay(&mut self, painter: &mut Painter, area: UiRect) {
+        let Some(kind) = self.store.state().ui.overlay.active else {
+            self.frame_layout.overlay_area = None;
+            return;
+        };
+
+        // 高度取可用区域的 70%，但留出边框与标题。
+        let height = (area.h.saturating_mul(70) / 100).max(6).min(area.h);
+        let popup = centered_rect_ui(70, height, area);
+        if popup.w < 3 || popup.h < 3 {
+            self.frame_layout.overlay_area = None;
             return;
         }
+        self.frame_layout.overlay_area = Some(popup);
 
         let base_style = UiStyle::default()
-            .bg(self.theme.core.sidebar_bg)
+            .bg(self.theme.core.popup_bg)
             .fg(self.theme.core.palette_fg);
-        painter.fill_rect(area, base_style);
-
-        let tabs_h = 1.min(area.h);
-        let tabs_area = UiRect::new(area.x, area.y, area.w, tabs_h);
-        let content_area = UiRect::new(
-            area.x,
-            area.y.saturating_add(tabs_h),
-            area.w,
-            area.h.saturating_sub(tabs_h),
+        painter.fill_rect(popup, base_style);
+        painter.border(
+            popup,
+            UiStyle::default().fg(self.theme.core.focus_border),
+            BorderKind::Plain,
         );
 
-        self.paint_bottom_panel_tabs(painter, tabs_area, &tab);
-
-        match tab {
-            BottomPanelTab::Problems => self.paint_bottom_panel_problems(painter, content_area),
-            BottomPanelTab::CodeActions => {
-                self.paint_bottom_panel_code_actions(painter, content_area)
-            }
-            BottomPanelTab::Locations => self.paint_bottom_panel_locations(painter, content_area),
-            BottomPanelTab::Symbols => self.paint_bottom_panel_symbols(painter, content_area),
-            BottomPanelTab::SearchResults => {
-                self.paint_bottom_panel_search_results(painter, content_area)
-            }
-            BottomPanelTab::Logs => self.paint_bottom_panel_logs(painter, content_area),
-        }
-    }
-
-    fn paint_bottom_panel_tabs(
-        &self,
-        painter: &mut Painter,
-        area: UiRect,
-        active: &BottomPanelTab,
-    ) {
-        if area.is_empty() {
+        let inner = UiRect::new(
+            popup.x.saturating_add(1),
+            popup.y.saturating_add(1),
+            popup.w.saturating_sub(2),
+            popup.h.saturating_sub(2),
+        );
+        if inner.is_empty() {
             return;
         }
 
-        let tab_active = UiStyle::default()
+        // 标题行。
+        let title = overlay_title(kind);
+        let title_style = UiStyle::default()
             .fg(self.theme.core.header_fg)
             .add_mod(Mod::BOLD);
-        let tab_inactive = UiStyle::default().fg(self.theme.core.palette_muted_fg);
+        painter.text_clipped(Pos::new(inner.x, inner.y), title, title_style, inner);
 
-        let y = area.y;
-        let mut x = area.x;
-        for (tab, label) in self.bottom_panel_tabs() {
-            let style = if &tab == active {
-                tab_active
-            } else {
-                tab_inactive
-            };
-            painter.text_clipped(Pos::new(x, y), label.as_str(), style, area);
-            x = x.saturating_add(label.width().min(u16::MAX as usize) as u16);
-            if x >= area.right() {
-                break;
-            }
+        let content = UiRect::new(
+            inner.x,
+            inner.y.saturating_add(1),
+            inner.w,
+            inner.h.saturating_sub(1),
+        );
+        if content.is_empty() {
+            return;
+        }
+
+        match kind {
+            OverlayKind::Problems => self.paint_overlay_problems(painter, content),
+            OverlayKind::CodeActions => self.paint_overlay_code_actions(painter, content),
+            OverlayKind::Locations => self.paint_overlay_locations(painter, content),
+            OverlayKind::Symbols => self.paint_overlay_symbols(painter, content),
+            OverlayKind::Search => self.paint_overlay_search(painter, content),
         }
     }
 
-    fn paint_bottom_panel_problems(&mut self, painter: &mut Painter, area: UiRect) {
+    fn paint_overlay_problems(&mut self, painter: &mut Painter, area: UiRect) {
         if area.is_empty() {
             return;
         }
@@ -155,7 +152,7 @@ impl Workbench {
         }
     }
 
-    fn paint_bottom_panel_locations(&mut self, painter: &mut Painter, area: UiRect) {
+    fn paint_overlay_locations(&mut self, painter: &mut Painter, area: UiRect) {
         if area.is_empty() {
             return;
         }
@@ -216,7 +213,7 @@ impl Workbench {
         }
     }
 
-    fn paint_bottom_panel_code_actions(&mut self, painter: &mut Painter, area: UiRect) {
+    fn paint_overlay_code_actions(&mut self, painter: &mut Painter, area: UiRect) {
         if area.is_empty() {
             return;
         }
@@ -269,7 +266,7 @@ impl Workbench {
         }
     }
 
-    fn paint_bottom_panel_symbols(&mut self, painter: &mut Painter, area: UiRect) {
+    fn paint_overlay_symbols(&mut self, painter: &mut Painter, area: UiRect) {
         if area.is_empty() {
             return;
         }
@@ -353,65 +350,40 @@ impl Workbench {
         }
     }
 
-    fn paint_bottom_panel_logs(&self, painter: &mut Painter, area: UiRect) {
+    fn paint_overlay_search(&mut self, painter: &mut Painter, area: UiRect) {
         if area.is_empty() {
             return;
         }
 
-        if area.w < 3 || area.h < 3 {
-            return;
-        }
-
-        let border_style = UiStyle::default().fg(self.theme.core.focus_border);
-        painter.border(area, border_style, BorderKind::Plain);
-
-        let inner = UiRect::new(
-            area.x.saturating_add(1),
-            area.y.saturating_add(1),
-            area.w.saturating_sub(2),
-            area.h.saturating_sub(2),
-        );
-        if inner.is_empty() {
-            return;
-        }
-
-        if self.logs.is_empty() {
-            let style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
-            painter.text_clipped(Pos::new(inner.x, inner.y), "No logs yet", style, inner);
-            return;
-        }
-
-        let height = inner.h as usize;
-        let visible = height.min(self.logs.len());
-        let start = self.logs.len().saturating_sub(visible);
-
-        for (row, line) in self.logs.iter().skip(start).enumerate() {
-            let y = inner.y.saturating_add(row.min(u16::MAX as usize) as u16);
-            if y >= inner.bottom() {
-                break;
-            }
-            let row_clip = UiRect::new(inner.x, y, inner.w, 1);
-            painter.text_clipped(
-                Pos::new(inner.x, y),
-                line.as_str(),
-                UiStyle::default(),
-                row_clip,
-            );
-        }
-    }
-
-    fn paint_bottom_panel_search_results(&mut self, painter: &mut Painter, area: UiRect) {
-        if area.is_empty() {
-            return;
-        }
-
-        let summary_h = 1.min(area.h);
-        let summary_area = UiRect::new(area.x, area.y, area.w, summary_h);
+        // 顶部 query 行（telescope 风格），下方层级结果。
+        let query_h = 1.min(area.h);
+        let query_area = UiRect::new(area.x, area.y, area.w, query_h);
+        let summary_h = 1.min(area.h.saturating_sub(query_h));
+        let summary_area = UiRect::new(area.x, area.y.saturating_add(query_h), area.w, summary_h);
         let list_area = UiRect::new(
             area.x,
-            area.y.saturating_add(summary_h),
+            area.y.saturating_add(query_h + summary_h),
             area.w,
-            area.h.saturating_sub(summary_h),
+            area.h.saturating_sub(query_h + summary_h),
+        );
+
+        let prompt = "/ ";
+        let query = self.store.state().search.query.clone();
+        let prompt_style = UiStyle::default().fg(self.theme.core.accent_fg);
+        painter.text_clipped(
+            Pos::new(query_area.x, query_area.y),
+            prompt,
+            prompt_style,
+            query_area,
+        );
+        painter.text_clipped(
+            Pos::new(
+                query_area.x.saturating_add(prompt.width() as u16),
+                query_area.y,
+            ),
+            query.as_str(),
+            UiStyle::default().fg(self.theme.core.palette_fg),
+            query_area,
         );
 
         self.sync_search_view_height(SearchViewport::BottomPanel, list_area.h);
@@ -436,7 +408,7 @@ impl Workbench {
         } else if !snapshot.search_text.is_empty() {
             "No results".to_string()
         } else {
-            "Enter search term in Search sidebar".to_string()
+            "Type to search".to_string()
         };
 
         let summary_style = UiStyle::default().fg(self.theme.core.palette_muted_fg);
@@ -447,11 +419,7 @@ impl Workbench {
             summary_area,
         );
 
-        if list_area.is_empty() {
-            return;
-        }
-
-        if snapshot.items.is_empty() {
+        if list_area.is_empty() || snapshot.items.is_empty() {
             return;
         }
 
@@ -554,6 +522,16 @@ impl Workbench {
                 }
             }
         }
+    }
+}
+
+fn overlay_title(kind: OverlayKind) -> &'static str {
+    match kind {
+        OverlayKind::Search => "Search",
+        OverlayKind::Problems => "Diagnostics",
+        OverlayKind::CodeActions => "Code Actions",
+        OverlayKind::Locations => "References",
+        OverlayKind::Symbols => "Symbols",
     }
 }
 

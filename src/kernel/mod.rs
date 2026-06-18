@@ -26,7 +26,7 @@ pub use panel::problems::{ProblemItem, ProblemRange, ProblemSeverity, ProblemsSt
 pub use panel::symbols::{SymbolItem, SymbolsState};
 pub use search::{SearchResultItem, SearchResultsSnapshot, SearchState, SearchViewport};
 pub use state::{
-    AppState, BottomPanelTab, ConfirmDialogState, EditorLayoutState, ExplorerState, FocusTarget,
-    InputDialogKind, InputDialogState, LspState, PendingAction, SidebarTab, UiState,
+    AppState, ConfirmDialogState, EditorLayoutState, ExplorerState, FocusTarget, InputDialogKind,
+    InputDialogState, LspState, OverlayKind, OverlayState, PendingAction, SidebarTab, UiState,
 };
 pub use store::{CompletionRanker, DispatchResult, Store};

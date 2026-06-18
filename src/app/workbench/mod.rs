@@ -15,7 +15,7 @@ use crate::kernel::services::ports::{
     EditorConfig, GlobalSearchMessage, LspServerKind, SearchMessage,
 };
 use crate::kernel::services::KernelServiceHost;
-use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, Store};
+use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, Store};
 use crate::models::build_file_tree;
 use crate::tui::view::{EventResult, View};
 use crate::ui::backend::Backend;
@@ -163,14 +163,6 @@ struct CompletionDocState {
     key: Option<CompletionDocKey>,
     last_area: Option<Rect>,
     render_cache: DocRenderCache,
-}
-
-#[derive(Debug, Default)]
-struct ClickTracker {
-    problems: Option<(Instant, usize)>,
-    locations: Option<(Instant, usize)>,
-    code_actions: Option<(Instant, usize)>,
-    symbols: Option<(Instant, usize)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -749,22 +741,8 @@ impl Workbench {
         self.store.state().ui.sidebar_visible
     }
 
-    pub fn bottom_panel_visible(&self) -> bool {
-        self.store.state().ui.bottom_panel.visible
-    }
-
-    fn bottom_panel_tabs(&self) -> Vec<(BottomPanelTab, String)> {
-        vec![
-            (BottomPanelTab::Problems, " PROBLEMS ".to_string()),
-            (BottomPanelTab::CodeActions, " ACTIONS ".to_string()),
-            (BottomPanelTab::Locations, " LOCATIONS ".to_string()),
-            (BottomPanelTab::Symbols, " SYMBOLS ".to_string()),
-            (
-                BottomPanelTab::SearchResults,
-                " SEARCH RESULTS ".to_string(),
-            ),
-            (BottomPanelTab::Logs, " LOGS ".to_string()),
-        ]
+    pub fn overlay_visible(&self) -> bool {
+        self.store.state().ui.overlay.is_visible()
     }
 
     fn active_editor_pane(&self) -> usize {

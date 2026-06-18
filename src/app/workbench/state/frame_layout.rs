@@ -34,7 +34,6 @@ pub(in crate::app::workbench) struct FrameLayout {
     pub(in crate::app::workbench) sidebar_container_area: Option<Rect>,
     pub(in crate::app::workbench) git_panel_area: Option<Rect>,
     pub(in crate::app::workbench) git_branch_areas: Vec<(String, Rect)>,
-    pub(in crate::app::workbench) bottom_panel_splitter_area: Option<Rect>,
-    pub(in crate::app::workbench) bottom_panel_area: Option<Rect>,
+    pub(in crate::app::workbench) overlay_area: Option<Rect>,
     pub(in crate::app::workbench) editor: EditorFrameLayout,
 }

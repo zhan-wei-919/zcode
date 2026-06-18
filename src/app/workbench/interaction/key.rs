@@ -3,9 +3,7 @@ use crate::core::event::{InputEvent, Key, KeyCode, KeyEvent, KeyModifiers, Mouse
 use crate::core::Command;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{KeybindingContext, KeybindingService};
-use crate::kernel::{
-    Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget, SidebarTab,
-};
+use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, OverlayKind, SidebarTab};
 use crate::tui::view::EventResult;
 use std::time::Instant;
 
@@ -218,14 +216,6 @@ impl Workbench {
             .and_then(|service| service.resolve(context, &key).cloned());
 
         if let Some(cmd) = cmd {
-            if cmd == Command::Copy
-                && self.store.state().ui.focus == FocusTarget::BottomPanel
-                && self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Logs
-            {
-                self.copy_logs_to_clipboard();
-                return EventResult::Consumed;
-            }
-
             let cmd_for_schedule = cmd.clone();
             let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd));
             self.maybe_trigger_completion(&cmd_for_schedule);
@@ -277,6 +267,27 @@ impl Workbench {
                 }
                 _ => EventResult::Ignored,
             },
+            // 搜索浮层：顶部 query 行接收字符与退格（telescope 风格的即时过滤）。
+            KeybindingContext::Overlay
+                if self.store.state().ui.overlay.active == Some(OverlayKind::Search) =>
+            {
+                match (key_event.code, key_event.modifiers) {
+                    (KeyCode::Char(ch), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
+                        let _ = self.dispatch_kernel(KernelAction::SearchAppend(ch));
+                        // telescope 风格：边输入边搜。
+                        let _ = self
+                            .dispatch_kernel(KernelAction::RunCommand(Command::GlobalSearchStart));
+                        EventResult::Consumed
+                    }
+                    (KeyCode::Backspace, _) => {
+                        let _ = self.dispatch_kernel(KernelAction::SearchBackspace);
+                        let _ = self
+                            .dispatch_kernel(KernelAction::RunCommand(Command::GlobalSearchStart));
+                        EventResult::Consumed
+                    }
+                    _ => EventResult::Ignored,
+                }
+            }
             _ => EventResult::Ignored,
         }
     }
@@ -293,7 +304,7 @@ impl Workbench {
                 SidebarTab::Explorer => KeybindingContext::SidebarExplorer,
                 SidebarTab::Search => KeybindingContext::SidebarSearch,
             },
-            FocusTarget::BottomPanel => KeybindingContext::BottomPanel,
+            FocusTarget::Overlay => KeybindingContext::Overlay,
             FocusTarget::CommandPalette => KeybindingContext::CommandPalette,
             FocusTarget::Editor => {
                 let pane = ui.editor_layout.active_pane;

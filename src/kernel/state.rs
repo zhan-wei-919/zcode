@@ -23,7 +23,7 @@ use super::search::SearchState;
 pub enum FocusTarget {
     Explorer,
     Editor,
-    BottomPanel,
+    Overlay,
     CommandPalette,
 }
 
@@ -33,14 +33,15 @@ pub enum SidebarTab {
     Search,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BottomPanelTab {
+/// 居中 telescope 浮层承载的列表种类。条目 / 选择 / 滚动仍住在各自面板态里
+/// （`ProblemsState` 等），这里只记录当前活动的是哪一种。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayKind {
+    Search,
     Problems,
     CodeActions,
     Locations,
     Symbols,
-    SearchResults,
-    Logs,
 }
 
 #[derive(Debug, Clone)]
@@ -109,11 +110,28 @@ impl InputDialogState {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct BottomPanelState {
-    pub visible: bool,
-    pub active_tab: BottomPanelTab,
-    pub height_ratio: u16,
+/// 居中浮层的可见性与当前种类。`None` 即不可见。
+#[derive(Debug, Clone, Default)]
+pub struct OverlayState {
+    pub active: Option<OverlayKind>,
+}
+
+impl OverlayState {
+    pub fn is_visible(&self) -> bool {
+        self.active.is_some()
+    }
+
+    pub fn open(&mut self, kind: OverlayKind) -> bool {
+        let changed = self.active != Some(kind);
+        self.active = Some(kind);
+        changed
+    }
+
+    pub fn close(&mut self) -> bool {
+        let changed = self.active.is_some();
+        self.active = None;
+        changed
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -474,7 +492,7 @@ pub struct UiState {
     pub sidebar_tab: SidebarTab,
     pub sidebar_width: Option<u16>,
     pub git_panel_expanded: bool,
-    pub bottom_panel: BottomPanelState,
+    pub overlay: OverlayState,
     pub focus: FocusTarget,
     pub editor_layout: EditorLayoutState,
     pub command_palette: CommandPaletteState,
@@ -496,11 +514,7 @@ impl Default for UiState {
             sidebar_tab: SidebarTab::Explorer,
             sidebar_width: None,
             git_panel_expanded: true,
-            bottom_panel: BottomPanelState {
-                visible: false,
-                active_tab: BottomPanelTab::Problems,
-                height_ratio: 333,
-            },
+            overlay: OverlayState::default(),
             focus: FocusTarget::Editor,
             editor_layout: EditorLayoutState::default(),
             command_palette: CommandPaletteState {

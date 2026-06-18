@@ -2,12 +2,12 @@ use crate::core::Command;
 use crate::kernel::services::ports::config::LspInputTimingConfig;
 use std::time::Duration;
 
-mod bottom_panel;
 mod command;
 mod completion;
 mod editor;
 mod explorer;
 mod key;
+mod overlay;
 mod search;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

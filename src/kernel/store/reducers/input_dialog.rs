@@ -1,4 +1,4 @@
-use crate::kernel::{Action, BottomPanelTab, Effect, FocusTarget, InputDialogKind};
+use crate::kernel::{Action, Effect, InputDialogKind, OverlayKind};
 
 impl super::Store {
     pub(super) fn reduce_input_dialog_action(
@@ -242,9 +242,7 @@ impl super::Store {
                     },
                     InputDialogKind::LspWorkspaceSymbols => {
                         let _ = self.state.symbols.clear();
-                        self.state.ui.bottom_panel.visible = true;
-                        self.state.ui.bottom_panel.active_tab = BottomPanelTab::Symbols;
-                        self.state.ui.focus = FocusTarget::BottomPanel;
+                        self.open_overlay(OverlayKind::Symbols);
                         Effect::LspWorkspaceSymbolsRequest { query: value }
                     }
                     InputDialogKind::GitWorktreeAdd { repo_root } => {

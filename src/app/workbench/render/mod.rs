@@ -5,11 +5,11 @@ use crate::ui::core::geom::Rect;
 use std::time::Duration;
 use std::time::Instant;
 
-mod bottom_panel;
 mod dialogs;
 mod editor;
 mod git;
 mod layout;
+mod overlay;
 mod sidebar;
 mod status;
 

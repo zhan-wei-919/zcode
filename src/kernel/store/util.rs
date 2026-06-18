@@ -1,6 +1,4 @@
-use crate::kernel::{
-    BottomPanelTab, EditorState, FocusTarget, SearchViewport, SidebarTab, UiState,
-};
+use crate::kernel::{EditorState, FocusTarget, OverlayKind, SearchViewport, SidebarTab, UiState};
 use ropey::RopeSlice;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,45 +26,11 @@ pub(super) fn search_viewport_for_focus(ui: &UiState) -> Option<SearchViewport> 
         FocusTarget::Explorer if ui.sidebar_tab == SidebarTab::Search => {
             Some(SearchViewport::Sidebar)
         }
-        FocusTarget::BottomPanel if ui.bottom_panel.active_tab == BottomPanelTab::SearchResults => {
+        FocusTarget::Overlay if ui.overlay.active == Some(OverlayKind::Search) => {
             Some(SearchViewport::BottomPanel)
         }
         _ => None,
     }
-}
-
-pub(super) fn bottom_panel_tabs() -> Vec<BottomPanelTab> {
-    vec![
-        BottomPanelTab::Problems,
-        BottomPanelTab::CodeActions,
-        BottomPanelTab::Locations,
-        BottomPanelTab::Symbols,
-        BottomPanelTab::SearchResults,
-        BottomPanelTab::Logs,
-    ]
-}
-
-pub(super) fn next_bottom_panel_tab(
-    tabs: &[BottomPanelTab],
-    current: &BottomPanelTab,
-) -> Option<BottomPanelTab> {
-    if tabs.is_empty() {
-        return None;
-    }
-    let idx = tabs.iter().position(|tab| tab == current).unwrap_or(0);
-    Some(tabs[(idx + 1) % tabs.len()].clone())
-}
-
-pub(super) fn prev_bottom_panel_tab(
-    tabs: &[BottomPanelTab],
-    current: &BottomPanelTab,
-) -> Option<BottomPanelTab> {
-    if tabs.is_empty() {
-        return None;
-    }
-    let idx = tabs.iter().position(|tab| tab == current).unwrap_or(0);
-    let prev = if idx == 0 { tabs.len() - 1 } else { idx - 1 };
-    Some(tabs[prev].clone())
 }
 
 pub(super) fn is_lsp_source_path(path: &Path) -> bool {

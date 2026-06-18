@@ -159,24 +159,9 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::RemoveSecondaryCursors,
     },
     PaletteItem {
-        label: "View: Toggle Bottom Panel",
-        label_lc: "view: toggle bottom panel",
-        command: Command::ToggleBottomPanel,
-    },
-    PaletteItem {
-        label: "View: Focus Bottom Panel",
-        label_lc: "view: focus bottom panel",
-        command: Command::FocusBottomPanel,
-    },
-    PaletteItem {
-        label: "Panel: Next Tab",
-        label_lc: "panel: next tab",
-        command: Command::NextBottomPanelTab,
-    },
-    PaletteItem {
-        label: "Panel: Prev Tab",
-        label_lc: "panel: prev tab",
-        command: Command::PrevBottomPanelTab,
+        label: "View: Diagnostics",
+        label_lc: "view: diagnostics",
+        command: Command::OpenDiagnostics,
     },
     PaletteItem {
         label: "Settings: Reload",

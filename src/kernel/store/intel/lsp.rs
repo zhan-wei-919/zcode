@@ -8,7 +8,7 @@ use crate::kernel::state::{
     CompletionPopupState, PayloadStamp, RangePayloadStamp, SignatureHelpPopupState,
 };
 use crate::kernel::EditorAction;
-use crate::kernel::{Action, BottomPanelTab, Effect, FocusTarget};
+use crate::kernel::{Action, Effect, FocusTarget, OverlayKind};
 use rustc_hash::FxHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -829,14 +829,7 @@ impl super::super::Store {
             }
             Action::LspReferences { items } => {
                 let mut changed = self.state.locations.set_items(items);
-
-                let prev_visible = self.state.ui.bottom_panel.visible;
-                let prev_tab = self.state.ui.bottom_panel.active_tab.clone();
-                self.state.ui.bottom_panel.visible = true;
-                self.state.ui.bottom_panel.active_tab = BottomPanelTab::Locations;
-                if !prev_visible || prev_tab != BottomPanelTab::Locations {
-                    changed = true;
-                }
+                changed |= self.open_overlay(OverlayKind::Locations);
 
                 super::super::DispatchResult {
                     effects: Vec::new(),
@@ -845,14 +838,7 @@ impl super::super::Store {
             }
             Action::LspCodeActions { items } => {
                 let mut changed = self.state.code_actions.set_items(items);
-
-                let prev_visible = self.state.ui.bottom_panel.visible;
-                let prev_tab = self.state.ui.bottom_panel.active_tab.clone();
-                self.state.ui.bottom_panel.visible = true;
-                self.state.ui.bottom_panel.active_tab = BottomPanelTab::CodeActions;
-                if !prev_visible || prev_tab != BottomPanelTab::CodeActions {
-                    changed = true;
-                }
+                changed |= self.open_overlay(OverlayKind::CodeActions);
 
                 super::super::DispatchResult {
                     effects: Vec::new(),
@@ -861,19 +847,7 @@ impl super::super::Store {
             }
             Action::LspSymbols { items } => {
                 let mut changed = self.state.symbols.set_items(items);
-
-                let prev_visible = self.state.ui.bottom_panel.visible;
-                let prev_tab = self.state.ui.bottom_panel.active_tab.clone();
-                let prev_focus = self.state.ui.focus;
-                self.state.ui.bottom_panel.visible = true;
-                self.state.ui.bottom_panel.active_tab = BottomPanelTab::Symbols;
-                self.state.ui.focus = FocusTarget::BottomPanel;
-                if !prev_visible
-                    || prev_tab != BottomPanelTab::Symbols
-                    || prev_focus != FocusTarget::BottomPanel
-                {
-                    changed = true;
-                }
+                changed |= self.open_overlay(OverlayKind::Symbols);
 
                 super::super::DispatchResult {
                     effects: Vec::new(),

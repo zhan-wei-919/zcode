@@ -17,10 +17,9 @@ fn apply_focus_plan(
     focus_plan: FocusPlan,
 ) -> bool {
     match focus_plan {
-        FocusPlan::BottomPanel
-        | FocusPlan::ActivityBar
-        | FocusPlan::SidebarTabs
-        | FocusPlan::SidebarArea => workbench.handle_mouse_area(event),
+        FocusPlan::ActivityBar | FocusPlan::SidebarTabs | FocusPlan::SidebarArea => {
+            workbench.handle_mouse_area(event)
+        }
         FocusPlan::EditorPane { pane } => {
             workbench.dispatch_kernel(KernelAction::EditorSetActivePane { pane })
         }
@@ -37,13 +36,10 @@ fn dispatch_by_target(
         MouseTarget::SidebarSplitter => workbench
             .handle_sidebar_split_mouse(mouse_event, ui_out)
             .unwrap_or(EventResult::Ignored),
-        MouseTarget::BottomPanelSplitter => workbench
-            .handle_bottom_panel_split_mouse(mouse_event, ui_out)
-            .unwrap_or(EventResult::Ignored),
         MouseTarget::Explorer => workbench.handle_explorer_mouse(mouse_event, ui_out),
         MouseTarget::Search => workbench.handle_search_mouse(mouse_event),
         MouseTarget::Editor => workbench.handle_editor_mouse(mouse_event, ui_out),
-        MouseTarget::BottomPanel => workbench.handle_bottom_panel_mouse(mouse_event),
+        MouseTarget::Overlay => workbench.handle_overlay_mouse(mouse_event),
         MouseTarget::ContextMenu | MouseTarget::CommandPalette | MouseTarget::ByFocus => {
             EventResult::Ignored
         }

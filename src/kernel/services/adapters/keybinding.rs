@@ -14,7 +14,7 @@ pub enum KeybindingContext {
     SidebarExplorer,
     SidebarSearch,
     CommandPalette,
-    BottomPanel,
+    Overlay,
 }
 
 impl KeybindingContext {
@@ -29,7 +29,7 @@ impl KeybindingContext {
                 Some(Self::SidebarSearch)
             }
             "palette" | "commandpalette" | "command_palette" => Some(Self::CommandPalette),
-            "bottompanel" | "bottom_panel" | "panel" => Some(Self::BottomPanel),
+            "overlay" | "bottompanel" | "panel" => Some(Self::Overlay),
             _ => None,
         }
     }
@@ -42,7 +42,7 @@ pub struct KeybindingService {
     sidebar_explorer: FxHashMap<Key, Command>,
     sidebar_search: FxHashMap<Key, Command>,
     command_palette: FxHashMap<Key, Command>,
-    bottom_panel: FxHashMap<Key, Command>,
+    overlay: FxHashMap<Key, Command>,
 }
 
 impl KeybindingService {
@@ -58,7 +58,7 @@ impl KeybindingService {
             sidebar_explorer: default_sidebar_explorer_keybindings(),
             sidebar_search: default_sidebar_search_keybindings(),
             command_palette: default_command_palette_keybindings(),
-            bottom_panel: default_bottom_panel_keybindings(),
+            overlay: default_overlay_keybindings(),
         }
     }
 
@@ -83,9 +83,7 @@ impl KeybindingService {
                 .command_palette
                 .get(key)
                 .or_else(|| self.global.get(key)),
-            KeybindingContext::BottomPanel => {
-                self.bottom_panel.get(key).or_else(|| self.global.get(key))
-            }
+            KeybindingContext::Overlay => self.overlay.get(key).or_else(|| self.global.get(key)),
         }
     }
 
@@ -97,7 +95,7 @@ impl KeybindingService {
             KeybindingContext::SidebarExplorer => &self.sidebar_explorer,
             KeybindingContext::SidebarSearch => &self.sidebar_search,
             KeybindingContext::CommandPalette => &self.command_palette,
-            KeybindingContext::BottomPanel => &self.bottom_panel,
+            KeybindingContext::Overlay => &self.overlay,
         }
     }
 
@@ -117,7 +115,7 @@ impl KeybindingService {
             KeybindingContext::SidebarExplorer => &mut self.sidebar_explorer,
             KeybindingContext::SidebarSearch => &mut self.sidebar_search,
             KeybindingContext::CommandPalette => &mut self.command_palette,
-            KeybindingContext::BottomPanel => &mut self.bottom_panel,
+            KeybindingContext::Overlay => &mut self.overlay,
         }
     }
 }
@@ -167,11 +165,7 @@ fn default_global_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::ctrl(KeyCode::Char('p')), Command::ToggleSidebarTab);
     bindings.insert(Key::ctrl_shift(KeyCode::Char('e')), Command::FocusExplorer);
     bindings.insert(Key::ctrl_shift(KeyCode::Char('f')), Command::FocusSearch);
-    bindings.insert(Key::ctrl(KeyCode::Char('j')), Command::ToggleBottomPanel);
-    bindings.insert(
-        Key::ctrl_shift(KeyCode::Char('j')),
-        Command::FocusBottomPanel,
-    );
+    bindings.insert(Key::ctrl(KeyCode::Char('j')), Command::OpenDiagnostics);
     bindings.insert(Key::ctrl(KeyCode::Char(',')), Command::OpenSettings);
 
     bindings
@@ -373,12 +367,11 @@ fn default_command_palette_keybindings() -> FxHashMap<Key, Command> {
     bindings
 }
 
-fn default_bottom_panel_keybindings() -> FxHashMap<Key, Command> {
+fn default_overlay_keybindings() -> FxHashMap<Key, Command> {
     let mut bindings = FxHashMap::default();
     bindings.reserve(20);
 
-    bindings.insert(Key::simple(KeyCode::Tab), Command::NextBottomPanelTab);
-    bindings.insert(Key::simple(KeyCode::BackTab), Command::PrevBottomPanelTab);
+    bindings.insert(Key::simple(KeyCode::Esc), Command::CloseOverlay);
     bindings.insert(Key::simple(KeyCode::Up), Command::SearchResultsMoveUp);
     bindings.insert(Key::simple(KeyCode::Down), Command::SearchResultsMoveDown);
     bindings.insert(
