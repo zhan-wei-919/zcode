@@ -252,6 +252,77 @@ fn test_ctrl_j_opens_diagnostics_overlay() {
 }
 
 #[test]
+fn test_problems_overlay_click_uses_problems_scroll_offset() {
+    use crate::kernel::{ProblemItem, ProblemRange, ProblemSeverity};
+
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+
+    // 注入 8 条诊断（同一文件、行号递增以保证排序后顺序稳定）。
+    let path = dir.path().join("diag.rs");
+    std::fs::write(&path, "\n".repeat(16)).unwrap();
+    let items: Vec<ProblemItem> = (0..8)
+        .map(|i| ProblemItem {
+            path: path.clone(),
+            range: ProblemRange {
+                start_line: i,
+                start_col: 0,
+                end_line: i,
+                end_col: 1,
+            },
+            severity: ProblemSeverity::Error,
+            message: format!("diag {i}"),
+            source: None,
+        })
+        .collect();
+    let _ = workbench.dispatch_kernel(KernelAction::LspDiagnostics {
+        path: path.clone(),
+        items,
+    });
+    assert_eq!(workbench.store.state().problems.items().len(), 8);
+
+    // 打开诊断浮层，焦点转到 Overlay。
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::OpenDiagnostics));
+    assert_eq!(workbench.focus(), FocusTarget::Overlay);
+
+    // 渲染一次以填充 frame_layout.overlay_area。
+    render_once(&mut workbench, 80, 24);
+
+    // 定死视口高度让滚动确定（max_scroll = 8 - 3 = 5）。
+    let _ = workbench.dispatch_kernel(KernelAction::ProblemsSetViewHeight { height: 3 });
+
+    // 向下滚动 Problems 列表：scroll(3) → problems.scroll_offset == 3，
+    // 而 search 浮层的 panel_view.scroll_offset 始终保持 0。
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::SearchResultsScrollDown));
+    assert_eq!(workbench.store.state().problems.scroll_offset(), 3);
+    assert_eq!(workbench.store.state().search.panel_view.scroll_offset, 0);
+
+    // 点击可见区第一行（visible_row = 0）。Problems 的列表从 popup.y + 2 起
+    // （内层去边框 +1，标题 +1，见 overlay.rs 的 list_top 计算）。
+    let popup = workbench
+        .frame_layout
+        .overlay_area
+        .expect("overlay area should be laid out after render");
+    let list_top = popup.y + 2;
+    let click = mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        popup.x + 1,
+        list_top,
+    );
+    let result = workbench.handle_input(&click);
+    assert!(result.is_consumed());
+
+    // 修复前：误用 search 偏移 0 → row = 0 + 0 = 0（click_row(0) 因已选中 0 而 no-op），selected 仍为 0。
+    // 修复后：用 problems 偏移 3 → row = 0 + 3 = 3，selected 变为 3。
+    assert_eq!(
+        workbench.store.state().problems.selected_index(),
+        3,
+        "点击滚动后浮层的第一可见行，应选中 problems.scroll_offset 对应的诊断项"
+    );
+}
+
+#[test]
 fn test_command_line_opens_and_runs_command() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();

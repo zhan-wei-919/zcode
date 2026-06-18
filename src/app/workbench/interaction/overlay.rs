@@ -36,11 +36,6 @@ impl Workbench {
 
                 match kind {
                     OverlayKind::Search => self.click_search_row(visible_row),
-                    OverlayKind::Problems => self.click_flat_row(
-                        visible_row,
-                        self.store.state().search.panel_view.scroll_offset,
-                        kind,
-                    ),
                     _ => self.click_flat_row(visible_row, self.flat_scroll_offset(kind), kind),
                 }
                 EventResult::Consumed
