@@ -167,10 +167,6 @@ pub enum Command {
     CloseOverlay,
     ReloadSettings,
     OpenSettings,
-
-    // ==================== Git ====================
-    GitWorktreeAdd,
-    GitTogglePanel,
     HardReload,
 
     // ==================== 扩展点 ====================
@@ -306,8 +302,6 @@ impl Command {
             Command::CloseOverlay => "closeOverlay",
             Command::ReloadSettings => "reloadSettings",
             Command::OpenSettings => "openSettings",
-            Command::GitWorktreeAdd => "gitWorktreeAdd",
-            Command::GitTogglePanel => "gitTogglePanel",
             Command::HardReload => "hardReload",
             Command::Escape => "escape",
             Command::Custom(name) => name,
@@ -442,8 +436,6 @@ impl Command {
             "closeOverlay" => Command::CloseOverlay,
             "reloadSettings" => Command::ReloadSettings,
             "openSettings" => Command::OpenSettings,
-            "gitWorktreeAdd" => Command::GitWorktreeAdd,
-            "gitTogglePanel" => Command::GitTogglePanel,
             "hardReload" => Command::HardReload,
             other => Command::Custom(other.to_string()),
         }

@@ -17,8 +17,6 @@ mod util;
 mod context_menu;
 #[path = "reducers/explorer.rs"]
 mod explorer;
-#[path = "reducers/git.rs"]
-mod git;
 #[path = "reducers/input_dialog.rs"]
 mod input_dialog;
 #[path = "reducers/search.rs"]
@@ -82,8 +80,6 @@ fn perf_action_label(action: &Action) -> &'static str {
         Action::SearchStarted { .. } => "kernel.action.search_started",
         Action::DirLoaded { .. } => "kernel.action.dir_loaded",
         Action::DirLoadError { .. } => "kernel.action.dir_load_error",
-        Action::GitStatusUpdated { .. } => "kernel.action.git_status_updated",
-        Action::GitDiffUpdated { .. } => "kernel.action.git_diff_updated",
         _ => "kernel.action.other",
     }
 }
@@ -383,7 +379,7 @@ impl Store {
         }
     }
 
-    fn maybe_close_empty_editor_split(&mut self, effects: &mut Vec<Effect>) -> bool {
+    fn maybe_close_empty_editor_split(&mut self, _effects: &mut Vec<Effect>) -> bool {
         // Currently zcode supports at most a single editor split (2 panes).
         if self.state.ui.editor_layout.panes != 2 {
             return false;
@@ -464,33 +460,7 @@ impl Store {
         self.state.ui.signature_help = super::state::SignatureHelpPopupState::default();
         let _ = self.state.ui.completion.close();
 
-        self.push_git_refresh_for_pane(0, effects);
-
         true
-    }
-
-    fn push_git_refresh_for_path(&self, path: std::path::PathBuf, effects: &mut Vec<Effect>) {
-        let Some(repo_root) = self.state.git.repo_root.clone() else {
-            return;
-        };
-
-        effects.push(Effect::GitRefreshStatus {
-            repo_root: repo_root.clone(),
-        });
-        effects.push(Effect::GitRefreshDiff { repo_root, path });
-    }
-
-    fn push_git_refresh_for_pane(&self, pane: usize, effects: &mut Vec<Effect>) {
-        let path = self
-            .state
-            .editor
-            .pane(pane)
-            .and_then(|pane_state| pane_state.active_tab())
-            .and_then(|tab| tab.path.clone());
-
-        if let Some(path) = path {
-            self.push_git_refresh_for_path(path, effects);
-        }
     }
 
     fn reconcile_signature_help_visibility(&mut self) -> bool {
@@ -717,7 +687,6 @@ impl Store {
                         content,
                     } => {
                         let opened_path = path.clone();
-                        let opened_path_for_git = opened_path.clone();
                         let pending = self
                             .state
                             .ui
@@ -864,20 +833,16 @@ impl Store {
                             }
                         }
 
-                        self.push_git_refresh_for_path(opened_path_for_git, &mut effects);
-
                         DispatchResult {
                             effects,
                             state_changed,
                         }
                     }
                     EditorAction::SetActiveTab { pane, index } => {
-                        let (state_changed, mut effects) = self
+                        let (state_changed, effects) = self
                             .state
                             .editor
                             .dispatch_action(EditorAction::SetActiveTab { pane, index });
-
-                        self.push_git_refresh_for_pane(pane, &mut effects);
 
                         DispatchResult {
                             effects,
@@ -890,8 +855,7 @@ impl Store {
                         success,
                         version,
                     } => {
-                        let saved_path = path.clone();
-                        let (state_changed, mut effects) =
+                        let (state_changed, effects) =
                             self.state.editor.dispatch_action(EditorAction::Saved {
                                 pane,
                                 path,
@@ -899,22 +863,16 @@ impl Store {
                                 version,
                             });
 
-                        if success {
-                            self.push_git_refresh_for_path(saved_path, &mut effects);
-                        }
-
                         DispatchResult {
                             effects,
                             state_changed,
                         }
                     }
                     EditorAction::CloseTabAt { pane, index } => {
-                        let (state_changed, mut effects) = self
+                        let (state_changed, effects) = self
                             .state
                             .editor
                             .dispatch_action(EditorAction::CloseTabAt { pane, index });
-
-                        self.push_git_refresh_for_pane(pane, &mut effects);
 
                         DispatchResult {
                             effects,
@@ -922,12 +880,10 @@ impl Store {
                         }
                     }
                     EditorAction::CloseTabsById { pane, tab_ids } => {
-                        let (state_changed, mut effects) = self
+                        let (state_changed, effects) = self
                             .state
                             .editor
                             .dispatch_action(EditorAction::CloseTabsById { pane, tab_ids });
-
-                        self.push_git_refresh_for_pane(pane, &mut effects);
 
                         DispatchResult {
                             effects,
@@ -967,15 +923,6 @@ impl Store {
                 effects: Vec::new(),
                 state_changed: false,
             },
-            action @ Action::GitInit
-            | action @ Action::GitRepoDetected { .. }
-            | action @ Action::GitRepoCleared
-            | action @ Action::GitStatusUpdated { .. }
-            | action @ Action::GitDiffUpdated { .. }
-            | action @ Action::GitWorktreesUpdated { .. }
-            | action @ Action::GitBranchesUpdated { .. }
-            | action @ Action::GitWorktreeResolved { .. }
-            | action @ Action::GitCheckoutBranch { .. } => self.reduce_git_action(action),
             Action::EditorConfigUpdated { config } => {
                 if self.state.editor.config == config {
                     DispatchResult {
@@ -1007,13 +954,8 @@ impl Store {
                 self.state.ui.editor_layout.active_pane = pane;
                 self.state.ui.focus = FocusTarget::Editor;
 
-                let mut effects = Vec::new();
-                if pane != prev {
-                    self.push_git_refresh_for_pane(pane, &mut effects);
-                }
-
                 DispatchResult {
-                    effects,
+                    effects: Vec::new(),
                     state_changed: pane != prev
                         || prev_focus != FocusTarget::Editor
                         || completion_changed
@@ -1309,71 +1251,19 @@ impl Store {
             }
             Action::DirLoaded { path, entries } => DispatchResult {
                 effects: Vec::new(),
-                state_changed: {
-                    let changed = self.state.explorer.apply_dir_loaded(path, entries);
-                    let git_changed = if changed {
-                        self.state
-                            .explorer
-                            .set_git_statuses(&self.state.git.file_status)
-                    } else {
-                        false
-                    };
-                    changed || git_changed
-                },
+                state_changed: self.state.explorer.apply_dir_loaded(path, entries),
             },
             Action::DirLoadError { path } => DispatchResult {
                 effects: Vec::new(),
-                state_changed: {
-                    let changed = self.state.explorer.apply_dir_load_error(path);
-                    let git_changed = if changed {
-                        self.state
-                            .explorer
-                            .set_git_statuses(&self.state.git.file_status)
-                    } else {
-                        false
-                    };
-                    changed || git_changed
-                },
+                state_changed: self.state.explorer.apply_dir_load_error(path),
             },
             Action::ExplorerPathCreated { path, is_dir } => DispatchResult {
-                effects: self
-                    .state
-                    .git
-                    .repo_root
-                    .clone()
-                    .map(|repo_root| vec![Effect::GitRefreshStatus { repo_root }])
-                    .unwrap_or_default(),
-                state_changed: {
-                    let changed = self.state.explorer.apply_path_created(path, is_dir);
-                    let git_changed = if changed {
-                        self.state
-                            .explorer
-                            .set_git_statuses(&self.state.git.file_status)
-                    } else {
-                        false
-                    };
-                    changed || git_changed
-                },
+                effects: Vec::new(),
+                state_changed: self.state.explorer.apply_path_created(path, is_dir),
             },
             Action::ExplorerPathDeleted { path } => DispatchResult {
-                effects: self
-                    .state
-                    .git
-                    .repo_root
-                    .clone()
-                    .map(|repo_root| vec![Effect::GitRefreshStatus { repo_root }])
-                    .unwrap_or_default(),
-                state_changed: {
-                    let changed = self.state.explorer.apply_path_deleted(path);
-                    let git_changed = if changed {
-                        self.state
-                            .explorer
-                            .set_git_statuses(&self.state.git.file_status)
-                    } else {
-                        false
-                    };
-                    changed || git_changed
-                },
+                effects: Vec::new(),
+                state_changed: self.state.explorer.apply_path_deleted(path),
             },
             Action::ExplorerPathRenamed { from, to } => {
                 let mut state_changed = self
@@ -1407,34 +1297,13 @@ impl Store {
                     state_changed = true;
                 }
 
-                if state_changed {
-                    state_changed |= self
-                        .state
-                        .explorer
-                        .set_git_statuses(&self.state.git.file_status);
-                }
-
                 DispatchResult {
-                    effects: if state_changed {
-                        if let Some(repo_root) = self.state.git.repo_root.clone() {
-                            vec![Effect::GitRefreshStatus { repo_root }]
-                        } else {
-                            Vec::new()
-                        }
-                    } else {
-                        Vec::new()
-                    },
+                    effects: Vec::new(),
                     state_changed,
                 }
             }
             Action::ExplorerDirChanged { path } => {
-                let (state_changed, mut effects) = self.state.explorer.request_dir_reload(path);
-                if state_changed {
-                    if let Some(repo_root) = self.state.git.repo_root.clone() {
-                        effects.push(Effect::GitRefreshStatus { repo_root });
-                    }
-                }
-
+                let (state_changed, effects) = self.state.explorer.request_dir_reload(path);
                 DispatchResult {
                     effects,
                     state_changed,
@@ -1714,41 +1583,6 @@ impl Store {
                     effects: vec![Effect::OpenSettings],
                     state_changed: false,
                 };
-            }
-            Command::GitWorktreeAdd => {
-                if self.state.ui.input_dialog.visible {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                let Some(repo_root) = self.state.git.repo_root.clone() else {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                };
-
-                self.state.ui.input_dialog.reset();
-                self.state.ui.input_dialog.visible = true;
-                self.state.ui.input_dialog.title = "Git Worktree".to_string();
-                self.state.ui.input_dialog.kind =
-                    Some(InputDialogKind::GitWorktreeAdd { repo_root });
-                state_changed = true;
-            }
-            Command::GitTogglePanel => {
-                let prev = self.state.ui.git_panel_expanded;
-                self.state.ui.git_panel_expanded = !prev;
-
-                if !self.state.ui.sidebar_visible {
-                    self.state.ui.sidebar_visible = true;
-                }
-                if self.state.ui.focus != FocusTarget::Explorer {
-                    self.state.ui.focus = FocusTarget::Explorer;
-                }
-
-                state_changed = true;
             }
             Command::HardReload => {
                 return DispatchResult {
@@ -3583,10 +3417,6 @@ impl Store {
             other => {
                 let pane = self.state.ui.editor_layout.active_pane;
                 let is_close_tab = matches!(other, Command::CloseTab);
-                let should_git_refresh = matches!(
-                    other,
-                    Command::NextTab | Command::PrevTab | Command::CloseTab
-                );
                 let should_flush_newline = matches!(other, Command::InsertNewline);
                 let should_flush_tab = matches!(other, Command::InsertTab);
                 let should_flush_cursor_move = other.is_cursor_command();
@@ -3643,14 +3473,8 @@ impl Store {
                     }
                 }
 
-                let mut collapsed = false;
                 if changed && is_close_tab {
-                    collapsed = self.maybe_close_empty_editor_split(&mut effects);
-                    state_changed |= collapsed;
-                }
-
-                if should_git_refresh && !collapsed {
-                    self.push_git_refresh_for_pane(pane, &mut effects);
+                    state_changed |= self.maybe_close_empty_editor_split(&mut effects);
                 }
 
                 let had_signature_help = self.state.ui.signature_help.is_active();

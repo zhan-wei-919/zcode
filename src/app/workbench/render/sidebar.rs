@@ -9,7 +9,7 @@ use crate::ui::core::style::Style as UiStyle;
 use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, UiTree};
 
 impl Workbench {
-    /// 常驻文件列表：sidebar 只画 explorer + git 子面板，没有 activity bar / 标签栏。
+    /// 常驻文件列表：sidebar 只画 explorer，没有 activity bar / 标签栏。
     pub(super) fn render_sidebar(&mut self, backend: &mut dyn Backend, area: UiRect) {
         if area.is_empty() {
             self.frame_layout.sidebar_content_area = None;
@@ -63,29 +63,8 @@ impl Workbench {
         // Clear the sidebar background so old content doesn't leak through on partial redraws.
         painter.fill_rect(inner, UiStyle::default().bg(self.theme.core.sidebar_bg));
 
-        let content_area = inner;
-        self.frame_layout.sidebar_content_area = Some(content_area);
-
-        self.frame_layout.git_panel_area = None;
-        self.frame_layout.git_branch_areas.clear();
-
-        let (show_git_panel, branches_len) = {
-            let state = self.store.state();
-            (
-                state.git.repo_root.is_some() && state.ui.git_panel_expanded,
-                state.git.branches.len(),
-            )
-        };
-
-        let (tree_area, git_area) = if show_git_panel && content_area.h >= 3 {
-            let branches_len = branches_len.clamp(1, 8) as u16;
-            let max_git_height = content_area.h.saturating_sub(1);
-            let git_height = (1 + branches_len).min(max_git_height);
-            let (tree_area, git_area) = content_area.split_bottom(git_height);
-            (tree_area, Some(git_area))
-        } else {
-            (content_area, None)
-        };
+        let tree_area = inner;
+        self.frame_layout.sidebar_content_area = Some(tree_area);
 
         self.sync_explorer_view_height(tree_area.h);
         let active_open_file_id = {
@@ -108,7 +87,6 @@ impl Workbench {
                 selected_id: explorer_state.selected(),
                 active_open_file_id,
                 scroll_offset: explorer_state.scroll_offset,
-                git_status_by_id: &explorer_state.git_status_by_id,
                 theme: &self.theme.core,
             },
         );
@@ -119,10 +97,6 @@ impl Workbench {
             &explorer_state.rows,
             explorer_state.scroll_offset,
         );
-
-        if let Some(git_area) = git_area {
-            self.paint_git_panel(&mut painter, git_area);
-        }
 
         backend.draw(ui_full, painter.cmds());
     }

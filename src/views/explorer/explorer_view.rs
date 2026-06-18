@@ -1,14 +1,11 @@
 //! 文件浏览器视图（纯渲染 + 命中测试）
 
 use crate::core::text_window;
-use crate::kernel::editor::SyntaxColorGroup;
-use crate::kernel::{GitFileStatus, GitFileStatusKind};
 use crate::models::{FileTreeRow, NodeId};
 use crate::ui::core::geom::{Pos, Rect};
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::{Mod, Style};
 use crate::ui::core::theme::Theme;
-use rustc_hash::FxHashMap;
 use unicode_width::UnicodeWidthStr;
 
 pub struct ExplorerView {
@@ -21,7 +18,6 @@ pub struct ExplorerPaintCtx<'a> {
     pub selected_id: Option<NodeId>,
     pub active_open_file_id: Option<NodeId>,
     pub scroll_offset: usize,
-    pub git_status_by_id: &'a FxHashMap<NodeId, GitFileStatus>,
     pub theme: &'a Theme,
 }
 
@@ -44,10 +40,9 @@ impl ExplorerView {
         row: &FileTreeRow,
         is_selected: bool,
         is_active_open_file: bool,
-        git_status: Option<GitFileStatus>,
         width: u16,
         theme: &Theme,
-    ) -> (String, char, Style, Style) {
+    ) -> (String, Style) {
         let indent = "  ".repeat(row.depth as usize);
         let icon = if row.is_dir {
             if row.is_expanded {
@@ -75,36 +70,16 @@ impl ExplorerView {
 
         let width = width as usize;
         if width == 0 {
-            return (String::new(), ' ', row_style, row_style);
+            return (String::new(), row_style);
         }
-
-        let trailing_width = 1usize;
-        let left_target_width = width.saturating_sub(trailing_width);
 
         let mut left = format!("{indent}{icon}{name}");
-        if left_target_width == 0 {
-            left.clear();
-        } else {
-            let end = text_window::truncate_to_width(&left, left_target_width);
-            left.truncate(end);
-        }
+        let end = text_window::truncate_to_width(&left, width);
+        left.truncate(end);
         let left_width = left.width();
-        let pad = " ".repeat(left_target_width.saturating_sub(left_width));
+        let pad = " ".repeat(width.saturating_sub(left_width));
 
-        let kind = git_status.and_then(|s| s.primary_kind());
-        let marker = kind.map(|k| k.marker()).unwrap_or(' ');
-        let marker_style = match kind {
-            Some(GitFileStatusKind::Conflict) => row_style.fg(theme.error_fg),
-            Some(GitFileStatusKind::Untracked) => row_style.fg(theme.palette_muted_fg),
-            Some(GitFileStatusKind::Added) => {
-                row_style.fg(theme.syntax_fg(SyntaxColorGroup::String))
-            }
-            Some(GitFileStatusKind::Modified) => row_style.fg(theme.header_fg),
-            None => row_style,
-        };
-
-        let left_pad = format!("{left}{pad}");
-        (left_pad, marker, row_style, marker_style)
+        (format!("{left}{pad}"), row_style)
     }
 
     pub fn paint(&mut self, painter: &mut Painter, ctx: ExplorerPaintCtx<'_>) {
@@ -114,7 +89,6 @@ impl ExplorerView {
             selected_id,
             active_open_file_id,
             scroll_offset,
-            git_status_by_id,
             theme,
         } = ctx;
         self.area = Some(area);
@@ -136,7 +110,6 @@ impl ExplorerView {
 
         let visible_height = area.h as usize;
         let visible_end = (scroll_offset + visible_height).min(rows.len());
-        let marker_x = area.x.saturating_add(area.w.saturating_sub(1));
         for (idx, row) in rows[scroll_offset..visible_end].iter().enumerate() {
             let y = area.y.saturating_add((idx.min(u16::MAX as usize)) as u16);
             if y >= area.bottom() {
@@ -145,24 +118,11 @@ impl ExplorerView {
 
             let is_selected = selected_id == Some(row.id);
             let is_active_open_file = active_open_file_id == Some(row.id);
-            let git_status = git_status_by_id.get(&row.id).copied();
-            let (left_pad, marker, row_style, marker_style) = self.render_row_parts(
-                row,
-                is_selected,
-                is_active_open_file,
-                git_status,
-                area.w,
-                theme,
-            );
+            let (left_pad, row_style) =
+                self.render_row_parts(row, is_selected, is_active_open_file, area.w, theme);
 
             let row_clip = Rect::new(area.x, y, area.w, 1);
             painter.text_clipped(Pos::new(area.x, y), left_pad, row_style, row_clip);
-            painter.text_clipped(
-                Pos::new(marker_x, y),
-                marker.to_string(),
-                marker_style,
-                row_clip,
-            );
         }
     }
 }

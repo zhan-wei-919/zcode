@@ -1,7 +1,7 @@
 use crate::core::text_window;
 use crate::kernel::editor::{
     cursor_display_x_abs, EditorPaneState, EditorTabState, HighlightKind, HighlightSpan,
-    SearchBarField, SearchBarMode, SearchBarState, SemanticSegment, SyntaxColorGroup,
+    SearchBarField, SearchBarMode, SearchBarState, SemanticSegment,
 };
 use crate::kernel::services::ports::{EditorConfig, Match};
 use crate::models::{cursor_set, slice_to_cow};
@@ -573,7 +573,7 @@ fn paint_gutter(
         .fg(theme.palette_muted_fg);
     painter.fill_rect(area, base_style);
 
-    let digits_width = area.w.saturating_sub(2) as usize;
+    let digits_width = area.w.saturating_sub(1) as usize;
     if digits_width == 0 {
         return;
     }
@@ -598,32 +598,15 @@ fn paint_gutter(
             base_style
         };
 
-        // Reserve last 2 columns: fold marker + git marker.
-        if area.w >= 2 {
-            let x = right.saturating_sub(2);
+        // Reserve last column for the fold marker.
+        if area.w >= 1 {
+            let x = right.saturating_sub(1);
             if let Some(marker) = tab.fold_marker_char(line.min(u32::MAX as usize) as u32) {
                 painter.text_clipped(
                     Pos::new(x, y),
                     marker.to_string(),
                     style,
                     Rect::new(x, y, 1, 1),
-                );
-            }
-        }
-        if area.w >= 1 {
-            let git_x = right.saturating_sub(1);
-            if let Some(marker) = tab.git_gutter_marker(line) {
-                let marker_style = match marker {
-                    '+' => style.fg(theme.syntax_fg(SyntaxColorGroup::String)),
-                    '~' => style.fg(theme.warning_fg),
-                    '-' => style.fg(theme.error_fg),
-                    _ => style,
-                };
-                painter.text_clipped(
-                    Pos::new(git_x, y),
-                    marker.to_string(),
-                    marker_style,
-                    Rect::new(git_x, y, 1, 1),
                 );
             }
         }
@@ -638,13 +621,14 @@ fn paint_gutter(
             continue;
         }
 
-        let x_end = right.saturating_sub(2);
+        // Number field is `area.w - 1` wide; the last column is reserved for the fold marker.
+        let x_end = right.saturating_sub(1);
         let x_start = x_end.saturating_sub(digits.len().min(u16::MAX as usize) as u16);
         painter.text_clipped(
             Pos::new(x_start, y),
             digits,
             style,
-            Rect::new(area.x, y, area.w.saturating_sub(2), 1),
+            Rect::new(area.x, y, area.w.saturating_sub(1), 1),
         );
     }
 }

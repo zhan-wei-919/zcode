@@ -569,9 +569,7 @@ pub fn should_ignore(name: &str) -> bool {
             | ".TemporaryItems"
             | "Thumbs.db"
             | "desktop.ini"
-            | ".git"
             | ".claude"
-            | ".worktrees"
             | "node_modules"
     )
 }

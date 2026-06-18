@@ -3,7 +3,6 @@
 pub mod action;
 pub mod editor;
 pub mod effect;
-pub mod git;
 pub mod language;
 pub mod lsp_registry;
 pub mod palette;
@@ -16,10 +15,6 @@ pub mod store;
 pub use action::Action;
 pub use editor::{EditorAction, EditorState};
 pub use effect::Effect;
-pub use git::{
-    GitFileStatus, GitFileStatusKind, GitGutterMarkKind, GitGutterMarkRange, GitGutterMarks,
-    GitHead, GitState, GitWorktreeItem,
-};
 pub use panel::code_actions::CodeActionsState;
 pub use panel::locations::{LocationItem, LocationsState};
 pub use panel::problems::{ProblemItem, ProblemRange, ProblemSeverity, ProblemsState};

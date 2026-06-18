@@ -133,16 +133,6 @@ fn lsp_command_override() -> Option<(String, Vec<String>)> {
     Some((command, args))
 }
 
-fn git_enabled() -> bool {
-    if env_truthy("ZCODE_DISABLE_GIT") {
-        return false;
-    }
-    if cfg!(test) {
-        return false;
-    }
-    true
-}
-
 #[derive(Debug, Default)]
 struct HoverPopupRenderState {
     last_request: Option<(PathBuf, u32, u32, u64)>,
@@ -422,10 +412,6 @@ impl Workbench {
             },
         };
 
-        if git_enabled() {
-            let _ = workbench.dispatch_kernel(KernelAction::GitInit);
-        }
-
         workbench.maybe_warn_clipboard_unavailable();
         Ok(workbench)
     }
@@ -638,35 +624,6 @@ impl Workbench {
                 while self.logs.len() > LOG_BUFFER_CAP {
                     self.logs.pop_front();
                 }
-            }
-            AppMessage::GitRepoDetected {
-                repo_root,
-                head,
-                worktrees,
-            } => {
-                let _ = self.dispatch_kernel(KernelAction::GitRepoDetected {
-                    repo_root,
-                    head,
-                    worktrees,
-                });
-            }
-            AppMessage::GitRepoCleared => {
-                let _ = self.dispatch_kernel(KernelAction::GitRepoCleared);
-            }
-            AppMessage::GitStatusUpdated { statuses } => {
-                let _ = self.dispatch_kernel(KernelAction::GitStatusUpdated { statuses });
-            }
-            AppMessage::GitDiffUpdated { path, marks } => {
-                let _ = self.dispatch_kernel(KernelAction::GitDiffUpdated { path, marks });
-            }
-            AppMessage::GitWorktreesUpdated { worktrees } => {
-                let _ = self.dispatch_kernel(KernelAction::GitWorktreesUpdated { worktrees });
-            }
-            AppMessage::GitBranchesUpdated { branches } => {
-                let _ = self.dispatch_kernel(KernelAction::GitBranchesUpdated { branches });
-            }
-            AppMessage::GitWorktreeResolved { path } => {
-                let _ = self.dispatch_kernel(KernelAction::GitWorktreeResolved { path });
             }
             AppMessage::FileReloaded { request, content } => {
                 let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::FileReloaded {

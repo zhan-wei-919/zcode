@@ -1,5 +1,4 @@
 use super::super::dnd_rules::{drop_intent, DropIntent};
-use super::super::util;
 use super::super::Workbench;
 use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::kernel::services::adapters::perf;
@@ -20,10 +19,6 @@ impl Workbench {
     ) -> EventResult {
         let _scope = perf::scope("input.mouse.explorer");
         let in_tree = self.explorer.contains(event.column, event.row);
-        let in_git = self
-            .frame_layout
-            .git_panel_area
-            .is_some_and(|a| util::rect_contains(a, event.column, event.row));
 
         let is_armed = self.ui_runtime.is_pressed() || self.ui_runtime.capture().is_some();
         let captured_is_explorer_row = self
@@ -32,37 +27,14 @@ impl Workbench {
             .and_then(|id| self.ui_tree.node(id))
             .is_some_and(|n| matches!(n.kind, NodeKind::ExplorerRow { .. }));
 
-        if !in_tree && !in_git && !is_armed {
+        if !in_tree && !is_armed {
             return EventResult::Ignored;
         }
 
         let rows_len = self.store.state().explorer.rows.len();
 
         match event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                if in_git {
-                    let Some((branch, _)) = self
-                        .frame_layout
-                        .git_branch_areas
-                        .iter()
-                        .find(|(_, rect)| util::rect_contains(*rect, event.column, event.row))
-                    else {
-                        return EventResult::Consumed;
-                    };
-
-                    let state = self.store.state();
-                    let is_active = state.git.head.as_ref().is_some_and(|head| {
-                        !head.detached && head.branch.as_deref() == Some(branch.as_str())
-                    });
-                    if !is_active {
-                        let _ = self.dispatch_kernel(KernelAction::GitCheckoutBranch {
-                            branch: branch.clone(),
-                        });
-                    }
-                    return EventResult::Consumed;
-                }
-                EventResult::Consumed
-            }
+            MouseEventKind::Down(MouseButton::Left) => EventResult::Consumed,
             MouseEventKind::Drag(MouseButton::Left) => {
                 let captured_is_explorer_row = self
                     .ui_runtime
@@ -220,12 +192,7 @@ impl Workbench {
 
                 EventResult::Ignored
             }
-            MouseEventKind::Down(MouseButton::Right) => {
-                if in_git {
-                    return EventResult::Consumed;
-                }
-                EventResult::Consumed
-            }
+            MouseEventKind::Down(MouseButton::Right) => EventResult::Consumed,
             MouseEventKind::Up(MouseButton::Right) => {
                 let mut handled = false;
                 for ev in &ui_out.events {

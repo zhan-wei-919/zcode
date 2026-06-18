@@ -2,7 +2,7 @@ use super::*;
 use crate::core::command::Command;
 use crate::kernel::editor::{
     EditorPaneState, EditorTabState, HighlightKind, HighlightSpan, SearchBarMode, SemanticSegment,
-    SnippetTabstop, TabId,
+    SnippetTabstop, SyntaxColorGroup, TabId,
 };
 use crate::kernel::services::ports::{EditorConfig, Match};
 use crate::models::{Granularity, Selection};
@@ -50,6 +50,45 @@ fn paint_editor_pane_no_tab_renders_empty_message() {
         .iter()
         .any(|cmd| matches!(cmd, PaintCmd::Text { text, .. } if text.contains("No file open")));
     assert!(has_message);
+}
+
+#[test]
+fn paint_editor_pane_gutter_renders_full_two_digit_line_number() {
+    // Regression: after the git gutter marker was removed, the number field shrank to one
+    // reserved (fold) column. The digit-paint math must use `area.w - 1`, not `- 2`, or
+    // multi-digit line numbers lose their last digit.
+    let config = EditorConfig::default();
+    let mut pane = EditorPaneState::new(&config);
+    let content = "x\n".repeat(12); // >= 10 lines => 2-digit line numbers
+    let tab =
+        EditorTabState::from_file(TabId::new(1), PathBuf::from("test.txt"), &content, &config);
+    pane.tabs.push(tab);
+    pane.active = 0;
+
+    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 20), &pane, &config);
+    let theme = Theme::default();
+    let mut painter = Painter::new();
+    paint_editor_pane(
+        &mut painter,
+        &layout,
+        &pane,
+        &config,
+        &theme,
+        default_render_options(true),
+        None,
+    );
+
+    let mut backend = TestBackend::new(layout.area.w, layout.area.h);
+    backend.draw(layout.area, painter.cmds());
+    let buf = backend.buffer();
+
+    // Line 10 (1-indexed) renders on content row 9; its digits are right-aligned ending one
+    // column left of the content (the last gutter column is reserved for the fold marker).
+    let y = layout.content_area.y + 9;
+    let last_digit_x = layout.content_area.x - 2;
+    let first_digit_x = layout.content_area.x - 3;
+    assert_eq!(buf.cell(first_digit_x, y).unwrap().symbol, "1");
+    assert_eq!(buf.cell(last_digit_x, y).unwrap().symbol, "0");
 }
 
 #[test]

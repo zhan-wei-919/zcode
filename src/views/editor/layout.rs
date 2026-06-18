@@ -142,7 +142,8 @@ fn compute_gutter(
 
     let total_lines = tab.buffer.len_lines().max(1);
     let digits = total_lines.to_string().len();
-    let gutter_width = ((digits + 2) as u16).min(editor_area.w);
+    // 行号位 + 1 列折叠标记。
+    let gutter_width = ((digits + 1) as u16).min(editor_area.w);
 
     if gutter_width == 0 || gutter_width >= editor_area.w {
         return (

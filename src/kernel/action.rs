@@ -22,7 +22,6 @@ use crate::kernel::services::ports::LspSignatureHelpPayload;
 use crate::kernel::services::ports::LspTextEdit;
 use crate::kernel::services::ports::LspWorkspaceEdit;
 use crate::kernel::services::ports::{LspHoverPayload, LspHoverPreviewPayload};
-use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem};
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -30,32 +29,6 @@ pub enum Action {
     Editor(EditorAction),
     OpenPath(PathBuf),
     Tick,
-    GitInit,
-    GitRepoDetected {
-        repo_root: PathBuf,
-        head: GitHead,
-        worktrees: Vec<GitWorktreeItem>,
-    },
-    GitRepoCleared,
-    GitStatusUpdated {
-        statuses: Vec<(PathBuf, GitFileStatus)>,
-    },
-    GitDiffUpdated {
-        path: PathBuf,
-        marks: GitGutterMarks,
-    },
-    GitWorktreesUpdated {
-        worktrees: Vec<GitWorktreeItem>,
-    },
-    GitBranchesUpdated {
-        branches: Vec<String>,
-    },
-    GitWorktreeResolved {
-        path: PathBuf,
-    },
-    GitCheckoutBranch {
-        branch: String,
-    },
     EditorConfigUpdated {
         config: EditorConfig,
     },

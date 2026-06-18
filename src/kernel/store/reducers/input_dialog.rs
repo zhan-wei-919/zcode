@@ -158,31 +158,6 @@ impl super::Store {
                             };
                         }
                     }
-                    InputDialogKind::GitWorktreeAdd { .. } => {
-                        if value.is_empty() {
-                            let prev = dialog.error.replace("Branch required".to_string());
-                            return super::DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                        if value.chars().any(|ch| ch.is_whitespace()) {
-                            let prev = dialog
-                                .error
-                                .replace("Branch cannot contain spaces".to_string());
-                            return super::DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                        if value.contains('\\') || value.contains("..") || value.starts_with('/') {
-                            let prev = dialog.error.replace("Invalid branch".to_string());
-                            return super::DispatchResult {
-                                effects: Vec::new(),
-                                state_changed: prev.as_deref() != dialog.error.as_deref(),
-                            };
-                        }
-                    }
                 }
 
                 let value = value.to_string();
@@ -244,13 +219,6 @@ impl super::Store {
                         let _ = self.state.symbols.clear();
                         self.open_overlay(OverlayKind::Symbols);
                         Effect::LspWorkspaceSymbolsRequest { query: value }
-                    }
-                    InputDialogKind::GitWorktreeAdd { repo_root } => {
-                        let branch = value
-                            .strip_prefix("refs/heads/")
-                            .unwrap_or(value.as_str())
-                            .to_string();
-                        Effect::GitWorktreeAdd { repo_root, branch }
                     }
                 };
 

@@ -146,30 +146,6 @@ pub enum Effect {
         resource_ops: Vec<LspResourceOp>,
         edits: Vec<LspWorkspaceFileEdit>,
     },
-    GitDetectRepo {
-        workspace_root: PathBuf,
-    },
-    GitRefreshStatus {
-        repo_root: PathBuf,
-    },
-    GitRefreshDiff {
-        repo_root: PathBuf,
-        path: PathBuf,
-    },
-    GitListWorktrees {
-        repo_root: PathBuf,
-    },
-    GitListBranches {
-        repo_root: PathBuf,
-    },
-    GitWorktreeAdd {
-        repo_root: PathBuf,
-        branch: String,
-    },
-    GitWorktreeResolve {
-        repo_root: PathBuf,
-        branch: String,
-    },
     Restart {
         path: PathBuf,
         hard: bool,

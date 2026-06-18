@@ -8,7 +8,6 @@ use std::time::Instant;
 mod command_line;
 mod dialogs;
 mod editor;
-mod git;
 mod layout;
 mod overlay;
 mod sidebar;

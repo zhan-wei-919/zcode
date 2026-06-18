@@ -16,51 +16,21 @@ impl super::Store {
                 state_changed: self.state.explorer.scroll(delta),
             },
             Action::ExplorerActivate => {
-                let prev_rows_len = self.state.explorer.rows.len();
                 let (state_changed, effects) = self.state.explorer.activate_selected();
-                let rows_changed = self.state.explorer.rows.len() != prev_rows_len;
-                let explorer_git_changed = if rows_changed {
-                    self.state
-                        .explorer
-                        .set_git_statuses(&self.state.git.file_status)
-                } else {
-                    false
-                };
                 super::DispatchResult {
                     effects,
-                    state_changed: state_changed || explorer_git_changed,
+                    state_changed,
                 }
             }
-            Action::ExplorerCollapse => {
-                let prev_rows_len = self.state.explorer.rows.len();
-                let state_changed = self.state.explorer.collapse_selected();
-                let rows_changed = self.state.explorer.rows.len() != prev_rows_len;
-                let explorer_git_changed = if rows_changed {
-                    self.state
-                        .explorer
-                        .set_git_statuses(&self.state.git.file_status)
-                } else {
-                    false
-                };
-                super::DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: state_changed || explorer_git_changed,
-                }
-            }
+            Action::ExplorerCollapse => super::DispatchResult {
+                effects: Vec::new(),
+                state_changed: self.state.explorer.collapse_selected(),
+            },
             Action::ExplorerClickRow { row, now } => {
-                let prev_rows_len = self.state.explorer.rows.len();
                 let (state_changed, effects) = self.state.explorer.click_row(row, now);
-                let rows_changed = self.state.explorer.rows.len() != prev_rows_len;
-                let explorer_git_changed = if rows_changed {
-                    self.state
-                        .explorer
-                        .set_git_statuses(&self.state.git.file_status)
-                } else {
-                    false
-                };
                 super::DispatchResult {
                     effects,
-                    state_changed: state_changed || explorer_git_changed,
+                    state_changed,
                 }
             }
             Action::ExplorerMovePath { from, to } => {
@@ -90,74 +60,25 @@ impl super::Store {
             }
             Action::DirLoaded { path, entries } => super::DispatchResult {
                 effects: Vec::new(),
-                state_changed: {
-                    let changed = self.state.explorer.apply_dir_loaded(path, entries);
-                    let git_changed = if changed {
-                        self.state
-                            .explorer
-                            .set_git_statuses(&self.state.git.file_status)
-                    } else {
-                        false
-                    };
-                    changed || git_changed
-                },
+                state_changed: self.state.explorer.apply_dir_loaded(path, entries),
             },
             Action::DirLoadError { path } => super::DispatchResult {
                 effects: Vec::new(),
-                state_changed: {
-                    let changed = self.state.explorer.apply_dir_load_error(path);
-                    let git_changed = if changed {
-                        self.state
-                            .explorer
-                            .set_git_statuses(&self.state.git.file_status)
-                    } else {
-                        false
-                    };
-                    changed || git_changed
-                },
+                state_changed: self.state.explorer.apply_dir_load_error(path),
             },
             Action::ExplorerPathCreated { path, is_dir } => super::DispatchResult {
-                effects: self
-                    .state
-                    .git
-                    .repo_root
-                    .clone()
-                    .map(|repo_root| vec![Effect::GitRefreshStatus { repo_root }])
-                    .unwrap_or_default(),
-                state_changed: {
-                    let changed = self.state.explorer.apply_path_created(path, is_dir);
-                    let git_changed = if changed {
-                        self.state
-                            .explorer
-                            .set_git_statuses(&self.state.git.file_status)
-                    } else {
-                        false
-                    };
-                    changed || git_changed
-                },
+                effects: Vec::new(),
+                state_changed: self.state.explorer.apply_path_created(path, is_dir),
             },
             Action::ExplorerPathDeleted { path } => super::DispatchResult {
-                effects: self
-                    .state
-                    .git
-                    .repo_root
-                    .clone()
-                    .map(|repo_root| vec![Effect::GitRefreshStatus { repo_root }])
-                    .unwrap_or_default(),
+                effects: Vec::new(),
                 state_changed: {
                     let clipboard_changed = self
                         .state
                         .explorer
                         .clear_clipboard_if_deleted_path(path.as_path());
                     let changed = self.state.explorer.apply_path_deleted(path);
-                    let git_changed = if changed {
-                        self.state
-                            .explorer
-                            .set_git_statuses(&self.state.git.file_status)
-                    } else {
-                        false
-                    };
-                    changed || git_changed || clipboard_changed
+                    changed || clipboard_changed
                 },
             },
             Action::ExplorerPathRenamed { from, to } => {
@@ -196,23 +117,8 @@ impl super::Store {
                     state_changed = true;
                 }
 
-                if state_changed {
-                    state_changed |= self
-                        .state
-                        .explorer
-                        .set_git_statuses(&self.state.git.file_status);
-                }
-
                 super::DispatchResult {
-                    effects: if state_changed {
-                        if let Some(repo_root) = self.state.git.repo_root.clone() {
-                            vec![Effect::GitRefreshStatus { repo_root }]
-                        } else {
-                            Vec::new()
-                        }
-                    } else {
-                        Vec::new()
-                    },
+                    effects: Vec::new(),
                     state_changed,
                 }
             }

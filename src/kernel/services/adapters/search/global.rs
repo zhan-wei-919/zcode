@@ -155,11 +155,12 @@ fn search_dir_parallel(
     let files_with_matches = Arc::new(AtomicUsize::new(0));
     let total_matches = Arc::new(AtomicUsize::new(0));
 
+    // 不读任何 git 相关的 ignore 文件（git 子系统已移除）；仅隐藏 dotfile。
     let walker = WalkBuilder::new(root)
         .hidden(true)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
         .build_parallel();
 
     walker.run(|| {
