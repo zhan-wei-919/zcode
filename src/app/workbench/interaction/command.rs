@@ -45,9 +45,9 @@ impl Workbench {
                 }
                 EventResult::Consumed
             }
-            KeybindingContext::CommandPalette => {
+            KeybindingContext::CommandLine => {
                 for ch in text.chars() {
-                    let _ = self.dispatch_kernel(KernelAction::PaletteAppend(ch));
+                    let _ = self.dispatch_kernel(KernelAction::CommandLineAppend(ch));
                 }
                 EventResult::Consumed
             }

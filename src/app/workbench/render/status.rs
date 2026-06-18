@@ -15,7 +15,6 @@ impl Workbench {
             FocusTarget::Editor => "Editor",
             FocusTarget::Overlay => "Overlay",
             FocusTarget::CommandLine => "Command",
-            FocusTarget::CommandPalette => "Palette",
         }
     }
 

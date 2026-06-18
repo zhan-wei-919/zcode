@@ -260,13 +260,6 @@ impl Workbench {
                 }
                 _ => EventResult::Ignored,
             },
-            KeybindingContext::CommandPalette => match (key_event.code, key_event.modifiers) {
-                (KeyCode::Char(ch), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
-                    let _ = self.dispatch_kernel(KernelAction::PaletteAppend(ch));
-                    EventResult::Consumed
-                }
-                _ => EventResult::Ignored,
-            },
             KeybindingContext::CommandLine => match (key_event.code, key_event.modifiers) {
                 (KeyCode::Char(ch), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
                     let _ = self.dispatch_kernel(KernelAction::CommandLineAppend(ch));
@@ -302,10 +295,6 @@ impl Workbench {
     pub(super) fn keybinding_context(&self) -> KeybindingContext {
         let ui = &self.store.state().ui;
 
-        if ui.command_palette.visible && ui.focus == FocusTarget::CommandPalette {
-            return KeybindingContext::CommandPalette;
-        }
-
         match ui.focus {
             FocusTarget::Explorer => match ui.sidebar_tab {
                 SidebarTab::Explorer => KeybindingContext::SidebarExplorer,
@@ -313,7 +302,6 @@ impl Workbench {
             },
             FocusTarget::Overlay => KeybindingContext::Overlay,
             FocusTarget::CommandLine => KeybindingContext::CommandLine,
-            FocusTarget::CommandPalette => KeybindingContext::CommandPalette,
             FocusTarget::Editor => {
                 let pane = ui.editor_layout.active_pane;
                 let visible = self

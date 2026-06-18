@@ -27,8 +27,8 @@ fn esc_resolves_to_escape_in_all_contexts() {
         Some(&Command::Escape)
     );
     assert_eq!(
-        service.resolve(KeybindingContext::CommandPalette, &esc),
-        Some(&Command::Escape)
+        service.resolve(KeybindingContext::CommandLine, &esc),
+        Some(&Command::CommandLineClose)
     );
     assert_eq!(
         service.resolve(KeybindingContext::EditorSearchBar, &esc),

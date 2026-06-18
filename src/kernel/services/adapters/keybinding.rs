@@ -13,7 +13,6 @@ pub enum KeybindingContext {
     EditorSearchBar,
     SidebarExplorer,
     SidebarSearch,
-    CommandPalette,
     CommandLine,
     Overlay,
 }
@@ -29,7 +28,6 @@ impl KeybindingContext {
             "search" | "sidebarsearch" | "sidebar.search" | "globalsearch" => {
                 Some(Self::SidebarSearch)
             }
-            "palette" | "commandpalette" | "command_palette" => Some(Self::CommandPalette),
             "commandline" | "command_line" | "cmdline" => Some(Self::CommandLine),
             "overlay" | "bottompanel" | "panel" => Some(Self::Overlay),
             _ => None,
@@ -43,7 +41,6 @@ pub struct KeybindingService {
     editor_search_bar: FxHashMap<Key, Command>,
     sidebar_explorer: FxHashMap<Key, Command>,
     sidebar_search: FxHashMap<Key, Command>,
-    command_palette: FxHashMap<Key, Command>,
     command_line: FxHashMap<Key, Command>,
     overlay: FxHashMap<Key, Command>,
 }
@@ -60,7 +57,6 @@ impl KeybindingService {
             editor_search_bar: default_editor_search_bar_keybindings(),
             sidebar_explorer: default_sidebar_explorer_keybindings(),
             sidebar_search: default_sidebar_search_keybindings(),
-            command_palette: default_command_palette_keybindings(),
             command_line: default_command_line_keybindings(),
             overlay: default_overlay_keybindings(),
         }
@@ -83,10 +79,6 @@ impl KeybindingService {
                 .sidebar_search
                 .get(key)
                 .or_else(|| self.global.get(key)),
-            KeybindingContext::CommandPalette => self
-                .command_palette
-                .get(key)
-                .or_else(|| self.global.get(key)),
             KeybindingContext::CommandLine => {
                 self.command_line.get(key).or_else(|| self.global.get(key))
             }
@@ -101,7 +93,6 @@ impl KeybindingService {
             KeybindingContext::EditorSearchBar => &self.editor_search_bar,
             KeybindingContext::SidebarExplorer => &self.sidebar_explorer,
             KeybindingContext::SidebarSearch => &self.sidebar_search,
-            KeybindingContext::CommandPalette => &self.command_palette,
             KeybindingContext::CommandLine => &self.command_line,
             KeybindingContext::Overlay => &self.overlay,
         }
@@ -122,7 +113,6 @@ impl KeybindingService {
             KeybindingContext::EditorSearchBar => &mut self.editor_search_bar,
             KeybindingContext::SidebarExplorer => &mut self.sidebar_explorer,
             KeybindingContext::SidebarSearch => &mut self.sidebar_search,
-            KeybindingContext::CommandPalette => &mut self.command_palette,
             KeybindingContext::CommandLine => &mut self.command_line,
             KeybindingContext::Overlay => &mut self.overlay,
         }
@@ -363,18 +353,6 @@ fn default_sidebar_search_keybindings() -> FxHashMap<Key, Command> {
         Key::simple(KeyCode::Char(' ')),
         Command::SearchResultsToggleExpand,
     );
-
-    bindings
-}
-
-fn default_command_palette_keybindings() -> FxHashMap<Key, Command> {
-    let mut bindings = FxHashMap::default();
-    bindings.reserve(16);
-
-    bindings.insert(Key::simple(KeyCode::Backspace), Command::PaletteBackspace);
-    bindings.insert(Key::simple(KeyCode::Up), Command::PaletteMoveUp);
-    bindings.insert(Key::simple(KeyCode::Down), Command::PaletteMoveDown);
-    bindings.insert(Key::simple(KeyCode::Enter), Command::PaletteConfirm);
 
     bindings
 }

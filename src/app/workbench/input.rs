@@ -40,10 +40,9 @@ fn dispatch_by_target(
         MouseTarget::Search => workbench.handle_search_mouse(mouse_event),
         MouseTarget::Editor => workbench.handle_editor_mouse(mouse_event, ui_out),
         MouseTarget::Overlay => workbench.handle_overlay_mouse(mouse_event),
-        MouseTarget::ContextMenu
-        | MouseTarget::CommandPalette
-        | MouseTarget::CommandLine
-        | MouseTarget::ByFocus => EventResult::Ignored,
+        MouseTarget::ContextMenu | MouseTarget::CommandLine | MouseTarget::ByFocus => {
+            EventResult::Ignored
+        }
     }
 }
 
@@ -159,7 +158,7 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
                 return EventResult::Ignored;
             }
 
-            if plan.target == MouseTarget::CommandPalette {
+            if plan.target == MouseTarget::CommandLine {
                 return EventResult::Ignored;
             }
 

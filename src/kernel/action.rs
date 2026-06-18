@@ -65,10 +65,6 @@ pub enum Action {
     InputDialogCursorRight,
     InputDialogAccept,
     InputDialogCancel,
-    PaletteAppend(char),
-    PaletteBackspace,
-    PaletteMoveSelection(isize),
-    PaletteClose,
     CommandLineAppend(char),
     EditorSetActivePane {
         pane: usize,

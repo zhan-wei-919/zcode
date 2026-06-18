@@ -309,20 +309,21 @@ fn escape_opens_settings_when_idle_in_editor() {
 }
 
 #[test]
-fn escape_closes_palette_first() {
+fn escape_closes_command_line_first() {
     let mut store = new_store();
-    store.state.ui.command_palette.visible = true;
-    store.state.ui.command_palette.query = "x".to_string();
-    store.state.ui.command_palette.selected = 1;
-    store.state.ui.focus = FocusTarget::CommandPalette;
+    store.state.ui.command_line.active = true;
+    store.state.ui.command_line.input = "x".to_string();
+    store.state.ui.command_line.cursor = 1;
+    store.state.ui.command_line.selected = 1;
+    store.state.ui.focus = FocusTarget::CommandLine;
 
     let result = store.dispatch(Action::RunCommand(Command::Escape));
 
     assert!(result.effects.is_empty());
     assert!(result.state_changed);
-    assert!(!store.state.ui.command_palette.visible);
-    assert!(store.state.ui.command_palette.query.is_empty());
-    assert_eq!(store.state.ui.command_palette.selected, 0);
+    assert!(!store.state.ui.command_line.active);
+    assert!(store.state.ui.command_line.input.is_empty());
+    assert_eq!(store.state.ui.command_line.selected, 0);
     assert_eq!(store.state.ui.focus, FocusTarget::Editor);
 }
 

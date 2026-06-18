@@ -51,7 +51,7 @@ impl Workbench {
                 self.dispatch_kernel(KernelAction::RunCommand(Command::OpenDiagnostics))
             }
             util::ActivityItem::Palette => {
-                self.dispatch_kernel(KernelAction::RunCommand(Command::CommandPalette))
+                self.dispatch_kernel(KernelAction::RunCommand(Command::OpenCommandLine))
             }
             util::ActivityItem::Git => {
                 self.dispatch_kernel(KernelAction::RunCommand(Command::GitTogglePanel))

@@ -471,19 +471,16 @@ fn test_drag_sidebar_splitter_updates_sidebar_width() {
 }
 
 #[test]
-fn test_command_palette_visible_mouse_down_does_not_steal_focus() {
+fn test_command_line_active_mouse_down_does_not_steal_focus() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
     let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
 
     render_once(&mut workbench, 120, 40);
 
-    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::CommandPalette));
-    assert!(workbench.store.state().ui.command_palette.visible);
-    assert_eq!(
-        workbench.store.state().ui.focus,
-        FocusTarget::CommandPalette
-    );
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::OpenCommandLine));
+    assert!(workbench.store.state().ui.command_line.active);
+    assert_eq!(workbench.store.state().ui.focus, FocusTarget::CommandLine);
 
     let editor_area = *workbench
         .frame_layout
@@ -500,11 +497,8 @@ fn test_command_palette_visible_mouse_down_does_not_steal_focus() {
         click_y,
     ));
 
-    assert!(workbench.store.state().ui.command_palette.visible);
-    assert_eq!(
-        workbench.store.state().ui.focus,
-        FocusTarget::CommandPalette
-    );
+    assert!(workbench.store.state().ui.command_line.active);
+    assert_eq!(workbench.store.state().ui.focus, FocusTarget::CommandLine);
 }
 
 #[test]

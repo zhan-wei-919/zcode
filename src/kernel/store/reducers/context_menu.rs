@@ -502,7 +502,7 @@ impl super::Store {
     pub(super) fn reduce_context_menu_action(&mut self, action: Action) -> super::DispatchResult {
         match action {
             Action::ContextMenuOpen { request, x, y } => {
-                if self.state.ui.command_palette.visible
+                if self.state.ui.command_line.active
                     || self.state.ui.input_dialog.visible
                     || self.state.ui.confirm_dialog.visible
                 {

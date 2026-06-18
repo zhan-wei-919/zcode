@@ -38,7 +38,6 @@ mod mouse;
 mod mouse_route;
 mod mouse_tracker;
 mod paint;
-mod palette;
 mod render;
 mod state;
 #[cfg(test)]

@@ -298,7 +298,7 @@ impl Workbench {
             || self.store.state().ui.completion.request.is_some()
             || self.store.state().ui.completion.pending_request.is_some()
             || self.store.state().ui.signature_help.visible
-            || self.store.state().ui.command_palette.visible
+            || self.store.state().ui.command_line.active
             || self.store.state().ui.input_dialog.visible
             || self.store.state().ui.confirm_dialog.visible
             || self.store.state().ui.hover.is_active()
@@ -395,7 +395,7 @@ impl Workbench {
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;
         }
-        if self.store.state().ui.command_palette.visible
+        if self.store.state().ui.command_line.active
             || self.store.state().ui.input_dialog.visible
             || self.store.state().ui.confirm_dialog.visible
         {
@@ -419,7 +419,7 @@ impl Workbench {
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;
         }
-        if self.store.state().ui.command_palette.visible
+        if self.store.state().ui.command_line.active
             || self.store.state().ui.input_dialog.visible
             || self.store.state().ui.confirm_dialog.visible
         {
@@ -443,7 +443,7 @@ impl Workbench {
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;
         }
-        if self.store.state().ui.command_palette.visible
+        if self.store.state().ui.command_line.active
             || self.store.state().ui.input_dialog.visible
             || self.store.state().ui.confirm_dialog.visible
         {

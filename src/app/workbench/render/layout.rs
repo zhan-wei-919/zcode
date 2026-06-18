@@ -1,5 +1,4 @@
 use super::super::dnd_rules::{drop_intent, DropIntent};
-use super::super::palette;
 use super::super::Workbench;
 use super::dialogs::{
     input_dialog_cursor, render_confirm_dialog, render_context_menu, render_input_dialog,
@@ -96,8 +95,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
 
     render_drag_preview(workbench, backend, area);
 
-    if !workbench.store.state().ui.command_palette.visible
-        && !workbench.store.state().ui.command_line.active
+    if !workbench.store.state().ui.command_line.active
         && !workbench.store.state().ui.overlay.is_visible()
         && !workbench.store.state().ui.input_dialog.visible
         && !workbench.store.state().ui.confirm_dialog.visible
@@ -122,13 +120,6 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
     if workbench.store.state().ui.context_menu.visible {
         let mut painter = Painter::new();
         render_context_menu(workbench, &mut painter, area);
-        backend.draw(area, painter.cmds());
-    }
-
-    if workbench.store.state().ui.command_palette.visible {
-        let _scope = perf::scope("render.palette");
-        let mut painter = Painter::new();
-        palette::render(workbench, &mut painter, area);
         backend.draw(area, painter.cmds());
     }
 
@@ -369,12 +360,6 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
         return None;
     }
 
-    if workbench.store.state().ui.command_palette.visible
-        && workbench.store.state().ui.focus == FocusTarget::CommandPalette
-    {
-        return palette::cursor(workbench);
-    }
-
     if workbench.store.state().ui.command_line.active {
         return workbench.command_line_cursor();
     }
@@ -403,7 +388,6 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
         }
         FocusTarget::Overlay => None,
         FocusTarget::CommandLine => None,
-        FocusTarget::CommandPalette => None,
     }
 }
 

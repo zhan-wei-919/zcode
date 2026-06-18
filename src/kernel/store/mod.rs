@@ -21,8 +21,6 @@ mod explorer;
 mod git;
 #[path = "reducers/input_dialog.rs"]
 mod input_dialog;
-#[path = "reducers/palette.rs"]
-mod palette;
 #[path = "reducers/search.rs"]
 mod search;
 
@@ -121,7 +119,6 @@ fn perf_command_label(command: &Command) -> &'static str {
         Command::FocusSearch => "kernel.command.focus_search",
         Command::OpenDiagnostics => "kernel.command.open_diagnostics",
         Command::CloseOverlay => "kernel.command.close_overlay",
-        Command::CommandPalette => "kernel.command.command_palette",
         Command::Escape => "kernel.command.escape",
         _ => "kernel.command.other",
     }
@@ -1445,10 +1442,6 @@ impl Store {
                     state_changed,
                 }
             }
-            action @ Action::PaletteAppend(_)
-            | action @ Action::PaletteBackspace
-            | action @ Action::PaletteMoveSelection(_)
-            | action @ Action::PaletteClose => self.reduce_palette_action(action),
             Action::CommandLineAppend(ch) => {
                 if !self.state.ui.command_line.active {
                     DispatchResult {
@@ -1622,15 +1615,22 @@ impl Store {
 
         match command {
             Command::Escape => {
-                if self.state.ui.command_palette.visible {
-                    self.state.ui.command_palette.reset();
-                    if self.state.ui.focus == FocusTarget::CommandPalette {
+                // 命令行 / 浮层各自的 Esc 已由其键位上下文处理；此处兜底关闭它们，
+                // 防止 Escape 经全局回退时残留活动状态。
+                if self.state.ui.command_line.active {
+                    self.state.ui.command_line.reset();
+                    if self.state.ui.focus == FocusTarget::CommandLine {
                         self.state.ui.focus = FocusTarget::Editor;
                     }
-
                     return DispatchResult {
                         effects,
                         state_changed: true,
+                    };
+                }
+                if self.state.ui.overlay.is_visible() {
+                    return DispatchResult {
+                        effects,
+                        state_changed: self.close_overlay(),
                     };
                 }
 
@@ -2043,81 +2043,6 @@ impl Store {
                     effects,
                     state_changed,
                 };
-            }
-            Command::CommandPalette => {
-                let visible = !self.state.ui.command_palette.visible;
-                self.state.ui.command_palette.reset();
-                self.state.ui.command_palette.visible = visible;
-                if visible {
-                    self.state.ui.focus = FocusTarget::CommandPalette;
-                } else if self.state.ui.focus == FocusTarget::CommandPalette {
-                    self.state.ui.focus = FocusTarget::Editor;
-                }
-                state_changed = true;
-            }
-            Command::PaletteClose => {
-                if self.state.ui.command_palette.visible {
-                    self.state.ui.command_palette.reset();
-                    if self.state.ui.focus == FocusTarget::CommandPalette {
-                        self.state.ui.focus = FocusTarget::Editor;
-                    }
-                    state_changed = true;
-                }
-            }
-            Command::PaletteBackspace => {
-                if self.state.ui.command_palette.visible {
-                    let removed = self.state.ui.command_palette.query.pop().is_some();
-                    if removed {
-                        self.state.ui.command_palette.selected = 0;
-                        state_changed = true;
-                    }
-                }
-            }
-            Command::PaletteMoveUp => {
-                if self.state.ui.command_palette.visible {
-                    let prev = self.state.ui.command_palette.selected;
-                    self.state.ui.command_palette.selected = prev.saturating_sub(1);
-                    state_changed = self.state.ui.command_palette.selected != prev;
-                }
-            }
-            Command::PaletteMoveDown => {
-                if self.state.ui.command_palette.visible {
-                    let prev = self.state.ui.command_palette.selected;
-                    self.state.ui.command_palette.selected = prev.saturating_add(1);
-                    state_changed = self.state.ui.command_palette.selected != prev;
-                }
-            }
-            Command::PaletteConfirm => {
-                if !self.state.ui.command_palette.visible {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                let query = self.state.ui.command_palette.query.clone();
-                let selected_raw = self.state.ui.command_palette.selected;
-                let matches = crate::kernel::palette::match_items(&query);
-
-                let palette_closed = true;
-                self.state.ui.command_palette.reset();
-                if self.state.ui.focus == FocusTarget::CommandPalette {
-                    self.state.ui.focus = FocusTarget::Editor;
-                }
-
-                if matches.is_empty() {
-                    return DispatchResult {
-                        effects,
-                        state_changed: palette_closed,
-                    };
-                }
-
-                let selected = selected_raw.min(matches.len().saturating_sub(1));
-                let cmd = matches[selected].command.clone();
-
-                let mut result = self.dispatch_command(cmd);
-                result.state_changed |= palette_closed;
-                return result;
             }
             Command::OpenCommandLine => {
                 self.state.ui.command_line.reset();

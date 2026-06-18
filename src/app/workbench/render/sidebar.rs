@@ -48,7 +48,7 @@ impl Workbench {
                     state.ui.sidebar_visible && state.ui.sidebar_tab == SidebarTab::Explorer
                 }
                 super::super::util::ActivityItem::Panel => state.ui.overlay.is_visible(),
-                super::super::util::ActivityItem::Palette => state.ui.command_palette.visible,
+                super::super::util::ActivityItem::Palette => state.ui.command_line.active,
                 super::super::util::ActivityItem::Git => {
                     state.git.repo_root.is_some() && state.ui.git_panel_expanded
                 }

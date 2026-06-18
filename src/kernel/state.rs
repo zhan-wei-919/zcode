@@ -25,7 +25,6 @@ pub enum FocusTarget {
     Editor,
     Overlay,
     CommandLine,
-    CommandPalette,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,19 +56,6 @@ impl Default for EditorLayoutState {
             panes: 1,
             active_pane: 0,
         }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct CommandPaletteState {
-    pub visible: bool,
-    pub query: String,
-    pub selected: usize,
-}
-
-impl CommandPaletteState {
-    pub fn reset(&mut self) {
-        *self = Self::default();
     }
 }
 
@@ -512,7 +498,6 @@ pub struct UiState {
     pub overlay: OverlayState,
     pub focus: FocusTarget,
     pub editor_layout: EditorLayoutState,
-    pub command_palette: CommandPaletteState,
     pub command_line: CommandLineState,
     pub input_dialog: InputDialogState,
     pub context_menu: ContextMenuState,
@@ -535,11 +520,6 @@ impl Default for UiState {
             overlay: OverlayState::default(),
             focus: FocusTarget::Editor,
             editor_layout: EditorLayoutState::default(),
-            command_palette: CommandPaletteState {
-                visible: false,
-                query: String::new(),
-                selected: 0,
-            },
             command_line: CommandLineState::default(),
             input_dialog: InputDialogState::default(),
             context_menu: ContextMenuState::default(),
