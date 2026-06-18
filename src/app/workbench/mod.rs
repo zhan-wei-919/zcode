@@ -63,7 +63,6 @@ const EDITOR_SEARCH_CHANNEL_CAP: usize = 64;
 const GLOBAL_SEARCH_CHANNEL_CAP: usize = 64;
 const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 const HOVER_IDLE_DELAY: Duration = Duration::from_millis(500);
-const TERMINAL_CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const DEFINITION_JUMP_HIGHLIGHT_DURATION: Duration = Duration::from_millis(1100);
 const DEFINITION_JUMP_PENDING_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -185,34 +184,6 @@ struct ThemeEditorLayoutCache {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TerminalCellPos {
-    row: u16,
-    col: u16,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TerminalSelection {
-    anchor: TerminalCellPos,
-    cursor: TerminalCellPos,
-}
-
-impl TerminalSelection {
-    fn is_empty(self) -> bool {
-        self.anchor == self.cursor
-    }
-
-    fn normalized(self) -> (TerminalCellPos, TerminalCellPos) {
-        let anchor_key = (self.anchor.row, self.anchor.col);
-        let cursor_key = (self.cursor.row, self.cursor.col);
-        if anchor_key <= cursor_key {
-            (self.anchor, self.cursor)
-        } else {
-            (self.cursor, self.anchor)
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct EditorScrollbarDragState {
     pane: usize,
     grab_offset: u16,
@@ -236,10 +207,6 @@ struct ViewportCache {
     applied_code_actions_panel_height: Option<u16>,
     symbols_panel_height: Option<u16>,
     applied_symbols_panel_height: Option<u16>,
-    terminal_panel_id: Option<crate::kernel::TerminalId>,
-    terminal_panel_size: Option<(u16, u16)>,
-    applied_terminal_panel_id: Option<crate::kernel::TerminalId>,
-    applied_terminal_panel_size: Option<(u16, u16)>,
 }
 
 pub struct Workbench {
@@ -729,17 +696,6 @@ impl Workbench {
             AppMessage::GitWorktreeResolved { path } => {
                 let _ = self.dispatch_kernel(KernelAction::GitWorktreeResolved { path });
             }
-            AppMessage::TerminalSpawned { id, title } => {
-                let _ = self.dispatch_kernel(KernelAction::TerminalSpawned { id, title });
-            }
-            AppMessage::TerminalOutput { id, bytes } => {
-                self.interaction.terminal_selection = None;
-                self.interaction.terminal_selecting = false;
-                let _ = self.dispatch_kernel(KernelAction::TerminalOutput { id, bytes });
-            }
-            AppMessage::TerminalExited { id, code } => {
-                let _ = self.dispatch_kernel(KernelAction::TerminalExited { id, code });
-            }
             AppMessage::FileReloaded { request, content } => {
                 let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::FileReloaded {
                     content,
@@ -822,7 +778,6 @@ impl Workbench {
                 " SEARCH RESULTS ".to_string(),
             ),
             (BottomPanelTab::Logs, " LOGS ".to_string()),
-            (BottomPanelTab::Terminal, " TERMINAL ".to_string()),
         ]
     }
 

@@ -39,7 +39,6 @@ impl Workbench {
                 self.paint_bottom_panel_search_results(painter, content_area)
             }
             BottomPanelTab::Logs => self.paint_bottom_panel_logs(painter, content_area),
-            BottomPanelTab::Terminal => self.paint_bottom_panel_terminal(painter, content_area),
         }
     }
 

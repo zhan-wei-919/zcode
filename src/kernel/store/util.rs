@@ -43,7 +43,6 @@ pub(super) fn bottom_panel_tabs() -> Vec<BottomPanelTab> {
         BottomPanelTab::Symbols,
         BottomPanelTab::SearchResults,
         BottomPanelTab::Logs,
-        BottomPanelTab::Terminal,
     ]
 }
 

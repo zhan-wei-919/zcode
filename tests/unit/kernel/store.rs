@@ -391,25 +391,6 @@ fn escape_clears_editor_selection_before_opening_settings() {
 }
 
 #[test]
-fn terminal_tab_spawns_session_on_activation() {
-    let mut store = new_store();
-    let result = store.dispatch(Action::BottomPanelSetActiveTab {
-        tab: BottomPanelTab::Terminal,
-    });
-
-    assert!(store.state.ui.bottom_panel.visible);
-    assert_eq!(
-        store.state.ui.bottom_panel.active_tab,
-        BottomPanelTab::Terminal
-    );
-    assert_eq!(store.state.terminal.active, Some(1));
-    assert!(matches!(
-        result.effects.as_slice(),
-        [Effect::TerminalSpawn { id: 1, .. }]
-    ));
-}
-
-#[test]
 fn bottom_panel_height_ratio_clamps_to_valid_range() {
     let mut store = new_store();
 
@@ -424,81 +405,6 @@ fn bottom_panel_height_ratio_clamps_to_valid_range() {
     let result = store.dispatch(Action::BottomPanelSetHeightRatio { ratio: 900 });
     assert!(!result.state_changed);
     assert_eq!(store.state.ui.bottom_panel.height_ratio, 900);
-}
-
-#[test]
-fn terminal_write_requires_session() {
-    let mut store = new_store();
-    let result = store.dispatch(Action::TerminalWrite {
-        id: 42,
-        bytes: b"ls\n".to_vec(),
-    });
-    assert!(result.effects.is_empty());
-
-    let _ = store.dispatch(Action::BottomPanelSetActiveTab {
-        tab: BottomPanelTab::Terminal,
-    });
-    let id = store.state.terminal.active.expect("session");
-    let result = store.dispatch(Action::TerminalWrite {
-        id,
-        bytes: b"pwd\n".to_vec(),
-    });
-    assert!(matches!(
-        result.effects.as_slice(),
-        [Effect::TerminalWrite { id: _, .. }]
-    ));
-}
-
-#[test]
-fn terminal_resize_is_idempotent() {
-    let mut store = new_store();
-    let _ = store.dispatch(Action::BottomPanelSetActiveTab {
-        tab: BottomPanelTab::Terminal,
-    });
-    let id = store.state.terminal.active.expect("session");
-
-    let result = store.dispatch(Action::TerminalResize {
-        id,
-        cols: 80,
-        rows: 24,
-    });
-    assert!(result.effects.is_empty());
-
-    let result = store.dispatch(Action::TerminalResize {
-        id,
-        cols: 100,
-        rows: 40,
-    });
-    assert!(matches!(
-        result.effects.as_slice(),
-        [Effect::TerminalResize { id: _, .. }]
-    ));
-    let session = store.state.terminal.session_mut(id).unwrap();
-    assert_eq!(session.cols, 100);
-    assert_eq!(session.rows, 40);
-}
-
-#[test]
-fn terminal_output_marks_dirty_and_exit_kills() {
-    let mut store = new_store();
-    let _ = store.dispatch(Action::BottomPanelSetActiveTab {
-        tab: BottomPanelTab::Terminal,
-    });
-    let id = store.state.terminal.active.expect("session");
-
-    let result = store.dispatch(Action::TerminalOutput {
-        id,
-        bytes: b"hi\n".to_vec(),
-    });
-    assert!(result.state_changed);
-    assert!(store.state.terminal.session_mut(id).unwrap().dirty);
-
-    let result = store.dispatch(Action::TerminalExited { id, code: Some(0) });
-    assert!(matches!(
-        result.effects.as_slice(),
-        [Effect::TerminalKill { id: _ }]
-    ));
-    assert!(store.state.terminal.session_mut(id).unwrap().exited);
 }
 
 #[test]

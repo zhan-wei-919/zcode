@@ -25,8 +25,6 @@ mod input_dialog;
 mod palette;
 #[path = "reducers/search.rs"]
 mod search;
-#[path = "reducers/terminal.rs"]
-mod terminal;
 #[path = "reducers/theme_editor.rs"]
 mod theme_editor;
 
@@ -97,7 +95,6 @@ fn perf_action_label(action: &Action) -> &'static str {
         Action::DirLoadError { .. } => "kernel.action.dir_load_error",
         Action::GitStatusUpdated { .. } => "kernel.action.git_status_updated",
         Action::GitDiffUpdated { .. } => "kernel.action.git_diff_updated",
-        Action::TerminalOutput { .. } => "kernel.action.terminal_output",
         _ => "kernel.action.other",
     }
 }
@@ -1058,13 +1055,8 @@ impl Store {
                 let next = tab.clone();
                 self.state.ui.bottom_panel.visible = true;
                 self.state.ui.bottom_panel.active_tab = tab;
-                let mut effects = Vec::new();
-                let mut state_changed = !prev_visible || prev != next;
-                if next == BottomPanelTab::Terminal {
-                    let (changed, terminal_effects) = self.ensure_terminal_session();
-                    state_changed |= changed;
-                    effects.extend(terminal_effects);
-                }
+                let effects = Vec::new();
+                let state_changed = !prev_visible || prev != next;
                 DispatchResult {
                     effects,
                     state_changed,
@@ -1124,12 +1116,6 @@ impl Store {
                 effects: Vec::new(),
                 state_changed: self.state.symbols.set_view_height(height),
             },
-            action @ Action::TerminalWrite { .. }
-            | action @ Action::TerminalResize { .. }
-            | action @ Action::TerminalScroll { .. }
-            | action @ Action::TerminalSpawned { .. }
-            | action @ Action::TerminalOutput { .. }
-            | action @ Action::TerminalExited { .. } => self.reduce_terminal_action(action),
             action @ Action::LspDiagnostics { .. }
             | action @ Action::LspHoverClear
             | action @ Action::LspHoverResponse { .. }
@@ -2219,12 +2205,6 @@ impl Store {
                     self.state.ui.focus = FocusTarget::Editor;
                 }
                 state_changed = true;
-                let mut effects = effects;
-                if visible && self.state.ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
-                    let (changed, terminal_effects) = self.ensure_terminal_session();
-                    state_changed |= changed;
-                    effects.extend(terminal_effects);
-                }
                 return DispatchResult {
                     effects,
                     state_changed,
@@ -2234,12 +2214,6 @@ impl Store {
                 self.state.ui.bottom_panel.visible = true;
                 self.state.ui.focus = FocusTarget::BottomPanel;
                 state_changed = true;
-                let mut effects = effects;
-                if self.state.ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
-                    let (changed, terminal_effects) = self.ensure_terminal_session();
-                    state_changed |= changed;
-                    effects.extend(terminal_effects);
-                }
                 return DispatchResult {
                     effects,
                     state_changed,
@@ -2256,12 +2230,6 @@ impl Store {
                         state_changed = true;
                     }
                 }
-                let mut effects = effects;
-                if self.state.ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
-                    let (changed, terminal_effects) = self.ensure_terminal_session();
-                    state_changed |= changed;
-                    effects.extend(terminal_effects);
-                }
                 return DispatchResult {
                     effects,
                     state_changed,
@@ -2277,12 +2245,6 @@ impl Store {
                         self.state.ui.bottom_panel.active_tab = prev;
                         state_changed = true;
                     }
-                }
-                let mut effects = effects;
-                if self.state.ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
-                    let (changed, terminal_effects) = self.ensure_terminal_session();
-                    state_changed |= changed;
-                    effects.extend(terminal_effects);
                 }
                 return DispatchResult {
                     effects,

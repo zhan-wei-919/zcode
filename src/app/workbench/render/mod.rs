@@ -12,7 +12,6 @@ mod git;
 mod layout;
 mod sidebar;
 mod status;
-mod terminal;
 
 pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area: Rect) {
     layout::render(workbench, backend, area);
@@ -110,22 +109,6 @@ impl Workbench {
             return;
         }
         self.render_cache.viewport.symbols_panel_height = Some(height);
-    }
-
-    fn sync_terminal_view_size(&mut self, id: crate::kernel::TerminalId, width: u16, height: u16) {
-        if width == 0 || height == 0 {
-            return;
-        }
-
-        let next = (width, height);
-        if self.render_cache.viewport.terminal_panel_id == Some(id)
-            && self.render_cache.viewport.terminal_panel_size == Some(next)
-        {
-            return;
-        }
-
-        self.render_cache.viewport.terminal_panel_id = Some(id);
-        self.render_cache.viewport.terminal_panel_size = Some(next);
     }
 
     pub fn flush_post_render_sync(&mut self) -> bool {
@@ -240,25 +223,6 @@ impl Workbench {
                 self.render_cache.viewport.applied_symbols_panel_height = Some(height);
                 changed |= self.dispatch_kernel(KernelAction::SymbolsSetViewHeight {
                     height: height as usize,
-                });
-            }
-        }
-
-        if let (Some(id), Some((width, height))) = (
-            self.render_cache.viewport.terminal_panel_id,
-            self.render_cache.viewport.terminal_panel_size,
-        ) {
-            if self.render_cache.viewport.applied_terminal_panel_id != Some(id)
-                || self.render_cache.viewport.applied_terminal_panel_size != Some((width, height))
-            {
-                self.render_cache.viewport.applied_terminal_panel_id = Some(id);
-                self.render_cache.viewport.applied_terminal_panel_size = Some((width, height));
-                self.interaction.terminal_selection = None;
-                self.interaction.terminal_selecting = false;
-                changed |= self.dispatch_kernel(KernelAction::TerminalResize {
-                    id,
-                    cols: width,
-                    rows: height,
                 });
             }
         }

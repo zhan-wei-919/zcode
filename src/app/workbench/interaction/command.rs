@@ -7,7 +7,7 @@ use crate::core::Command;
 use crate::kernel::lsp_registry;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::KeybindingContext;
-use crate::kernel::{Action as KernelAction, BottomPanelTab, EditorAction, FocusTarget};
+use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget};
 use crate::tui::view::EventResult;
 use std::time::Instant;
 
@@ -51,18 +51,6 @@ impl Workbench {
                 }
                 EventResult::Consumed
             }
-            KeybindingContext::BottomPanel => {
-                if self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal {
-                    if let Some(id) = self.store.state().terminal.active_session().map(|s| s.id) {
-                        let _ = self.dispatch_kernel(KernelAction::TerminalWrite {
-                            id,
-                            bytes: text.as_bytes().to_vec(),
-                        });
-                        return EventResult::Consumed;
-                    }
-                }
-                EventResult::Ignored
-            }
             _ => EventResult::Ignored,
         }
     }
@@ -80,14 +68,6 @@ impl Workbench {
             text.push_str(line);
         }
         self.set_clipboard_text(&text);
-    }
-
-    pub(in super::super) fn copy_terminal_selection_to_clipboard(&mut self) -> bool {
-        let Some(text) = self.terminal_selection_text() else {
-            return false;
-        };
-        self.set_clipboard_text(&text);
-        true
     }
 
     pub(in super::super) fn maybe_warn_clipboard_unavailable(&mut self) {

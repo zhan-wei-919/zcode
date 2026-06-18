@@ -4,10 +4,9 @@ use super::super::Workbench;
 use super::dialogs::{
     input_dialog_cursor, render_confirm_dialog, render_context_menu, render_input_dialog,
 };
-use super::terminal::cursor_position_terminal;
 use crate::kernel::editor::TabId;
 use crate::kernel::services::adapters::perf;
-use crate::kernel::{BottomPanelTab, FocusTarget, SidebarTab};
+use crate::kernel::{FocusTarget, SidebarTab};
 use crate::models::NodeId;
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::{Pos, Rect};
@@ -492,10 +491,7 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
             let layout = compute_editor_pane_layout(area, pane_state, config);
             cursor_position_editor(&layout, pane_state, config)
         }
-        FocusTarget::BottomPanel => match workbench.store.state().ui.bottom_panel.active_tab {
-            BottomPanelTab::Terminal => cursor_position_terminal(workbench),
-            _ => None,
-        },
+        FocusTarget::BottomPanel => None,
         FocusTarget::CommandPalette => None,
         FocusTarget::ThemeEditor => None,
     }

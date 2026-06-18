@@ -12,7 +12,6 @@ pub mod search;
 pub mod services;
 pub mod state;
 pub mod store;
-pub mod terminal;
 
 pub use action::Action;
 pub use editor::{EditorAction, EditorState};
@@ -32,4 +31,3 @@ pub use state::{
     UiState,
 };
 pub use store::{CompletionRanker, DispatchResult, Store};
-pub use terminal::{TerminalId, TerminalSession, TerminalState};

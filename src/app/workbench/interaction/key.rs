@@ -1,5 +1,4 @@
 use super::super::Workbench;
-use super::terminal::terminal_bytes_for_key_event;
 use crate::core::event::{
     InputEvent, Key, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -43,12 +42,6 @@ impl Workbench {
         }
         self.lsp_sync.debounce.inlay_hints = None;
         self.lsp_sync.debounce.folding_range = None;
-        if self.store.state().ui.focus == FocusTarget::BottomPanel
-            && self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal
-        {
-            self.ui.terminal_cursor_visible = true;
-            self.ui.terminal_cursor_last_blink = Instant::now();
-        }
 
         if !preserve_hover {
             if let Some(service) = self
@@ -234,43 +227,6 @@ impl Workbench {
             .kernel_services
             .get::<KeybindingService>()
             .and_then(|service| service.resolve(context, &key).cloned());
-
-        let terminal_active = self.store.state().ui.focus == FocusTarget::BottomPanel
-            && self.store.state().ui.bottom_panel.active_tab == BottomPanelTab::Terminal;
-
-        if terminal_active
-            && !matches!(
-                cmd.as_ref(),
-                Some(Command::ToggleBottomPanel | Command::FocusBottomPanel)
-            )
-        {
-            if matches!(cmd.as_ref(), Some(Command::Copy))
-                && self.copy_terminal_selection_to_clipboard()
-            {
-                return EventResult::Consumed;
-            }
-
-            if key_event.code == KeyCode::PageUp {
-                if let Some(id) = self.store.state().terminal.active_session().map(|s| s.id) {
-                    let _ = self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: 20 });
-                }
-                return EventResult::Consumed;
-            }
-
-            if key_event.code == KeyCode::PageDown {
-                if let Some(id) = self.store.state().terminal.active_session().map(|s| s.id) {
-                    let _ = self.dispatch_kernel(KernelAction::TerminalScroll { id, delta: -20 });
-                }
-                return EventResult::Consumed;
-            }
-
-            if let Some(bytes) = terminal_bytes_for_key_event(key_event) {
-                if let Some(id) = self.store.state().terminal.active_session().map(|s| s.id) {
-                    let _ = self.dispatch_kernel(KernelAction::TerminalWrite { id, bytes });
-                }
-                return EventResult::Consumed;
-            }
-        }
 
         if let Some(cmd) = cmd {
             if cmd == Command::Copy

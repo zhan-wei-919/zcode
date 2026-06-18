@@ -8,18 +8,14 @@ use std::time::Instant;
 pub(in crate::app::workbench) struct UiDisplayState {
     pub(in crate::app::workbench) hover_popup: HoverPopupRenderState,
     pub(in crate::app::workbench) completion_doc: CompletionDocState,
-    pub(in crate::app::workbench) terminal_cursor_visible: bool,
-    pub(in crate::app::workbench) terminal_cursor_last_blink: Instant,
     pub(in crate::app::workbench) click_tracker: ClickTracker,
 }
 
 impl UiDisplayState {
-    pub(in crate::app::workbench) fn new(now: Instant) -> Self {
+    pub(in crate::app::workbench) fn new(_now: Instant) -> Self {
         Self {
             hover_popup: HoverPopupRenderState::default(),
             completion_doc: CompletionDocState::default(),
-            terminal_cursor_visible: true,
-            terminal_cursor_last_blink: now,
             click_tracker: ClickTracker::default(),
         }
     }

@@ -54,12 +54,7 @@ impl Workbench {
                         .dispatch_kernel(KernelAction::RunCommand(Command::ToggleBottomPanel));
                 }
 
-                let mut changed = self.dispatch_kernel(KernelAction::BottomPanelSetActiveTab {
-                    tab: crate::kernel::BottomPanelTab::Terminal,
-                });
-                changed |=
-                    self.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel));
-                changed
+                self.dispatch_kernel(KernelAction::RunCommand(Command::FocusBottomPanel))
             }
             util::ActivityItem::Palette => {
                 self.dispatch_kernel(KernelAction::RunCommand(Command::CommandPalette))

@@ -42,8 +42,6 @@ tree-sitter-bash = "0.20"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-portable-pty = { version = "0.9.0", optional = true }
-vt100 = { version = "0.16.2", optional = true }
 notify = "7"
 signal-hook = "0.3"
 libc = "0.2"
@@ -52,8 +50,7 @@ libc = "0.2"
 tempfile = "3.23.0"
 
 [features]
-terminal = ["dep:portable-pty", "dep:vt100"]
-tui = ["dep:ratatui", "dep:crossterm", "terminal"]
+tui = ["dep:ratatui", "dep:crossterm"]
 default = ["tui"]
 perf = []
 
