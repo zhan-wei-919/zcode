@@ -4,7 +4,7 @@ use crate::kernel::state::{
     ContextMenuAction, ContextMenuEntry, ContextMenuRequest, ContextMenuState,
     ExplorerClipboardMode, ExplorerMenuAction, PendingAction, TabMenuAction,
 };
-use crate::kernel::{Action, Effect, FocusTarget, SidebarTab};
+use crate::kernel::{Action, Effect, FocusTarget};
 use std::path::{Path, PathBuf};
 
 fn action_entry(label: &'static str, action: ContextMenuAction, enabled: bool) -> ContextMenuEntry {
@@ -518,10 +518,6 @@ impl super::Store {
                     ContextMenuRequest::Explorer { tree_row } => {
                         if !self.state.ui.sidebar_visible {
                             self.state.ui.sidebar_visible = true;
-                            state_changed = true;
-                        }
-                        if self.state.ui.sidebar_tab != SidebarTab::Explorer {
-                            self.state.ui.sidebar_tab = SidebarTab::Explorer;
                             state_changed = true;
                         }
                         if self.state.ui.focus != FocusTarget::Explorer {

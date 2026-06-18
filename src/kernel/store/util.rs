@@ -1,4 +1,4 @@
-use crate::kernel::{EditorState, FocusTarget, OverlayKind, SearchViewport, SidebarTab, UiState};
+use crate::kernel::{EditorState, FocusTarget, OverlayKind, SearchViewport, UiState};
 use ropey::RopeSlice;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -23,9 +23,6 @@ pub(super) fn resolve_renamed_path(
 
 pub(super) fn search_viewport_for_focus(ui: &UiState) -> Option<SearchViewport> {
     match ui.focus {
-        FocusTarget::Explorer if ui.sidebar_tab == SidebarTab::Search => {
-            Some(SearchViewport::Sidebar)
-        }
         FocusTarget::Overlay if ui.overlay.active == Some(OverlayKind::Search) => {
             Some(SearchViewport::BottomPanel)
         }

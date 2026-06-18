@@ -42,9 +42,7 @@ use intel::semantic::reconcile_pending_semantic_row;
 use search::search_open_target;
 use util::{find_open_tab, is_lsp_source_path, search_viewport_for_focus};
 
-use super::{
-    Action, AppState, EditorAction, Effect, FocusTarget, InputDialogKind, OverlayKind, SidebarTab,
-};
+use super::{Action, AppState, EditorAction, Effect, FocusTarget, InputDialogKind, OverlayKind};
 use crate::kernel::language::{
     adapter::adapter_for_tab, adapter_for, CompletionRecord, CompletionResolveState,
 };
@@ -1746,9 +1744,6 @@ impl Store {
                 if !self.state.ui.sidebar_visible {
                     self.state.ui.sidebar_visible = true;
                 }
-                if self.state.ui.sidebar_tab != SidebarTab::Explorer {
-                    self.state.ui.sidebar_tab = SidebarTab::Explorer;
-                }
                 if self.state.ui.focus != FocusTarget::Explorer {
                     self.state.ui.focus = FocusTarget::Explorer;
                 }
@@ -2010,21 +2005,11 @@ impl Store {
             Command::FocusExplorer => {
                 self.state.ui.focus = FocusTarget::Explorer;
                 self.state.ui.sidebar_visible = true;
-                self.state.ui.sidebar_tab = SidebarTab::Explorer;
                 state_changed = true;
             }
             Command::FocusSearch => {
-                // 全局搜索改为居中浮层（telescope 风格），不再占用 sidebar 标签。
+                // 全局搜索改为居中浮层（telescope 风格）。
                 state_changed = self.open_overlay(OverlayKind::Search);
-            }
-            Command::ToggleSidebarTab => {
-                self.state.ui.focus = FocusTarget::Explorer;
-                self.state.ui.sidebar_visible = true;
-                self.state.ui.sidebar_tab = match self.state.ui.sidebar_tab {
-                    SidebarTab::Explorer => SidebarTab::Search,
-                    SidebarTab::Search => SidebarTab::Explorer,
-                };
-                state_changed = true;
             }
             Command::FocusEditor => {
                 self.state.ui.focus = FocusTarget::Editor;
@@ -2135,23 +2120,17 @@ impl Store {
                 return result;
             }
             Command::ExplorerUp => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Explorer
-                {
+                if self.state.ui.focus == FocusTarget::Explorer {
                     state_changed = self.state.explorer.move_selection(-1);
                 }
             }
             Command::ExplorerDown => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Explorer
-                {
+                if self.state.ui.focus == FocusTarget::Explorer {
                     state_changed = self.state.explorer.move_selection(1);
                 }
             }
             Command::ExplorerActivate => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Explorer
-                {
+                if self.state.ui.focus == FocusTarget::Explorer {
                     let (changed, fx) = self.state.explorer.activate_selected();
                     return DispatchResult {
                         effects: fx,
@@ -2160,23 +2139,17 @@ impl Store {
                 }
             }
             Command::ExplorerCollapse => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Explorer
-                {
+                if self.state.ui.focus == FocusTarget::Explorer {
                     state_changed = self.state.explorer.collapse_selected();
                 }
             }
             Command::ExplorerScrollUp => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Explorer
-                {
+                if self.state.ui.focus == FocusTarget::Explorer {
                     state_changed = self.state.explorer.scroll(-3);
                 }
             }
             Command::ExplorerScrollDown => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Explorer
-                {
+                if self.state.ui.focus == FocusTarget::Explorer {
                     state_changed = self.state.explorer.scroll(3);
                 }
             }
@@ -2314,10 +2287,8 @@ impl Store {
                 };
             }
             Command::GlobalSearchStart => {
-                let search_focused = (self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Search)
-                    || (self.state.ui.focus == FocusTarget::Overlay
-                        && self.state.ui.overlay.active == Some(OverlayKind::Search));
+                let search_focused = self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Search);
                 if search_focused && !self.state.search.query.is_empty() {
                     let root = self.state.workspace_root.clone();
                     let pattern = self.state.search.query.clone();
@@ -2336,36 +2307,36 @@ impl Store {
                 }
             }
             Command::GlobalSearchCursorLeft => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Search
+                if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Search)
                 {
                     state_changed = self.state.search.cursor_left();
                 }
             }
             Command::GlobalSearchCursorRight => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Search
+                if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Search)
                 {
                     state_changed = self.state.search.cursor_right();
                 }
             }
             Command::GlobalSearchBackspace => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Search
+                if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Search)
                 {
                     state_changed = self.state.search.backspace_query();
                 }
             }
             Command::GlobalSearchToggleCaseSensitive => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Search
+                if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Search)
                 {
                     state_changed = self.state.search.toggle_case_sensitive();
                 }
             }
             Command::GlobalSearchToggleRegex => {
-                if self.state.ui.focus == FocusTarget::Explorer
-                    && self.state.ui.sidebar_tab == SidebarTab::Search
+                if self.state.ui.focus == FocusTarget::Overlay
+                    && self.state.ui.overlay.active == Some(OverlayKind::Search)
                 {
                     state_changed = self.state.search.toggle_regex();
                 }

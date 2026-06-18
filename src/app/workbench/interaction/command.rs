@@ -39,12 +39,6 @@ impl Workbench {
                 }
                 EventResult::Consumed
             }
-            KeybindingContext::SidebarSearch => {
-                for ch in text.chars() {
-                    let _ = self.dispatch_kernel(KernelAction::SearchAppend(ch));
-                }
-                EventResult::Consumed
-            }
             KeybindingContext::CommandLine => {
                 for ch in text.chars() {
                     let _ = self.dispatch_kernel(KernelAction::CommandLineAppend(ch));

@@ -17,9 +17,7 @@ fn apply_focus_plan(
     focus_plan: FocusPlan,
 ) -> bool {
     match focus_plan {
-        FocusPlan::ActivityBar | FocusPlan::SidebarTabs | FocusPlan::SidebarArea => {
-            workbench.handle_mouse_area(event)
-        }
+        FocusPlan::SidebarArea => workbench.handle_mouse_area(event),
         FocusPlan::EditorPane { pane } => {
             workbench.dispatch_kernel(KernelAction::EditorSetActivePane { pane })
         }
@@ -37,7 +35,6 @@ fn dispatch_by_target(
             .handle_sidebar_split_mouse(mouse_event, ui_out)
             .unwrap_or(EventResult::Ignored),
         MouseTarget::Explorer => workbench.handle_explorer_mouse(mouse_event, ui_out),
-        MouseTarget::Search => workbench.handle_search_mouse(mouse_event),
         MouseTarget::Editor => workbench.handle_editor_mouse(mouse_event, ui_out),
         MouseTarget::Overlay => workbench.handle_overlay_mouse(mouse_event),
         MouseTarget::ContextMenu | MouseTarget::CommandLine | MouseTarget::ByFocus => {
@@ -168,10 +165,7 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
             }
 
             let dispatch_target = if plan.target == MouseTarget::ByFocus {
-                mouse_target_from_focus(
-                    workbench.store.state().ui.focus,
-                    workbench.store.state().ui.sidebar_tab,
-                )
+                mouse_target_from_focus(workbench.store.state().ui.focus)
             } else {
                 plan.target
             };

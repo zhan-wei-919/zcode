@@ -59,11 +59,6 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::FocusSearch,
     },
     PaletteItem {
-        label: "View: Toggle Sidebar Tab",
-        label_lc: "view: toggle sidebar tab",
-        command: Command::ToggleSidebarTab,
-    },
-    PaletteItem {
         label: "View: Focus Editor",
         label_lc: "view: focus editor",
         command: Command::FocusEditor,

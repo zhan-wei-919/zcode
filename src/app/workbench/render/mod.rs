@@ -52,20 +52,12 @@ impl Workbench {
         self.render_cache.viewport.explorer_view_height = Some(height);
     }
 
-    fn sync_search_view_height(&mut self, viewport: SearchViewport, height: u16) {
+    fn sync_search_view_height(&mut self, _viewport: SearchViewport, height: u16) {
         if height == 0 {
             return;
         }
 
-        let slot = match viewport {
-            SearchViewport::Sidebar => {
-                &mut self.render_cache.viewport.search_sidebar_results_height
-            }
-            SearchViewport::BottomPanel => {
-                &mut self.render_cache.viewport.search_panel_results_height
-            }
-        };
-
+        let slot = &mut self.render_cache.viewport.search_panel_results_height;
         if *slot == Some(height) {
             return;
         }
@@ -153,23 +145,6 @@ impl Workbench {
             if self.render_cache.viewport.applied_explorer_view_height != Some(height) {
                 self.render_cache.viewport.applied_explorer_view_height = Some(height);
                 changed |= self.dispatch_kernel(KernelAction::ExplorerSetViewHeight {
-                    height: height as usize,
-                });
-            }
-        }
-
-        if let Some(height) = self.render_cache.viewport.search_sidebar_results_height {
-            if self
-                .render_cache
-                .viewport
-                .applied_search_sidebar_results_height
-                != Some(height)
-            {
-                self.render_cache
-                    .viewport
-                    .applied_search_sidebar_results_height = Some(height);
-                changed |= self.dispatch_kernel(KernelAction::SearchSetViewHeight {
-                    viewport: SearchViewport::Sidebar,
                     height: height as usize,
                 });
             }

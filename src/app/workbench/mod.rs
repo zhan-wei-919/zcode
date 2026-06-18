@@ -22,7 +22,7 @@ use crate::ui::backend::Backend;
 use crate::ui::core::color_support::detect_terminal_color_support;
 use crate::ui::core::geom::Rect;
 use crate::views::doc::RenderCache as DocRenderCache;
-use crate::views::{ExplorerView, SearchView};
+use crate::views::ExplorerView;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -49,7 +49,6 @@ mod util;
 use state::{FrameLayout, InteractionState, LspSyncState, RenderCache, ThemeState, UiDisplayState};
 
 const STATUS_HEIGHT: u16 = 1;
-const ACTIVITY_BAR_WIDTH: u16 = 3;
 const SIDEBAR_WIDTH_PERCENT: u16 = 20;
 const SIDEBAR_MIN_WIDTH: u16 = 20;
 const LOG_BUFFER_CAP: usize = 2000;
@@ -176,8 +175,6 @@ struct ViewportCache {
     applied_editor_content_sizes: Vec<(u16, u16)>,
     explorer_view_height: Option<u16>,
     applied_explorer_view_height: Option<u16>,
-    search_sidebar_results_height: Option<u16>,
-    applied_search_sidebar_results_height: Option<u16>,
     search_panel_results_height: Option<u16>,
     applied_search_panel_results_height: Option<u16>,
     problems_panel_height: Option<u16>,
@@ -193,7 +190,6 @@ struct ViewportCache {
 pub struct Workbench {
     store: Store,
     explorer: ExplorerView,
-    search_view: SearchView,
     editor_search_tasks: Vec<Option<SearchTask>>,
     editor_search_rx: Vec<Option<Receiver<SearchMessage>>>,
     log_rx: Option<Receiver<String>>,
@@ -376,7 +372,6 @@ impl Workbench {
         let mut workbench = Self {
             store,
             explorer: ExplorerView::new(),
-            search_view: SearchView::new(),
             editor_search_tasks: std::iter::repeat_with(|| None).take(panes).collect(),
             editor_search_rx: std::iter::repeat_with(|| None).take(panes).collect(),
             log_rx,

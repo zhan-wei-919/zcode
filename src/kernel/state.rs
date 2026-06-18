@@ -27,12 +27,6 @@ pub enum FocusTarget {
     CommandLine,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SidebarTab {
-    Explorer,
-    Search,
-}
-
 /// 居中 telescope 浮层承载的列表种类。条目 / 选择 / 滚动仍住在各自面板态里
 /// （`ProblemsState` 等），这里只记录当前活动的是哪一种。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -492,7 +486,6 @@ pub struct ContextMenuState {
 #[derive(Debug, Clone)]
 pub struct UiState {
     pub sidebar_visible: bool,
-    pub sidebar_tab: SidebarTab,
     pub sidebar_width: Option<u16>,
     pub git_panel_expanded: bool,
     pub overlay: OverlayState,
@@ -514,7 +507,6 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             sidebar_visible: true,
-            sidebar_tab: SidebarTab::Explorer,
             sidebar_width: None,
             git_panel_expanded: true,
             overlay: OverlayState::default(),

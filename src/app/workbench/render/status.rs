@@ -1,6 +1,6 @@
 use super::super::Workbench;
 use crate::kernel::editor::DiskState;
-use crate::kernel::{FocusTarget, SidebarTab};
+use crate::kernel::FocusTarget;
 use crate::ui::core::geom::{Pos, Rect as UiRect};
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::Style as UiStyle;
@@ -8,10 +8,7 @@ use crate::ui::core::style::Style as UiStyle;
 impl Workbench {
     fn active_label(&self) -> &'static str {
         match self.store.state().ui.focus {
-            FocusTarget::Explorer => match self.store.state().ui.sidebar_tab {
-                SidebarTab::Explorer => "Explorer",
-                SidebarTab::Search => "Search",
-            },
+            FocusTarget::Explorer => "Explorer",
             FocusTarget::Editor => "Editor",
             FocusTarget::Overlay => "Overlay",
             FocusTarget::CommandLine => "Command",

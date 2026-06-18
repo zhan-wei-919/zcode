@@ -8,7 +8,6 @@ mod editor;
 mod explorer;
 mod key;
 mod overlay;
-mod search;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LspDebouncePipeline {

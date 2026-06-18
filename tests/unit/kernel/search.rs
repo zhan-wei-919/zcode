@@ -8,7 +8,6 @@ fn match_item(file_index: usize, match_index: usize) -> Match {
 
 fn seeded_state(files: usize, matches_per_file: usize) -> SearchState {
     let mut state = SearchState::default();
-    state.sidebar_view.view_height = 20;
     state.panel_view.view_height = 20;
 
     for file_index in 0..files {
@@ -72,10 +71,10 @@ fn test_selection_wraps() {
     });
 
     assert_eq!(state.selected_index, 0);
-    state.sidebar_view.view_height = 1;
-    assert!(state.move_selection(-1, SearchViewport::Sidebar));
+    state.panel_view.view_height = 1;
+    assert!(state.move_selection(-1, SearchViewport::BottomPanel));
     assert_eq!(state.selected_index, 1);
-    assert!(state.move_selection(1, SearchViewport::Sidebar));
+    assert!(state.move_selection(1, SearchViewport::BottomPanel));
     assert_eq!(state.selected_index, 0);
 }
 

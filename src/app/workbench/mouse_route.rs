@@ -14,14 +14,11 @@ pub(super) enum MouseTarget {
     SidebarSplitter,
     ByFocus,
     Explorer,
-    Search,
     Editor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum FocusPlan {
-    ActivityBar,
-    SidebarTabs,
     SidebarArea,
     EditorPane { pane: usize },
 }
@@ -44,18 +41,9 @@ pub(super) struct MouseDispatchPlan {
     pub(super) reason: MouseRouteReason,
 }
 
-pub(super) fn mouse_target_from_focus(
-    focus: FocusTarget,
-    sidebar_tab: crate::kernel::SidebarTab,
-) -> MouseTarget {
+pub(super) fn mouse_target_from_focus(focus: FocusTarget) -> MouseTarget {
     match focus {
-        FocusTarget::Explorer => {
-            if sidebar_tab == crate::kernel::SidebarTab::Search {
-                MouseTarget::Search
-            } else {
-                MouseTarget::Explorer
-            }
-        }
+        FocusTarget::Explorer => MouseTarget::Explorer,
         FocusTarget::Editor => MouseTarget::Editor,
         FocusTarget::Overlay => MouseTarget::Overlay,
         FocusTarget::CommandLine => MouseTarget::CommandLine,
@@ -96,31 +84,7 @@ fn editor_pane_at(workbench: &Workbench, x: u16, y: u16) -> Option<usize> {
 
 fn focus_plan_for_area(workbench: &Workbench, event: &MouseEvent) -> Option<FocusPlan> {
     match event.kind {
-        MouseEventKind::Down(MouseButton::Left) => {
-            if workbench
-                .frame_layout
-                .activity_bar_area
-                .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-            {
-                Some(FocusPlan::ActivityBar)
-            } else if workbench
-                .frame_layout
-                .sidebar_tabs_area
-                .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-            {
-                Some(FocusPlan::SidebarTabs)
-            } else if workbench
-                .frame_layout
-                .sidebar_area
-                .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-            {
-                Some(FocusPlan::SidebarArea)
-            } else {
-                editor_pane_at(workbench, event.column, event.row)
-                    .map(|pane| FocusPlan::EditorPane { pane })
-            }
-        }
-        MouseEventKind::Down(MouseButton::Right) => {
+        MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Down(MouseButton::Right) => {
             if workbench
                 .frame_layout
                 .sidebar_area

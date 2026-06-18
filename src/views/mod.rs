@@ -8,7 +8,6 @@
 pub mod doc;
 pub mod editor;
 pub mod explorer;
-pub mod search;
 
 pub use editor::{
     compute_editor_pane_layout, compute_pane_rects, compute_tab_row_layout, cursor_position_editor,
@@ -20,4 +19,3 @@ pub use editor::{
     VerticalScrollbarMetrics,
 };
 pub use explorer::{ExplorerPaintCtx, ExplorerView};
-pub use search::SearchView;

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchViewport {
-    Sidebar,
+    /// 居中浮层视口（telescope 搜索）。历史名保留为 BottomPanel，语义即「唯一浮层视口」。
     BottomPanel,
 }
 
@@ -55,7 +55,6 @@ pub struct SearchState {
     pub files: Vec<SearchFileResult>,
     pub items: Vec<SearchResultItem>,
     pub selected_index: usize,
-    pub sidebar_view: SearchViewportState,
     pub panel_view: SearchViewportState,
     pub last_error: Option<String>,
 }
@@ -104,7 +103,6 @@ impl SearchState {
         self.files.clear();
         self.items.clear();
         self.selected_index = 0;
-        self.sidebar_view.scroll_offset = 0;
         self.panel_view.scroll_offset = 0;
         self.last_error = None;
 
@@ -299,7 +297,6 @@ impl SearchState {
 
                 if !had_items {
                     self.selected_index = 0;
-                    self.sidebar_view.scroll_offset = 0;
                     self.panel_view.scroll_offset = 0;
                 }
 
@@ -423,7 +420,6 @@ impl SearchState {
             }
         }
 
-        self.keep_row_visible(self.selected_index, SearchViewport::Sidebar);
         self.keep_row_visible(self.selected_index, SearchViewport::BottomPanel);
 
         true
@@ -431,14 +427,12 @@ impl SearchState {
 
     fn viewport(&self, viewport: SearchViewport) -> &SearchViewportState {
         match viewport {
-            SearchViewport::Sidebar => &self.sidebar_view,
             SearchViewport::BottomPanel => &self.panel_view,
         }
     }
 
     fn viewport_mut(&mut self, viewport: SearchViewport) -> &mut SearchViewportState {
         match viewport {
-            SearchViewport::Sidebar => &mut self.sidebar_view,
             SearchViewport::BottomPanel => &mut self.panel_view,
         }
     }

@@ -5,7 +5,7 @@ use super::dialogs::{
 };
 use crate::kernel::editor::TabId;
 use crate::kernel::services::adapters::perf;
-use crate::kernel::{FocusTarget, SidebarTab};
+use crate::kernel::FocusTarget;
 use crate::models::NodeId;
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::{Pos, Rect};
@@ -31,18 +31,8 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         backend.draw(status_area, painter.cmds());
     }
 
-    let (activity_area, content_area) = body_area.split_left(super::super::ACTIVITY_BAR_WIDTH);
-
-    workbench.frame_layout.activity_bar_area = (!activity_area.is_empty()).then_some(activity_area);
-    if !activity_area.is_empty() {
-        let _scope = perf::scope("render.activity");
-        let mut painter = Painter::new();
-        workbench.paint_activity_bar(&mut painter, activity_area);
-        backend.draw(activity_area, painter.cmds());
-    }
-
-    // 列表结果改为按需弹出的居中浮层，不再占用常驻底部空间。
-    let main_area = content_area;
+    // 两区域形态：左侧常驻 explorer + 右侧编辑区；列表结果走按需弹出的居中浮层。
+    let main_area = body_area;
 
     let (_sidebar_area, editor_area) = if workbench.store.state().ui.sidebar_visible
         && main_area.w > 0
@@ -65,14 +55,12 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
             let _scope = perf::scope("render.sidebar");
             workbench.render_sidebar(backend, sidebar_area);
         } else {
-            workbench.frame_layout.sidebar_tabs_area = None;
             workbench.frame_layout.sidebar_content_area = None;
         }
 
         (sidebar_area, editor_area)
     } else {
         workbench.frame_layout.sidebar_area = None;
-        workbench.frame_layout.sidebar_tabs_area = None;
         workbench.frame_layout.sidebar_content_area = None;
         workbench.frame_layout.sidebar_container_area = None;
         workbench.interaction.sidebar_split_dragging = false;
@@ -87,8 +75,8 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
     if workbench.store.state().ui.overlay.is_visible() {
         let _scope = perf::scope("render.overlay");
         let mut painter = Painter::new();
-        workbench.paint_overlay(&mut painter, content_area);
-        backend.draw(content_area, painter.cmds());
+        workbench.paint_overlay(&mut painter, main_area);
+        backend.draw(main_area, painter.cmds());
     } else {
         workbench.frame_layout.overlay_area = None;
     }
@@ -365,19 +353,7 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
     }
 
     match workbench.store.state().ui.focus {
-        FocusTarget::Explorer => {
-            if workbench.store.state().ui.sidebar_tab == SidebarTab::Search {
-                let search_state = &workbench.store.state().search;
-                workbench.search_view.cursor_position(
-                    &search_state.query,
-                    search_state.query_cursor,
-                    search_state.case_sensitive,
-                    search_state.use_regex,
-                )
-            } else {
-                None
-            }
-        }
+        FocusTarget::Explorer => None,
         FocusTarget::Editor => {
             let pane = workbench.store.state().ui.editor_layout.active_pane;
             let area = workbench.frame_layout.editor.inner(pane)?;

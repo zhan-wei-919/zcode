@@ -12,7 +12,6 @@ pub enum KeybindingContext {
     Editor,
     EditorSearchBar,
     SidebarExplorer,
-    SidebarSearch,
     CommandLine,
     Overlay,
 }
@@ -25,9 +24,6 @@ impl KeybindingContext {
             "editor" => Some(Self::Editor),
             "searchbar" | "editorsearchbar" | "editor.searchbar" => Some(Self::EditorSearchBar),
             "explorer" | "sidebarexplorer" | "sidebar.explorer" => Some(Self::SidebarExplorer),
-            "search" | "sidebarsearch" | "sidebar.search" | "globalsearch" => {
-                Some(Self::SidebarSearch)
-            }
             "commandline" | "command_line" | "cmdline" => Some(Self::CommandLine),
             "overlay" | "bottompanel" | "panel" => Some(Self::Overlay),
             _ => None,
@@ -40,7 +36,6 @@ pub struct KeybindingService {
     editor: FxHashMap<Key, Command>,
     editor_search_bar: FxHashMap<Key, Command>,
     sidebar_explorer: FxHashMap<Key, Command>,
-    sidebar_search: FxHashMap<Key, Command>,
     command_line: FxHashMap<Key, Command>,
     overlay: FxHashMap<Key, Command>,
 }
@@ -56,7 +51,6 @@ impl KeybindingService {
             editor: default_editor_keybindings(),
             editor_search_bar: default_editor_search_bar_keybindings(),
             sidebar_explorer: default_sidebar_explorer_keybindings(),
-            sidebar_search: default_sidebar_search_keybindings(),
             command_line: default_command_line_keybindings(),
             overlay: default_overlay_keybindings(),
         }
@@ -75,10 +69,6 @@ impl KeybindingService {
                 .sidebar_explorer
                 .get(key)
                 .or_else(|| self.global.get(key)),
-            KeybindingContext::SidebarSearch => self
-                .sidebar_search
-                .get(key)
-                .or_else(|| self.global.get(key)),
             KeybindingContext::CommandLine => {
                 self.command_line.get(key).or_else(|| self.global.get(key))
             }
@@ -92,7 +82,6 @@ impl KeybindingService {
             KeybindingContext::Editor => &self.editor,
             KeybindingContext::EditorSearchBar => &self.editor_search_bar,
             KeybindingContext::SidebarExplorer => &self.sidebar_explorer,
-            KeybindingContext::SidebarSearch => &self.sidebar_search,
             KeybindingContext::CommandLine => &self.command_line,
             KeybindingContext::Overlay => &self.overlay,
         }
@@ -112,7 +101,6 @@ impl KeybindingService {
             KeybindingContext::Editor => &mut self.editor,
             KeybindingContext::EditorSearchBar => &mut self.editor_search_bar,
             KeybindingContext::SidebarExplorer => &mut self.sidebar_explorer,
-            KeybindingContext::SidebarSearch => &mut self.sidebar_search,
             KeybindingContext::CommandLine => &mut self.command_line,
             KeybindingContext::Overlay => &mut self.overlay,
         }
@@ -164,7 +152,6 @@ fn default_global_keybindings() -> FxHashMap<Key, Command> {
         Command::OpenCommandLine,
     );
     bindings.insert(Key::ctrl(KeyCode::Char('b')), Command::ToggleSidebar);
-    bindings.insert(Key::ctrl(KeyCode::Char('p')), Command::ToggleSidebarTab);
     bindings.insert(Key::ctrl_shift(KeyCode::Char('e')), Command::FocusExplorer);
     bindings.insert(Key::ctrl_shift(KeyCode::Char('f')), Command::FocusSearch);
     bindings.insert(Key::ctrl(KeyCode::Char('j')), Command::OpenDiagnostics);
@@ -316,43 +303,6 @@ fn default_sidebar_explorer_keybindings() -> FxHashMap<Key, Command> {
     bindings.insert(Key::simple(KeyCode::Char('a')), Command::ExplorerNewFile);
     bindings.insert(Key::shift(KeyCode::Char('a')), Command::ExplorerNewFolder);
     bindings.insert(Key::simple(KeyCode::Char('d')), Command::ExplorerDelete);
-
-    bindings
-}
-
-fn default_sidebar_search_keybindings() -> FxHashMap<Key, Command> {
-    let mut bindings = FxHashMap::default();
-    bindings.reserve(20);
-
-    bindings.insert(Key::simple(KeyCode::Enter), Command::GlobalSearchStart);
-    bindings.insert(Key::simple(KeyCode::Left), Command::GlobalSearchCursorLeft);
-    bindings.insert(
-        Key::simple(KeyCode::Right),
-        Command::GlobalSearchCursorRight,
-    );
-    bindings.insert(
-        Key::simple(KeyCode::Backspace),
-        Command::GlobalSearchBackspace,
-    );
-    bindings.insert(
-        Key::alt(KeyCode::Char('c')),
-        Command::GlobalSearchToggleCaseSensitive,
-    );
-    bindings.insert(
-        Key::alt(KeyCode::Char('x')),
-        Command::GlobalSearchToggleRegex,
-    );
-
-    bindings.insert(Key::simple(KeyCode::Up), Command::SearchResultsMoveUp);
-    bindings.insert(Key::simple(KeyCode::Down), Command::SearchResultsMoveDown);
-    bindings.insert(
-        Key::ctrl(KeyCode::Enter),
-        Command::SearchResultsOpenSelected,
-    );
-    bindings.insert(
-        Key::simple(KeyCode::Char(' ')),
-        Command::SearchResultsToggleExpand,
-    );
 
     bindings
 }

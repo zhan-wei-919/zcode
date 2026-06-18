@@ -78,27 +78,6 @@ fn mouse_with_modifiers(
     })
 }
 
-fn activity_bar_slot_pos(workbench: &Workbench, index: u16) -> Option<(u16, u16)> {
-    let area = workbench.frame_layout.activity_bar_area?;
-    let slot_h = util::activity_slot_height(area.h).max(1);
-    let slot_top = area.y.saturating_add(index.saturating_mul(slot_h));
-    if slot_top >= area.bottom() {
-        return None;
-    }
-    let remaining = area.bottom().saturating_sub(slot_top);
-    let h = slot_h.min(remaining).max(1);
-    let x = area.x.saturating_add(area.w.saturating_sub(1) / 2);
-    let y = slot_top.saturating_add(h.saturating_sub(1) / 2);
-    Some((x, y))
-}
-
-fn bottom_panel_activity_pos(workbench: &Workbench) -> Option<(u16, u16)> {
-    let index = util::activity_items()
-        .iter()
-        .position(|item| *item == util::ActivityItem::Panel)?;
-    activity_bar_slot_pos(workbench, index as u16)
-}
-
 fn search_bar_button_pos(workbench: &Workbench, button: SearchBarHitResult) -> Option<(u16, u16)> {
     let state = workbench.store.state();
     let area = *workbench.frame_layout.editor.inner_areas.first()?;
@@ -286,65 +265,6 @@ fn test_command_line_escape_closes() {
     }));
     assert!(!workbench.store.state().ui.command_line.active);
     assert_eq!(workbench.focus(), FocusTarget::Editor);
-}
-
-#[test]
-fn test_activity_bar_removes_search_find_replace_buttons() {
-    assert_eq!(
-        util::activity_items(),
-        &[
-            util::ActivityItem::Explorer,
-            util::ActivityItem::Panel,
-            util::ActivityItem::Palette,
-            util::ActivityItem::Git,
-            util::ActivityItem::Settings,
-        ]
-    );
-}
-
-#[test]
-fn test_bottom_panel_activity_click_opens_when_hidden() {
-    let dir = tempdir().unwrap();
-    let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
-
-    render_once(&mut workbench, 120, 40);
-    let (x, y) = bottom_panel_activity_pos(&workbench).expect("bottom panel activity item");
-    assert!(!workbench.overlay_visible());
-
-    let result = workbench.handle_input(&mouse(MouseEventKind::Down(MouseButton::Left), x, y));
-
-    assert!(result.is_consumed());
-    assert!(workbench.overlay_visible());
-    assert_eq!(workbench.focus(), FocusTarget::Overlay);
-}
-
-#[test]
-fn test_bottom_panel_activity_highlight_follows_visibility() {
-    let dir = tempdir().unwrap();
-    let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
-
-    render_once(&mut workbench, 120, 40);
-    let (x, y) = bottom_panel_activity_pos(&workbench).expect("bottom panel activity item");
-    let mut backend = TestBackend::new(120, 40);
-    workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
-    let _ = workbench.flush_post_render_sync();
-    assert_eq!(
-        backend.buffer().cell(x, y).expect("activity cell").style.bg,
-        Some(workbench.theme.core.activity_bg)
-    );
-
-    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::OpenDiagnostics));
-
-    render_once(&mut workbench, 120, 40);
-    let mut backend = TestBackend::new(120, 40);
-    workbench.render(&mut backend, Rect::new(0, 0, 120, 40));
-    let _ = workbench.flush_post_render_sync();
-    assert_eq!(
-        backend.buffer().cell(x, y).expect("activity cell").style.bg,
-        Some(workbench.theme.core.activity_active_bg)
-    );
 }
 
 #[test]

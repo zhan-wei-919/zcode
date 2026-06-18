@@ -1,57 +1,5 @@
 use crate::ui::core::geom::Rect;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ActivityItem {
-    Explorer,
-    Panel,
-    Palette,
-    Git,
-    Settings,
-}
-
-const ACTIVITY_ITEMS: [ActivityItem; 5] = [
-    ActivityItem::Explorer,
-    ActivityItem::Panel,
-    ActivityItem::Palette,
-    ActivityItem::Git,
-    ActivityItem::Settings,
-];
-
-impl ActivityItem {
-    pub(super) fn icon(self) -> char {
-        match self {
-            ActivityItem::Explorer => '\u{f07b}',
-            ActivityItem::Panel => '\u{f120}',
-            ActivityItem::Palette => '\u{f11c}',
-            ActivityItem::Git => '\u{e0a0}',
-            ActivityItem::Settings => '\u{f013}',
-        }
-    }
-}
-
-pub(super) fn activity_items() -> &'static [ActivityItem] {
-    &ACTIVITY_ITEMS
-}
-
-pub(super) fn activity_slot_height(height: u16) -> u16 {
-    let items = ACTIVITY_ITEMS.len() as u16;
-    if items == 0 || height == 0 {
-        return 1;
-    }
-
-    if height >= items.saturating_mul(3) {
-        3
-    } else if height >= items.saturating_mul(2) {
-        2
-    } else {
-        1
-    }
-}
-
-pub(super) fn activity_item_at_row(index: u16) -> Option<ActivityItem> {
-    ACTIVITY_ITEMS.get(index as usize).copied()
-}
-
 pub(super) fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
     let width = area.w.saturating_mul(width_percent).saturating_div(100);
     let min_width = 10.min(area.w);

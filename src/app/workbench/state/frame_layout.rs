@@ -27,9 +27,7 @@ impl EditorFrameLayout {
 #[derive(Debug, Default)]
 pub(in crate::app::workbench) struct FrameLayout {
     pub(in crate::app::workbench) render_area: Option<Rect>,
-    pub(in crate::app::workbench) activity_bar_area: Option<Rect>,
     pub(in crate::app::workbench) sidebar_area: Option<Rect>,
-    pub(in crate::app::workbench) sidebar_tabs_area: Option<Rect>,
     pub(in crate::app::workbench) sidebar_content_area: Option<Rect>,
     pub(in crate::app::workbench) sidebar_container_area: Option<Rect>,
     pub(in crate::app::workbench) git_panel_area: Option<Rect>,

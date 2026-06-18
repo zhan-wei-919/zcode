@@ -3,7 +3,7 @@ use crate::core::event::{InputEvent, Key, KeyCode, KeyEvent, KeyModifiers, Mouse
 use crate::core::Command;
 use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{KeybindingContext, KeybindingService};
-use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, OverlayKind, SidebarTab};
+use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, OverlayKind};
 use crate::tui::view::EventResult;
 use std::time::Instant;
 
@@ -253,13 +253,6 @@ impl Workbench {
                 }
                 _ => EventResult::Ignored,
             },
-            KeybindingContext::SidebarSearch => match (key_event.code, key_event.modifiers) {
-                (KeyCode::Char(ch), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
-                    let _ = self.dispatch_kernel(KernelAction::SearchAppend(ch));
-                    EventResult::Consumed
-                }
-                _ => EventResult::Ignored,
-            },
             KeybindingContext::CommandLine => match (key_event.code, key_event.modifiers) {
                 (KeyCode::Char(ch), mods) if mods.is_empty() || mods == KeyModifiers::SHIFT => {
                     let _ = self.dispatch_kernel(KernelAction::CommandLineAppend(ch));
@@ -296,10 +289,7 @@ impl Workbench {
         let ui = &self.store.state().ui;
 
         match ui.focus {
-            FocusTarget::Explorer => match ui.sidebar_tab {
-                SidebarTab::Explorer => KeybindingContext::SidebarExplorer,
-                SidebarTab::Search => KeybindingContext::SidebarSearch,
-            },
+            FocusTarget::Explorer => KeybindingContext::SidebarExplorer,
             FocusTarget::Overlay => KeybindingContext::Overlay,
             FocusTarget::CommandLine => KeybindingContext::CommandLine,
             FocusTarget::Editor => {
