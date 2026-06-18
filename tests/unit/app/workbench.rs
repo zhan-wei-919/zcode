@@ -49,6 +49,48 @@ fn drive_until(
     }
 }
 
+/// 捕获当前线程的 tracing 输出，供测试断言错误确实被记录。
+/// FsOpError 等诊断已从内存 buffer 改为写日志（避免静默吞错），
+/// 测试相应改为捕获 tracing 而非读 `workbench.logs`。
+#[derive(Clone)]
+struct CapturedLog(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl CapturedLog {
+    fn new() -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())))
+    }
+
+    fn contains(&self, needle: &str) -> bool {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).contains(needle)
+    }
+
+    fn subscriber(&self) -> impl tracing::Subscriber {
+        tracing_subscriber::fmt()
+            .with_writer(self.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .finish()
+    }
+}
+
+impl std::io::Write for CapturedLog {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLog {
+    type Writer = CapturedLog;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
 fn render_once(workbench: &mut Workbench, w: u16, h: u16) {
     let mut backend = TestBackend::new(w, h);
     workbench.render(&mut backend, Rect::new(0, 0, w, h));
@@ -96,7 +138,7 @@ fn search_bar_button_pos(workbench: &Workbench, button: SearchBarHitResult) -> O
 fn test_workbench_new() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     assert_eq!(workbench.focus(), FocusTarget::Editor);
     assert!(workbench.sidebar_visible());
@@ -111,7 +153,7 @@ fn test_file_watcher_tracks_workspace_and_syncs_open_files() {
     std::fs::write(&close_path, "fn close() {}\n").expect("write close path");
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
         pane: 0,
@@ -174,7 +216,7 @@ fn test_file_watcher_tracks_workspace_and_syncs_open_files() {
 fn test_toggle_sidebar() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     assert!(workbench.sidebar_visible());
 
@@ -193,7 +235,7 @@ fn test_toggle_sidebar() {
 fn test_ctrl_j_opens_diagnostics_overlay() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     assert!(!workbench.overlay_visible());
 
@@ -213,7 +255,7 @@ fn test_ctrl_j_opens_diagnostics_overlay() {
 fn test_command_line_opens_and_runs_command() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     // F1 唤起 `:` 命令行（无模态时不能用字面 `:`）。
     let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
@@ -249,7 +291,7 @@ fn test_command_line_opens_and_runs_command() {
 fn test_command_line_escape_closes() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
         code: KeyCode::F(1),
@@ -271,7 +313,7 @@ fn test_command_line_escape_closes() {
 fn test_drag_tab_renders_ghost_label_near_cursor() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let path = dir.path().join("ghost_drag.rs");
     let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
@@ -341,7 +383,7 @@ fn test_drag_tab_renders_ghost_label_near_cursor() {
 fn test_drag_sidebar_splitter_updates_sidebar_width() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     render_once(&mut workbench, 120, 40);
 
@@ -394,7 +436,7 @@ fn test_drag_sidebar_splitter_updates_sidebar_width() {
 fn test_command_line_active_mouse_down_does_not_steal_focus() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     render_once(&mut workbench, 120, 40);
 
@@ -425,7 +467,7 @@ fn test_command_line_active_mouse_down_does_not_steal_focus() {
 fn test_splitter_capture_clears_when_sidebar_hidden_before_mouse_up() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     render_once(&mut workbench, 120, 40);
 
@@ -479,7 +521,7 @@ fn test_drag_explorer_file_into_folder_moves_path() {
     let to = dst_dir.join("a.txt");
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(&root, runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     // Expand `src` so its entries become visible and draggable.
     let src_row = workbench
@@ -610,7 +652,7 @@ fn test_drag_explorer_file_into_folder_conflict_cancel_keeps_original() {
     std::fs::write(&to, "TO").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(&root, runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     // Expand `src` so its entries become visible and draggable.
     let src_row = workbench
@@ -749,7 +791,7 @@ fn test_drag_explorer_file_into_folder_conflict_accept_overwrites() {
     std::fs::write(&to, "TO").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(&root, runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     // Expand `src` so its entries become visible and draggable.
     let src_row = workbench
@@ -908,7 +950,7 @@ fn test_drag_explorer_file_onto_file_row_moves_into_that_files_parent_dir() {
     let to = root.join("a.txt");
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(&root, runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     // Expand `src` so its entries become visible and draggable.
     let src_row = workbench
@@ -1039,7 +1081,7 @@ fn test_drag_explorer_file_into_root_empty_space_moves_into_root() {
     let to = root.join("a.txt");
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(&root, runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     // Expand `src` so its entries become visible and draggable.
     let src_row = workbench
@@ -1153,7 +1195,7 @@ fn test_drag_explorer_file_renders_ghost_label_near_cursor() {
     std::fs::write(&from, "hello\n").unwrap();
 
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(&root, runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     render_once(&mut workbench, 120, 40);
 
@@ -1227,7 +1269,7 @@ fn test_explorer_highlights_active_open_file_when_another_row_is_selected() {
     std::fs::write(&selected_path, "fn selected() {}\n").unwrap();
 
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(&root, runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(&root, runtime, None).unwrap();
 
     let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
         pane: 0,
@@ -1300,7 +1342,7 @@ fn test_open_file_and_save_runs_async_runtime() {
     std::fs::write(&file_path, "hello\n").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let _ = workbench.dispatch_kernel(KernelAction::OpenPath(file_path.clone()));
     drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
@@ -1344,7 +1386,7 @@ fn test_editor_search_runs_async_task_and_updates_matches() {
     std::fs::write(&file_path, "hello world\nhello again\n").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let _ = workbench.dispatch_kernel(KernelAction::OpenPath(file_path.clone()));
     drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
@@ -1393,7 +1435,7 @@ fn test_editor_search_bar_nav_buttons_click_dispatches_commands() {
     std::fs::write(&file_path, "hello world\nhello again\n").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let _ = workbench.dispatch_kernel(KernelAction::OpenPath(file_path.clone()));
     drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
@@ -1505,7 +1547,7 @@ fn test_global_search_runs_async_task_and_populates_results() {
     std::fs::write(&b, "x needle y\n").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusSearch));
     for ch in "needle".chars() {
@@ -1538,7 +1580,7 @@ fn test_global_search_runs_async_task_and_populates_results() {
 fn test_explorer_create_file_runs_async_fs_and_updates_tree() {
     let dir = tempdir().unwrap();
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::ExplorerNewFile));
     let _ = workbench.dispatch_kernel(KernelAction::InputDialogAppend('x'));
@@ -1563,7 +1605,7 @@ fn test_explorer_create_file_runs_async_fs_and_updates_tree() {
 fn test_explorer_create_dir_then_expand_loads_entries() {
     let dir = tempdir().unwrap();
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::ExplorerNewFolder));
     let _ = workbench.dispatch_kernel(KernelAction::InputDialogAppend('d'));
@@ -1618,7 +1660,7 @@ fn test_explorer_expand_dir_load_error_collapses_node() {
     std::fs::create_dir_all(&gone_path).unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     std::fs::remove_dir_all(&gone_path).unwrap();
 
@@ -1661,7 +1703,7 @@ fn test_explorer_delete_file_runs_async_fs_and_updates_tree() {
     std::fs::write(&file_path, "x\n").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let row = workbench
         .store
@@ -1700,16 +1742,17 @@ fn test_explorer_create_file_error_is_logged() {
     std::fs::write(&file_path, "exists\n").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
-    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::ExplorerNewFile));
-    let _ = workbench.dispatch_kernel(KernelAction::InputDialogAppend('x'));
-    let _ = workbench.dispatch_kernel(KernelAction::InputDialogAccept);
+    let log = CapturedLog::new();
+    tracing::subscriber::with_default(log.subscriber(), || {
+        let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::ExplorerNewFile));
+        let _ = workbench.dispatch_kernel(KernelAction::InputDialogAppend('x'));
+        let _ = workbench.dispatch_kernel(KernelAction::InputDialogAccept);
 
-    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
-        w.logs
-            .iter()
-            .any(|line| line.contains("[fs:create_file]") && line.contains("x"))
+        drive_until(&mut workbench, &rx, Duration::from_secs(2), |_w| {
+            log.contains("create_file")
+        });
     });
 
     let count = workbench
@@ -1732,7 +1775,7 @@ fn test_save_failure_is_logged_and_does_not_clear_dirty() {
     std::fs::write(&file_path, "hello\n").unwrap();
 
     let (runtime, rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let _ = workbench.dispatch_kernel(KernelAction::OpenPath(file_path.clone()));
     drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
@@ -1761,10 +1804,11 @@ fn test_save_failure_is_logged_and_does_not_clear_dirty() {
     };
     let _ = workbench.handle_input(&InputEvent::Key(save));
 
-    drive_until(&mut workbench, &rx, Duration::from_secs(2), |w| {
-        w.logs
-            .iter()
-            .any(|line| line.contains("[fs:write_file]") && line.contains("a.txt"))
+    let log = CapturedLog::new();
+    tracing::subscriber::with_default(log.subscriber(), || {
+        drive_until(&mut workbench, &rx, Duration::from_secs(2), |_w| {
+            log.contains("write_file")
+        });
     });
 
     let tab = workbench
@@ -1781,7 +1825,7 @@ fn test_save_failure_is_logged_and_does_not_clear_dirty() {
 fn test_out_of_order_file_reloaded_messages_keep_latest_content() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let path = dir.path().join("race.rs");
     let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
@@ -1832,7 +1876,7 @@ fn test_out_of_order_file_reloaded_messages_keep_latest_content() {
 fn test_context_menu_visible_mouse_events_do_not_steal_focus() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     render_once(&mut workbench, 120, 40);
 
@@ -1882,7 +1926,7 @@ fn test_context_menu_visible_mouse_events_do_not_steal_focus() {
 fn test_editor_right_click_selects_word_under_cursor_for_context_actions() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let path = dir.path().join("main.rs");
     let line = "let content = content + 1;\n";
@@ -1948,7 +1992,7 @@ fn test_editor_right_click_selects_word_under_cursor_for_context_actions() {
 fn test_editor_right_click_inside_selection_keeps_existing_selection() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let path = dir.path().join("main.rs");
     let line = "fn to_ratatui_style(s: Style) -> RStyle {\n";
@@ -2048,7 +2092,7 @@ fn test_editor_right_click_inside_selection_keeps_existing_selection() {
 fn test_editor_drag_overflow_keeps_horizontal_follow_on_later_drag() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let path = dir.path().join("wide.txt");
     let long_line = "x".repeat(240);
@@ -2134,7 +2178,7 @@ fn test_editor_drag_overflow_keeps_horizontal_follow_on_later_drag() {
 fn test_markdown_checkbox_click_toggles_task_marker() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let path = dir.path().join("todo.md");
     let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
@@ -2182,7 +2226,7 @@ fn test_markdown_checkbox_click_toggles_task_marker() {
 fn test_shift_scroll_down_moves_editor_horizontally() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let path = dir.path().join("wide.rs");
     let content = format!("{}\n", "x".repeat(240));
@@ -2234,7 +2278,7 @@ fn test_shift_scroll_down_moves_editor_horizontally() {
 fn test_editor_vertical_scrollbar_shows_only_on_right_edge_hover() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let path = dir.path().join("long.rs");
     let content = (0..200)
@@ -2309,7 +2353,7 @@ fn test_editor_vertical_scrollbar_shows_only_on_right_edge_hover() {
 fn test_editor_vertical_scrollbar_drag_updates_line_offset_without_selection() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let path = dir.path().join("long.rs");
     let content = (0..200)
@@ -2380,7 +2424,7 @@ fn test_editor_vertical_scrollbar_drag_updates_line_offset_without_selection() {
 fn test_lsp_definition_sets_transient_destination_highlight() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let path = dir.path().join("main.rs");
     let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
@@ -2421,7 +2465,7 @@ fn test_lsp_definition_sets_transient_destination_highlight() {
 fn test_lsp_definition_highlight_is_deferred_until_target_file_opens() {
     let dir = tempdir().unwrap();
     let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
 
     let current_path = dir.path().join("current.rs");
     let target_path = dir.path().join("target.rs");

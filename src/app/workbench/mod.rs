@@ -24,7 +24,6 @@ use crate::ui::core::geom::Rect;
 use crate::views::doc::RenderCache as DocRenderCache;
 use crate::views::ExplorerView;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -51,8 +50,6 @@ use state::{FrameLayout, InteractionState, LspSyncState, RenderCache, ThemeState
 const STATUS_HEIGHT: u16 = 1;
 const SIDEBAR_WIDTH_PERCENT: u16 = 20;
 const SIDEBAR_MIN_WIDTH: u16 = 20;
-const LOG_BUFFER_CAP: usize = 2000;
-const MAX_LOG_DRAIN_PER_TICK: usize = 1024;
 const MAX_EDITOR_SEARCH_DRAIN_PER_TICK: usize = 256;
 const MAX_GLOBAL_SEARCH_DRAIN_PER_TICK: usize = 256;
 const MAX_KERNEL_BUS_DRAIN_PER_TICK: usize = 256;
@@ -182,8 +179,6 @@ pub struct Workbench {
     explorer: ExplorerView,
     editor_search_tasks: Vec<Option<SearchTask>>,
     editor_search_rx: Vec<Option<Receiver<SearchMessage>>>,
-    log_rx: Option<Receiver<String>>,
-    logs: VecDeque<String>,
     clipboard_unavailable_warned: bool,
     settings_path: Option<PathBuf>,
     last_settings_check: Instant,
@@ -228,7 +223,6 @@ impl Workbench {
     pub fn new(
         root_path: &Path,
         runtime: AsyncRuntime,
-        log_rx: Option<Receiver<String>>,
         wakeup: Option<WakeupSender>,
     ) -> std::io::Result<Self> {
         let file_tree = build_file_tree(root_path)?;
@@ -364,8 +358,6 @@ impl Workbench {
             explorer: ExplorerView::new(),
             editor_search_tasks: std::iter::repeat_with(|| None).take(panes).collect(),
             editor_search_rx: std::iter::repeat_with(|| None).take(panes).collect(),
-            log_rx,
-            logs: VecDeque::with_capacity(LOG_BUFFER_CAP.min(256)),
             clipboard_unavailable_warned: false,
             settings_path,
             last_settings_check: Instant::now(),
@@ -414,10 +406,6 @@ impl Workbench {
 
         workbench.maybe_warn_clipboard_unavailable();
         Ok(workbench)
-    }
-
-    pub fn take_log_rx(&mut self) -> Option<Receiver<String>> {
-        self.log_rx.take()
     }
 
     pub fn take_pending_restart(&mut self) -> Option<(PathBuf, bool)> {
@@ -614,17 +602,21 @@ impl Workbench {
                 path,
                 to,
                 error,
-            } => {
-                let msg = if let Some(to) = to {
-                    format!("[fs:{op}] {} -> {}: {error}", path.display(), to.display())
-                } else {
-                    format!("[fs:{op}] {}: {error}", path.display())
-                };
-                self.logs.push_back(msg);
-                while self.logs.len() > LOG_BUFFER_CAP {
-                    self.logs.pop_front();
-                }
-            }
+            } => match to {
+                Some(to) => tracing::warn!(
+                    op = %op,
+                    path = %path.display(),
+                    to = %to.display(),
+                    error = %error,
+                    "workbench.fs_op_failed"
+                ),
+                None => tracing::warn!(
+                    op = %op,
+                    path = %path.display(),
+                    error = %error,
+                    "workbench.fs_op_failed"
+                ),
+            },
             AppMessage::FileReloaded { request, content } => {
                 let _ = self.dispatch_kernel(KernelAction::Editor(EditorAction::FileReloaded {
                     content,

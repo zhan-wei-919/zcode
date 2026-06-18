@@ -22,7 +22,6 @@ impl Workbench {
         changed |= self.poll_editor_search();
         changed |= self.poll_global_search();
         changed |= self.poll_kernel_bus();
-        changed |= self.poll_logs();
         changed |= self.poll_settings();
         self.store.tick();
         changed |= self.poll_semantic_tokens_debounce();
@@ -211,43 +210,6 @@ impl Workbench {
                 Err(mpsc::TryRecvError::Disconnected) => break,
             }
         }
-        changed
-    }
-
-    fn poll_logs(&mut self) -> bool {
-        let Some(rx) = self.log_rx.take() else {
-            return false;
-        };
-
-        let mut changed = false;
-        let mut drained = 0usize;
-        let mut disconnected = false;
-
-        loop {
-            match rx.try_recv() {
-                Ok(line) => {
-                    changed = true;
-                    drained += 1;
-                    self.logs.push_back(line);
-                    while self.logs.len() > super::LOG_BUFFER_CAP {
-                        self.logs.pop_front();
-                    }
-                    if drained >= super::MAX_LOG_DRAIN_PER_TICK {
-                        break;
-                    }
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    disconnected = true;
-                    break;
-                }
-            }
-        }
-
-        if !disconnected {
-            self.log_rx = Some(rx);
-        }
-
         changed
     }
 

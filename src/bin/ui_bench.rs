@@ -58,7 +58,7 @@ fn main() -> std::io::Result<()> {
     let root = create_fixture_dir(explorer_files)?;
     let (tx, _rx) = mpsc::channel();
     let runtime = AsyncRuntime::new(tx)?;
-    let mut workbench = Workbench::new(&root, runtime, None, None)?;
+    let mut workbench = Workbench::new(&root, runtime, None)?;
 
     let normal = generate_rust_like(normal_lines, normal_cols);
     let long = generate_rust_like(long_lines, long_cols);

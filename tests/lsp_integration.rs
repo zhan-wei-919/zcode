@@ -209,7 +209,7 @@ fn test_lsp_spawn_sync_requests_and_diagnostics_are_wired() {
     let def_path_canon = std::fs::canonicalize(&def_path).unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
     let (cmd, args) = workbench.lsp_command_config().unwrap();
     assert_eq!(cmd, stub_path.to_string_lossy());
@@ -339,7 +339,7 @@ fn test_hover_requests_definition_preview_by_default() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -433,7 +433,7 @@ fn test_hover_appends_definition_preview_when_enabled_by_settings() {
     std::fs::write(&impl_path, "pub fn impl_target() { println!(\"impl\"); }\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -506,7 +506,7 @@ fn test_lsp_spawns_for_multiple_languages() {
     std::fs::write(&py_path, "x = 1\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     for path in [&ts_path, &go_path, &py_path] {
@@ -554,7 +554,7 @@ fn test_did_open_sends_language_id_for_python_go_and_js_ts() {
     std::fs::write(&js_path, "export const y = 2;\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     for path in [&py_path, &go_path, &ts_path, &js_path] {
@@ -610,7 +610,7 @@ fn test_hover_and_completion_work_for_python_go_and_js_ts() {
     std::fs::write(&js_path, "export const y = 2;\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     let completion = KeyEvent {
@@ -691,7 +691,7 @@ fn test_hover_works_when_cursor_is_after_identifier() {
     std::fs::write(&py_path, "foo = 1\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -748,7 +748,7 @@ fn test_completion_debounce_triggers_for_python() {
     std::fs::write(&py_path, "\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -794,7 +794,7 @@ fn test_completion_triggers_without_tick_for_python() {
     std::fs::write(&py_path, "\n").unwrap();
 
     let (runtime, _rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -849,7 +849,7 @@ fn test_completion_coalesces_inflight_requests_for_python() {
     std::fs::write(&py_path, "\n").unwrap();
 
     let (runtime, _rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -931,7 +931,7 @@ fn test_real_pyright_hover_and_completion_smoke() {
     std::fs::write(&comp_path, "import os\nos.\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1066,7 +1066,7 @@ fn test_real_rust_analyzer_completion_preserves_placeholder_text() {
     .unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1268,7 +1268,7 @@ fn test_optional_lsp_requests_are_gated_by_capabilities() {
     std::fs::write(&py_path, "x = 1\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1329,7 +1329,7 @@ fn test_lsp_rename_applies_workspace_edit() {
     std::fs::write(&a_path, "old old\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1394,7 +1394,7 @@ fn test_lsp_references_populates_locations_and_opens_selected_item() {
     let b_path_canon = std::fs::canonicalize(&b_path).unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1473,7 +1473,7 @@ fn test_lsp_code_action_applies_edit_and_execute_command() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1563,7 +1563,7 @@ fn test_lsp_range_format_replaces_selection() {
     std::fs::write(&a_path, "hello world\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1641,7 +1641,7 @@ fn test_lsp_document_symbols_populates_symbols_and_jumps_to_item() {
     std::fs::write(&a_path, "line0\nline1\nline2\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1729,7 +1729,7 @@ fn test_lsp_workspace_symbols_opens_selected_item() {
     let b_path_canon = std::fs::canonicalize(&b_path).unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1838,7 +1838,7 @@ fn test_lsp_utf8_position_encoding_applies_workspace_edit_to_unopened_file() {
     std::fs::write(&b_path, "😀hello\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1919,7 +1919,7 @@ fn test_lsp_resource_operations_create_rename_delete() {
     let _ = std::fs::remove_file(&new_path);
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -1993,7 +1993,7 @@ fn test_lsp_completion_resolve_and_confirm_applies_snippet_and_auto_import() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2090,7 +2090,7 @@ fn test_lsp_completion_auto_import_uses_full_sync_after_multi_edit_apply() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2235,7 +2235,7 @@ fn test_lsp_quit_sends_shutdown_and_exit() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2280,7 +2280,7 @@ fn test_lsp_completion_session_reuse_skips_extra_requests() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2363,7 +2363,7 @@ fn test_lsp_completion_incomplete_disables_session_reuse() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2417,7 +2417,7 @@ fn test_completion_popup_does_not_close_on_background_lsp_requests() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2476,7 +2476,7 @@ fn test_idle_hover_does_not_trigger_without_mouse_target() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2538,7 +2538,7 @@ fn test_idle_hover_does_not_trigger_when_mouse_is_only_after_identifier() {
     std::fs::write(&a_path, "foo \n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2605,7 +2605,7 @@ fn test_idle_hover_does_not_trigger_when_cursor_not_on_identifier() {
     std::fs::write(&a_path, "").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2666,7 +2666,7 @@ fn test_hover_response_does_not_show_after_user_input() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2747,7 +2747,7 @@ fn test_completion_closes_after_deleting_trigger() {
     std::fs::write(&a_path, "").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2818,7 +2818,7 @@ fn test_completion_filters_items_while_typing() {
     std::fs::write(&a_path, "").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2899,7 +2899,7 @@ fn test_semantic_tokens_apply_expected_highlight_kinds() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -2970,7 +2970,7 @@ fn test_inlay_hints_are_applied_for_single_line_file() {
     std::fs::write(&a_path, "let mut logging_guard = logging::init();").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -3026,7 +3026,7 @@ fn test_inlay_hints_refresh_after_viewport_size_change() {
     std::fs::write(&a_path, content).unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -3085,7 +3085,7 @@ fn test_inlay_hints_refresh_after_mouse_scroll() {
     std::fs::write(&a_path, content).unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -3171,7 +3171,7 @@ fn test_semantic_tokens_range_is_used_for_large_files() {
     std::fs::write(&a_path, content).unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -3265,7 +3265,7 @@ fn test_signature_help_closes_after_cursor_leaves_call() {
     std::fs::write(&a_path, "").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -3351,7 +3351,7 @@ fn test_signature_help_closes_after_mouse_moves_cursor_outside_call() {
     std::fs::write(&a_path, "\nlet outside_target = 1;\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -3430,7 +3430,7 @@ fn test_signature_help_does_not_open_on_comma_when_inactive() {
     std::fs::write(&a_path, "foo(\"a\")\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {
@@ -3507,7 +3507,7 @@ fn test_lsp_progress_end_triggers_inlay_hints_refresh() {
     std::fs::write(&a_path, "fn main() {}\n").unwrap();
 
     let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
     assert!(workbench.has_lsp_service());
 
     workbench.handle_message(AppMessage::FileLoaded {

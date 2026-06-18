@@ -24,7 +24,7 @@ struct StartupPaths {
 }
 
 fn main() -> io::Result<()> {
-    let mut logging_guard = logging::init();
+    let logging_guard = logging::init();
     if cfg!(debug_assertions) {
         if let Some(guard) = &logging_guard {
             eprintln!("Log dir: {}", guard.log_dir().display());
@@ -93,12 +93,10 @@ fn main() -> io::Result<()> {
 
     let mut terminal = RatatuiTerminal::new(io::stdout())
         .inspect_err(|e| tracing::error!(error = ?e, "terminal init failed"))?;
-    let log_rx = logging_guard.as_mut().and_then(|guard| guard.take_log_rx());
     let result = run_app(
         &mut terminal,
         startup.root.as_path(),
         startup.open_file,
-        log_rx,
         &term_rx,
     );
     drop(terminal);
@@ -133,7 +131,6 @@ fn run_app(
     terminal: &mut RatatuiTerminal,
     path: &Path,
     startup_file: Option<PathBuf>,
-    log_rx: Option<mpsc::Receiver<String>>,
     term_rx: &mpsc::Receiver<TerminationSignal>,
 ) -> io::Result<()> {
     let mut root_path = path.to_path_buf();
@@ -143,7 +140,6 @@ fn run_app(
     let mut workbench = Workbench::new(
         root_path.as_path(),
         AsyncRuntime::new(tx.clone())?,
-        log_rx,
         Some(wakeup_tx.clone()),
     )?;
     if let Some(path) = startup_file {
@@ -181,7 +177,6 @@ fn run_app(
                 match workbench.handle_input(&input_event) {
                     EventResult::Quit => return Ok(()),
                     EventResult::Restart { path, hard } => {
-                        let log_rx = workbench.take_log_rx();
                         root_path = path;
                         let (new_tx, new_rx) = mpsc::channel();
                         tx = new_tx;
@@ -189,7 +184,6 @@ fn run_app(
                         workbench = Workbench::new(
                             root_path.as_path(),
                             AsyncRuntime::new(tx.clone())?,
-                            log_rx,
                             Some(wakeup_tx.clone()),
                         )?;
                         dirty = true;
@@ -217,7 +211,6 @@ fn run_app(
             workbench.handle_message(msg);
             dirty = true;
             if let Some((path, hard)) = workbench.take_pending_restart() {
-                let log_rx = workbench.take_log_rx();
                 root_path = path;
                 let (new_tx, new_rx) = mpsc::channel();
                 tx = new_tx;
@@ -225,7 +218,6 @@ fn run_app(
                 workbench = Workbench::new(
                     root_path.as_path(),
                     AsyncRuntime::new(tx.clone())?,
-                    log_rx,
                     Some(wakeup_tx.clone()),
                 )?;
                 dirty = true;

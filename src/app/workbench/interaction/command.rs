@@ -81,7 +81,7 @@ impl Workbench {
 
                 match crate::tui::osc52::copy_to_clipboard(text) {
                     Ok(()) => {
-                        // This is a user-visible behavior change; keep a breadcrumb in Logs.
+                        // This is a user-visible behavior change; keep a breadcrumb in the log file.
                         self.push_log_line("[clipboard] Copied via OSC52 fallback.".to_string());
                     }
                     Err(osc52_err) => {
@@ -96,11 +96,10 @@ impl Workbench {
         }
     }
 
-    pub(in super::super) fn push_log_line(&mut self, line: String) {
-        self.logs.push_back(line);
-        while self.logs.len() > super::super::LOG_BUFFER_CAP {
-            self.logs.pop_front();
-        }
+    /// 用户可见的诊断面包屑（剪贴板不可用、越界 fs 操作等）。Logs 视图已删除，
+    /// 这些条目改写入日志文件，避免静默吞掉错误。
+    pub(in super::super) fn push_log_line(&self, line: String) {
+        tracing::warn!(target: "zcode::workbench", "{line}");
     }
 
     pub(super) fn maybe_schedule_semantic_tokens_debounce(&mut self, cmd: &Command) {
