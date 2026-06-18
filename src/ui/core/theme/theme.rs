@@ -90,6 +90,13 @@ pub struct Theme {
     pub sidebar_bg: Color,
     pub popup_bg: Color,
     pub statusbar_bg: Color,
+    /// 当前行整行背景高亮（编辑区聚焦时）。
+    pub current_line_bg: Color,
+    /// 状态栏模式块：各模式底色 + 块上文字色。
+    pub mode_normal_bg: Color,
+    pub mode_insert_bg: Color,
+    pub mode_command_bg: Color,
+    pub mode_text_fg: Color,
     pub md_heading1_fg: Color,
     pub md_heading2_fg: Color,
     pub md_heading3_fg: Color,
@@ -214,19 +221,24 @@ impl Default for Theme {
             sidebar_bg: Color::Reset,
             popup_bg: Color::Reset,
             statusbar_bg: Color::Reset,
+            current_line_bg: Color::Indexed(8), // DarkGray，整行柔和高亮
+            mode_normal_bg: Color::Indexed(4),  // Blue
+            mode_insert_bg: Color::Indexed(2),  // Green
+            mode_command_bg: Color::Indexed(3), // Yellow
+            mode_text_fg: Color::Indexed(0),    // Black（彩色块上的字）
             md_heading1_fg: Color::Rgb(0x56, 0x9C, 0xD6), // Blue
             md_heading2_fg: Color::Rgb(0x4E, 0xC9, 0xB0), // Teal
             md_heading3_fg: Color::Rgb(0xDC, 0xDC, 0xAA), // Yellow
             md_heading4_fg: Color::Rgb(0xCE, 0x91, 0x78), // Orange
             md_heading5_fg: Color::Rgb(0xC5, 0x86, 0xC0), // Purple
             md_heading6_fg: Color::Rgb(0x6A, 0x99, 0x55), // Green
-            md_link_fg: Color::Rgb(0x56, 0x9C, 0xD6),     // Blue
-            md_code_fg: Color::Rgb(0xCE, 0x91, 0x78),     // Orange
-            md_code_bg: Color::Rgb(0x30, 0x30, 0x30),     // Dark gray
-            md_blockquote_fg: Color::Indexed(8),          // DarkGray
-            md_blockquote_bar: Color::Indexed(8),         // DarkGray
-            md_hr_fg: Color::Indexed(8),                  // DarkGray
-            md_marker_fg: Color::Indexed(8),              // DarkGray
+            md_link_fg: Color::Rgb(0x56, 0x9C, 0xD6), // Blue
+            md_code_fg: Color::Rgb(0xCE, 0x91, 0x78), // Orange
+            md_code_bg: Color::Rgb(0x30, 0x30, 0x30), // Dark gray
+            md_blockquote_fg: Color::Indexed(8), // DarkGray
+            md_blockquote_bar: Color::Indexed(8), // DarkGray
+            md_hr_fg: Color::Indexed(8),        // DarkGray
+            md_marker_fg: Color::Indexed(8),    // DarkGray
             search_match_bg: Color::Rgb(0x5A, 0x4A, 0x1E), // Soft amber
             search_current_match_bg: Color::Rgb(0x80, 0x60, 0x10), // Bright amber
         }

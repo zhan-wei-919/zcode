@@ -63,7 +63,30 @@ impl Workbench {
         // Clear the sidebar background so old content doesn't leak through on partial redraws.
         painter.fill_rect(inner, UiStyle::default().bg(self.theme.core.sidebar_bg));
 
-        let tree_area = inner;
+        // 头部：聚焦时 " EXPLORER"，否则 " explorer"（青色加粗），下方留一空行。
+        let header_h = 2u16.min(inner.h);
+        if header_h >= 1 {
+            let focused = self.store.state().ui.focus == crate::kernel::FocusTarget::Explorer;
+            let header = if focused { " EXPLORER" } else { " explorer" };
+            let header_style = UiStyle::default()
+                .bg(self.theme.core.sidebar_bg)
+                .fg(self.theme.core.header_fg)
+                .add_mod(crate::ui::core::style::Mod::BOLD);
+            let header_clip = UiRect::new(inner.x, inner.y, inner.w, 1);
+            painter.text_clipped(
+                Pos::new(inner.x, inner.y),
+                header,
+                header_style,
+                header_clip,
+            );
+        }
+
+        let tree_area = UiRect::new(
+            inner.x,
+            inner.y.saturating_add(header_h),
+            inner.w,
+            inner.h.saturating_sub(header_h),
+        );
         self.frame_layout.sidebar_content_area = Some(tree_area);
 
         self.sync_explorer_view_height(tree_area.h);

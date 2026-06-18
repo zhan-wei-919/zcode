@@ -681,6 +681,7 @@ impl Workbench {
                 workspace_empty: self.store.state().explorer.rows.is_empty(),
                 show_vertical_scrollbar: false,
                 transient_row_highlight: self.definition_jump_row_highlight_for_pane(pane),
+                editor_focused: self.store.state().ui.focus == crate::kernel::FocusTarget::Editor,
             };
             let markdown = md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
             self.draw_editor_pane(backend, pane, &layout, pane_state, markdown, options);

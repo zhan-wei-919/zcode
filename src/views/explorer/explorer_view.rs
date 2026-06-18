@@ -46,9 +46,9 @@ impl ExplorerView {
         let indent = "  ".repeat(row.depth as usize);
         let icon = if row.is_dir {
             if row.is_expanded {
-                "▼ "
+                "▾ "
             } else {
-                "▶ "
+                "▸ "
             }
         } else {
             "  "
@@ -63,7 +63,8 @@ impl ExplorerView {
         } else if is_active_open_file {
             Style::default().fg(theme.header_fg).add_mod(Mod::BOLD)
         } else if row.is_dir {
-            Style::default().fg(theme.accent_fg)
+            // demo 里目录用青色强调（与侧栏头部一致）。
+            Style::default().fg(theme.header_fg)
         } else {
             Style::default().fg(theme.palette_fg)
         };
@@ -73,7 +74,8 @@ impl ExplorerView {
             return (String::new(), row_style);
         }
 
-        let mut left = format!("{indent}{icon}{name}");
+        // 前导空格，与 demo 的 " {indent}{icon}{name}" 对齐。
+        let mut left = format!(" {indent}{icon}{name}");
         let end = text_window::truncate_to_width(&left, width);
         left.truncate(end);
         let left_width = left.width();
