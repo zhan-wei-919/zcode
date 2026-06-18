@@ -298,13 +298,14 @@ fn first_compute_syntax_effect(effects: &[Effect]) -> Option<ComputeSyntaxEffect
 }
 
 #[test]
-fn escape_opens_settings_when_idle_in_editor() {
+fn escape_is_noop_when_idle_in_editor() {
     let mut store = new_store();
     store.state.ui.focus = FocusTarget::Editor;
 
     let result = store.dispatch(Action::RunCommand(Command::Escape));
 
-    assert!(matches!(result.effects.as_slice(), [Effect::OpenSettings]));
+    // Esc with nothing to dismiss must be a no-op — never open settings.
+    assert!(result.effects.is_empty());
     assert!(!result.state_changed);
 }
 
@@ -356,7 +357,7 @@ fn escape_closes_editor_search_bar() {
 }
 
 #[test]
-fn escape_clears_editor_selection_before_opening_settings() {
+fn escape_clears_editor_selection() {
     let mut store = new_store();
     store.state.ui.focus = FocusTarget::Editor;
     let path = store.state.workspace_root.join("test.txt");

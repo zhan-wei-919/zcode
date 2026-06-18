@@ -1560,8 +1560,9 @@ impl Store {
                     };
                 }
 
+                // 没有任何可关闭的东西时，Esc 是无操作——绝不打开设置文件。
                 return DispatchResult {
-                    effects: vec![Effect::OpenSettings],
+                    effects,
                     state_changed: false,
                 };
             }
