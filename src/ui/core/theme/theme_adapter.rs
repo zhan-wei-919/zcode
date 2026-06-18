@@ -10,7 +10,6 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
 
     let mut adapted = Theme {
         focus_border: map_color_for_support(theme.focus_border, support),
-        inactive_border: map_color_for_support(theme.inactive_border, support),
         separator: map_color_for_support(theme.separator, support),
         accent_fg: map_color_for_support(theme.accent_fg, support),
         syntax_colors: theme
@@ -18,16 +17,7 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
             .map(|c| map_color_for_support(c, support)),
         error_fg: map_color_for_support(theme.error_fg, support),
         warning_fg: map_color_for_support(theme.warning_fg, support),
-        activity_bg: map_color_for_support(theme.activity_bg, support),
-        activity_fg: map_color_for_support(theme.activity_fg, support),
-        activity_active_bg: map_color_for_support(theme.activity_active_bg, support),
-        activity_active_fg: map_color_for_support(theme.activity_active_fg, support),
-        sidebar_tab_active_bg: map_color_for_support(theme.sidebar_tab_active_bg, support),
-        sidebar_tab_active_fg: map_color_for_support(theme.sidebar_tab_active_fg, support),
-        sidebar_tab_inactive_fg: map_color_for_support(theme.sidebar_tab_inactive_fg, support),
         header_fg: map_color_for_support(theme.header_fg, support),
-        palette_border: map_color_for_support(theme.palette_border, support),
-        palette_bg: map_color_for_support(theme.palette_bg, support),
         palette_fg: map_color_for_support(theme.palette_fg, support),
         palette_selected_bg: map_color_for_support(theme.palette_selected_bg, support),
         palette_selected_fg: map_color_for_support(theme.palette_selected_fg, support),
@@ -38,9 +28,7 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
         popup_bg: map_color_for_support(theme.popup_bg, support),
         statusbar_bg: map_color_for_support(theme.statusbar_bg, support),
         current_line_bg: map_color_for_support(theme.current_line_bg, support),
-        mode_normal_bg: map_color_for_support(theme.mode_normal_bg, support),
         mode_insert_bg: map_color_for_support(theme.mode_insert_bg, support),
-        mode_command_bg: map_color_for_support(theme.mode_command_bg, support),
         mode_text_fg: map_color_for_support(theme.mode_text_fg, support),
         md_heading1_fg: map_color_for_support(theme.md_heading1_fg, support),
         md_heading2_fg: map_color_for_support(theme.md_heading2_fg, support),
@@ -61,22 +49,6 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
 
     apply_non_truecolor_syntax_palette(&mut adapted, theme, support);
     adapted
-}
-
-pub fn map_color_to_support(color: Color, support: TerminalColorSupport) -> Color {
-    map_color_for_support(color, support)
-}
-
-pub fn color_to_rgb(color: Color) -> Option<(u8, u8, u8)> {
-    match color {
-        Color::Reset => None,
-        Color::Rgb(r, g, b) => Some((r, g, b)),
-        Color::Indexed(i) => Some(ansi256_index_to_rgb(i)),
-    }
-}
-
-pub fn color_to_hex(color: Color) -> Option<String> {
-    color_to_rgb(color).map(|(r, g, b)| format!("#{:02X}{:02X}{:02X}", r, g, b))
 }
 
 fn apply_non_truecolor_syntax_palette(

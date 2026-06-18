@@ -117,48 +117,27 @@ fn ansi16_fallback_converts_syntax_colors_to_indexed_palette() {
 }
 
 #[test]
-fn color_to_rgb_supports_indexed_colors() {
-    assert_eq!(color_to_rgb(Color::Indexed(16)), Some((0, 0, 0)));
-    assert_eq!(color_to_rgb(Color::Indexed(21)), Some((0, 0, 255)));
-    assert_eq!(color_to_rgb(Color::Indexed(244)), Some((128, 128, 128)));
-    assert_eq!(color_to_rgb(Color::Reset), None);
-}
-
-#[test]
-fn color_to_hex_supports_indexed_colors() {
-    assert_eq!(
-        color_to_hex(Color::Indexed(21)),
-        Some("#0000FF".to_string())
-    );
-    assert_eq!(
-        color_to_hex(Color::Indexed(244)),
-        Some("#808080".to_string())
-    );
-    assert_eq!(color_to_hex(Color::Reset), None);
-}
-
-#[test]
 fn ansi256_rgb_mapping_avoids_theme_dependent_base16_palette() {
     // ANSI 0..15 colors can be customized by terminal themes (notably on macOS Terminal.app),
     // so RGB→ANSI256 mapping should prefer the standardized 16..255 palette for stability.
     assert_eq!(
-        map_color_to_support(Color::Rgb(255, 0, 0), TerminalColorSupport::Ansi256),
+        map_color_for_support(Color::Rgb(255, 0, 0), TerminalColorSupport::Ansi256),
         Color::Indexed(196)
     );
     assert_eq!(
-        map_color_to_support(Color::Rgb(0, 255, 0), TerminalColorSupport::Ansi256),
+        map_color_for_support(Color::Rgb(0, 255, 0), TerminalColorSupport::Ansi256),
         Color::Indexed(46)
     );
     assert_eq!(
-        map_color_to_support(Color::Rgb(0, 0, 255), TerminalColorSupport::Ansi256),
+        map_color_for_support(Color::Rgb(0, 0, 255), TerminalColorSupport::Ansi256),
         Color::Indexed(21)
     );
     assert_eq!(
-        map_color_to_support(Color::Rgb(0, 0, 0), TerminalColorSupport::Ansi256),
+        map_color_for_support(Color::Rgb(0, 0, 0), TerminalColorSupport::Ansi256),
         Color::Indexed(16)
     );
     assert_eq!(
-        map_color_to_support(Color::Rgb(255, 255, 255), TerminalColorSupport::Ansi256),
+        map_color_for_support(Color::Rgb(255, 255, 255), TerminalColorSupport::Ansi256),
         Color::Indexed(231)
     );
 }
