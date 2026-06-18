@@ -152,3 +152,29 @@ fn test_find_node_by_path_ro_returns_none_for_unknown_or_outside_paths() {
     );
     assert_eq!(tree.find_node_by_path_ro(&PathBuf::from("/tmp")), None);
 }
+
+#[test]
+fn test_flatten_for_view_hides_root_so_top_level_depth_is_zero() {
+    // 隐藏的 root 不应计入缩进：顶层条目 depth=0、嵌套逐层 +1，与 demo 的文件列表对齐。
+    let mut tree = FileTree::new_with_root("root".into(), PathBuf::from("/root"));
+    let root = tree.root();
+    let src = tree
+        .insert_child(root, "src".into(), NodeKind::Dir)
+        .unwrap();
+    let app = tree.insert_child(src, "app".into(), NodeKind::Dir).unwrap();
+    tree.insert_child(app, "main.rs".into(), NodeKind::File)
+        .unwrap();
+    tree.expand(src);
+    tree.expand(app);
+
+    let rows = tree.flatten_for_view();
+    let depth_of = |name: &str| {
+        rows.iter()
+            .find(|r| r.name.as_os_str() == std::ffi::OsStr::new(name))
+            .map(|r| r.depth)
+    };
+
+    assert_eq!(depth_of("src"), Some(0), "顶层目录应为 depth 0");
+    assert_eq!(depth_of("app"), Some(1), "二层目录应为 depth 1");
+    assert_eq!(depth_of("main.rs"), Some(2), "三层文件应为 depth 2");
+}

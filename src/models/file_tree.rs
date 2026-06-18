@@ -473,7 +473,9 @@ impl FileTree {
                 if let Some(node) = self.arena.get(id) {
                     result.push(FileTreeRow {
                         id,
-                        depth,
+                        // root 不作为行渲染：顶层条目的可见缩进从 0 起算（与 demo 对齐）。
+                        // 非 root 节点 depth 恒 >= 1，减 1 不会下溢。
+                        depth: depth - 1,
                         name: node.name.clone(),
                         is_dir: node.kind == NodeKind::Dir,
                         is_expanded: self.expanded.contains(&id),
