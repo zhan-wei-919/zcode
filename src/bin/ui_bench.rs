@@ -16,7 +16,6 @@ fn main() -> std::io::Result<()> {
     let mut events: usize = 100_000;
     let mut width: u16 = 120;
     let mut height: u16 = 40;
-    let mut panes: usize = 2;
     let mut tabs_per_pane: usize = 5;
     let mut render_on_input = false;
     let mut explorer_files: usize = 200;
@@ -34,8 +33,6 @@ fn main() -> std::io::Result<()> {
             width = value.parse().unwrap_or(width);
         } else if let Some(value) = arg.strip_prefix("--height=") {
             height = value.parse().unwrap_or(height);
-        } else if let Some(value) = arg.strip_prefix("--panes=") {
-            panes = value.parse().unwrap_or(panes);
         } else if let Some(value) = arg.strip_prefix("--tabs=") {
             tabs_per_pane = value.parse().unwrap_or(tabs_per_pane);
         } else if arg == "--render-on-input" {
@@ -53,7 +50,7 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    let panes = panes.clamp(1, 2);
+    let panes = 1usize;
     let tabs_per_pane = tabs_per_pane.max(1);
     let required_tabs = panes.saturating_mul(tabs_per_pane);
     let explorer_files = explorer_files.max(required_tabs);
@@ -62,10 +59,6 @@ fn main() -> std::io::Result<()> {
     let (tx, _rx) = mpsc::channel();
     let runtime = AsyncRuntime::new(tx)?;
     let mut workbench = Workbench::new(&root, runtime, None, None)?;
-
-    if panes == 2 {
-        workbench.bench_run_command(Command::SplitEditorVertical);
-    }
 
     let normal = generate_rust_like(normal_lines, normal_cols);
     let long = generate_rust_like(long_lines, long_cols);

@@ -69,31 +69,6 @@ pub static PALETTE_ITEMS: &[PaletteItem] = &[
         command: Command::FocusEditor,
     },
     PaletteItem {
-        label: "View: Split Editor (Vertical)",
-        label_lc: "view: split editor (vertical)",
-        command: Command::SplitEditorVertical,
-    },
-    PaletteItem {
-        label: "View: Split Editor (Horizontal)",
-        label_lc: "view: split editor (horizontal)",
-        command: Command::SplitEditorHorizontal,
-    },
-    PaletteItem {
-        label: "View: Close Editor Split",
-        label_lc: "view: close editor split",
-        command: Command::CloseEditorSplit,
-    },
-    PaletteItem {
-        label: "View: Focus Next Editor Pane",
-        label_lc: "view: focus next editor pane",
-        command: Command::FocusNextEditorPane,
-    },
-    PaletteItem {
-        label: "View: Focus Prev Editor Pane",
-        label_lc: "view: focus prev editor pane",
-        command: Command::FocusPrevEditorPane,
-    },
-    PaletteItem {
         label: "LSP: Hover",
         label_lc: "lsp: hover",
         command: Command::LspHover,

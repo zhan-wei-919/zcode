@@ -413,89 +413,50 @@ impl Workbench {
                             };
                             let tab_id = TabId::new(tab_id);
 
-                            match intent {
-                                DropIntent::TabToTabBar { to_pane } => {
-                                    let Some(to_pane_state) =
-                                        self.store.state().editor.pane(to_pane)
-                                    else {
-                                        continue;
-                                    };
-                                    // to_pane 来自真实 EditorArea 节点的 drop intent，其内层矩形必然已写入；
-                                    // 越界则跳过，不再静默回退到 pane 0（避免投放到错误 pane）。
-                                    let Some(to_area) = self.frame_layout.editor.inner(to_pane)
-                                    else {
-                                        continue;
-                                    };
-                                    let config = &self.store.state().editor.config;
-                                    let to_layout =
-                                        compute_editor_pane_layout(to_area, to_pane_state, config);
+                            if let DropIntent::TabToTabBar { to_pane } = intent {
+                                let Some(to_pane_state) = self.store.state().editor.pane(to_pane)
+                                else {
+                                    continue;
+                                };
+                                // to_pane 来自真实 EditorArea 节点的 drop intent，其内层矩形必然已写入；
+                                // 越界则跳过，不再静默回退到 pane 0（避免投放到错误 pane）。
+                                let Some(to_area) = self.frame_layout.editor.inner(to_pane) else {
+                                    continue;
+                                };
+                                let config = &self.store.state().editor.config;
+                                let to_layout =
+                                    compute_editor_pane_layout(to_area, to_pane_state, config);
 
-                                    let hovered_to = self
-                                        .store
-                                        .state()
-                                        .ui
-                                        .hovered_tab
-                                        .filter(|(hp, _)| *hp == to_pane)
-                                        .map(|(_, i)| i);
+                                let hovered_to = self
+                                    .store
+                                    .state()
+                                    .ui
+                                    .hovered_tab
+                                    .filter(|(hp, _)| *hp == to_pane)
+                                    .map(|(_, i)| i);
 
-                                    let Some(to_index) = tab_insertion_index(
-                                        &to_layout,
-                                        to_pane_state,
-                                        pos.x,
-                                        pos.y,
-                                        hovered_to,
-                                    ) else {
-                                        continue;
-                                    };
+                                let Some(to_index) = tab_insertion_index(
+                                    &to_layout,
+                                    to_pane_state,
+                                    pos.x,
+                                    pos.y,
+                                    hovered_to,
+                                ) else {
+                                    continue;
+                                };
 
-                                    let _ = self.dispatch_kernel(KernelAction::Editor(
-                                        EditorAction::MoveTab {
-                                            tab_id,
-                                            from_pane,
-                                            to_pane,
-                                            to_index,
-                                        },
-                                    ));
-                                    let _ =
-                                        self.dispatch_kernel(KernelAction::EditorSetActivePane {
-                                            pane: to_pane,
-                                        });
-                                    handled = true;
-                                }
-                                DropIntent::TabToSplit { drop } => {
-                                    let cmd = match drop {
-                                        crate::ui::core::tree::SplitDrop::Right => {
-                                            Command::SplitEditorVertical
-                                        }
-                                        crate::ui::core::tree::SplitDrop::Down => {
-                                            Command::SplitEditorHorizontal
-                                        }
-                                    };
-                                    let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd));
-
-                                    let to_pane = 1usize;
-                                    let to_index = self
-                                        .store
-                                        .state()
-                                        .editor
-                                        .pane(to_pane)
-                                        .map(|p| p.tabs.len())
-                                        .unwrap_or(0);
-                                    let _ = self.dispatch_kernel(KernelAction::Editor(
-                                        EditorAction::MoveTab {
-                                            tab_id,
-                                            from_pane,
-                                            to_pane,
-                                            to_index,
-                                        },
-                                    ));
-                                    let _ =
-                                        self.dispatch_kernel(KernelAction::EditorSetActivePane {
-                                            pane: to_pane,
-                                        });
-                                    handled = true;
-                                }
-                                _ => {}
+                                let _ = self.dispatch_kernel(KernelAction::Editor(
+                                    EditorAction::MoveTab {
+                                        tab_id,
+                                        from_pane,
+                                        to_pane,
+                                        to_index,
+                                    },
+                                ));
+                                let _ = self.dispatch_kernel(KernelAction::EditorSetActivePane {
+                                    pane: to_pane,
+                                });
+                                handled = true;
                             }
                         }
                         _ => {}

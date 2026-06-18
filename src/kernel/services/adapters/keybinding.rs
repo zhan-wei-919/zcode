@@ -172,11 +172,6 @@ fn default_global_keybindings() -> FxHashMap<Key, Command> {
         Key::ctrl_shift(KeyCode::Char('j')),
         Command::FocusBottomPanel,
     );
-    bindings.insert(Key::ctrl(KeyCode::Char('\\')), Command::SplitEditorVertical);
-    bindings.insert(
-        Key::ctrl_shift(KeyCode::Char('\\')),
-        Command::CloseEditorSplit,
-    );
     bindings.insert(Key::ctrl(KeyCode::Char(',')), Command::OpenSettings);
 
     bindings

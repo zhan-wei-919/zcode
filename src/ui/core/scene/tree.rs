@@ -39,12 +39,6 @@ pub enum Axis {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SplitDrop {
-    Right,
-    Down,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeKind {
     Unknown,
     Splitter { axis: Axis },
@@ -53,7 +47,6 @@ pub enum NodeKind {
     ExplorerRow { node_id: u64 },
     ExplorerFolderDrop { node_id: u64 },
     EditorArea { pane: usize },
-    EditorSplitDrop { pane: usize, drop: SplitDrop },
     MenuItem { menu_id: u32, index: usize },
 }
 

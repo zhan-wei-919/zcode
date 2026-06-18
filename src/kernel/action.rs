@@ -73,9 +73,6 @@ pub enum Action {
     EditorSetActivePane {
         pane: usize,
     },
-    EditorSetSplitRatio {
-        ratio: u16,
-    },
     SidebarSetWidth {
         width: u16,
     },

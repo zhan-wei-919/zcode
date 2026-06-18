@@ -44,7 +44,6 @@ impl DragDropRules for TestRules {
         matches!(
             (payload, target.kind),
             (DragPayload::Tab { .. }, NodeKind::TabBar { .. })
-                | (DragPayload::Tab { .. }, NodeKind::EditorSplitDrop { .. })
                 | (
                     DragPayload::ExplorerNode { .. },
                     NodeKind::EditorArea { .. }
@@ -335,7 +334,7 @@ fn drag_drop_prefers_topmost_compatible_target_when_overlapping() {
 }
 
 #[test]
-fn drag_drop_emits_drop_for_tab_split_targets() {
+fn drag_drop_emits_drop_for_tab_targets() {
     let mut tree = UiTree::new();
 
     let tab = Node {
@@ -349,20 +348,17 @@ fn drag_drop_emits_drop_for_tab_split_targets() {
             tab_id: 42u64,
         },
     };
-    let split = Node {
+    let drop_target = Node {
         id: Id::raw(2),
         rect: Rect::new(10, 0, 10, 10),
         layer: 0,
         z: 0,
         sense: Sense::DROP_TARGET,
-        kind: NodeKind::EditorSplitDrop {
-            pane: 0,
-            drop: crate::ui::core::tree::SplitDrop::Right,
-        },
+        kind: NodeKind::TabBar { pane: 1 },
     };
 
     tree.push(tab);
-    tree.push(split);
+    tree.push(drop_target);
 
     let mut rt = UiRuntime::new();
     let _ = on_input(
@@ -377,7 +373,7 @@ fn drag_drop_emits_drop_for_tab_split_targets() {
         &mouse(MouseEventKind::Drag(MouseButton::Left), 3, 1),
         &tree,
     );
-    // Move over editor split drop target.
+    // Move over tab bar drop target.
     let _ = on_input(
         &mut rt,
         &mouse(MouseEventKind::Drag(MouseButton::Left), 12, 1),

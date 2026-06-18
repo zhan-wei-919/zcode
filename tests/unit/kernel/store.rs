@@ -478,129 +478,6 @@ fn confirm_dialog_rejects_out_of_workspace_file_operations() {
 }
 
 #[test]
-fn auto_closes_split_when_second_pane_becomes_empty_after_move_tab() {
-    let mut store = new_store();
-
-    let a = store.state.workspace_root.join("a.rs");
-    let b = store.state.workspace_root.join("b.rs");
-
-    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
-        pane: 0,
-        path: a,
-        content: "a".to_string(),
-    }));
-    let _ = store.dispatch(Action::RunCommand(Command::SplitEditorVertical));
-    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
-        pane: 1,
-        path: b,
-        content: "b".to_string(),
-    }));
-
-    assert_eq!(store.state.ui.editor_layout.panes, 2);
-    assert_eq!(store.state.editor.panes.len(), 2);
-
-    let tab_id = store.state.editor.pane(1).unwrap().tabs[0].id;
-    let result = store.dispatch(Action::Editor(EditorAction::MoveTab {
-        tab_id,
-        from_pane: 1,
-        to_pane: 0,
-        to_index: 1,
-    }));
-
-    assert!(result.state_changed);
-    assert_eq!(store.state.ui.editor_layout.panes, 1);
-    assert_eq!(store.state.editor.panes.len(), 1);
-
-    let titles: Vec<_> = store
-        .state
-        .editor
-        .pane(0)
-        .unwrap()
-        .tabs
-        .iter()
-        .map(|t| t.title.as_str())
-        .collect();
-    assert!(titles.contains(&"a.rs"));
-    assert!(titles.contains(&"b.rs"));
-}
-
-#[test]
-fn auto_closes_split_when_first_pane_becomes_empty_after_move_tab() {
-    let mut store = new_store();
-
-    let a = store.state.workspace_root.join("a.rs");
-    let b = store.state.workspace_root.join("b.rs");
-
-    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
-        pane: 0,
-        path: a,
-        content: "a".to_string(),
-    }));
-    let _ = store.dispatch(Action::RunCommand(Command::SplitEditorVertical));
-    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
-        pane: 1,
-        path: b,
-        content: "b".to_string(),
-    }));
-
-    let tab_id = store.state.editor.pane(0).unwrap().tabs[0].id;
-    let to_index = store.state.editor.pane(1).unwrap().tabs.len();
-    let result = store.dispatch(Action::Editor(EditorAction::MoveTab {
-        tab_id,
-        from_pane: 0,
-        to_pane: 1,
-        to_index,
-    }));
-
-    assert!(result.state_changed);
-    assert_eq!(store.state.ui.editor_layout.panes, 1);
-    assert_eq!(store.state.ui.editor_layout.active_pane, 0);
-    assert_eq!(
-        store.state.ui.editor_layout.split_direction,
-        SplitDirection::Vertical
-    );
-    assert_eq!(store.state.editor.panes.len(), 1);
-
-    let pane = store.state.editor.pane(0).unwrap();
-    assert_eq!(pane.tabs.len(), 2);
-    assert!(pane.active < pane.tabs.len());
-
-    let titles: Vec<_> = pane.tabs.iter().map(|t| t.title.as_str()).collect();
-    assert!(titles.contains(&"a.rs"));
-    assert!(titles.contains(&"b.rs"));
-}
-
-#[test]
-fn auto_closes_split_when_last_tab_in_second_pane_is_closed() {
-    let mut store = new_store();
-
-    let a = store.state.workspace_root.join("a.rs");
-    let b = store.state.workspace_root.join("b.rs");
-
-    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
-        pane: 0,
-        path: a,
-        content: "a".to_string(),
-    }));
-    let _ = store.dispatch(Action::RunCommand(Command::SplitEditorVertical));
-    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
-        pane: 1,
-        path: b,
-        content: "b".to_string(),
-    }));
-
-    let result = store.dispatch(Action::Editor(EditorAction::CloseTabAt {
-        pane: 1,
-        index: 0,
-    }));
-    assert!(result.state_changed);
-    assert_eq!(store.state.ui.editor_layout.panes, 1);
-    assert_eq!(store.state.editor.panes.len(), 1);
-    assert_eq!(store.state.editor.pane(0).unwrap().tabs.len(), 1);
-    assert_eq!(store.state.editor.pane(0).unwrap().tabs[0].title, "a.rs");
-}
-
-#[test]
 fn explorer_context_menu_root_items_include_disabled_actions() {
     let mut store = new_store();
 
@@ -4021,13 +3898,11 @@ fn reload_from_disk_emits_reload_request_from_active_tab() {
     let mut store = new_store();
     let path = store.state.workspace_root.join("reload_target.rs");
 
-    let _ = store.dispatch(Action::RunCommand(Command::SplitEditorVertical));
     let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
         pane: 0,
         path: path.clone(),
         content: "fn main() {}\n".to_string(),
     }));
-    let _ = store.dispatch(Action::EditorSetActivePane { pane: 0 });
 
     let result = store.dispatch(Action::RunCommand(Command::ReloadFromDisk));
 

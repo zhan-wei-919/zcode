@@ -43,18 +43,10 @@ pub enum BottomPanelTab {
     Logs,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SplitDirection {
-    Vertical,
-    Horizontal,
-}
-
 #[derive(Debug, Clone)]
 pub struct EditorLayoutState {
     pub panes: usize,
     pub active_pane: usize,
-    pub split_ratio: u16,
-    pub split_direction: SplitDirection,
 }
 
 impl Default for EditorLayoutState {
@@ -62,8 +54,6 @@ impl Default for EditorLayoutState {
         Self {
             panes: 1,
             active_pane: 0,
-            split_ratio: 500,
-            split_direction: SplitDirection::Vertical,
         }
     }
 }
@@ -393,8 +383,6 @@ pub enum TabMenuAction {
     CloseOthers,
     CloseToRight,
     CloseAll,
-    SplitRight,
-    SplitDown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

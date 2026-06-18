@@ -1,5 +1,5 @@
 use crate::core::Command;
-use crate::kernel::editor::{EditorAction, TabId};
+use crate::kernel::editor::EditorAction;
 use crate::kernel::state::{
     ContextMenuAction, ContextMenuEntry, ContextMenuRequest, ContextMenuState,
     ExplorerClipboardMode, ExplorerMenuAction, PendingAction, TabMenuAction,
@@ -242,17 +242,6 @@ impl super::Store {
                 ContextMenuAction::Tab(TabMenuAction::CloseAll),
                 tab_count > 0,
             ),
-            ContextMenuEntry::separator(),
-            action_entry(
-                "Split Right",
-                ContextMenuAction::Tab(TabMenuAction::SplitRight),
-                can_target_tab,
-            ),
-            action_entry(
-                "Split Down",
-                ContextMenuAction::Tab(TabMenuAction::SplitDown),
-                can_target_tab,
-            ),
         ]
     }
 
@@ -357,46 +346,6 @@ impl super::Store {
         result
     }
 
-    fn split_tab_to_other_pane(
-        &mut self,
-        pane: usize,
-        tab_id: u64,
-        split_command: Command,
-    ) -> super::DispatchResult {
-        let mut result = self.dispatch(Action::RunCommand(split_command));
-        if self.state.ui.editor_layout.panes < 2 {
-            result.state_changed = true;
-            return result;
-        }
-
-        let to_pane = if pane == 0 { 1 } else { 0 };
-        let to_index = self
-            .state
-            .editor
-            .pane(to_pane)
-            .map(|pane_state| pane_state.tabs.len())
-            .unwrap_or(0);
-
-        let (moved, mut move_effects) = self.state.editor.dispatch_action(EditorAction::MoveTab {
-            tab_id: TabId::new(tab_id),
-            from_pane: pane,
-            to_pane,
-            to_index,
-        });
-        result.effects.append(&mut move_effects);
-
-        if moved {
-            self.state.ui.editor_layout.active_pane = to_pane;
-            self.state.ui.focus = FocusTarget::Editor;
-            self.push_git_refresh_for_pane(pane, &mut result.effects);
-            self.push_git_refresh_for_pane(to_pane, &mut result.effects);
-            result.state_changed = true;
-        }
-
-        result.state_changed = true;
-        result
-    }
-
     fn dispatch_tab_menu_action(
         &mut self,
         action: TabMenuAction,
@@ -470,24 +419,6 @@ impl super::Store {
                 self.close_tabs_with_unsaved_guard(pane, close_ids)
             }
             TabMenuAction::CloseAll => self.close_tabs_with_unsaved_guard(pane, tab_ids),
-            TabMenuAction::SplitRight => {
-                let Some(index) = target_index else {
-                    return super::DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                };
-                self.split_tab_to_other_pane(pane, tab_ids[index], Command::SplitEditorVertical)
-            }
-            TabMenuAction::SplitDown => {
-                let Some(index) = target_index else {
-                    return super::DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                };
-                self.split_tab_to_other_pane(pane, tab_ids[index], Command::SplitEditorHorizontal)
-            }
         }
     }
 

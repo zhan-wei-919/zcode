@@ -49,18 +49,6 @@ fn drop_intent_maps_supported_pairs() {
         drop_intent(&tab, crate::ui::core::tree::NodeKind::TabBar { pane: 1 }),
         Some(DropIntent::TabToTabBar { to_pane: 1 })
     );
-    assert_eq!(
-        drop_intent(
-            &tab,
-            crate::ui::core::tree::NodeKind::EditorSplitDrop {
-                pane: 0,
-                drop: crate::ui::core::tree::SplitDrop::Down,
-            },
-        ),
-        Some(DropIntent::TabToSplit {
-            drop: crate::ui::core::tree::SplitDrop::Down
-        })
-    );
 
     assert_eq!(
         drop_intent(

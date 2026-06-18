@@ -6,7 +6,6 @@ use super::super::EditorScrollbarDragState;
 
 #[derive(Debug, Default)]
 pub(in crate::app::workbench) struct InteractionState {
-    pub(in crate::app::workbench) editor_split_dragging: bool,
     pub(in crate::app::workbench) sidebar_split_dragging: bool,
     pub(in crate::app::workbench) bottom_panel_split_dragging: bool,
     pub(in crate::app::workbench) editor_scrollbar_drag: Option<EditorScrollbarDragState>,

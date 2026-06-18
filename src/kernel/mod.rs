@@ -27,7 +27,6 @@ pub use panel::symbols::{SymbolItem, SymbolsState};
 pub use search::{SearchResultItem, SearchResultsSnapshot, SearchState, SearchViewport};
 pub use state::{
     AppState, BottomPanelTab, ConfirmDialogState, EditorLayoutState, ExplorerState, FocusTarget,
-    InputDialogKind, InputDialogState, LspState, PendingAction, SidebarTab, SplitDirection,
-    UiState,
+    InputDialogKind, InputDialogState, LspState, PendingAction, SidebarTab, UiState,
 };
 pub use store::{CompletionRanker, DispatchResult, Store};

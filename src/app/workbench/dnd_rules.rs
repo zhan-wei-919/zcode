@@ -1,11 +1,10 @@
 use crate::ui::core::input::DragPayload;
 use crate::ui::core::runtime::DragDropRules;
-use crate::ui::core::tree::{Node, NodeKind, SplitDrop};
+use crate::ui::core::tree::{Node, NodeKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DropIntent {
     TabToTabBar { to_pane: usize },
-    TabToSplit { drop: SplitDrop },
     ExplorerToEditorArea { pane: usize },
     ExplorerToExplorerRow { to_row_id: u64 },
     ExplorerToExplorerFolder { to_dir_id: u64 },
@@ -31,9 +30,6 @@ pub(super) fn drop_intent(payload: &DragPayload, target_kind: NodeKind) -> Optio
     match (payload, target_kind) {
         (DragPayload::Tab { .. }, NodeKind::TabBar { pane }) => {
             Some(DropIntent::TabToTabBar { to_pane: pane })
-        }
-        (DragPayload::Tab { .. }, NodeKind::EditorSplitDrop { drop, .. }) => {
-            Some(DropIntent::TabToSplit { drop })
         }
         (DragPayload::ExplorerNode { .. }, NodeKind::EditorArea { pane }) => {
             Some(DropIntent::ExplorerToEditorArea { pane })

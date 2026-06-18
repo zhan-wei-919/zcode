@@ -40,9 +40,6 @@ fn dispatch_by_target(
         MouseTarget::BottomPanelSplitter => workbench
             .handle_bottom_panel_split_mouse(mouse_event, ui_out)
             .unwrap_or(EventResult::Ignored),
-        MouseTarget::EditorSplitter => workbench
-            .handle_editor_split_mouse(mouse_event, ui_out)
-            .unwrap_or(EventResult::Ignored),
         MouseTarget::Explorer => workbench.handle_explorer_mouse(mouse_event, ui_out),
         MouseTarget::Search => workbench.handle_search_mouse(mouse_event),
         MouseTarget::Editor => workbench.handle_editor_mouse(mouse_event, ui_out),

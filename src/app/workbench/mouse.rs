@@ -3,10 +3,9 @@ use super::Workbench;
 use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::core::Command;
 use crate::kernel::services::adapters::perf;
-use crate::kernel::{Action as KernelAction, SidebarTab, SplitDirection};
+use crate::kernel::{Action as KernelAction, SidebarTab};
 use crate::tui::view::EventResult;
 use crate::ui::core::geom::Pos;
-use crate::ui::core::geom::Rect;
 use crate::ui::core::id::IdPath;
 use crate::ui::core::input::UiEvent;
 use crate::ui::core::runtime::UiRuntimeOutput;
@@ -146,62 +145,6 @@ impl Workbench {
         false
     }
 
-    pub(super) fn handle_editor_split_mouse(
-        &mut self,
-        event: &MouseEvent,
-        ui_out: &UiRuntimeOutput,
-    ) -> Option<EventResult> {
-        let _scope = perf::scope("input.mouse.split");
-        let splitter_id = IdPath::root("workbench")
-            .push_str("editor_splitter")
-            .finish();
-
-        // Arm dragging on mouse down if we hit the splitter node from the last rendered tree.
-        if matches!(event.kind, MouseEventKind::Down(MouseButton::Left)) {
-            let pos = Pos::new(event.column, event.row);
-            let hit = self.ui_tree.hit_test_with_sense(pos, Sense::DRAG_SOURCE);
-            if hit.is_none_or(|n| n.id != splitter_id) {
-                return None;
-            }
-
-            self.interaction.editor_split_dragging = true;
-            let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::FocusEditor));
-            self.update_editor_split_ratio(event.column, event.row);
-            return Some(EventResult::Consumed);
-        }
-
-        // While dragging, keep feeding events to the UI runtime (capture/threshold handling),
-        // but only apply updates for the splitter drag session.
-        if !self.interaction.editor_split_dragging {
-            return None;
-        }
-
-        let mut handled = false;
-        for ev in &ui_out.events {
-            match ev {
-                UiEvent::DragStart { id, pos } if *id == splitter_id => {
-                    handled = true;
-                    self.update_editor_split_ratio(pos.x, pos.y);
-                }
-                UiEvent::DragMove { id, pos, .. } if *id == splitter_id => {
-                    handled = true;
-                    self.update_editor_split_ratio(pos.x, pos.y);
-                }
-                UiEvent::DragEnd { id, .. } if *id == splitter_id => {
-                    handled = true;
-                }
-                _ => {}
-            }
-        }
-
-        if matches!(event.kind, MouseEventKind::Up(MouseButton::Left)) {
-            self.interaction.editor_split_dragging = false;
-            handled = true;
-        }
-
-        handled.then_some(EventResult::Consumed)
-    }
-
     pub(super) fn handle_sidebar_split_mouse(
         &mut self,
         event: &MouseEvent,
@@ -322,18 +265,6 @@ impl Workbench {
         handled.then_some(EventResult::Consumed)
     }
 
-    fn update_editor_split_ratio(&mut self, column: u16, row: u16) {
-        let Some(area) = self.frame_layout.editor.container_area else {
-            return;
-        };
-
-        let direction = self.store.state().ui.editor_layout.split_direction;
-        let Some(ratio) = compute_split_ratio(direction, area, column, row) else {
-            return;
-        };
-        let _ = self.dispatch_kernel(KernelAction::EditorSetSplitRatio { ratio });
-    }
-
     fn update_sidebar_width(&mut self, column: u16) {
         let Some(area) = self.frame_layout.sidebar_container_area else {
             return;
@@ -374,43 +305,3 @@ impl Workbench {
         let _ = self.dispatch_kernel(KernelAction::BottomPanelSetHeightRatio { ratio });
     }
 }
-
-fn compute_split_ratio(
-    direction: SplitDirection,
-    area: Rect,
-    column: u16,
-    row: u16,
-) -> Option<u16> {
-    match direction {
-        SplitDirection::Vertical => {
-            if area.w < 3 {
-                return None;
-            }
-            let total = area.w.saturating_sub(1);
-            if total < 2 {
-                return None;
-            }
-
-            let mut left = column.saturating_sub(area.x);
-            left = left.clamp(1, total.saturating_sub(1));
-            Some(((left as u32) * 1000 / (total as u32)) as u16)
-        }
-        SplitDirection::Horizontal => {
-            if area.h < 3 {
-                return None;
-            }
-            let total = area.h.saturating_sub(1);
-            if total < 2 {
-                return None;
-            }
-
-            let mut top = row.saturating_sub(area.y);
-            top = top.clamp(1, total.saturating_sub(1));
-            Some(((top as u32) * 1000 / (total as u32)) as u16)
-        }
-    }
-}
-
-#[cfg(test)]
-#[path = "../../../tests/unit/app/workbench/mouse_split_ratio.rs"]
-mod tests;

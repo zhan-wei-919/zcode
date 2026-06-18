@@ -49,7 +49,7 @@ use util::{
 
 use super::{
     Action, AppState, BottomPanelTab, EditorAction, Effect, FocusTarget, InputDialogKind,
-    SidebarTab, SplitDirection,
+    SidebarTab,
 };
 use crate::kernel::language::{
     adapter::adapter_for_tab, adapter_for, CompletionRecord, CompletionResolveState,
@@ -392,7 +392,6 @@ impl Store {
 
         self.state.ui.editor_layout.panes = 1;
         self.state.ui.editor_layout.active_pane = 0;
-        self.state.ui.editor_layout.split_direction = SplitDirection::Vertical;
         self.state.ui.focus = FocusTarget::Editor;
 
         let _ = self.state.editor.ensure_panes(1);
@@ -1006,22 +1005,6 @@ impl Store {
                         || prev_focus != FocusTarget::Editor
                         || completion_changed
                         || self.reconcile_signature_help_visibility(),
-                }
-            }
-            Action::EditorSetSplitRatio { ratio } => {
-                if self.state.ui.editor_layout.panes < 2 {
-                    return DispatchResult {
-                        effects: Vec::new(),
-                        state_changed: false,
-                    };
-                }
-
-                let ratio = ratio.clamp(100, 900);
-                let prev = self.state.ui.editor_layout.split_ratio;
-                self.state.ui.editor_layout.split_ratio = ratio;
-                DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: ratio != prev,
                 }
             }
             Action::SidebarSetWidth { width } => {
@@ -2034,135 +2017,6 @@ impl Store {
             Command::FocusEditor => {
                 self.state.ui.focus = FocusTarget::Editor;
                 state_changed = true;
-            }
-            Command::SplitEditorVertical => {
-                let prev_dir = self.state.ui.editor_layout.split_direction;
-                let prev_focus = self.state.ui.focus;
-                self.state.ui.editor_layout.split_direction = SplitDirection::Vertical;
-                if self.state.ui.editor_layout.panes < 2 {
-                    self.state.ui.editor_layout.panes = 2;
-                    self.state.ui.editor_layout.active_pane =
-                        self.state.ui.editor_layout.active_pane.min(1);
-                    self.state.ui.focus = FocusTarget::Editor;
-                    let panes = self.state.ui.editor_layout.panes;
-                    let _ = self.state.editor.ensure_panes(panes);
-                    state_changed = true;
-                } else {
-                    self.state.ui.focus = FocusTarget::Editor;
-                    state_changed =
-                        prev_dir != SplitDirection::Vertical || prev_focus != FocusTarget::Editor;
-                }
-
-                if state_changed {
-                    let pane = self.state.ui.editor_layout.active_pane;
-                    let mut effects = effects;
-                    self.push_git_refresh_for_pane(pane, &mut effects);
-                    return DispatchResult {
-                        effects,
-                        state_changed,
-                    };
-                }
-            }
-            Command::SplitEditorHorizontal => {
-                let prev_dir = self.state.ui.editor_layout.split_direction;
-                let prev_focus = self.state.ui.focus;
-                self.state.ui.editor_layout.split_direction = SplitDirection::Horizontal;
-                if self.state.ui.editor_layout.panes < 2 {
-                    self.state.ui.editor_layout.panes = 2;
-                    self.state.ui.editor_layout.active_pane =
-                        self.state.ui.editor_layout.active_pane.min(1);
-                    self.state.ui.focus = FocusTarget::Editor;
-                    let panes = self.state.ui.editor_layout.panes;
-                    let _ = self.state.editor.ensure_panes(panes);
-                    state_changed = true;
-                } else {
-                    self.state.ui.focus = FocusTarget::Editor;
-                    state_changed =
-                        prev_dir != SplitDirection::Horizontal || prev_focus != FocusTarget::Editor;
-                }
-
-                if state_changed {
-                    let pane = self.state.ui.editor_layout.active_pane;
-                    let mut effects = effects;
-                    self.push_git_refresh_for_pane(pane, &mut effects);
-                    return DispatchResult {
-                        effects,
-                        state_changed,
-                    };
-                }
-            }
-            Command::CloseEditorSplit => {
-                if self.state.ui.editor_layout.panes > 1 {
-                    self.state.ui.editor_layout.panes = 1;
-                    self.state.ui.editor_layout.active_pane = 0;
-                    self.state.ui.editor_layout.split_direction = SplitDirection::Vertical;
-                    self.state.ui.focus = FocusTarget::Editor;
-                    let panes = self.state.ui.editor_layout.panes;
-                    let _ = self.state.editor.ensure_panes(panes);
-                    state_changed = true;
-
-                    let pane = self.state.ui.editor_layout.active_pane;
-                    let mut effects = effects;
-                    self.push_git_refresh_for_pane(pane, &mut effects);
-                    return DispatchResult {
-                        effects,
-                        state_changed,
-                    };
-                }
-            }
-            Command::FocusNextEditorPane => {
-                let panes = self.state.ui.editor_layout.panes.max(1);
-                if panes > 1 {
-                    self.state.ui.editor_layout.active_pane =
-                        (self.state.ui.editor_layout.active_pane + 1) % panes;
-                    self.state.ui.focus = FocusTarget::Editor;
-                    state_changed = true;
-                }
-
-                if !state_changed {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                let pane = self.state.ui.editor_layout.active_pane;
-                let mut effects = effects;
-                self.push_git_refresh_for_pane(pane, &mut effects);
-
-                return DispatchResult {
-                    effects,
-                    state_changed,
-                };
-            }
-            Command::FocusPrevEditorPane => {
-                let panes = self.state.ui.editor_layout.panes.max(1);
-                if panes > 1 {
-                    self.state.ui.editor_layout.active_pane =
-                        if self.state.ui.editor_layout.active_pane == 0 {
-                            panes - 1
-                        } else {
-                            self.state.ui.editor_layout.active_pane - 1
-                        };
-                    self.state.ui.focus = FocusTarget::Editor;
-                    state_changed = true;
-                }
-
-                if !state_changed {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                let pane = self.state.ui.editor_layout.active_pane;
-                let mut effects = effects;
-                self.push_git_refresh_for_pane(pane, &mut effects);
-
-                return DispatchResult {
-                    effects,
-                    state_changed,
-                };
             }
             Command::ToggleBottomPanel => {
                 let visible = !self.state.ui.bottom_panel.visible;

@@ -1,6 +1,5 @@
 use super::super::{CompletionDocKey, Workbench};
 use crate::kernel::editor::EditorPaneState;
-use crate::kernel::SplitDirection;
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::Pos;
 use crate::ui::core::geom::Rect as UiRect;
@@ -8,7 +7,7 @@ use crate::ui::core::id::IdPath;
 use crate::ui::core::layout::Insets;
 use crate::ui::core::painter::Painter;
 use crate::ui::core::style::Style as UiStyle;
-use crate::ui::core::tree::{Axis, Node, NodeKind, Sense, SplitDrop};
+use crate::ui::core::tree::{Node, NodeKind, Sense};
 use crate::views::doc;
 use crate::views::editor::markdown::MarkdownDocument;
 use crate::views::{
@@ -20,27 +19,6 @@ use unicode_width::UnicodeWidthStr;
 pub(super) const MAX_DOC_RENDER_LINES: usize = doc::MAX_RENDER_LINES;
 
 impl Workbench {
-    fn register_editor_splitter_node(&mut self, sep_area: UiRect, direction: SplitDirection) {
-        if sep_area.is_empty() {
-            return;
-        }
-        let axis = match direction {
-            SplitDirection::Vertical => Axis::Vertical,
-            SplitDirection::Horizontal => Axis::Horizontal,
-        };
-        let id = IdPath::root("workbench")
-            .push_str("editor_splitter")
-            .finish();
-        self.ui_tree.push(Node {
-            id,
-            rect: sep_area,
-            layer: 0,
-            z: 0,
-            sense: Sense::HOVER | Sense::DRAG_SOURCE,
-            kind: NodeKind::Splitter { axis },
-        });
-    }
-
     pub(super) fn paint_hover_popup(&mut self, painter: &mut Painter, area: UiRect) {
         self.ui.hover_popup.last_area = None;
         self.ui.hover_popup.total_lines = 0;
@@ -643,11 +621,7 @@ impl Workbench {
     }
 
     pub(super) fn render_editor_panes(&mut self, backend: &mut dyn Backend, area: UiRect) {
-        let panes = self.store.state().ui.editor_layout.panes.max(1);
-        let direction = self.store.state().ui.editor_layout.split_direction;
-        let split_ratio = self.store.state().ui.editor_layout.split_ratio;
-
-        let rects = compute_pane_rects(area, panes, direction, split_ratio);
+        let rects = compute_pane_rects(area);
 
         // 帧布局契约：几何一次性前置写入，render 与 interaction 共享同一份。
         self.frame_layout.editor.container_area = (!area.is_empty()).then_some(area);
@@ -665,44 +639,14 @@ impl Workbench {
         self.render_cache
             .viewport
             .editor_content_sizes
-            .resize_with(panes, || (0, 0));
+            .resize_with(1, || (0, 0));
         self.render_cache
             .viewport
             .applied_editor_content_sizes
-            .resize_with(panes, || (0, 0));
+            .resize_with(1, || (0, 0));
 
-        match rects.separator {
-            None => {
-                // 无分隔线 = 单一可视 pane（panes==1 / 退化尺寸 / panes>2），不可能拖拽分割线。
-                self.interaction.editor_split_dragging = false;
-                let active = self
-                    .store
-                    .state()
-                    .ui
-                    .editor_layout
-                    .active_pane
-                    .min(panes - 1);
-                // 仅真正单 pane（panes==1）注册 split drop zones，与原行为一致。
-                let with_drop_zones = panes == 1;
-                self.render_one_editor_pane(backend, active, rects.inner[0], with_drop_zones);
-            }
-            Some((sep_area, dir)) => {
-                self.register_editor_splitter_node(sep_area, dir);
-                self.draw_split_separator(backend, sep_area, dir);
-
-                // inner_areas[0] = 左/上 = pane 0；inner_areas[1] = 右/下 = pane 1。
-                let pane0_inner = rects.inner[0];
-                if !pane0_inner.is_empty()
-                    && !self.render_one_editor_pane(backend, 0, pane0_inner, false)
-                {
-                    return;
-                }
-                let pane1_inner = rects.inner[1];
-                if !pane1_inner.is_empty() {
-                    self.render_one_editor_pane(backend, 1, pane1_inner, false);
-                }
-            }
-        }
+        // 单编辑区：仅一个 pane。
+        self.render_one_editor_pane(backend, 0, rects.inner[0]);
     }
 
     /// 渲染单个 editor pane：计算内部布局、同步 viewport、注册节点并绘制。
@@ -712,7 +656,6 @@ impl Workbench {
         backend: &mut dyn Backend,
         pane: usize,
         inner: UiRect,
-        with_drop_zones: bool,
     ) -> bool {
         let layout = {
             let Some(pane_state) = self.store.state().editor.pane(pane) else {
@@ -733,9 +676,6 @@ impl Workbench {
         if let Some(pane_state) = self.store.state().editor.pane(pane) {
             push_editor_area_node(&mut self.ui_tree, pane, &layout);
             push_editor_tab_nodes(&mut self.ui_tree, pane, &layout, pane_state, hovered_tab);
-            if with_drop_zones {
-                push_editor_split_drop_zones(&mut self.ui_tree, pane, &layout);
-            }
             let options = EditorPaneRenderOptions {
                 hovered_tab,
                 workspace_empty: self.store.state().explorer.rows.is_empty(),
@@ -746,45 +686,6 @@ impl Workbench {
             self.draw_editor_pane(backend, pane, &layout, pane_state, markdown, options);
         }
         true
-    }
-
-    /// 绘制分屏分隔线：垂直分屏画竖线、水平分屏画横线（不画方框，更接近 nvim 风格）。
-    fn draw_split_separator(
-        &self,
-        backend: &mut dyn Backend,
-        sep_area: UiRect,
-        direction: SplitDirection,
-    ) {
-        if sep_area.is_empty() {
-            return;
-        }
-        let style = UiStyle::default()
-            .fg(self.theme.core.separator)
-            .bg(self.theme.core.editor_bg);
-        let mut painter = Painter::new();
-        match direction {
-            SplitDirection::Vertical => {
-                for dx in 0..sep_area.w {
-                    painter.vline(
-                        Pos::new(sep_area.x.saturating_add(dx), sep_area.y),
-                        sep_area.h,
-                        '│',
-                        style,
-                    );
-                }
-            }
-            SplitDirection::Horizontal => {
-                for dy in 0..sep_area.h {
-                    painter.hline(
-                        Pos::new(sep_area.x, sep_area.y.saturating_add(dy)),
-                        sep_area.w,
-                        '─',
-                        style,
-                    );
-                }
-            }
-        }
-        backend.draw(sep_area, painter.cmds());
     }
 }
 
@@ -947,71 +848,6 @@ fn push_editor_area_node(
         sense: Sense::DROP_TARGET | Sense::CONTEXT_MENU,
         kind: NodeKind::EditorArea { pane },
     });
-}
-
-fn push_editor_split_drop_zones(
-    ui_tree: &mut crate::ui::core::tree::UiTree,
-    pane: usize,
-    layout: &EditorPaneLayout,
-) {
-    let area = layout.editor_area;
-    if area.is_empty() {
-        return;
-    }
-
-    // Drag-to-split zones (VSCode-like). This is intentionally coarse and only used as a drop
-    // target while dragging a tab.
-    let right_w = area.w.saturating_div(3).max(10).min(area.w);
-    let down_h = area.h.saturating_div(3).max(4).min(area.h);
-    if right_w == 0 || down_h == 0 {
-        return;
-    }
-
-    let down = UiRect::new(area.x, area.bottom().saturating_sub(down_h), area.w, down_h);
-    if !down.is_empty() {
-        let id = IdPath::root("workbench")
-            .push_str("editor_split_drop")
-            .push_u64(pane as u64)
-            .push_str("down")
-            .finish();
-        ui_tree.push(Node {
-            id,
-            rect: down,
-            layer: 1,
-            z: 0,
-            sense: Sense::DROP_TARGET,
-            kind: NodeKind::EditorSplitDrop {
-                pane,
-                drop: SplitDrop::Down,
-            },
-        });
-    }
-
-    let right = UiRect::new(
-        area.right().saturating_sub(right_w),
-        area.y,
-        right_w,
-        area.h,
-    );
-    if !right.is_empty() {
-        let id = IdPath::root("workbench")
-            .push_str("editor_split_drop")
-            .push_u64(pane as u64)
-            .push_str("right")
-            .finish();
-        // Push after `down` so it wins in the overlapping bottom-right region.
-        ui_tree.push(Node {
-            id,
-            rect: right,
-            layer: 1,
-            z: 0,
-            sense: Sense::DROP_TARGET,
-            kind: NodeKind::EditorSplitDrop {
-                pane,
-                drop: SplitDrop::Right,
-            },
-        });
-    }
 }
 
 fn push_editor_tab_nodes(

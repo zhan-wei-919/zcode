@@ -343,28 +343,6 @@ fn render_drag_preview(workbench: &Workbench, backend: &mut dyn Backend, area: R
                     }
                 }
             }
-            DropIntent::TabToSplit { drop } => {
-                let highlight = UiStyle::default()
-                    .bg(workbench.theme.core.palette_selected_bg)
-                    .fg(workbench.theme.core.palette_selected_fg);
-                painter.style_rect(target.rect, highlight);
-
-                let label = match drop {
-                    crate::ui::core::tree::SplitDrop::Right => "Split Right",
-                    crate::ui::core::tree::SplitDrop::Down => "Split Down",
-                };
-                let label_w =
-                    unicode_width::UnicodeWidthStr::width(label).min(u16::MAX as usize) as u16;
-                let x = target
-                    .rect
-                    .x
-                    .saturating_add(target.rect.w.saturating_sub(label_w) / 2);
-                let y = target.rect.y.saturating_add(target.rect.h / 2);
-                let row = Rect::new(target.rect.x, y, target.rect.w, 1.min(target.rect.h));
-                if !row.is_empty() {
-                    painter.text_clipped(Pos::new(x, y), label, highlight, row);
-                }
-            }
         }
     }
 
