@@ -7,7 +7,7 @@ use crate::kernel::editor::{ReloadRequest, TabId};
 use crate::kernel::language::LanguageId;
 use crate::kernel::services::ports::{
     LspCompletionItem, LspCompletionTriggerContext, LspPositionEncoding, LspRange, LspResourceOp,
-    LspWorkspaceFileEdit, ThemeSettings,
+    LspWorkspaceFileEdit,
 };
 
 #[derive(Debug, Clone)]
@@ -173,9 +173,6 @@ pub enum Effect {
     Restart {
         path: PathBuf,
         hard: bool,
-    },
-    SaveThemeSettings {
-        theme_settings: Box<ThemeSettings>,
     },
     ReloadFile(ReloadRequest),
 }

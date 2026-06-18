@@ -47,10 +47,9 @@ fn dispatch_by_target(
         MouseTarget::Search => workbench.handle_search_mouse(mouse_event),
         MouseTarget::Editor => workbench.handle_editor_mouse(mouse_event, ui_out),
         MouseTarget::BottomPanel => workbench.handle_bottom_panel_mouse(mouse_event),
-        MouseTarget::ContextMenu
-        | MouseTarget::ThemeEditor
-        | MouseTarget::CommandPalette
-        | MouseTarget::ByFocus => EventResult::Ignored,
+        MouseTarget::ContextMenu | MouseTarget::CommandPalette | MouseTarget::ByFocus => {
+            EventResult::Ignored
+        }
     }
 }
 
@@ -164,10 +163,6 @@ pub(super) fn handle_input(workbench: &mut Workbench, event: &InputEvent) -> Eve
 
                 // Modal overlay: swallow mouse events even when it doesn't redraw.
                 return EventResult::Ignored;
-            }
-
-            if plan.target == MouseTarget::ThemeEditor {
-                return workbench.handle_theme_editor_mouse(mouse_event);
             }
 
             if plan.target == MouseTarget::CommandPalette {

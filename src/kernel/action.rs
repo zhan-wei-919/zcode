@@ -22,7 +22,7 @@ use crate::kernel::services::ports::LspSignatureHelpPayload;
 use crate::kernel::services::ports::LspTextEdit;
 use crate::kernel::services::ports::LspWorkspaceEdit;
 use crate::kernel::services::ports::{LspHoverPayload, LspHoverPreviewPayload};
-use crate::kernel::state::{BottomPanelTab, PreviewLanguage, ThemeEditorFocus};
+use crate::kernel::state::BottomPanelTab;
 use crate::kernel::{GitFileStatus, GitGutterMarks, GitHead, GitWorktreeItem};
 
 #[derive(Debug, Clone)]
@@ -288,36 +288,4 @@ pub enum Action {
     ExplorerDirChanged {
         path: PathBuf,
     },
-    ThemeEditorOpen,
-    ThemeEditorClose,
-    ThemeEditorMoveTokenSelection {
-        delta: isize,
-    },
-    ThemeEditorSetFocus {
-        focus: ThemeEditorFocus,
-    },
-    ThemeEditorAdjustHue {
-        delta: i16,
-    },
-    ThemeEditorSetHue {
-        hue: u16,
-    },
-    ThemeEditorAdjustSaturation {
-        delta: i8,
-    },
-    ThemeEditorAdjustLightness {
-        delta: i8,
-    },
-    ThemeEditorSetSaturationLightness {
-        saturation: u8,
-        lightness: u8,
-    },
-    ThemeEditorSetAnsiIndex {
-        index: u8,
-    },
-    ThemeEditorCycleLanguage,
-    ThemeEditorSetLanguage {
-        language: PreviewLanguage,
-    },
-    ThemeEditorResetToken,
 }

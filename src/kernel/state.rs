@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::core::Command;
-use crate::kernel::editor::SyntaxColorGroup;
 use crate::kernel::language::{
     CompletionEntry, CompletionNormalizationSnapshot, CompletionRecord, CompletionResolveState,
     HoverModel, HoverSectionModel, SignatureHelpModel,
@@ -26,216 +25,6 @@ pub enum FocusTarget {
     Editor,
     BottomPanel,
     CommandPalette,
-    ThemeEditor,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThemeEditorToken {
-    // Syntax foreground colors
-    Comment,
-    Keyword,
-    KeywordControl,
-    String,
-    Number,
-    Type,
-    Attribute,
-    Namespace,
-    Macro,
-    Function,
-    Variable,
-    Constant,
-    Regex,
-    // Background colors
-    EditorBg,
-    SidebarBg,
-    ActivityBg,
-    PopupBg,
-    StatusbarBg,
-}
-
-impl ThemeEditorToken {
-    pub const ALL: [ThemeEditorToken; 18] = [
-        ThemeEditorToken::Comment,
-        ThemeEditorToken::Keyword,
-        ThemeEditorToken::KeywordControl,
-        ThemeEditorToken::String,
-        ThemeEditorToken::Number,
-        ThemeEditorToken::Type,
-        ThemeEditorToken::Attribute,
-        ThemeEditorToken::Namespace,
-        ThemeEditorToken::Macro,
-        ThemeEditorToken::Function,
-        ThemeEditorToken::Variable,
-        ThemeEditorToken::Constant,
-        ThemeEditorToken::Regex,
-        ThemeEditorToken::EditorBg,
-        ThemeEditorToken::SidebarBg,
-        ThemeEditorToken::ActivityBg,
-        ThemeEditorToken::PopupBg,
-        ThemeEditorToken::StatusbarBg,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Comment => "Comment",
-            Self::Keyword => "Keyword",
-            Self::KeywordControl => "Keyword Ctrl",
-            Self::String => "String",
-            Self::Number => "Number",
-            Self::Type => "Type",
-            Self::Attribute => "Attribute",
-            Self::Namespace => "Namespace",
-            Self::Macro => "Macro",
-            Self::Function => "Function",
-            Self::Variable => "Variable",
-            Self::Constant => "Constant",
-            Self::Regex => "Regex",
-            Self::EditorBg => "Editor BG",
-            Self::SidebarBg => "Sidebar BG",
-            Self::ActivityBg => "Activity BG",
-            Self::PopupBg => "Popup BG",
-            Self::StatusbarBg => "Statusbar BG",
-        }
-    }
-
-    pub fn index(self) -> usize {
-        match self {
-            Self::Comment => 0,
-            Self::Keyword => 1,
-            Self::KeywordControl => 2,
-            Self::String => 3,
-            Self::Number => 4,
-            Self::Type => 5,
-            Self::Attribute => 6,
-            Self::Namespace => 7,
-            Self::Macro => 8,
-            Self::Function => 9,
-            Self::Variable => 10,
-            Self::Constant => 11,
-            Self::Regex => 12,
-            Self::EditorBg => 13,
-            Self::SidebarBg => 14,
-            Self::ActivityBg => 15,
-            Self::PopupBg => 16,
-            Self::StatusbarBg => 17,
-        }
-    }
-
-    pub fn from_index(i: usize) -> Self {
-        Self::ALL[i % Self::ALL.len()]
-    }
-
-    pub const fn syntax_color_group(self) -> Option<SyntaxColorGroup> {
-        match self {
-            Self::Comment => Some(SyntaxColorGroup::Comment),
-            Self::Keyword => Some(SyntaxColorGroup::Keyword),
-            Self::KeywordControl => Some(SyntaxColorGroup::KeywordControl),
-            Self::String => Some(SyntaxColorGroup::String),
-            Self::Number => Some(SyntaxColorGroup::Number),
-            Self::Type => Some(SyntaxColorGroup::Type),
-            Self::Attribute => Some(SyntaxColorGroup::Attribute),
-            Self::Namespace => Some(SyntaxColorGroup::Namespace),
-            Self::Macro => Some(SyntaxColorGroup::Macro),
-            Self::Function => Some(SyntaxColorGroup::Function),
-            Self::Variable => Some(SyntaxColorGroup::Variable),
-            Self::Constant => Some(SyntaxColorGroup::Constant),
-            Self::Regex => Some(SyntaxColorGroup::Regex),
-            Self::EditorBg
-            | Self::SidebarBg
-            | Self::ActivityBg
-            | Self::PopupBg
-            | Self::StatusbarBg => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThemeEditorFocus {
-    TokenList,
-    HueBar,
-    SvPalette,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PreviewLanguage {
-    Rust,
-    Python,
-    Go,
-    JavaScript,
-    TypeScript,
-    C,
-    Cpp,
-    Java,
-}
-
-impl PreviewLanguage {
-    pub const ALL: [PreviewLanguage; 8] = [
-        PreviewLanguage::Rust,
-        PreviewLanguage::Python,
-        PreviewLanguage::Go,
-        PreviewLanguage::JavaScript,
-        PreviewLanguage::TypeScript,
-        PreviewLanguage::C,
-        PreviewLanguage::Cpp,
-        PreviewLanguage::Java,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Rust => "Rust",
-            Self::Python => "Py",
-            Self::Go => "Go",
-            Self::JavaScript => "JS",
-            Self::TypeScript => "TS",
-            Self::C => "C",
-            Self::Cpp => "C++",
-            Self::Java => "Java",
-        }
-    }
-
-    pub fn next(self) -> Self {
-        match self {
-            Self::Rust => Self::Python,
-            Self::Python => Self::Go,
-            Self::Go => Self::JavaScript,
-            Self::JavaScript => Self::TypeScript,
-            Self::TypeScript => Self::C,
-            Self::C => Self::Cpp,
-            Self::Cpp => Self::Java,
-            Self::Java => Self::Rust,
-        }
-    }
-
-    pub fn from_index(i: usize) -> Self {
-        Self::ALL[i % Self::ALL.len()]
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ThemeEditorState {
-    pub visible: bool,
-    pub selected_token: ThemeEditorToken,
-    pub focus: ThemeEditorFocus,
-    pub hue: u16,
-    pub saturation: u8,
-    pub lightness: u8,
-    pub ansi_index: u8,
-    pub preview_language: PreviewLanguage,
-}
-
-impl Default for ThemeEditorState {
-    fn default() -> Self {
-        Self {
-            visible: false,
-            selected_token: ThemeEditorToken::Comment,
-            focus: ThemeEditorFocus::TokenList,
-            hue: 0,
-            saturation: 50,
-            lightness: 50,
-            ansi_index: 16,
-            preview_language: PreviewLanguage::Rust,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -710,7 +499,6 @@ pub struct UiState {
     pub hover: HoverPopupState,
     pub signature_help: SignatureHelpPopupState,
     pub completion: CompletionPopupState,
-    pub theme_editor: ThemeEditorState,
 }
 
 impl Default for UiState {
@@ -741,7 +529,6 @@ impl Default for UiState {
             hover: HoverPopupState::default(),
             signature_help: SignatureHelpPopupState::default(),
             completion: CompletionPopupState::default(),
-            theme_editor: ThemeEditorState::default(),
         }
     }
 }

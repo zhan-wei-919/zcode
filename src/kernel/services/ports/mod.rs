@@ -24,4 +24,4 @@ pub use runtime::{AsyncExecutor, BoxFuture};
 pub use search::{
     FileMatches, GlobalSearchMessage, Match, Result as SearchResult, SearchError, SearchMessage,
 };
-pub use settings::{KeybindingRule, Settings, ThemeSettings};
+pub use settings::{KeybindingRule, Settings};

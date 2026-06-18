@@ -15,7 +15,6 @@ use crate::ui::core::painter::Painter;
 use crate::ui::core::style::{Mod as UiMod, Style as UiStyle};
 use crate::ui::core::theme::Theme;
 use crate::ui::core::tree::{Axis, Node, NodeKind, Sense};
-use crate::views::theme_editor::paint_theme_editor;
 use crate::views::{
     compute_editor_pane_layout, cursor_position_editor, tab_insertion_index, tab_insertion_x,
 };
@@ -110,28 +109,7 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         (Rect::default(), main_area)
     };
 
-    if workbench.store.state().ui.theme_editor.visible {
-        // Fill editor area with editor_bg so theme changes are visible behind the controls.
-        let bg_style = UiStyle::default().bg(workbench.theme.core.editor_bg);
-        let mut bg_painter = Painter::new();
-        bg_painter.fill_rect(editor_area, bg_style);
-        backend.draw(editor_area, bg_painter.cmds());
-
-        let mut painter = Painter::new();
-        let areas = paint_theme_editor(
-            &mut painter,
-            editor_area,
-            &workbench.store.state().ui.theme_editor,
-            &workbench.theme.core,
-            workbench.theme.color_support,
-            workbench.render_cache.theme_editor_layout.ansi_cursor,
-        );
-        workbench.render_cache.theme_editor_layout.token_list_area = areas.token_list;
-        workbench.render_cache.theme_editor_layout.hue_bar_area = areas.hue_bar;
-        workbench.render_cache.theme_editor_layout.sv_palette_area = areas.sv_palette;
-        workbench.render_cache.theme_editor_layout.language_bar_area = areas.language_bar;
-        backend.draw(editor_area, painter.cmds());
-    } else {
+    {
         let _scope = perf::scope("render.editors");
         workbench.render_editor_panes(backend, editor_area);
     }
@@ -493,7 +471,6 @@ pub(super) fn cursor_position(workbench: &Workbench) -> Option<(u16, u16)> {
         }
         FocusTarget::BottomPanel => None,
         FocusTarget::CommandPalette => None,
-        FocusTarget::ThemeEditor => None,
     }
 }
 

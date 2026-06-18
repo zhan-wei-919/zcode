@@ -1,5 +1,3 @@
-#[path = "primitives/color.rs"]
-pub mod color;
 #[path = "theme/color_support.rs"]
 pub mod color_support;
 #[path = "primitives/geom.rs"]

@@ -1,6 +1,5 @@
 //! 工作台模块：统一管理视图和输入分发
 
-use super::theme::UiTheme;
 use crate::core::event::InputEvent;
 use crate::core::wakeup::WakeupSender;
 use crate::core::Command;
@@ -174,15 +173,6 @@ struct ClickTracker {
     symbols: Option<(Instant, usize)>,
 }
 
-#[derive(Debug, Default)]
-struct ThemeEditorLayoutCache {
-    token_list_area: Option<Rect>,
-    hue_bar_area: Option<Rect>,
-    sv_palette_area: Option<Rect>,
-    ansi_cursor: Option<(u16, u16)>,
-    language_bar_area: Option<Rect>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct EditorScrollbarDragState {
     pane: usize,
@@ -237,7 +227,6 @@ pub struct Workbench {
     pending_definition_highlight: Option<PendingDefinitionHighlight>,
     definition_jump_highlight: Option<DefinitionJumpHighlight>,
     pending_restart: Option<PendingRestart>,
-    pending_theme_save_deadline: Option<Instant>,
     pending_completion_rank_save_deadline: Option<Instant>,
     file_watcher: Option<FileWatcherService>,
 }
@@ -268,7 +257,6 @@ impl Workbench {
         let file_tree = build_file_tree(root_path)?;
         let absolute_root = file_tree.absolute_root().to_path_buf();
         let mut keybindings = KeybindingService::new();
-        let mut theme = UiTheme::default();
         let mut editor_config = EditorConfig::default();
         let mut lsp_settings_override: Option<(String, Vec<String>, Option<serde_json::Value>)> =
             None;
@@ -351,7 +339,6 @@ impl Workbench {
                         entry.initialization_options = Some(initialization_options);
                     }
                 }
-                theme.apply_settings(&settings.theme);
                 editor_config = settings.editor;
             }
         }
@@ -414,7 +401,7 @@ impl Workbench {
                 file_watcher_open_paths_version,
                 ..LspSyncState::default()
             },
-            theme: ThemeState::new(theme, terminal_color_support),
+            theme: ThemeState::new(terminal_color_support),
             ui_runtime: crate::ui::core::runtime::UiRuntime::new(),
             ui_tree: crate::ui::core::tree::UiTree::new(),
             runtime,
@@ -439,7 +426,6 @@ impl Workbench {
             pending_definition_highlight: None,
             definition_jump_highlight: None,
             pending_restart: None,
-            pending_theme_save_deadline: None,
             pending_completion_rank_save_deadline: None,
             file_watcher: match FileWatcherService::new(watcher_root.as_path()) {
                 Ok(w) => Some(w),

@@ -1,12 +1,11 @@
 use super::*;
 use crate::core::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
-use crate::kernel::editor::{ReloadCause, ReloadRequest, SyntaxColorGroup};
+use crate::kernel::editor::{ReloadCause, ReloadRequest};
 use crate::models::NodeId;
 use crate::ui::backend::test::TestBackend;
 use crate::ui::core::geom::Rect;
 use crate::ui::core::id::IdPath;
-use crate::ui::core::style::Color;
 use crate::ui::core::tree::{NodeKind, SplitDrop};
 use crate::views::{
     compute_editor_pane_layout, hit_test_search_bar, vertical_scrollbar_metrics, SearchBarHitResult,
@@ -1655,125 +1654,6 @@ fn test_open_file_and_save_runs_async_runtime() {
     });
 
     assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "Xhello\n");
-}
-
-#[test]
-fn test_theme_editor_sync_hsl_supports_indexed_colors() {
-    let dir = tempdir().unwrap();
-    let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
-
-    workbench.theme.source.syntax_colors[SyntaxColorGroup::Comment as usize] = Color::Indexed(65);
-    assert_eq!(
-        workbench.store.state().ui.theme_editor.selected_token,
-        crate::kernel::state::ThemeEditorToken::Comment
-    );
-    assert_eq!(
-        crate::ui::core::theme_adapter::color_to_rgb(
-            workbench.theme.source.syntax_colors[SyntaxColorGroup::Comment as usize],
-        ),
-        crate::ui::core::theme_adapter::color_to_rgb(Color::Indexed(65))
-    );
-
-    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetHue { hue: 1 });
-    assert_eq!(workbench.store.state().ui.theme_editor.hue, 1);
-    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetSaturationLightness {
-        saturation: 1,
-        lightness: 1,
-    });
-    assert_eq!(
-        (
-            workbench.store.state().ui.theme_editor.hue,
-            workbench.store.state().ui.theme_editor.saturation,
-            workbench.store.state().ui.theme_editor.lightness,
-        ),
-        (1, 1, 1)
-    );
-
-    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::OpenThemeEditor));
-
-    workbench.sync_theme_editor_hsl();
-
-    let (r, g, b) = crate::ui::core::theme_adapter::color_to_rgb(Color::Indexed(65)).unwrap();
-    let expected = crate::app::theme::rgb_to_hsl(r, g, b);
-    let state = &workbench.store.state().ui.theme_editor;
-    assert_eq!((state.hue, state.saturation, state.lightness), expected);
-}
-
-#[test]
-fn test_theme_editor_ui_theme_uses_ansi_fallback_when_not_truecolor() {
-    let dir = tempdir().unwrap();
-    let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
-
-    workbench.theme.color_support = crate::ui::core::color_support::TerminalColorSupport::Ansi256;
-    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetHue { hue: 120 });
-    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetSaturationLightness {
-        saturation: 100,
-        lightness: 50,
-    });
-
-    workbench.apply_theme_editor_color();
-
-    assert!(matches!(
-        workbench.theme.source.syntax_colors[SyntaxColorGroup::Comment as usize],
-        Color::Rgb(..)
-    ));
-    assert!(matches!(
-        workbench.theme.core.syntax_fg(SyntaxColorGroup::Comment),
-        Color::Indexed(_)
-    ));
-}
-
-#[test]
-fn test_theme_editor_apply_color_updates_preview_in_ansi256_mode() {
-    let dir = tempdir().unwrap();
-    let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
-
-    workbench.theme.color_support = crate::ui::core::color_support::TerminalColorSupport::Ansi256;
-
-    // Pick a concrete ANSI256 color and ensure the preview uses it.
-    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorSetAnsiIndex { index: 196 });
-
-    workbench.apply_theme_editor_color();
-
-    assert_eq!(
-        workbench.theme.core.syntax_fg(SyntaxColorGroup::Comment),
-        Color::Indexed(196)
-    );
-}
-
-#[test]
-fn test_theme_editor_ansi_palette_marker_tracks_mouse_cell() {
-    let dir = tempdir().unwrap();
-    let (runtime, _rx) = create_test_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None, None).unwrap();
-
-    workbench.theme.color_support = crate::ui::core::color_support::TerminalColorSupport::Ansi256;
-    let _ = workbench.dispatch_kernel(KernelAction::ThemeEditorOpen);
-
-    let mut backend = TestBackend::new(200, 60);
-    workbench.render(&mut backend, Rect::new(0, 0, 200, 60));
-    let area = workbench
-        .render_cache
-        .theme_editor_layout
-        .sv_palette_area
-        .expect("sv palette area");
-    assert!(area.w > 0 && area.h > 0);
-
-    let click_x = area.x.saturating_add(area.w.saturating_sub(1));
-    let click_y = area.y;
-    let _ = workbench.handle_input(&mouse(
-        MouseEventKind::Down(MouseButton::Left),
-        click_x,
-        click_y,
-    ));
-
-    let mut backend = TestBackend::new(200, 60);
-    workbench.render(&mut backend, Rect::new(0, 0, 200, 60));
-    let buf = backend.buffer();
-    assert_eq!(buf.cell(click_x, click_y).unwrap().symbol, "+");
 }
 
 #[test]

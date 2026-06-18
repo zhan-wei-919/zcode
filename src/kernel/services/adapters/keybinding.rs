@@ -15,7 +15,6 @@ pub enum KeybindingContext {
     SidebarSearch,
     CommandPalette,
     BottomPanel,
-    ThemeEditor,
 }
 
 impl KeybindingContext {
@@ -31,7 +30,6 @@ impl KeybindingContext {
             }
             "palette" | "commandpalette" | "command_palette" => Some(Self::CommandPalette),
             "bottompanel" | "bottom_panel" | "panel" => Some(Self::BottomPanel),
-            "themeeditor" | "theme_editor" => Some(Self::ThemeEditor),
             _ => None,
         }
     }
@@ -45,7 +43,6 @@ pub struct KeybindingService {
     sidebar_search: FxHashMap<Key, Command>,
     command_palette: FxHashMap<Key, Command>,
     bottom_panel: FxHashMap<Key, Command>,
-    theme_editor: FxHashMap<Key, Command>,
 }
 
 impl KeybindingService {
@@ -62,7 +59,6 @@ impl KeybindingService {
             sidebar_search: default_sidebar_search_keybindings(),
             command_palette: default_command_palette_keybindings(),
             bottom_panel: default_bottom_panel_keybindings(),
-            theme_editor: FxHashMap::default(),
         }
     }
 
@@ -90,9 +86,6 @@ impl KeybindingService {
             KeybindingContext::BottomPanel => {
                 self.bottom_panel.get(key).or_else(|| self.global.get(key))
             }
-            KeybindingContext::ThemeEditor => {
-                self.theme_editor.get(key).or_else(|| self.global.get(key))
-            }
         }
     }
 
@@ -105,7 +98,6 @@ impl KeybindingService {
             KeybindingContext::SidebarSearch => &self.sidebar_search,
             KeybindingContext::CommandPalette => &self.command_palette,
             KeybindingContext::BottomPanel => &self.bottom_panel,
-            KeybindingContext::ThemeEditor => &self.theme_editor,
         }
     }
 
@@ -126,7 +118,6 @@ impl KeybindingService {
             KeybindingContext::SidebarSearch => &mut self.sidebar_search,
             KeybindingContext::CommandPalette => &mut self.command_palette,
             KeybindingContext::BottomPanel => &mut self.bottom_panel,
-            KeybindingContext::ThemeEditor => &mut self.theme_editor,
         }
     }
 }

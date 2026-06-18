@@ -25,8 +25,6 @@ mod input_dialog;
 mod palette;
 #[path = "reducers/search.rs"]
 mod search;
-#[path = "reducers/theme_editor.rs"]
-mod theme_editor;
 
 use intel::completion::{
     adjust_completion_multiline_indentation, apply_completion_insertion_cursor,
@@ -49,7 +47,6 @@ use util::{
     prev_bottom_panel_tab, search_viewport_for_focus,
 };
 
-use super::state::ThemeEditorFocus;
 use super::{
     Action, AppState, BottomPanelTab, EditorAction, Effect, FocusTarget, InputDialogKind,
     SidebarTab, SplitDirection,
@@ -1619,19 +1616,6 @@ impl Store {
                     state_changed: true,
                 }
             }
-            action @ Action::ThemeEditorOpen
-            | action @ Action::ThemeEditorClose
-            | action @ Action::ThemeEditorMoveTokenSelection { .. }
-            | action @ Action::ThemeEditorSetFocus { .. }
-            | action @ Action::ThemeEditorAdjustHue { .. }
-            | action @ Action::ThemeEditorSetHue { .. }
-            | action @ Action::ThemeEditorAdjustSaturation { .. }
-            | action @ Action::ThemeEditorAdjustLightness { .. }
-            | action @ Action::ThemeEditorSetSaturationLightness { .. }
-            | action @ Action::ThemeEditorSetAnsiIndex { .. }
-            | action @ Action::ThemeEditorCycleLanguage
-            | action @ Action::ThemeEditorSetLanguage { .. }
-            | action @ Action::ThemeEditorResetToken => self.reduce_theme_editor_action(action),
         }
     }
 
@@ -1647,15 +1631,6 @@ impl Store {
                         self.state.ui.focus = FocusTarget::Editor;
                     }
 
-                    return DispatchResult {
-                        effects,
-                        state_changed: true,
-                    };
-                }
-
-                if self.state.ui.theme_editor.visible {
-                    self.state.ui.theme_editor.visible = false;
-                    self.state.ui.focus = FocusTarget::Editor;
                     return DispatchResult {
                         effects,
                         state_changed: true,
@@ -1743,15 +1718,6 @@ impl Store {
                 return DispatchResult {
                     effects: vec![Effect::OpenSettings],
                     state_changed: false,
-                };
-            }
-            Command::OpenThemeEditor => {
-                self.state.ui.theme_editor.visible = true;
-                self.state.ui.theme_editor.focus = ThemeEditorFocus::TokenList;
-                self.state.ui.focus = FocusTarget::ThemeEditor;
-                return DispatchResult {
-                    effects: Vec::new(),
-                    state_changed: true,
                 };
             }
             Command::GitWorktreeAdd => {

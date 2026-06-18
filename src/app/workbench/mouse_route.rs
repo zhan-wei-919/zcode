@@ -9,7 +9,6 @@ use crate::ui::core::tree::Sense;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MouseTarget {
     ContextMenu,
-    ThemeEditor,
     CommandPalette,
     SidebarSplitter,
     BottomPanelSplitter,
@@ -33,7 +32,6 @@ pub(super) enum FocusPlan {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MouseRouteReason {
     ContextMenuModal,
-    ThemeEditorModal,
     CommandPaletteModal,
     SidebarSplitterHit,
     BottomPanelSplitterHit,
@@ -65,7 +63,6 @@ pub(super) fn mouse_target_from_focus(
         FocusTarget::Editor => MouseTarget::Editor,
         FocusTarget::BottomPanel => MouseTarget::BottomPanel,
         FocusTarget::CommandPalette => MouseTarget::CommandPalette,
-        FocusTarget::ThemeEditor => MouseTarget::ThemeEditor,
     }
 }
 
@@ -200,13 +197,6 @@ pub(super) fn plan_mouse_dispatch(workbench: &Workbench, event: &MouseEvent) -> 
         return MouseDispatchPlan::modal(
             MouseTarget::ContextMenu,
             MouseRouteReason::ContextMenuModal,
-        );
-    }
-
-    if workbench.store.state().ui.theme_editor.visible {
-        return MouseDispatchPlan::modal(
-            MouseTarget::ThemeEditor,
-            MouseRouteReason::ThemeEditorModal,
         );
     }
 
