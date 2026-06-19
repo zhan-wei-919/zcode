@@ -8,7 +8,7 @@ pub mod selection;
 pub mod text_buffer;
 
 pub use cursor_set::SecondaryCursor;
-pub use edit_history::{EditHistory, EditHistoryConfig, UndoResult};
+pub use edit_history::{EditHistory, UndoResult};
 pub use edit_op::{EditOp, OpId, OpKind};
 pub use file_tree::{
     build_file_tree, should_ignore, FileTree, FileTreeError, FileTreeRow, LoadState, NodeId,

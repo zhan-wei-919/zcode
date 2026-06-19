@@ -61,16 +61,6 @@ fn test_replace_apply() {
 }
 
 #[test]
-fn test_serialization() {
-    let op = EditOp::insert(OpId::root(), 0, CompactString::new("hello"), (0, 0), (0, 5));
-    let json = op.to_json_line().unwrap();
-    let restored = EditOp::from_json_line(&json).unwrap();
-
-    assert_eq!(restored.cursor_after(), (0, 5));
-    assert_eq!(restored.parent, OpId::root());
-}
-
-#[test]
 fn test_opid_uniqueness() {
     let id1 = OpId::new();
     let id2 = OpId::new();

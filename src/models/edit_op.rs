@@ -209,14 +209,6 @@ impl EditOp {
     pub fn apply(&self, rope: &mut ropey::Rope) {
         self.kind.apply(rope);
     }
-
-    pub fn to_json_line(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(self)
-    }
-
-    pub fn from_json_line(line: &str) -> Option<Self> {
-        serde_json::from_str(line).ok()
-    }
 }
 
 impl OpKind {

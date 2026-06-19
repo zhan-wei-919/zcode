@@ -1658,7 +1658,7 @@ impl EditorTabState {
         self.invalidate_semantic_highlight_on_edit(&op);
         self.last_edit_op_id = Some(op.id);
         self.reset_cursor_goal_col();
-        self.history.push(op, self.buffer.rope());
+        self.history.push(op);
         self.dirty = true;
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
         self.bump_version();
@@ -2148,7 +2148,7 @@ impl EditorTabState {
     }
 
     pub fn on_saved(&mut self) {
-        self.history.on_save(self.buffer.rope());
+        self.history.on_save();
         self.dirty = false;
         self.disk_state = super::state::DiskState::InSync;
     }

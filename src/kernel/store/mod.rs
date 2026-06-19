@@ -371,7 +371,6 @@ impl Store {
         let now = std::time::Instant::now();
         for pane in &mut self.state.editor.panes {
             for tab in &mut pane.tabs {
-                tab.history.tick();
                 if let crate::kernel::editor::DiskState::ReloadedFromDisk { at } = tab.disk_state {
                     if now.duration_since(at) >= std::time::Duration::from_secs(3) {
                         tab.disk_state = crate::kernel::editor::DiskState::InSync;

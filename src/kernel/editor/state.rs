@@ -239,7 +239,7 @@ impl std::fmt::Debug for EditorTabState {
 impl EditorTabState {
     pub fn untitled(id: TabId, config: &EditorConfig) -> Self {
         let buffer = TextBuffer::new();
-        let history = EditHistory::new(buffer.rope().clone());
+        let history = EditHistory::new();
         Self {
             id,
             title: "Untitled".to_string(),
@@ -279,7 +279,7 @@ impl EditorTabState {
             .unwrap_or_else(|| "Untitled".to_string());
 
         let buffer = TextBuffer::from_text(content);
-        let history = EditHistory::new(buffer.rope().clone());
+        let history = EditHistory::new();
         let syntax = SyntaxDocument::for_path(&path, buffer.rope());
         let syntax_highlight_cache = syntax
             .as_ref()
@@ -1158,7 +1158,7 @@ impl EditorTabState {
     pub fn reload_from_content(&mut self, content: &str, config: &EditorConfig) {
         use crate::models::{EditHistory, TextBuffer};
         self.buffer = TextBuffer::from_text(content);
-        self.history = EditHistory::new(self.buffer.rope().clone());
+        self.history = EditHistory::new();
         self.dirty = false;
         self.edit_version = self.edit_version.saturating_add(1);
         self.last_edit_op_id = None;

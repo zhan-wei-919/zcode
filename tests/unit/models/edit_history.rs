@@ -4,7 +4,7 @@ use compact_str::CompactString;
 #[test]
 fn test_undo_redo() {
     let base = Rope::from_str("hello");
-    let mut history = EditHistory::new(base.clone());
+    let mut history = EditHistory::new();
 
     // 插入 " world"
     let mut rope = base.clone();
@@ -16,7 +16,7 @@ fn test_undo_redo() {
         (0, 11),
     );
     op.apply(&mut rope);
-    history.push(op, &rope);
+    history.push(op);
 
     assert!(history.can_undo());
     assert!(!history.can_redo());
@@ -38,97 +38,46 @@ fn test_undo_redo() {
 
 #[test]
 fn test_branch_on_edit_after_undo() {
-    let base = Rope::from_str("");
-    let mut history = EditHistory::new(base.clone());
+    let mut history = EditHistory::new();
 
     // 插入 "a"
-    let mut rope = Rope::from_str("a");
     let op_a = EditOp::insert(history.head(), 0, CompactString::new("a"), (0, 0), (0, 1));
-    history.push(op_a.clone(), &rope);
+    history.push(op_a.clone());
 
     // 插入 "b"
-    rope = Rope::from_str("ab");
     let op_b = EditOp::insert(history.head(), 1, CompactString::new("b"), (0, 1), (0, 2));
-    history.push(op_b.clone(), &rope);
+    history.push(op_b.clone());
+    let mut rope = Rope::from_str("ab");
 
-    // Undo 一次（回到 "a"）
-    let _ = history.undo(&rope).unwrap();
-
-    // 插入 "c"（创建分支）
-    rope = Rope::from_str("ac");
-    let op_c = EditOp::insert(history.head(), 1, CompactString::new("c"), (0, 1), (0, 2));
-    history.push(op_c.clone(), &rope);
-
-    // 验证分支存在
-    let children = history.children_of(&op_a.id);
-    assert_eq!(children.len(), 2); // b 和 c 都是 a 的子节点
-
-    // checkout 到旧分支 b，再 undo 回 a，然后 redo 应该回到 b（而不是最近创建的 c）
-    let (checkout_rope, _) = history.checkout(op_b.id).unwrap();
-    assert_eq!(checkout_rope.to_string(), "ab");
-    rope = checkout_rope;
-
+    // Undo 一次（回到 "a"），HEAD 落到 op_a
     let undo = history.undo(&rope).unwrap();
     assert_eq!(undo.rope.to_string(), "a");
-    rope = undo.rope;
+    assert_eq!(history.head(), op_a.id);
 
-    let redo = history.redo(&rope).unwrap();
-    assert_eq!(redo.rope.to_string(), "ab");
-}
+    // 在 "a" 上插入 "c"，创建第二条分支
+    let op_c = EditOp::insert(history.head(), 1, CompactString::new("c"), (0, 1), (0, 2));
+    history.push(op_c.clone());
+    rope = Rope::from_str("ac");
+    assert_eq!(history.head(), op_c.id);
 
-#[test]
-fn test_log() {
-    let base = Rope::from_str("");
-    let mut history = EditHistory::new(base.clone());
+    // 两条分支的 op 都仍在历史中
+    assert!(history.get_op(&op_b.id).is_some());
+    assert!(history.get_op(&op_c.id).is_some());
 
-    // 插入 "a", "b", "c"
-    let mut rope = Rope::from_str("a");
-    let op_a = EditOp::insert(history.head(), 0, CompactString::new("a"), (0, 0), (0, 1));
-    history.push(op_a, &rope);
-
-    rope = Rope::from_str("ab");
-    let op_b = EditOp::insert(history.head(), 1, CompactString::new("b"), (0, 1), (0, 2));
-    history.push(op_b, &rope);
-
-    rope = Rope::from_str("abc");
-    let op_c = EditOp::insert(history.head(), 2, CompactString::new("c"), (0, 2), (0, 3));
-    history.push(op_c, &rope);
-
-    // log 应该返回 c, b, a
-    let log = history.log();
-    assert_eq!(log.len(), 3);
-}
-
-#[test]
-fn test_checkout() {
-    let base = Rope::from_str("");
-    let mut history = EditHistory::new(base.clone());
-
-    // 插入 "a"
-    let mut rope = Rope::from_str("a");
-    let op_a = EditOp::insert(history.head(), 0, CompactString::new("a"), (0, 0), (0, 1));
-    let op_a_id = op_a.id;
-    history.push(op_a, &rope);
-
-    // 插入 "b"
-    rope = Rope::from_str("ab");
-    let op_b = EditOp::insert(history.head(), 1, CompactString::new("b"), (0, 1), (0, 2));
-    history.push(op_b, &rope);
-
-    // checkout 到 op_a
-    let (checkout_rope, _) = history.checkout(op_a_id).unwrap();
-    assert_eq!(checkout_rope.to_string(), "a");
-    assert_eq!(history.head(), op_a_id);
+    // Undo 回 "a" 后 redo 跟随最近创建的分支 c
+    let undo = history.undo(&rope).unwrap();
+    assert_eq!(undo.rope.to_string(), "a");
+    let redo = history.redo(&undo.rope).unwrap();
+    assert_eq!(redo.rope.to_string(), "ac");
+    assert_eq!(history.head(), op_c.id);
 }
 
 #[test]
 fn test_is_dirty() {
-    let base = Rope::from_str("hello");
-    let mut history = EditHistory::new(base.clone());
+    let mut history = EditHistory::new();
 
     assert!(!history.is_dirty());
 
-    let rope = Rope::from_str("hello world");
     let op = EditOp::insert(
         history.head(),
         5,
@@ -136,7 +85,7 @@ fn test_is_dirty() {
         (0, 5),
         (0, 11),
     );
-    history.push(op, &rope);
+    history.push(op);
 
     assert!(history.is_dirty());
 }
@@ -144,7 +93,7 @@ fn test_is_dirty() {
 #[test]
 fn test_dirty_save_point() {
     let base = Rope::from_str("hello");
-    let mut history = EditHistory::new(base.clone());
+    let mut history = EditHistory::new();
 
     let mut rope = base.clone();
     let op = EditOp::insert(
@@ -155,10 +104,10 @@ fn test_dirty_save_point() {
         (0, 11),
     );
     op.apply(&mut rope);
-    history.push(op, &rope);
+    history.push(op);
 
     assert!(history.is_dirty());
-    history.on_save(&rope);
+    history.on_save();
     assert!(!history.is_dirty());
 
     let undo = history.undo(&rope).unwrap();
@@ -170,45 +119,14 @@ fn test_dirty_save_point() {
 }
 
 #[test]
-fn push_without_backup_does_not_queue_pending_ops() {
-    let base = Rope::from_str("");
-    let mut history = EditHistory::new(base.clone());
-
-    let mut rope = base.clone();
+fn clear_resets_history() {
+    let mut history = EditHistory::new();
     let op = EditOp::insert(history.head(), 0, CompactString::new("a"), (0, 0), (0, 1));
-    op.apply(&mut rope);
-    history.push(op, &rope);
+    history.push(op);
+    assert!(history.can_undo());
 
-    assert!(history.pending_ops.is_empty());
-}
-
-#[test]
-fn push_with_backup_queues_pending_ops() {
-    let base = Rope::from_str("");
-    let mut path = std::env::temp_dir();
-    path.push(format!(
-        "zcode-edit-history-{}.ops",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    ));
-
-    let mut history = EditHistory::with_backup(base.clone(), path.clone())
-        .expect("history with backup should be created")
-        .with_config(EditHistoryConfig {
-            flush_interval_ms: 60_000,
-            flush_threshold: 1_000_000,
-            checkpoint_interval: 0,
-        });
-
-    let mut rope = base.clone();
-    let op = EditOp::insert(history.head(), 0, CompactString::new("a"), (0, 0), (0, 1));
-    op.apply(&mut rope);
-    history.push(op, &rope);
-
-    assert_eq!(history.pending_ops.len(), 1);
-
-    drop(history);
-    let _ = std::fs::remove_file(path);
+    history.clear();
+    assert!(!history.can_undo());
+    assert!(!history.is_dirty());
+    assert!(history.head().is_root());
 }
