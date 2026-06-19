@@ -1,9 +1,8 @@
 use crate::kernel::editor::EditorTabState;
 use crate::kernel::editor::SnippetTabstop;
 use crate::kernel::language::adapter::{
-    expand_snippet as expand_fallback_snippet, CompletionContext, CompletionProtocolAdapter,
-    CompletionRecord, CompletionReplacePolicy, LanguageInteractionPolicy, LanguageRuntimeContext,
-    TextEditPlan,
+    CompletionContext, CompletionProtocolAdapter, CompletionRecord, CompletionReplacePolicy,
+    LanguageInteractionPolicy, LanguageRuntimeContext, TextEditPlan,
 };
 use crate::kernel::language::{CompletionEntry, LanguageId};
 use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding, LspRange};
@@ -13,8 +12,6 @@ use crate::models::{Granularity, Selection};
 use rustc_hash::FxHashMap;
 
 use super::completion_rank::CompletionRanker;
-
-pub(in crate::kernel::store) use crate::kernel::language::adapter::SnippetExpansion;
 
 pub(in crate::kernel::store) fn should_close_completion_on_editor_action(
     action: &EditorAction,
@@ -287,16 +284,6 @@ pub(in crate::kernel::store) struct CompletionInsertion {
 }
 
 impl CompletionInsertion {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(in crate::kernel::store) fn from_plain_text(text: String) -> Self {
-        Self::from_plan(TextEditPlan::from_plain_text(text))
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(in crate::kernel::store) fn from_snippet(snippet: &str) -> Self {
-        Self::from_plan(TextEditPlan::from_snippet(snippet))
-    }
-
     pub(in crate::kernel::store) fn from_plan(plan: TextEditPlan) -> Self {
         Self {
             text: plan.text,
@@ -317,20 +304,6 @@ impl CompletionInsertion {
     pub(in crate::kernel::store) fn has_cursor_or_selection(&self) -> bool {
         self.cursor.is_some() || self.selection.is_some()
     }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(in crate::kernel::store) fn resolve_completion_insertion(
-    tab: &EditorTabState,
-    adapter: &dyn crate::kernel::language::LanguageAdapter,
-    item: &LspCompletionItem,
-) -> CompletionInsertion {
-    let runtime =
-        LanguageRuntimeContext::new(tab.language(), tab, adapter.syntax().syntax_facts(tab));
-    let plan = adapter
-        .completion_protocol()
-        .normalize_completion_text(&CompletionContext::live(runtime, item));
-    CompletionInsertion::from_plan(plan)
 }
 
 pub(in crate::kernel::store) fn completion_replace_range(
@@ -560,11 +533,6 @@ pub(in crate::kernel::store) fn apply_completion_insertion_cursor(
     crate::kernel::editor::clamp_and_follow(&mut tab.viewport, &tab.buffer, tab_size);
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(in crate::kernel::store) fn expand_snippet(snippet: &str) -> SnippetExpansion {
-    expand_fallback_snippet(snippet)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,6 +544,20 @@ mod tests {
     };
     use crate::kernel::state::CompletionPopupState;
     use std::path::PathBuf;
+
+    /// 测试辅助：复刻生产 confirm 路径里 normalize → from_plan 的两步，方便按语言对比插入结果。
+    fn resolve_completion_insertion(
+        tab: &EditorTabState,
+        adapter: &dyn crate::kernel::language::LanguageAdapter,
+        item: &LspCompletionItem,
+    ) -> CompletionInsertion {
+        let runtime =
+            LanguageRuntimeContext::new(tab.language(), tab, adapter.syntax().syntax_facts(tab));
+        let plan = adapter
+            .completion_protocol()
+            .normalize_completion_text(&CompletionContext::live(runtime, item));
+        CompletionInsertion::from_plan(plan)
+    }
 
     fn completion_item(id: u64, label: &str) -> LspCompletionItem {
         LspCompletionItem {

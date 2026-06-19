@@ -76,8 +76,6 @@ pub struct LspService {
     server_command_overrides: FxHashMap<LspServerKind, LspServerCommandOverride>,
     clients: FxHashMap<ClientKey, LspClient>,
     warned_missing: FxHashSet<LspServerKind>,
-    debug_command: String,
-    debug_args: Vec<String>,
 }
 
 impl LspService {
@@ -89,22 +87,21 @@ impl LspService {
             server_command_overrides: FxHashMap::default(),
             clients: FxHashMap::default(),
             warned_missing: FxHashSet::default(),
-            debug_command: "rust-analyzer".to_string(),
-            debug_args: Vec::new(),
         }
     }
 
-    /// Backward-compatible debug view (used by tests): returns the configured override if present,
-    /// otherwise the Rust default command name.
+    /// Backward-compatible debug view (used by tests): the configured override if present,
+    /// otherwise the Rust default command name. Derived from the authoritative `command_override`.
     pub fn command_config(&self) -> (&str, &[String]) {
-        (&self.debug_command, &self.debug_args)
+        match &self.command_override {
+            Some((command, args, _)) => (command.as_str(), args.as_slice()),
+            None => ("rust-analyzer", &[]),
+        }
     }
 
     /// Global override (primarily for tests / debugging).
     pub fn with_command(mut self, command: String, args: Vec<String>) -> Self {
-        self.command_override = Some((command.clone(), args.clone(), None));
-        self.debug_command = command;
-        self.debug_args = args;
+        self.command_override = Some((command, args, None));
         self
     }
 
@@ -114,9 +111,7 @@ impl LspService {
         args: Vec<String>,
         initialization_options: Option<Value>,
     ) -> Self {
-        self.command_override = Some((command.clone(), args.clone(), initialization_options));
-        self.debug_command = command;
-        self.debug_args = args;
+        self.command_override = Some((command, args, initialization_options));
         self
     }
 
@@ -141,14 +136,6 @@ impl LspService {
 
         self.command_override = command_override;
         self.server_command_overrides = server_command_overrides;
-
-        if let Some((command, args, _)) = &self.command_override {
-            self.debug_command = command.clone();
-            self.debug_args = args.clone();
-        } else {
-            self.debug_command = "rust-analyzer".to_string();
-            self.debug_args.clear();
-        }
 
         for client in self.clients.values_mut() {
             client.shutdown();

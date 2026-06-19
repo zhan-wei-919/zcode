@@ -496,95 +496,10 @@ pub(super) fn hover_text(hover: &lsp_types::Hover) -> Option<String> {
     }
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub(super) fn signature_help_text(help: &lsp_types::SignatureHelp) -> Option<String> {
-    let active_sig = help.active_signature.unwrap_or(0) as usize;
-    let sig = help.signatures.get(active_sig)?;
-
-    let active_param = sig.active_parameter.or(help.active_parameter).unwrap_or(0) as usize;
-
-    let mut label = sig.label.clone();
-    if let Some(params) = sig.parameters.as_ref() {
-        if let Some(param) = params.get(active_param) {
-            if let Some((start, end)) = parameter_label_range(&label, &param.label) {
-                if start < end && end <= label.len() {
-                    label = format!(
-                        "{}[{}]{}",
-                        &label[..start],
-                        &label[start..end],
-                        &label[end..]
-                    );
-                }
-            }
-        }
-    }
-
-    let mut lines = Vec::new();
-    if help.signatures.len() > 1 {
-        lines.push(format!(
-            "{label} ({}/{})",
-            active_sig + 1,
-            help.signatures.len()
-        ));
-    } else {
-        lines.push(label);
-    }
-
-    if let Some(doc) = sig.documentation.as_ref().and_then(documentation_text) {
-        let doc = doc.trim();
-        if !doc.is_empty() {
-            let mut it = doc.lines();
-            let first = it.next().unwrap_or_default();
-            if !first.trim().is_empty() {
-                lines.push(first.trim().to_string());
-            }
-        }
-    }
-
-    let text = lines.join("\n").trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
-}
-
 pub(super) fn documentation_text(doc: &lsp_types::Documentation) -> Option<String> {
     markup_from_documentation(doc).map(|markup| match markup {
         LspMarkup::Markdown(text) | LspMarkup::PlainText(text) => text,
     })
-}
-
-#[cfg(test)]
-pub(super) fn parameter_label_range(
-    label: &str,
-    param: &lsp_types::ParameterLabel,
-) -> Option<(usize, usize)> {
-    match param {
-        lsp_types::ParameterLabel::Simple(s) => {
-            let start = label.find(s)?;
-            Some((start, start.saturating_add(s.len())))
-        }
-        lsp_types::ParameterLabel::LabelOffsets([start, end]) => {
-            let start = utf16_offset_to_byte(label, *start);
-            let end = utf16_offset_to_byte(label, *end);
-            Some((start, end.max(start)))
-        }
-    }
-}
-
-#[cfg(test)]
-pub(super) fn utf16_offset_to_byte(s: &str, offset: u32) -> usize {
-    let mut units = 0u32;
-    for (byte, ch) in s.char_indices() {
-        let next = units.saturating_add(ch.len_utf16() as u32);
-        if next > offset {
-            return byte;
-        }
-        units = next;
-    }
-    s.len()
 }
 
 #[cfg(test)]

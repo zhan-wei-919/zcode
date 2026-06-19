@@ -34,8 +34,6 @@ use intel::completion::{
 };
 pub use intel::completion_rank::CompletionRanker;
 
-#[cfg(test)]
-use intel::completion::expand_snippet;
 use intel::lsp::{
     lsp_position_encoding, lsp_position_encoding_for_path, lsp_position_to_byte_offset,
     lsp_range_for_full_lines, lsp_server_capabilities_for_path,

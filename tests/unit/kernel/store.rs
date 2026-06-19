@@ -3598,6 +3598,7 @@ fn completion_confirm_keeps_semantic_highlight_on_unedited_lines() {
 
 #[test]
 fn expand_snippet_strips_tabstops_and_keeps_placeholder_text() {
+    use crate::kernel::language::adapter::expand_snippet;
     let out = expand_snippet("foo$1bar$0");
     assert_eq!(out.text, "foobar");
     assert_eq!(out.cursor, Some(3));
@@ -3621,12 +3622,15 @@ fn expand_snippet_strips_tabstops_and_keeps_placeholder_text() {
 
 #[test]
 fn completion_plain_text_keeps_server_text_literal() {
-    let insertion = CompletionInsertion::from_plain_text("println!()".to_string());
+    use crate::kernel::language::adapter::TextEditPlan;
+    let insertion =
+        CompletionInsertion::from_plan(TextEditPlan::from_plain_text("println!()".to_string()));
     assert_eq!(insertion.text, "println!()");
     assert!(insertion.cursor.is_none());
     assert!(insertion.selection.is_none());
 
-    let insertion = CompletionInsertion::from_plain_text("no_parens".to_string());
+    let insertion =
+        CompletionInsertion::from_plan(TextEditPlan::from_plain_text("no_parens".to_string()));
     assert_eq!(insertion.text, "no_parens");
     assert!(insertion.cursor.is_none());
     assert!(insertion.selection.is_none());
@@ -3645,7 +3649,11 @@ fn snippet_tab_navigation_moves_between_placeholders() {
     }));
 
     let tab_size = store.state.editor.config.tab_size;
-    let insertion = CompletionInsertion::from_snippet("fn ${1:name}(${2:arg}) { $0 }");
+    let insertion = CompletionInsertion::from_plan(
+        crate::kernel::language::adapter::TextEditPlan::from_snippet(
+            "fn ${1:name}(${2:arg}) { $0 }",
+        ),
+    );
 
     {
         let tab = store

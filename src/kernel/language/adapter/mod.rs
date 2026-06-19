@@ -148,7 +148,6 @@ impl CompletionNormalizationSnapshot {
 pub enum CompletionNormalizationContext<'a> {
     Live(LanguageRuntimeContext<'a>),
     Snapshot(CompletionNormalizationSnapshot),
-    Detached(Option<LanguageId>),
 }
 
 impl<'a> CompletionNormalizationContext<'a> {
@@ -156,7 +155,6 @@ impl<'a> CompletionNormalizationContext<'a> {
         match self {
             Self::Live(runtime) => runtime.language,
             Self::Snapshot(snapshot) => snapshot.language,
-            Self::Detached(language) => *language,
         }
     }
 
@@ -164,7 +162,6 @@ impl<'a> CompletionNormalizationContext<'a> {
         match self {
             Self::Live(runtime) => runtime.server,
             Self::Snapshot(snapshot) => snapshot.server,
-            Self::Detached(language) => (*language).and_then(LanguageId::server_kind),
         }
     }
 
@@ -172,7 +169,6 @@ impl<'a> CompletionNormalizationContext<'a> {
         match self {
             Self::Live(runtime) => runtime.server_caps,
             Self::Snapshot(snapshot) => snapshot.server_caps.as_ref(),
-            Self::Detached(_) => None,
         }
     }
 
@@ -180,14 +176,13 @@ impl<'a> CompletionNormalizationContext<'a> {
         match self {
             Self::Live(runtime) => runtime.syntax.clone(),
             Self::Snapshot(snapshot) => snapshot.syntax.clone(),
-            Self::Detached(_) => SyntaxFacts::default(),
         }
     }
 
     pub fn runtime(&self) -> Option<&LanguageRuntimeContext<'a>> {
         match self {
             Self::Live(runtime) => Some(runtime),
-            Self::Snapshot(_) | Self::Detached(_) => None,
+            Self::Snapshot(_) => None,
         }
     }
 }
@@ -212,13 +207,6 @@ impl<'a> CompletionContext<'a> {
     ) -> Self {
         Self {
             normalization: CompletionNormalizationContext::Snapshot(snapshot),
-            item,
-        }
-    }
-
-    pub fn detached(language: Option<LanguageId>, item: &'a LspCompletionItem) -> Self {
-        Self {
-            normalization: CompletionNormalizationContext::Detached(language),
             item,
         }
     }
@@ -431,6 +419,7 @@ impl HoverModel {
     }
 }
 
+#[cfg(test)]
 impl CompletionRecord {
     pub fn from_raw_unresolved(raw: LspCompletionItem) -> Self {
         let insert = match raw.insert_text_format {
@@ -464,6 +453,7 @@ impl CompletionRecord {
     }
 }
 
+#[cfg(test)]
 impl From<LspCompletionItem> for CompletionRecord {
     fn from(raw: LspCompletionItem) -> Self {
         Self::from_raw_unresolved(raw)
