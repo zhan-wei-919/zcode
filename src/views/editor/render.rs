@@ -41,8 +41,6 @@ pub struct EditorPaneRenderOptions {
     pub workspace_empty: bool,
     pub show_vertical_scrollbar: bool,
     pub transient_row_highlight: Option<TransientRowHighlight>,
-    /// 编辑区是否聚焦——决定是否画当前行整行高亮。
-    pub editor_focused: bool,
 }
 
 pub fn paint_editor_pane(
@@ -428,7 +426,6 @@ fn paint_editor_body(
             current_match_index: pane.search_bar.current_match_index,
             markdown,
             transient_row_highlight: options.transient_row_highlight,
-            editor_focused: options.editor_focused,
         },
     );
 
@@ -612,7 +609,6 @@ struct ContentPaintCtx<'a> {
     current_match_index: Option<usize>,
     markdown: Option<&'a MarkdownDocument>,
     transient_row_highlight: Option<TransientRowHighlight>,
-    editor_focused: bool,
 }
 
 fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintCtx<'_>) {
@@ -628,7 +624,6 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         current_match_index,
         markdown,
         transient_row_highlight,
-        editor_focused,
     } = ctx;
     if area.is_empty() {
         return;
@@ -672,17 +667,9 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             match_cursor += 1;
         }
         let line_matches = &search_matches[line_match_start..match_cursor];
-        // 当前行整行高亮（聚焦时）；拖拽落点的临时高亮优先。
-        let current_line_bg =
-            (editor_focused && row == cursor_row).then_some(theme.current_line_bg);
-        let row_bg = transient_row_bg(theme, transient_row_highlight, row).or(current_line_bg);
+        // 拖拽落点的临时行高亮（不做常驻当前行高亮）。
+        let row_bg = transient_row_bg(theme, transient_row_highlight, row);
         let row_base_style = row_bg.map_or(base_style, |bg| base_style.bg(bg));
-
-        // 行级背景（当前行整行高亮 / 拖拽落点）必须铺满整行宽度：否则只有文字区被
-        // 着色，文字右侧空白露出 editor_bg，看起来像「从行首到光标」的异常高亮。
-        if row_bg.is_some() {
-            painter.fill_rect(Rect::new(area.x, y, area.w, 1), row_base_style);
-        }
 
         // For markdown non-cursor lines, use WYSIWYG rendering
         if is_markdown && row != cursor_row {

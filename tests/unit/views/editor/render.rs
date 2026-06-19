@@ -287,61 +287,6 @@ fn paint_editor_pane_selection_background_overrides_search_match_background() {
 }
 
 #[test]
-fn paint_editor_pane_current_line_highlight_fills_full_row_width() {
-    let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new();
-    let tab = EditorTabState::from_file(
-        TabId::new(1),
-        PathBuf::from("test.txt"),
-        "hi\nworld\n",
-        &config,
-    );
-    pane.tabs.push(tab);
-    pane.active = 0;
-    // Cursor on row 0; no selection set.
-    pane.tabs[0].buffer.set_cursor(0, 2);
-
-    let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 6), &pane, &config);
-    let theme = Theme::default();
-    let mut painter = Painter::new();
-    paint_editor_pane(
-        &mut painter,
-        &layout,
-        &pane,
-        &config,
-        &theme,
-        crate::views::EditorPaneRenderOptions {
-            editor_focused: true,
-            ..Default::default()
-        },
-        None,
-    );
-
-    let mut backend = TestBackend::new(layout.area.w, layout.area.h);
-    backend.draw(layout.area, painter.cmds());
-    let buf = backend.buffer();
-
-    let cursor_y = layout.content_area.y;
-    let text_cell = buf.cell(layout.content_area.x, cursor_y).unwrap();
-    let empty_cell = buf
-        .cell(layout.content_area.right().saturating_sub(1), cursor_y)
-        .unwrap();
-
-    assert_ne!(
-        theme.current_line_bg, theme.editor_bg,
-        "precondition: current-line highlight must be visible"
-    );
-    // "整行高亮": the whole cursor row shares the current-line background, so the
-    // empty area past the text must match the text background — not stop at the cursor.
-    assert_eq!(text_cell.style.bg, Some(theme.current_line_bg));
-    assert_eq!(
-        empty_cell.style.bg,
-        Some(theme.current_line_bg),
-        "current-line highlight should fill the full row width, not stop at end of text"
-    );
-}
-
-#[test]
 fn paint_editor_pane_snippet_placeholder_background_highlights_active_tabstop() {
     let config = EditorConfig::default();
     let mut pane = EditorPaneState::new();

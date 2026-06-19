@@ -27,7 +27,6 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
         sidebar_bg: map_color_for_support(theme.sidebar_bg, support),
         popup_bg: map_color_for_support(theme.popup_bg, support),
         statusbar_bg: map_color_for_support(theme.statusbar_bg, support),
-        current_line_bg: map_color_for_support(theme.current_line_bg, support),
         mode_insert_bg: map_color_for_support(theme.mode_insert_bg, support),
         mode_text_fg: map_color_for_support(theme.mode_text_fg, support),
         md_heading1_fg: map_color_for_support(theme.md_heading1_fg, support),
