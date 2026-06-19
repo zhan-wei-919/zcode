@@ -6,8 +6,6 @@ use super::syntax::{merge_adjacent_highlight_spans, HighlightSpan};
 
 #[derive(Debug, Clone)]
 pub(crate) struct AsyncSyntaxHighlightCache {
-    line_count: usize,
-    byte_len: usize,
     lines: Vec<Option<Arc<Vec<HighlightSpan>>>>,
     dirty: Vec<bool>,
 }
@@ -16,8 +14,6 @@ impl AsyncSyntaxHighlightCache {
     pub(crate) fn new_for_rope(rope: &Rope) -> Self {
         let total_lines = rope.len_lines().max(1);
         Self {
-            line_count: total_lines,
-            byte_len: rope.len_bytes(),
             lines: vec![None; total_lines],
             dirty: vec![true; total_lines],
         }
@@ -36,9 +32,6 @@ impl AsyncSyntaxHighlightCache {
             std::cmp::Ordering::Less => self.dirty.resize_with(total_lines, || true),
             std::cmp::Ordering::Greater => self.dirty.truncate(total_lines),
         }
-
-        self.line_count = total_lines;
-        self.byte_len = rope.len_bytes();
     }
 
     pub(crate) fn reset_for_rope(&mut self, rope: &Rope) {

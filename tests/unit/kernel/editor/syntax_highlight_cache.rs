@@ -33,7 +33,7 @@ fn apply_edit_shape_shift_splice_keeps_alignment() {
     };
     cache.apply_edit_shape_shift(&rope_new, &edit);
 
-    assert_eq!(cache.line_count, rope_new.len_lines().max(1));
+    // 行数已扩到 4：下方 `cache.line(3).expect(...)` 与 `cache.dirty[3]` 索引即证明缓存已重整形状。
     assert!(cache.line(0).is_some());
     assert!(cache.line(1).is_none());
     assert!(cache.line(2).is_none());
@@ -81,11 +81,10 @@ fn ensure_shape_new_lines_none_and_dirty() {
 
     let mut cache = AsyncSyntaxHighlightCache::new_for_rope(&rope_old);
     cache.apply_patch(0, vec![dummy_span(), dummy_span()]);
-    assert_eq!(cache.line_count, 2);
     assert_eq!(cache.dirty_segments(), Vec::<(usize, usize)>::new());
 
     cache.ensure_shape_for_rope(&rope_new);
-    assert_eq!(cache.line_count, 4);
+    // 行数已扩到 4：下方 `cache.line(3)`/`cache.dirty[3]` 索引即证明形状已更新。
     assert!(cache.line(0).is_some());
     assert!(cache.line(1).is_some());
     assert!(cache.line(2).is_none());

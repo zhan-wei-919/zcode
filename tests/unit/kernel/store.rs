@@ -2877,13 +2877,14 @@ fn cursor_move_flush_preserves_sticky_semantic_kind_on_active_line() {
             .and_then(|pane| pane.active_tab_mut())
             .expect("open tab exists");
         tab.buffer.set_cursor(0, 6);
-        let _ = tab.set_semantic_highlight(
+        tab.set_pending_semantic_highlight_from_slice(
             version,
-            vec![vec![
+            &[vec![
                 sem_seg(0, 3, Some(crate::kernel::editor::HighlightKind::Variable)),
                 sem_seg(3, "cin >> value".len(), None),
             ]],
         );
+        tab.flush_pending_semantic_highlight();
         let _ = tab.set_pending_semantic_highlight_from_slice(
             version,
             &[vec![sem_seg(0, "cin >> value".len(), None)]],
@@ -2942,9 +2943,9 @@ fn semantic_tokens_full_empty_response_preserves_sticky_kind_left_of_cursor() {
             .and_then(|pane| pane.active_tab_mut())
             .expect("open tab exists");
         tab.buffer.set_cursor(0, 7);
-        let _ = tab.set_semantic_highlight(
+        tab.set_pending_semantic_highlight_from_slice(
             version,
-            vec![
+            &[
                 vec![
                     sem_seg(0, 3, Some(crate::kernel::editor::HighlightKind::Variable)),
                     sem_seg(3, "cin >> value".len(), None),
@@ -2952,6 +2953,7 @@ fn semantic_tokens_full_empty_response_preserves_sticky_kind_left_of_cursor() {
                 Vec::new(),
             ],
         );
+        tab.flush_pending_semantic_highlight();
     }
 
     let _ = store.dispatch(Action::LspSemanticTokens {
@@ -3009,13 +3011,14 @@ fn semantic_tokens_range_empty_response_preserves_sticky_kind_left_of_cursor() {
             .and_then(|pane| pane.active_tab_mut())
             .expect("open tab exists");
         tab.buffer.set_cursor(0, 7);
-        let _ = tab.set_semantic_highlight(
+        tab.set_pending_semantic_highlight_from_slice(
             version,
-            vec![vec![
+            &[vec![
                 sem_seg(0, 3, Some(crate::kernel::editor::HighlightKind::Variable)),
                 sem_seg(3, "cin >> value".len(), None),
             ]],
         );
+        tab.flush_pending_semantic_highlight();
     }
 
     let result = store.dispatch(Action::LspSemanticTokensRange {
@@ -3091,9 +3094,9 @@ fn semantic_tokens_range_keeps_committed_highlight_outside_range() {
             .pane_mut(0)
             .and_then(|pane| pane.active_tab_mut())
             .expect("open tab exists");
-        let _ = tab.set_semantic_highlight(
+        tab.set_pending_semantic_highlight_from_slice(
             version,
-            vec![
+            &[
                 vec![sem_seg(
                     0,
                     5,
@@ -3111,6 +3114,7 @@ fn semantic_tokens_range_keeps_committed_highlight_outside_range() {
                 )],
             ],
         );
+        tab.flush_pending_semantic_highlight();
     }
 
     // Response covers only line 1.
@@ -3490,9 +3494,9 @@ fn completion_confirm_keeps_semantic_highlight_on_unedited_lines() {
             .pane_mut(0)
             .and_then(|pane| pane.active_tab_mut())
             .expect("open tab exists");
-        let _ = tab.set_semantic_highlight(
+        tab.set_pending_semantic_highlight_from_slice(
             version,
-            vec![
+            &[
                 vec![crate::kernel::editor::SemanticSegment {
                     start: 0,
                     end: "Widget".len(),
@@ -3513,6 +3517,7 @@ fn completion_confirm_keeps_semantic_highlight_on_unedited_lines() {
                 ],
             ],
         );
+        tab.flush_pending_semantic_highlight();
         assert!(
             tab.semantic_segments_line(0).is_some(),
             "test setup: line 0 starts highlighted"

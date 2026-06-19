@@ -706,14 +706,15 @@ fn semantic_highlight_and_inlay_hints_do_not_flicker_on_edit() {
         &config,
     );
 
-    tab.set_semantic_highlight(
+    tab.set_pending_semantic_highlight_from_slice(
         0,
-        vec![vec![
+        &[vec![
             sem_seg(0, 2, Some(HighlightKind::Keyword)),
             sem_seg(2, "fn main() {}".len(), None),
         ]],
     );
-    tab.set_inlay_hints(0, 0, 1, vec![vec![": hint".to_string()]]);
+    tab.flush_pending_semantic_highlight();
+    tab.set_inlay_hints_from_slice(0, 0, 1, &[vec![": hint".to_string()]]);
 
     assert!(tab.semantic_segments_line(0).is_some());
     assert!(tab.inlay_hint_line(0).is_some());
@@ -729,13 +730,14 @@ fn semantic_highlight_keeps_visible_snapshot_on_line_edit() {
     let config = EditorConfig::default();
     let mut tab =
         EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "foo\nbar", &config);
-    tab.set_semantic_highlight(
+    tab.set_pending_semantic_highlight_from_slice(
         0,
-        vec![
+        &[
             vec![sem_seg(0, 3, Some(HighlightKind::Function))],
             vec![sem_seg(0, 3, Some(HighlightKind::Macro))],
         ],
     );
+    tab.flush_pending_semantic_highlight();
 
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertChar('x'), 0, &config);
@@ -753,14 +755,15 @@ fn semantic_highlight_keeps_visible_snapshot_on_newline_edit() {
         "foo\nbar\nbaz",
         &config,
     );
-    tab.set_semantic_highlight(
+    tab.set_pending_semantic_highlight_from_slice(
         0,
-        vec![
+        &[
             vec![sem_seg(0, 3, Some(HighlightKind::Function))],
             vec![sem_seg(0, 3, Some(HighlightKind::Macro))],
             vec![sem_seg(0, 3, Some(HighlightKind::Type))],
         ],
     );
+    tab.flush_pending_semantic_highlight();
 
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
@@ -777,10 +780,11 @@ fn semantic_highlight_keeps_visible_snapshot_when_appending_punctuation() {
     let config = EditorConfig::default();
     let mut tab =
         EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "String", &config);
-    tab.set_semantic_highlight(
+    tab.set_pending_semantic_highlight_from_slice(
         0,
-        vec![vec![sem_seg(0, "String".len(), Some(HighlightKind::Type))]],
+        &[vec![sem_seg(0, "String".len(), Some(HighlightKind::Type))]],
     );
+    tab.flush_pending_semantic_highlight();
 
     tab.buffer.set_cursor(0, tab.buffer.line_grapheme_len(0));
     let _ = tab.apply_command(Command::InsertChar(':'), 0, &config);

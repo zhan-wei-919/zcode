@@ -31,7 +31,7 @@ fn sem_seg(start: usize, end: usize, kind: Option<HighlightKind>) -> SemanticSeg
 #[test]
 fn paint_editor_pane_no_tab_renders_empty_message() {
     let config = EditorConfig::default();
-    let pane = EditorPaneState::new(&config);
+    let pane = EditorPaneState::new();
     let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 10), &pane, &config);
 
     let mut painter = Painter::new();
@@ -58,7 +58,7 @@ fn paint_editor_pane_gutter_renders_full_two_digit_line_number() {
     // reserved (fold) column. The digit-paint math must use `area.w - 1`, not `- 2`, or
     // multi-digit line numbers lose their last digit.
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     let content = "x\n".repeat(12); // >= 10 lines => 2-digit line numbers
     let tab =
         EditorTabState::from_file(TabId::new(1), PathBuf::from("test.txt"), &content, &config);
@@ -94,7 +94,7 @@ fn paint_editor_pane_gutter_renders_full_two_digit_line_number() {
 #[test]
 fn paint_editor_pane_search_bar_draws_find_label() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     pane.search_bar.show(SearchBarMode::Search);
     pane.search_bar.search_text = "abc".to_string();
     pane.search_bar.cursor_pos = pane.search_bar.search_text.len();
@@ -128,7 +128,7 @@ fn paint_editor_pane_search_bar_draws_find_label() {
 #[test]
 fn paint_editor_pane_search_bar_draws_nav_buttons() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     pane.search_bar.show(SearchBarMode::Search);
 
     let layout = crate::views::compute_editor_pane_layout(Rect::new(0, 0, 40, 10), &pane, &config);
@@ -159,7 +159,7 @@ fn paint_editor_pane_search_bar_draws_nav_buttons() {
 #[test]
 fn paint_editor_pane_search_matches_use_match_and_current_match_backgrounds() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     let tab = EditorTabState::from_file(
         TabId::new(1),
         PathBuf::from("test.txt"),
@@ -205,7 +205,7 @@ fn paint_editor_pane_search_matches_use_match_and_current_match_backgrounds() {
 #[test]
 fn paint_editor_pane_transient_row_highlight_applies_destination_background() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     pane.tabs.push(EditorTabState::from_file(
         TabId::new(1),
         PathBuf::from("test.txt"),
@@ -246,7 +246,7 @@ fn paint_editor_pane_transient_row_highlight_applies_destination_background() {
 #[test]
 fn paint_editor_pane_selection_background_overrides_search_match_background() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     let mut tab = EditorTabState::from_file(
         TabId::new(1),
         PathBuf::from("test.txt"),
@@ -289,7 +289,7 @@ fn paint_editor_pane_selection_background_overrides_search_match_background() {
 #[test]
 fn paint_editor_pane_snippet_placeholder_background_highlights_active_tabstop() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
 
     let mut tab = EditorTabState::from_file(
         TabId::new(1),
@@ -350,7 +350,7 @@ fn paint_editor_pane_snippet_placeholder_background_highlights_active_tabstop() 
 #[test]
 fn paint_editor_pane_does_not_extend_stale_semantic_span_after_placeholder_replacement() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
 
     let mut tab = EditorTabState::from_file(
         TabId::new(1),
@@ -358,9 +358,9 @@ fn paint_editor_pane_does_not_extend_stale_semantic_span_after_placeholder_repla
         "fn name(args)",
         &config,
     );
-    let _ = tab.set_semantic_highlight(
+    tab.set_pending_semantic_highlight_from_slice(
         0,
-        vec![vec![
+        &[vec![
             sem_seg(0, 2, Some(HighlightKind::Keyword)),
             sem_seg(2, 3, None),
             sem_seg(3, 7, Some(HighlightKind::Function)),
@@ -369,6 +369,7 @@ fn paint_editor_pane_does_not_extend_stale_semantic_span_after_placeholder_repla
             sem_seg(12, 13, None),
         ]],
     );
+    tab.flush_pending_semantic_highlight();
 
     tab.begin_snippet_session(
         0,
@@ -444,10 +445,14 @@ fn paint_editor_pane_does_not_extend_stale_semantic_span_after_placeholder_repla
 #[test]
 fn paint_editor_pane_ignores_invalid_semantic_row_and_uses_syntax_fallback() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     let mut tab =
         EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "if value", &config);
-    let _ = tab.set_semantic_highlight(0, vec![vec![sem_seg(1, 3, Some(HighlightKind::Function))]]);
+    tab.set_pending_semantic_highlight_from_slice(
+        0,
+        &[vec![sem_seg(1, 3, Some(HighlightKind::Function))]],
+    );
+    tab.flush_pending_semantic_highlight();
     pane.tabs.push(tab);
     pane.active = 0;
 
@@ -481,7 +486,7 @@ fn paint_editor_pane_ignores_invalid_semantic_row_and_uses_syntax_fallback() {
 #[test]
 fn paint_editor_pane_indent_guides_do_not_overwrite_code() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     pane.tabs.push(EditorTabState::from_file(
         TabId::new(1),
         PathBuf::from("test.rs"),
@@ -518,7 +523,7 @@ fn paint_editor_pane_indent_guides_do_not_overwrite_code() {
 #[test]
 fn paint_editor_pane_indent_guides_respect_selection_background() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     let mut tab = EditorTabState::from_file(
         TabId::new(1),
         PathBuf::from("test.rs"),
@@ -561,7 +566,7 @@ fn paint_editor_pane_indent_guides_respect_selection_background() {
 #[test]
 fn paint_editor_pane_long_file_draws_vertical_scrollbar() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     let text = (0..120)
         .map(|i| format!("line {i}"))
         .collect::<Vec<_>>()
@@ -612,7 +617,7 @@ fn paint_editor_pane_long_file_draws_vertical_scrollbar() {
 #[test]
 fn paint_editor_pane_long_file_hides_vertical_scrollbar_when_not_hovered() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     let text = (0..120)
         .map(|i| format!("line {i}"))
         .collect::<Vec<_>>()
@@ -655,7 +660,7 @@ fn paint_editor_pane_long_file_hides_vertical_scrollbar_when_not_hovered() {
 #[test]
 fn paint_editor_pane_vertical_scrollbar_thumb_moves_with_line_offset() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     let text = (0..160)
         .map(|i| format!("line {i}"))
         .collect::<Vec<_>>()
@@ -716,7 +721,7 @@ fn paint_editor_pane_vertical_scrollbar_thumb_moves_with_line_offset() {
 #[test]
 fn paint_editor_tabs_active_tab_uses_selected_palette() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
 
     let mut first = EditorTabState::untitled(TabId::new(1), &config);
     first.title = "Alpha.rs".to_string();
@@ -770,7 +775,7 @@ fn paint_editor_tabs_active_tab_uses_selected_palette() {
 #[test]
 fn paint_editor_tabs_truncate_titles_with_ellipsis_in_narrow_width() {
     let config = EditorConfig::default();
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
 
     let mut first = EditorTabState::untitled(TabId::new(1), &config);
     first.title = "this-is-a-very-long-file-name.rs".to_string();

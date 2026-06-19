@@ -624,20 +624,6 @@ impl EditorTabState {
         self.is_in_string_or_comment_at_char(char_offset)
     }
 
-    pub fn highlight_lines(
-        &self,
-        start_line: usize,
-        end_line_exclusive: usize,
-    ) -> Option<Vec<Vec<HighlightSpan>>> {
-        let lines = self.highlight_lines_shared(start_line, end_line_exclusive)?;
-        Some(
-            lines
-                .iter()
-                .map(|line| line.as_ref().clone())
-                .collect::<Vec<_>>(),
-        )
-    }
-
     pub fn highlight_lines_shared(
         &self,
         start_line: usize,
@@ -700,40 +686,6 @@ impl EditorTabState {
         semantic.lines(start_line, end_line_exclusive)
     }
 
-    pub fn set_semantic_highlight(
-        &mut self,
-        version: u64,
-        lines: Vec<Vec<SemanticSegment>>,
-    ) -> bool {
-        let same = self
-            .semantic_highlight
-            .as_ref()
-            .is_some_and(|s| s.matches_full(version, &lines));
-        if same {
-            return false;
-        }
-
-        self.semantic_highlight = Some(SemanticHighlightState::from_full(version, lines));
-        true
-    }
-
-    pub fn set_semantic_highlight_from_slice(
-        &mut self,
-        version: u64,
-        lines: &[Vec<SemanticSegment>],
-    ) -> bool {
-        let same = self
-            .semantic_highlight
-            .as_ref()
-            .is_some_and(|s| s.matches_full(version, lines));
-        if same {
-            return false;
-        }
-
-        self.semantic_highlight = Some(SemanticHighlightState::from_full(version, lines.to_vec()));
-        true
-    }
-
     pub(crate) fn set_pending_semantic_highlight_from_slice(
         &mut self,
         version: u64,
@@ -749,51 +701,6 @@ impl EditorTabState {
 
         self.pending_semantic_highlight =
             Some(SemanticHighlightState::from_full(version, lines.to_vec()));
-        true
-    }
-
-    pub fn set_semantic_highlight_range(
-        &mut self,
-        version: u64,
-        start_line: usize,
-        lines: Vec<Vec<SemanticSegment>>,
-    ) -> bool {
-        self.set_semantic_highlight_range_from_slice(version, start_line, &lines)
-    }
-
-    pub fn set_semantic_highlight_range_from_slice(
-        &mut self,
-        version: u64,
-        start_line: usize,
-        lines: &[Vec<SemanticSegment>],
-    ) -> bool {
-        if lines.is_empty() {
-            return false;
-        }
-
-        let end_line_exclusive = start_line.saturating_add(lines.len());
-        if self.semantic_highlight.as_ref().is_some_and(|semantic| {
-            semantic.version == version
-                && semantic
-                    .lines(start_line, end_line_exclusive)
-                    .is_some_and(|current| current == lines)
-        }) {
-            return false;
-        }
-
-        let semantic = self
-            .semantic_highlight
-            .get_or_insert_with(|| SemanticHighlightState {
-                version,
-                segments: Vec::new(),
-            });
-
-        if semantic.version != version {
-            semantic.version = version;
-            semantic.segments.clear();
-        }
-
-        semantic.replace_range(start_line, end_line_exclusive, lines.to_vec());
         true
     }
 
@@ -945,32 +852,6 @@ impl EditorTabState {
             return None;
         }
         Some(&hints.lines[start..end])
-    }
-
-    pub fn set_inlay_hints(
-        &mut self,
-        version: u64,
-        start_line: usize,
-        end_line_exclusive: usize,
-        lines: Vec<Vec<String>>,
-    ) -> bool {
-        let same = self.inlay_hints.as_ref().is_some_and(|s| {
-            s.version == version
-                && s.start_line == start_line
-                && s.end_line_exclusive == end_line_exclusive
-                && s.lines == lines
-        });
-        if same {
-            return false;
-        }
-
-        self.inlay_hints = Some(InlayHintsState {
-            version,
-            start_line,
-            end_line_exclusive,
-            lines,
-        });
-        true
     }
 
     pub fn set_inlay_hints_from_slice(
@@ -1194,34 +1075,6 @@ impl EditorTabState {
         }
 
         viewport::clamp_and_follow(&mut self.viewport, &self.buffer, tab_size);
-        true
-    }
-
-    pub fn set_folding_ranges(&mut self, version: u64, ranges: Vec<LspFoldingRange>) -> bool {
-        let mut collapsed = self
-            .folding
-            .as_ref()
-            .map(|s| s.collapsed.clone())
-            .unwrap_or_default();
-
-        let fold_starts = FoldingState::build_fold_starts(&ranges);
-        collapsed.retain(|start| fold_starts.contains_key(start));
-        let hidden_ranges = FoldingState::build_hidden_ranges(&collapsed, &fold_starts);
-
-        let next = FoldingState {
-            version,
-            ranges,
-            fold_starts,
-            collapsed,
-            hidden_ranges,
-        };
-
-        let same = self.folding.as_ref().is_some_and(|s| s == &next);
-        if same {
-            return false;
-        }
-
-        self.folding = Some(next);
         true
     }
 
@@ -2063,8 +1916,14 @@ pub struct EditorPaneState {
     pub search_bar: SearchBarState,
 }
 
+impl Default for EditorPaneState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EditorPaneState {
-    pub fn new(_config: &EditorConfig) -> Self {
+    pub fn new() -> Self {
         Self {
             tabs: Vec::new(),
             active: 0,
@@ -2196,8 +2055,8 @@ pub struct EditorState {
 impl EditorState {
     pub fn new(config: EditorConfig) -> Self {
         Self {
-            config: config.clone(),
-            panes: vec![EditorPaneState::new(&config)],
+            config,
+            panes: vec![EditorPaneState::new()],
             open_paths_version: 0,
             next_tab_id: 1,
         }
@@ -2237,7 +2096,7 @@ impl EditorState {
             std::cmp::Ordering::Greater => {
                 self.panes.reserve(desired - current);
                 for _ in current..desired {
-                    self.panes.push(EditorPaneState::new(&self.config));
+                    self.panes.push(EditorPaneState::new());
                 }
                 true
             }

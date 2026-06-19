@@ -6,7 +6,7 @@ use crate::ui::core::painter::{PaintCmd, Painter};
 use crate::ui::core::theme::Theme;
 
 fn pane_with_tabs(config: &EditorConfig, tabs: &[(&str, bool)]) -> EditorPaneState {
-    let mut pane = EditorPaneState::new(config);
+    let mut pane = EditorPaneState::new();
     pane.tabs = tabs
         .iter()
         .enumerate()
@@ -352,7 +352,7 @@ fn editor_vertical_scrollbar_hit_test_distinguishes_thumb_and_track() {
         .map(|i| format!("line {i}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let mut pane = EditorPaneState::new(&config);
+    let mut pane = EditorPaneState::new();
     pane.tabs.push(EditorTabState::from_file(
         TabId::new(1),
         std::path::PathBuf::from("long.rs"),

@@ -114,7 +114,9 @@ fn invalidate_semantic_highlight_keeps_visible_and_clears_pending_on_edit() {
         "foobar".len(),
         Some(HighlightKind::Function),
     )]];
-    let _ = tab.set_semantic_highlight(0, lines.clone());
+    // 先把 active 经 pending→flush 落定，再单独留一份 pending，复现两者并存。
+    tab.set_pending_semantic_highlight_from_slice(0, &lines);
+    tab.flush_pending_semantic_highlight();
     let _ = tab.set_pending_semantic_highlight_from_slice(0, &lines);
     assert!(tab.semantic_highlight.is_some());
     assert!(tab.pending_semantic_highlight.is_some());

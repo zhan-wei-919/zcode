@@ -5,7 +5,7 @@ use crate::ui::core::geom::Rect;
 use std::path::PathBuf;
 
 fn pane_with_text(config: &EditorConfig, text: &str) -> EditorPaneState {
-    let mut pane = EditorPaneState::new(config);
+    let mut pane = EditorPaneState::new();
     pane.tabs.push(EditorTabState::from_file(
         TabId::new(1),
         PathBuf::from("test.rs"),
