@@ -678,6 +678,12 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         let row_bg = transient_row_bg(theme, transient_row_highlight, row).or(current_line_bg);
         let row_base_style = row_bg.map_or(base_style, |bg| base_style.bg(bg));
 
+        // 行级背景（当前行整行高亮 / 拖拽落点）必须铺满整行宽度：否则只有文字区被
+        // 着色，文字右侧空白露出 editor_bg，看起来像「从行首到光标」的异常高亮。
+        if row_bg.is_some() {
+            painter.fill_rect(Rect::new(area.x, y, area.w, 1), row_base_style);
+        }
+
         // For markdown non-cursor lines, use WYSIWYG rendering
         if is_markdown && row != cursor_row {
             if let Some(md) = markdown {
