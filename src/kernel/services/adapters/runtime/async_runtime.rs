@@ -2,6 +2,7 @@ use super::message::AppMessage;
 use crate::kernel::editor::ReloadRequest;
 use crate::kernel::editor::TabId;
 use crate::kernel::language::LanguageId;
+use crate::kernel::services::ports::lsp::{line_len_chars, lsp_col_to_char_offset_in_line};
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::{
     LspPositionEncoding, LspResourceOp, LspTextEdit, LspWorkspaceFileEdit,
@@ -843,51 +844,6 @@ fn lsp_position_to_byte_offset(
     let line_len = line_len_chars(line_slice);
     let char_offset = (line_start + col_chars.min(line_len)).min(rope.len_chars());
     rope.char_to_byte(char_offset)
-}
-
-fn lsp_col_to_char_offset_in_line(
-    line: ropey::RopeSlice<'_>,
-    col: u32,
-    encoding: LspPositionEncoding,
-) -> usize {
-    let mut units = 0u32;
-    let mut chars = 0usize;
-    let mut it = line.chars().peekable();
-    while let Some(ch) = it.next() {
-        if ch == '\n' {
-            break;
-        }
-        if ch == '\r' && matches!(it.peek(), Some('\n')) {
-            break;
-        }
-        let next = units
-            + match encoding {
-                LspPositionEncoding::Utf8 => ch.len_utf8() as u32,
-                LspPositionEncoding::Utf16 => ch.len_utf16() as u32,
-                LspPositionEncoding::Utf32 => 1,
-            };
-        if next > col {
-            break;
-        }
-        units = next;
-        chars += 1;
-    }
-    chars
-}
-
-fn line_len_chars(line: ropey::RopeSlice<'_>) -> usize {
-    let mut len = 0usize;
-    let mut it = line.chars().peekable();
-    while let Some(ch) = it.next() {
-        if ch == '\n' {
-            break;
-        }
-        if ch == '\r' && matches!(it.peek(), Some('\n')) {
-            break;
-        }
-        len += 1;
-    }
-    len
 }
 
 #[cfg(test)]

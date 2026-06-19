@@ -1,5 +1,4 @@
 use crate::kernel::{EditorState, FocusTarget, OverlayKind, UiState};
-use ropey::RopeSlice;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -27,21 +26,6 @@ pub(super) fn search_overlay_focused(ui: &UiState) -> bool {
 
 pub(super) fn is_lsp_source_path(path: &Path) -> bool {
     crate::kernel::lsp_registry::is_lsp_source_path(path)
-}
-
-pub(super) fn line_len_chars(line: RopeSlice<'_>) -> usize {
-    let mut len = 0usize;
-    let mut it = line.chars().peekable();
-    while let Some(ch) = it.next() {
-        if ch == '\n' {
-            break;
-        }
-        if ch == '\r' && matches!(it.peek(), Some('\n')) {
-            break;
-        }
-        len += 1;
-    }
-    len
 }
 
 pub(super) fn find_open_tab(

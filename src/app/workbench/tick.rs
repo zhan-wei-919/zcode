@@ -4,6 +4,7 @@ use crate::kernel::services::adapters::lsp::LspServerCommandOverride;
 use crate::kernel::services::adapters::{
     ConfigService, FileWatchEvent, KeybindingContext, KeybindingService, LspService,
 };
+use crate::kernel::services::ports::lsp::column_for_chars;
 use crate::kernel::services::ports::LspServerKind;
 use crate::kernel::services::ports::{
     GlobalSearchMessage, LspPosition, LspPositionEncoding, SearchMessage,
@@ -589,19 +590,7 @@ fn lsp_position_from_buffer_pos(
     let col_chars = char_offset.saturating_sub(line_start);
 
     let line_slice = rope.line(row);
-    let character = match encoding {
-        LspPositionEncoding::Utf8 => line_slice
-            .chars()
-            .take(col_chars)
-            .map(|ch| ch.len_utf8() as u32)
-            .sum(),
-        LspPositionEncoding::Utf16 => line_slice
-            .chars()
-            .take(col_chars)
-            .map(|ch| ch.len_utf16() as u32)
-            .sum(),
-        LspPositionEncoding::Utf32 => col_chars as u32,
-    };
+    let character = column_for_chars(line_slice, col_chars, encoding);
 
     (row as u32, character)
 }

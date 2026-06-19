@@ -3,7 +3,7 @@ use crate::kernel::services::ports::{
     LspPositionEncoding, LspSemanticToken, LspSemanticTokensLegend,
 };
 
-use super::lsp::lsp_col_to_char_offset_in_line;
+use crate::kernel::services::ports::lsp::lsp_col_to_char_offset_in_line;
 
 pub(super) fn semantic_segment_lines_from_tokens(
     rope: &ropey::Rope,

@@ -1,5 +1,6 @@
 //! LSP data contracts used across kernel + adapters.
 
+use ropey::RopeSlice;
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -52,6 +53,77 @@ pub enum LspPositionEncoding {
     #[default]
     Utf16,
     Utf32,
+}
+
+// 行内位置 ↔ LSP 列的纯换算。只依赖 ropey + `LspPositionEncoding`，无任何策略，
+// 故安置在 ports 层供 adapter / store / app 三侧共消费，杜绝逐字节复制各自漂移。
+
+/// 一行（不含行尾 `\n` / `\r\n`）的字符数。
+pub fn line_len_chars(line: RopeSlice<'_>) -> usize {
+    let mut len = 0usize;
+    let mut it = line.chars().peekable();
+    while let Some(ch) = it.next() {
+        if ch == '\n' {
+            break;
+        }
+        if ch == '\r' && matches!(it.peek(), Some('\n')) {
+            break;
+        }
+        len += 1;
+    }
+    len
+}
+
+/// 把 LSP 列（按 `encoding` 计的编码单元数）换算成行内字符偏移。
+pub fn lsp_col_to_char_offset_in_line(
+    line: RopeSlice<'_>,
+    col: u32,
+    encoding: LspPositionEncoding,
+) -> usize {
+    let mut units = 0u32;
+    let mut chars = 0usize;
+    let mut it = line.chars().peekable();
+    while let Some(ch) = it.next() {
+        if ch == '\n' {
+            break;
+        }
+        if ch == '\r' && matches!(it.peek(), Some('\n')) {
+            break;
+        }
+        let next = units
+            + match encoding {
+                LspPositionEncoding::Utf8 => ch.len_utf8() as u32,
+                LspPositionEncoding::Utf16 => ch.len_utf16() as u32,
+                LspPositionEncoding::Utf32 => 1,
+            };
+        if next > col {
+            break;
+        }
+        units = next;
+        chars += 1;
+    }
+    chars
+}
+
+/// 把行内字符偏移换算成 LSP 列（按 `encoding` 计的编码单元数），即上者的逆。
+pub fn column_for_chars(
+    line: RopeSlice<'_>,
+    col_chars: usize,
+    encoding: LspPositionEncoding,
+) -> u32 {
+    match encoding {
+        LspPositionEncoding::Utf8 => line
+            .chars()
+            .take(col_chars)
+            .map(|ch| ch.len_utf8() as u32)
+            .sum(),
+        LspPositionEncoding::Utf16 => line
+            .chars()
+            .take(col_chars)
+            .map(|ch| ch.len_utf16() as u32)
+            .sum(),
+        LspPositionEncoding::Utf32 => col_chars as u32,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -286,3 +358,7 @@ pub struct LspServerCapabilities {
     pub completion_triggers: Vec<char>,
     pub signature_help_triggers: Vec<char>,
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/kernel/services/ports/lsp.rs"]
+mod tests;

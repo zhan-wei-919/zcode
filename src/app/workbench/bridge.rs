@@ -4,6 +4,7 @@ use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{
     ClipboardService, GlobalSearchService, LspService, SearchService,
 };
+use crate::kernel::services::ports::lsp::column_for_chars;
 use crate::kernel::services::ports::{LspPosition, LspPositionEncoding, LspRange, LspTextChange};
 use crate::kernel::state::PendingAction;
 use crate::kernel::{Action as KernelAction, EditorAction, Effect as KernelEffect};
@@ -725,19 +726,7 @@ fn lsp_position_at(rope: &Rope, char_offset: usize, encoding: LspPositionEncodin
     let line_start = rope.line_to_char(line);
     let col_chars = char_offset.saturating_sub(line_start);
     let line_slice = rope.line(line);
-    let col = match encoding {
-        LspPositionEncoding::Utf8 => line_slice
-            .chars()
-            .take(col_chars)
-            .map(|ch| ch.len_utf8() as u32)
-            .sum(),
-        LspPositionEncoding::Utf16 => line_slice
-            .chars()
-            .take(col_chars)
-            .map(|ch| ch.len_utf16() as u32)
-            .sum(),
-        LspPositionEncoding::Utf32 => col_chars as u32,
-    };
+    let col = column_for_chars(line_slice, col_chars, encoding);
     LspPosition {
         line: line as u32,
         character: col,

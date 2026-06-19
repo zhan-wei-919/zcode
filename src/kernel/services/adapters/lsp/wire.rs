@@ -617,6 +617,52 @@ fn render_source_preview_payload(
     })
 }
 
+/// 错误响应与缺失 result 两条路径下发完全相同的空/默认结果。抽出共用，
+/// 两份 match 表无法各自漂移；成功路径不走此处。
+fn dispatch_empty_response(kind: &LspRequestKind, ctx: &KernelServiceContext) {
+    match kind {
+        LspRequestKind::Hover { session } => ctx.dispatch(Action::LspHoverResponse {
+            session: *session,
+            payload: LspHoverPayload::default(),
+        }),
+        LspRequestKind::HoverImplementation { session, .. } => {
+            ctx.dispatch(Action::LspHoverImplementationPreview {
+                session: *session,
+                payload: LspHoverPreviewPayload::default(),
+            })
+        }
+        LspRequestKind::HoverDefinition { session, .. } => {
+            ctx.dispatch(Action::LspHoverDefinitionPreview {
+                session: *session,
+                payload: LspHoverPreviewPayload::default(),
+            })
+        }
+        LspRequestKind::References => ctx.dispatch(Action::LspReferences { items: Vec::new() }),
+        LspRequestKind::DocumentSymbols { .. } | LspRequestKind::WorkspaceSymbols => {
+            ctx.dispatch(Action::LspSymbols { items: Vec::new() })
+        }
+        LspRequestKind::CodeAction => ctx.dispatch(Action::LspCodeActions { items: Vec::new() }),
+        LspRequestKind::Completion => ctx.dispatch(Action::LspCompletion {
+            items: Vec::new(),
+            is_incomplete: false,
+        }),
+        LspRequestKind::SemanticTokens { .. } | LspRequestKind::SemanticTokensRange { .. } => {}
+        LspRequestKind::InlayHints { .. } => {}
+        LspRequestKind::FoldingRange { path, version } => ctx.dispatch(Action::LspFoldingRanges {
+            path: path.clone(),
+            version: *version,
+            ranges: Vec::new(),
+        }),
+        LspRequestKind::SignatureHelp => ctx.dispatch(Action::LspSignatureHelp {
+            payload: LspSignatureHelpPayload::default(),
+        }),
+        LspRequestKind::Format { path } => {
+            ctx.dispatch(Action::LspFormatCompleted { path: path.clone() })
+        }
+        _ => {}
+    }
+}
+
 pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &KernelServiceContext) {
     let response_start = Instant::now();
     let kind_label = match &kind {
@@ -654,100 +700,12 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
         } else {
             tracing::warn!(code = err.code, error = %err.message, "lsp request failed");
         }
-        match &kind {
-            LspRequestKind::Hover { session } => ctx.dispatch(Action::LspHoverResponse {
-                session: *session,
-                payload: LspHoverPayload::default(),
-            }),
-            LspRequestKind::HoverImplementation { session, .. } => {
-                ctx.dispatch(Action::LspHoverImplementationPreview {
-                    session: *session,
-                    payload: LspHoverPreviewPayload::default(),
-                })
-            }
-            LspRequestKind::HoverDefinition { session, .. } => {
-                ctx.dispatch(Action::LspHoverDefinitionPreview {
-                    session: *session,
-                    payload: LspHoverPreviewPayload::default(),
-                })
-            }
-            LspRequestKind::References => ctx.dispatch(Action::LspReferences { items: Vec::new() }),
-            LspRequestKind::DocumentSymbols { .. } | LspRequestKind::WorkspaceSymbols => {
-                ctx.dispatch(Action::LspSymbols { items: Vec::new() })
-            }
-            LspRequestKind::CodeAction => {
-                ctx.dispatch(Action::LspCodeActions { items: Vec::new() })
-            }
-            LspRequestKind::Completion => ctx.dispatch(Action::LspCompletion {
-                items: Vec::new(),
-                is_incomplete: false,
-            }),
-            LspRequestKind::SemanticTokens { .. } | LspRequestKind::SemanticTokensRange { .. } => {}
-            LspRequestKind::InlayHints { .. } => {}
-            LspRequestKind::FoldingRange { path, version } => {
-                ctx.dispatch(Action::LspFoldingRanges {
-                    path: path.clone(),
-                    version: *version,
-                    ranges: Vec::new(),
-                })
-            }
-            LspRequestKind::SignatureHelp => ctx.dispatch(Action::LspSignatureHelp {
-                payload: LspSignatureHelpPayload::default(),
-            }),
-            LspRequestKind::Format { path } => {
-                ctx.dispatch(Action::LspFormatCompleted { path: path.clone() })
-            }
-            _ => {}
-        }
+        dispatch_empty_response(&kind, ctx);
         return;
     }
 
     let Some(result) = resp.result else {
-        match &kind {
-            LspRequestKind::Hover { session } => ctx.dispatch(Action::LspHoverResponse {
-                session: *session,
-                payload: LspHoverPayload::default(),
-            }),
-            LspRequestKind::HoverImplementation { session, .. } => {
-                ctx.dispatch(Action::LspHoverImplementationPreview {
-                    session: *session,
-                    payload: LspHoverPreviewPayload::default(),
-                })
-            }
-            LspRequestKind::HoverDefinition { session, .. } => {
-                ctx.dispatch(Action::LspHoverDefinitionPreview {
-                    session: *session,
-                    payload: LspHoverPreviewPayload::default(),
-                })
-            }
-            LspRequestKind::References => ctx.dispatch(Action::LspReferences { items: Vec::new() }),
-            LspRequestKind::DocumentSymbols { .. } | LspRequestKind::WorkspaceSymbols => {
-                ctx.dispatch(Action::LspSymbols { items: Vec::new() })
-            }
-            LspRequestKind::CodeAction => {
-                ctx.dispatch(Action::LspCodeActions { items: Vec::new() })
-            }
-            LspRequestKind::Completion => ctx.dispatch(Action::LspCompletion {
-                items: Vec::new(),
-                is_incomplete: false,
-            }),
-            LspRequestKind::SemanticTokens { .. } | LspRequestKind::SemanticTokensRange { .. } => {}
-            LspRequestKind::InlayHints { .. } => {}
-            LspRequestKind::FoldingRange { path, version } => {
-                ctx.dispatch(Action::LspFoldingRanges {
-                    path: path.clone(),
-                    version: *version,
-                    ranges: Vec::new(),
-                })
-            }
-            LspRequestKind::SignatureHelp => ctx.dispatch(Action::LspSignatureHelp {
-                payload: LspSignatureHelpPayload::default(),
-            }),
-            LspRequestKind::Format { path } => {
-                ctx.dispatch(Action::LspFormatCompleted { path: path.clone() })
-            }
-            _ => {}
-        }
+        dispatch_empty_response(&kind, ctx);
         return;
     };
 

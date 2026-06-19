@@ -1,4 +1,7 @@
 use crate::kernel::language::HoverSectionModel;
+use crate::kernel::services::ports::lsp::{
+    column_for_chars, line_len_chars, lsp_col_to_char_offset_in_line,
+};
 use crate::kernel::services::ports::{
     LspClientKey, LspHoverPayload, LspHoverPreviewPayload, LspPosition, LspPositionEncoding,
     LspRange, LspResourceOp, LspServerCapabilities, LspTextEdit, LspWorkspaceEdit,
@@ -19,9 +22,7 @@ use std::time::Instant;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::super::util::find_open_tab;
-use super::super::util::{
-    is_lsp_source_path, line_len_chars, open_tabs_for_path, resolve_renamed_path,
-};
+use super::super::util::{is_lsp_source_path, open_tabs_for_path, resolve_renamed_path};
 use super::completion::{
     completion_runtime_context, filtered_completion_indices, language_runtime_context,
     normalize_completion_record, sort_completion_items,
@@ -95,36 +96,6 @@ pub(in crate::kernel::store) fn lsp_position_to_byte_offset(
     let line_len = line_len_chars(line_slice);
     let char_offset = (line_start + col_chars.min(line_len)).min(rope.len_chars());
     rope.char_to_byte(char_offset)
-}
-
-pub(in crate::kernel::store) fn lsp_col_to_char_offset_in_line(
-    line: ropey::RopeSlice<'_>,
-    col: u32,
-    encoding: LspPositionEncoding,
-) -> usize {
-    let mut units = 0u32;
-    let mut chars = 0usize;
-    let mut it = line.chars().peekable();
-    while let Some(ch) = it.next() {
-        if ch == '\n' {
-            break;
-        }
-        if ch == '\r' && matches!(it.peek(), Some('\n')) {
-            break;
-        }
-        let next = units
-            + match encoding {
-                LspPositionEncoding::Utf8 => ch.len_utf8() as u32,
-                LspPositionEncoding::Utf16 => ch.len_utf16() as u32,
-                LspPositionEncoding::Utf32 => 1,
-            };
-        if next > col {
-            break;
-        }
-        units = next;
-        chars += 1;
-    }
-    chars
 }
 
 pub(in crate::kernel::store) fn lsp_request_target(
@@ -314,19 +285,7 @@ pub(in crate::kernel::store) fn lsp_position_from_buffer_pos(
     let line_start = rope.line_to_char(row);
     let col_chars = char_offset.saturating_sub(line_start);
     let line_slice = rope.line(row);
-    let character = match encoding {
-        LspPositionEncoding::Utf8 => line_slice
-            .chars()
-            .take(col_chars)
-            .map(|ch| ch.len_utf8() as u32)
-            .sum(),
-        LspPositionEncoding::Utf16 => line_slice
-            .chars()
-            .take(col_chars)
-            .map(|ch| ch.len_utf16() as u32)
-            .sum(),
-        LspPositionEncoding::Utf32 => col_chars as u32,
-    };
+    let character = column_for_chars(line_slice, col_chars, encoding);
     (row as u32, character)
 }
 
@@ -341,19 +300,7 @@ pub(in crate::kernel::store) fn lsp_position_from_char_offset(
     let line_start = rope.line_to_char(row);
     let col_chars = char_offset.saturating_sub(line_start);
     let line_slice = rope.line(row);
-    let character = match encoding {
-        LspPositionEncoding::Utf8 => line_slice
-            .chars()
-            .take(col_chars)
-            .map(|ch| ch.len_utf8() as u32)
-            .sum(),
-        LspPositionEncoding::Utf16 => line_slice
-            .chars()
-            .take(col_chars)
-            .map(|ch| ch.len_utf16() as u32)
-            .sum(),
-        LspPositionEncoding::Utf32 => col_chars as u32,
-    };
+    let character = column_for_chars(line_slice, col_chars, encoding);
 
     LspPosition {
         line: row as u32,
