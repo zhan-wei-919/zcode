@@ -4,7 +4,7 @@ use crate::kernel::editor::EditorTabState;
 use crate::kernel::language::adapter::adapter_for_tab;
 use crate::kernel::language::LanguageRuntimeContext;
 use crate::kernel::lsp_registry;
-use crate::kernel::{Action as KernelAction, FocusTarget};
+use crate::kernel::Action as KernelAction;
 
 fn interaction_runtime_context<'a>(
     workbench: &'a Workbench,
@@ -29,41 +29,24 @@ fn interaction_runtime_context<'a>(
 
 impl Workbench {
     pub(super) fn maybe_trigger_completion(&mut self, cmd: &Command) {
-        if self.store.state().ui.focus != FocusTarget::Editor {
+        let Some(ctx) = self.active_lsp_editing_context() else {
             return;
-        }
-
-        if self
-            .kernel_services
-            .get::<crate::kernel::services::adapters::LspService>()
-            .is_none()
-        {
-            return;
-        }
-
-        let pane = self.store.state().ui.editor_layout.active_pane;
+        };
         let Some(tab) = self
             .store
             .state()
             .editor
-            .pane(pane)
+            .pane(ctx.pane)
             .and_then(|pane| pane.active_tab())
         else {
             return;
         };
 
-        let Some(path) = tab.path.as_ref() else {
-            return;
-        };
-        if !lsp_registry::is_lsp_source_path(path) {
-            return;
-        }
-
         let adapter = adapter_for_tab(tab);
         let interaction = adapter.interaction();
         let runtime = interaction_runtime_context(self, tab);
         let completion_triggers: &[char] =
-            lsp_registry::client_key_for_path(&self.store.state().workspace_root, path)
+            lsp_registry::client_key_for_path(&self.store.state().workspace_root, &ctx.path)
                 .map(|(_, key)| key)
                 .and_then(|key| self.store.state().lsp.server_capabilities.get(&key))
                 .map(|caps| caps.completion_triggers.as_slice())
@@ -101,7 +84,7 @@ impl Workbench {
             .completion
             .pending_request
             .as_ref()
-            .is_some_and(|pending| pending.pane == pane && &pending.path == path);
+            .is_some_and(|pending| pending.pane == ctx.pane && pending.path == ctx.path);
 
         // While a completion request is inflight, avoid spamming extra requests for
         // identifier typing. This keeps latency low by letting the first request complete.

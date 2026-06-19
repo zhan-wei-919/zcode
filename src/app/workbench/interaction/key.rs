@@ -125,11 +125,7 @@ impl Workbench {
             match (key_event.code, key_event.modifiers) {
                 (KeyCode::Esc, _) => {
                     let _ = self.dispatch_kernel(KernelAction::CompletionClose);
-                    self.ui.completion_doc.scroll = 0;
-                    self.ui.completion_doc.total_lines = 0;
-                    self.ui.completion_doc.key = None;
-                    self.ui.completion_doc.last_area = None;
-                    self.ui.completion_doc.render_cache.clear();
+                    self.reset_completion_doc_state();
                     return EventResult::Consumed;
                 }
                 (KeyCode::Tab, _) => {
@@ -195,11 +191,7 @@ impl Workbench {
 
                     // Completion session ends; reset doc scroll for the next popup.
                     if !self.store.state().ui.completion.visible {
-                        self.ui.completion_doc.scroll = 0;
-                        self.ui.completion_doc.total_lines = 0;
-                        self.ui.completion_doc.key = None;
-                        self.ui.completion_doc.last_area = None;
-                        self.ui.completion_doc.render_cache.clear();
+                        self.reset_completion_doc_state();
                     }
                     return EventResult::Consumed;
                 }

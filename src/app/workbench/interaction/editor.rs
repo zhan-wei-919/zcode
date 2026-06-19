@@ -620,26 +620,8 @@ impl Workbench {
                 EventResult::Consumed
             }
             MouseEventKind::ScrollUp => {
-                if self.store.state().ui.completion.visible
-                    && self
-                        .ui
-                        .completion_doc
-                        .last_area
-                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-                {
-                    let step = scroll_step.max(1) as isize;
-                    let _ = self.scroll_completion_doc_by(-step);
-                    return EventResult::Consumed;
-                }
-                if self.store.state().ui.hover.is_active()
-                    && self
-                        .ui
-                        .hover_popup
-                        .last_area
-                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-                {
-                    let step = scroll_step.max(1) as isize;
-                    let _ = self.scroll_hover_popup_by(-step);
+                let step = scroll_step.max(1) as isize;
+                if self.route_scroll_to_popup(event.column, event.row, Some(-step)) {
                     return EventResult::Consumed;
                 }
 
@@ -655,26 +637,8 @@ impl Workbench {
                 EventResult::Consumed
             }
             MouseEventKind::ScrollDown => {
-                if self.store.state().ui.completion.visible
-                    && self
-                        .ui
-                        .completion_doc
-                        .last_area
-                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-                {
-                    let step = scroll_step.max(1) as isize;
-                    let _ = self.scroll_completion_doc_by(step);
-                    return EventResult::Consumed;
-                }
-                if self.store.state().ui.hover.is_active()
-                    && self
-                        .ui
-                        .hover_popup
-                        .last_area
-                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-                {
-                    let step = scroll_step.max(1) as isize;
-                    let _ = self.scroll_hover_popup_by(step);
+                let step = scroll_step.max(1) as isize;
+                if self.route_scroll_to_popup(event.column, event.row, Some(step)) {
                     return EventResult::Consumed;
                 }
 
@@ -690,22 +654,7 @@ impl Workbench {
                 EventResult::Consumed
             }
             MouseEventKind::ScrollLeft => {
-                if self.store.state().ui.completion.visible
-                    && self
-                        .ui
-                        .completion_doc
-                        .last_area
-                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-                {
-                    return EventResult::Consumed;
-                }
-                if self.store.state().ui.hover.is_active()
-                    && self
-                        .ui
-                        .hover_popup
-                        .last_area
-                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-                {
+                if self.route_scroll_to_popup(event.column, event.row, None) {
                     return EventResult::Consumed;
                 }
 
@@ -716,22 +665,7 @@ impl Workbench {
                 EventResult::Consumed
             }
             MouseEventKind::ScrollRight => {
-                if self.store.state().ui.completion.visible
-                    && self
-                        .ui
-                        .completion_doc
-                        .last_area
-                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-                {
-                    return EventResult::Consumed;
-                }
-                if self.store.state().ui.hover.is_active()
-                    && self
-                        .ui
-                        .hover_popup
-                        .last_area
-                        .is_some_and(|a| util::rect_contains(a, event.column, event.row))
-                {
+                if self.route_scroll_to_popup(event.column, event.row, None) {
                     return EventResult::Consumed;
                 }
 
@@ -743,6 +677,37 @@ impl Workbench {
             }
             _ => EventResult::Ignored,
         }
+    }
+
+    /// 滚轮命中 completion-doc / hover-popup 时把滚动路由给浮层。垂直方向传 `Some(delta)`
+    /// 滚动浮层，水平方向传 `None`（只消费、不滚动，避免编辑器在浮层下横向滚动）。返回
+    /// 是否已被浮层消费。四个滚动臂共用此守卫对，杜绝命中判定漂移。
+    fn route_scroll_to_popup(&mut self, x: u16, y: u16, popup_delta: Option<isize>) -> bool {
+        if self.store.state().ui.completion.visible
+            && self
+                .ui
+                .completion_doc
+                .last_area
+                .is_some_and(|a| util::rect_contains(a, x, y))
+        {
+            if let Some(delta) = popup_delta {
+                let _ = self.scroll_completion_doc_by(delta);
+            }
+            return true;
+        }
+        if self.store.state().ui.hover.is_active()
+            && self
+                .ui
+                .hover_popup
+                .last_area
+                .is_some_and(|a| util::rect_contains(a, x, y))
+        {
+            if let Some(delta) = popup_delta {
+                let _ = self.scroll_hover_popup_by(delta);
+            }
+            return true;
+        }
+        false
     }
 
     fn mouse_horizontal_step(scroll_step: usize, tab_size: u8) -> isize {

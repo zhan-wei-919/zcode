@@ -436,6 +436,12 @@ impl Workbench {
         self.ui.completion_doc.scroll = 0;
     }
 
+    /// 完整重置 completion-doc 浮层状态（滚动 / 行数 / 缓存键 / 区域 / 渲染缓存），
+    /// completion 会话结束时调用。等价整体赋 `CompletionDocState::default()`。
+    fn reset_completion_doc_state(&mut self) {
+        self.ui.completion_doc = CompletionDocState::default();
+    }
+
     pub(super) fn open_settings(&mut self) {
         if !settings_enabled() {
             return;

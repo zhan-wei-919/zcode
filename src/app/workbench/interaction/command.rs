@@ -9,9 +9,42 @@ use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::KeybindingContext;
 use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget};
 use crate::tui::view::EventResult;
+use std::path::PathBuf;
 use std::time::Instant;
 
+/// LSP 编辑前置守卫通过后的拥有式上下文：活动 pane 与文件路径。返回拥有式数据（path
+/// 克隆）而非借用，使调用方在守卫后仍可自由 `&mut self`（dispatch / 改 debounce 字段）。
+pub(super) struct LspEditContext {
+    pub pane: usize,
+    pub path: PathBuf,
+}
+
 impl Workbench {
+    /// 四处 LSP-debounce / completion 调度共享的前置守卫：焦点在编辑器、LSP 服务存在、
+    /// 有活动 tab 且其路径是 LSP 源文件。通过返回拥有式上下文，否则 None。
+    pub(super) fn active_lsp_editing_context(&self) -> Option<LspEditContext> {
+        if self.store.state().ui.focus != FocusTarget::Editor {
+            return None;
+        }
+        self.kernel_services
+            .get::<crate::kernel::services::adapters::LspService>()?;
+        let pane = self.store.state().ui.editor_layout.active_pane;
+        let tab = self
+            .store
+            .state()
+            .editor
+            .pane(pane)
+            .and_then(|pane| pane.active_tab())?;
+        let path = tab.path.as_ref()?;
+        if !lsp_registry::is_lsp_source_path(path) {
+            return None;
+        }
+        Some(LspEditContext {
+            pane,
+            path: path.clone(),
+        })
+    }
+
     pub(in super::super) fn handle_paste(&mut self, text: &str) -> EventResult {
         let _scope = perf::scope("input.paste");
         let context = self.keybinding_context();
@@ -103,35 +136,9 @@ impl Workbench {
     }
 
     pub(super) fn maybe_schedule_semantic_tokens_debounce(&mut self, cmd: &Command) {
-        if self.store.state().ui.focus != FocusTarget::Editor {
-            return;
-        }
-
-        if self
-            .kernel_services
-            .get::<crate::kernel::services::adapters::LspService>()
-            .is_none()
-        {
-            return;
-        }
-
-        let pane = self.store.state().ui.editor_layout.active_pane;
-        let Some(tab) = self
-            .store
-            .state()
-            .editor
-            .pane(pane)
-            .and_then(|pane| pane.active_tab())
-        else {
+        let Some(ctx) = self.active_lsp_editing_context() else {
             return;
         };
-
-        let Some(path) = tab.path.as_ref() else {
-            return;
-        };
-        if !lsp_registry::is_lsp_source_path(path) {
-            return;
-        }
 
         let timing = &self.store.state().editor.config.lsp_input_timing;
         let eager_refresh = self
@@ -139,15 +146,23 @@ impl Workbench {
             .state()
             .lsp
             .eager_semantic_refresh_paths
-            .contains(path);
+            .contains(&ctx.path);
 
         let edit_trigger = classify_lsp_edit_trigger(cmd, timing);
 
         let supports_semantic_tokens_range =
-            lsp_registry::client_key_for_path(&self.store.state().workspace_root, path)
+            lsp_registry::client_key_for_path(&self.store.state().workspace_root, &ctx.path)
                 .map(|(_, key)| key)
                 .and_then(|key| self.store.state().lsp.server_capabilities.get(&key))
                 .is_some_and(|c| c.semantic_tokens_range);
+        let buffer_lines = self
+            .store
+            .state()
+            .editor
+            .pane(ctx.pane)
+            .and_then(|pane| pane.active_tab())
+            .map(|tab| tab.buffer.len_lines().max(1))
+            .unwrap_or(0);
         let move_should_schedule = matches!(
             cmd,
             Command::CursorUp
@@ -157,7 +172,7 @@ impl Workbench {
                 | Command::PageUp
                 | Command::PageDown
         ) && supports_semantic_tokens_range
-            && tab.buffer.len_lines().max(1) >= 2000;
+            && buffer_lines >= 2000;
 
         if let Some(trigger) = edit_trigger {
             let trigger = semantic_tokens_trigger(trigger, eager_refresh);
@@ -174,33 +189,7 @@ impl Workbench {
     }
 
     pub(super) fn maybe_schedule_inlay_hints_debounce(&mut self, cmd: &Command) {
-        if self.store.state().ui.focus != FocusTarget::Editor {
-            return;
-        }
-
-        if self
-            .kernel_services
-            .get::<crate::kernel::services::adapters::LspService>()
-            .is_none()
-        {
-            return;
-        }
-
-        let pane = self.store.state().ui.editor_layout.active_pane;
-        let Some(tab) = self
-            .store
-            .state()
-            .editor
-            .pane(pane)
-            .and_then(|pane| pane.active_tab())
-        else {
-            return;
-        };
-
-        let Some(path) = tab.path.as_ref() else {
-            return;
-        };
-        if !lsp_registry::is_lsp_source_path(path) {
+        if self.active_lsp_editing_context().is_none() {
             return;
         }
 
@@ -234,33 +223,7 @@ impl Workbench {
     }
 
     pub(super) fn maybe_schedule_folding_range_debounce(&mut self, cmd: &Command) {
-        if self.store.state().ui.focus != FocusTarget::Editor {
-            return;
-        }
-
-        if self
-            .kernel_services
-            .get::<crate::kernel::services::adapters::LspService>()
-            .is_none()
-        {
-            return;
-        }
-
-        let pane = self.store.state().ui.editor_layout.active_pane;
-        let Some(tab) = self
-            .store
-            .state()
-            .editor
-            .pane(pane)
-            .and_then(|pane| pane.active_tab())
-        else {
-            return;
-        };
-
-        let Some(path) = tab.path.as_ref() else {
-            return;
-        };
-        if !lsp_registry::is_lsp_source_path(path) {
+        if self.active_lsp_editing_context().is_none() {
             return;
         }
 

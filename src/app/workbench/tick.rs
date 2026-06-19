@@ -1,3 +1,4 @@
+use super::interaction::LspDebouncePipeline;
 use super::settings_parse::{parse_settings, ParsedSettings};
 use super::Workbench;
 use crate::core::Command;
@@ -23,9 +24,9 @@ impl Workbench {
         changed |= self.poll_kernel_bus();
         changed |= self.poll_settings();
         self.store.tick();
-        changed |= self.poll_semantic_tokens_debounce();
-        changed |= self.poll_inlay_hints_debounce();
-        changed |= self.poll_folding_range_debounce();
+        changed |= self.poll_lsp_debounce(LspDebouncePipeline::SemanticTokens);
+        changed |= self.poll_lsp_debounce(LspDebouncePipeline::InlayHints);
+        changed |= self.poll_lsp_debounce(LspDebouncePipeline::FoldingRange);
         changed |= self.poll_idle_hover();
         changed |= self.poll_definition_jump_highlight();
         self.poll_completion_rank_save();
@@ -343,15 +344,26 @@ impl Workbench {
         false
     }
 
-    fn poll_semantic_tokens_debounce(&mut self) -> bool {
-        let Some(deadline) = self.lsp_sync.debounce.semantic_tokens else {
+    /// 三条 LSP debounce（语义高亮 / inlay / 折叠）到点后下发对应刷新命令，共享
+    /// 同一抑制块（焦点不在编辑器、命令行 / 对话框可见时跳过）。pipeline 选 slot + 命令。
+    fn poll_lsp_debounce(&mut self, pipeline: LspDebouncePipeline) -> bool {
+        let deadline = match pipeline {
+            LspDebouncePipeline::SemanticTokens => self.lsp_sync.debounce.semantic_tokens,
+            LspDebouncePipeline::InlayHints => self.lsp_sync.debounce.inlay_hints,
+            LspDebouncePipeline::FoldingRange => self.lsp_sync.debounce.folding_range,
+        };
+        let Some(deadline) = deadline else {
             return false;
         };
         if Instant::now() < deadline {
             return false;
         }
 
-        self.lsp_sync.debounce.semantic_tokens = None;
+        match pipeline {
+            LspDebouncePipeline::SemanticTokens => self.lsp_sync.debounce.semantic_tokens = None,
+            LspDebouncePipeline::InlayHints => self.lsp_sync.debounce.inlay_hints = None,
+            LspDebouncePipeline::FoldingRange => self.lsp_sync.debounce.folding_range = None,
+        }
 
         if self.store.state().ui.focus != FocusTarget::Editor {
             return false;
@@ -363,55 +375,12 @@ impl Workbench {
             return false;
         }
 
-        let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::LspSemanticTokens));
-        false
-    }
-
-    fn poll_inlay_hints_debounce(&mut self) -> bool {
-        let Some(deadline) = self.lsp_sync.debounce.inlay_hints else {
-            return false;
+        let command = match pipeline {
+            LspDebouncePipeline::SemanticTokens => Command::LspSemanticTokens,
+            LspDebouncePipeline::InlayHints => Command::LspInlayHints,
+            LspDebouncePipeline::FoldingRange => Command::LspFoldingRange,
         };
-        if Instant::now() < deadline {
-            return false;
-        }
-
-        self.lsp_sync.debounce.inlay_hints = None;
-
-        if self.store.state().ui.focus != FocusTarget::Editor {
-            return false;
-        }
-        if self.store.state().ui.command_line.active
-            || self.store.state().ui.input_dialog.visible
-            || self.store.state().ui.confirm_dialog.visible
-        {
-            return false;
-        }
-
-        let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::LspInlayHints));
-        false
-    }
-
-    fn poll_folding_range_debounce(&mut self) -> bool {
-        let Some(deadline) = self.lsp_sync.debounce.folding_range else {
-            return false;
-        };
-        if Instant::now() < deadline {
-            return false;
-        }
-
-        self.lsp_sync.debounce.folding_range = None;
-
-        if self.store.state().ui.focus != FocusTarget::Editor {
-            return false;
-        }
-        if self.store.state().ui.command_line.active
-            || self.store.state().ui.input_dialog.visible
-            || self.store.state().ui.confirm_dialog.visible
-        {
-            return false;
-        }
-
-        let _ = self.dispatch_kernel(KernelAction::RunCommand(Command::LspFoldingRange));
+        let _ = self.dispatch_kernel(KernelAction::RunCommand(command));
         false
     }
 
