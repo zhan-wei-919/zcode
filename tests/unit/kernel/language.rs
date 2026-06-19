@@ -51,6 +51,37 @@ fn from_path_maps_all_supported_extensions() {
 }
 
 #[test]
+fn from_code_fence_maps_union_of_view_and_adapter_aliases() {
+    let cases = [
+        ("rust", Some(LanguageId::Rust)),
+        ("rs", Some(LanguageId::Rust)),
+        ("python", Some(LanguageId::Python)),
+        ("cpp", Some(LanguageId::Cpp)),
+        ("c++", Some(LanguageId::Cpp)),
+        // Aliases the adapter table previously lacked.
+        ("htm", Some(LanguageId::Html)),
+        ("javascriptreact", Some(LanguageId::Jsx)),
+        ("typescriptreact", Some(LanguageId::Tsx)),
+        ("zsh", Some(LanguageId::Bash)),
+        // Aliases the view (markdown) table previously lacked.
+        ("sql", Some(LanguageId::Sql)),
+        ("markdown", Some(LanguageId::Markdown)),
+        ("md", Some(LanguageId::Markdown)),
+        // Case-insensitive + surrounding whitespace are normalized.
+        ("  RuSt  ", Some(LanguageId::Rust)),
+        ("nonsense", None),
+        ("", None),
+    ];
+    for (fence, expected) in cases {
+        assert_eq!(
+            LanguageId::from_code_fence(fence),
+            expected,
+            "fence {fence:?}"
+        );
+    }
+}
+
+#[test]
 fn lsp_language_id_mapping_is_correct() {
     let cases = [
         (LanguageId::Rust, "rust"),

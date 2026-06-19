@@ -4,7 +4,7 @@
 //! non-cursor lines (hiding markers, applying formatting) and source-line
 //! highlighting for the cursor line.
 
-use crate::kernel::editor::{HighlightKind, HighlightSpan, LanguageId};
+use crate::kernel::editor::{HighlightKind, HighlightSpan};
 use unicode_width::UnicodeWidthStr;
 
 /// Block-level classification for each line.
@@ -1385,29 +1385,6 @@ pub fn display_to_source_byte(offset_map: &[(usize, usize)], display_byte: usize
                 offset_map[idx - 1].1
             }
         }
-    }
-}
-
-pub fn language_id_for_fence(lang: &str) -> Option<LanguageId> {
-    match lang.to_ascii_lowercase().as_str() {
-        "rust" | "rs" => Some(LanguageId::Rust),
-        "go" => Some(LanguageId::Go),
-        "python" | "py" => Some(LanguageId::Python),
-        "java" => Some(LanguageId::Java),
-        "c" => Some(LanguageId::C),
-        "cpp" | "c++" | "cc" | "cxx" => Some(LanguageId::Cpp),
-        "javascript" | "js" => Some(LanguageId::JavaScript),
-        "jsx" | "javascriptreact" => Some(LanguageId::Jsx),
-        "typescript" | "ts" => Some(LanguageId::TypeScript),
-        "tsx" | "typescriptreact" => Some(LanguageId::Tsx),
-        "json" => Some(LanguageId::Json),
-        "yaml" | "yml" => Some(LanguageId::Yaml),
-        "html" | "htm" => Some(LanguageId::Html),
-        "xml" => Some(LanguageId::Xml),
-        "css" => Some(LanguageId::Css),
-        "toml" => Some(LanguageId::Toml),
-        "bash" | "sh" | "shell" | "zsh" => Some(LanguageId::Bash),
-        _ => None,
     }
 }
 

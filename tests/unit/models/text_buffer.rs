@@ -12,6 +12,26 @@ fn test_text_buffer_basic() {
 }
 
 #[test]
+fn replace_range_op_auto_cursor_lands_on_grapheme_column() {
+    // "e\u{301}" = 'e' + combining acute = 2 chars but 1 grapheme.
+    let mut buffer = TextBuffer::from_text("e\u{301}xy");
+    // Replace "xy" (chars 2..4) with "z\u{301}q" (3 chars, graphemes ź + q).
+    let _ = buffer.replace_range_op_auto_cursor(2, 4, "z\u{301}q", OpId::root());
+    // Line "e\u{301}z\u{301}q" → graphemes é, ź, q; cursor after inserted text = grapheme col 3.
+    assert_eq!(buffer.cursor(), (0, 3));
+}
+
+#[test]
+fn replace_range_op_adjust_cursor_recomputes_grapheme_column() {
+    let mut buffer = TextBuffer::from_text("e\u{301}xy");
+    buffer.set_cursor(0, 3); // after "y"
+                             // Replace "xy" (chars 2..4) with "z"; cursor at/after end shifts onto "z".
+    let _ = buffer.replace_range_op_adjust_cursor(2, 4, "z", OpId::root());
+    // Line "e\u{301}z" → graphemes é, z; cursor after "z" = grapheme col 2.
+    assert_eq!(buffer.cursor(), (0, 2));
+}
+
+#[test]
 fn test_pos_to_char() {
     let buffer = TextBuffer::from_text("hello\nworld");
 

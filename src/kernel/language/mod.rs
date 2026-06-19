@@ -70,6 +70,33 @@ impl LanguageId {
         }
     }
 
+    /// 代码围栏语言标识 → `LanguageId` 的唯一规范映射。别名取 view（markdown 渲染）与
+    /// adapter（hover code block）两表的并集，杜绝两份别名表漂移。
+    pub fn from_code_fence(lang: &str) -> Option<Self> {
+        match lang.trim().to_ascii_lowercase().as_str() {
+            "rust" | "rs" => Some(Self::Rust),
+            "go" => Some(Self::Go),
+            "python" | "py" => Some(Self::Python),
+            "javascript" | "js" => Some(Self::JavaScript),
+            "typescript" | "ts" => Some(Self::TypeScript),
+            "jsx" | "javascriptreact" => Some(Self::Jsx),
+            "tsx" | "typescriptreact" => Some(Self::Tsx),
+            "c" => Some(Self::C),
+            "cpp" | "c++" | "cc" | "cxx" => Some(Self::Cpp),
+            "java" => Some(Self::Java),
+            "json" => Some(Self::Json),
+            "yaml" | "yml" => Some(Self::Yaml),
+            "html" | "htm" => Some(Self::Html),
+            "xml" => Some(Self::Xml),
+            "css" => Some(Self::Css),
+            "toml" => Some(Self::Toml),
+            "sql" => Some(Self::Sql),
+            "bash" | "sh" | "shell" | "zsh" => Some(Self::Bash),
+            "markdown" | "md" => Some(Self::Markdown),
+            _ => None,
+        }
+    }
+
     pub fn server_kind(self) -> Option<LspServerKind> {
         match self {
             Self::Rust => Some(LspServerKind::RustAnalyzer),

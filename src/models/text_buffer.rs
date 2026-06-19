@@ -502,25 +502,7 @@ impl TextBuffer {
         self.rope.insert(start_char, inserted);
 
         let cursor_after_char_offset = start_char.saturating_add(inserted.chars().count());
-        let row = self.rope.char_to_line(cursor_after_char_offset);
-        let line_char_start = self.rope.line_to_char(row);
-        let col_chars = cursor_after_char_offset.saturating_sub(line_char_start);
-
-        let slice = self.rope.line(row);
-        let line = slice_to_cow(slice);
-
-        let mut taken_chars = 0usize;
-        let mut col_graphemes = 0usize;
-        for g in unicode_segmentation::UnicodeSegmentation::graphemes(line.as_ref(), true) {
-            let g_chars = g.chars().count();
-            if taken_chars + g_chars > col_chars {
-                break;
-            }
-            taken_chars += g_chars;
-            col_graphemes += 1;
-        }
-
-        let cursor_after = (row, col_graphemes);
+        let cursor_after = self.cursor_pos_from_char_offset(cursor_after_char_offset);
         self.cursor = cursor_after;
         self.selection = None;
         self.cached_char_pos = Some(cursor_after_char_offset);
@@ -564,25 +546,7 @@ impl TextBuffer {
         };
         cursor_after_char_offset = cursor_after_char_offset.min(self.rope.len_chars());
 
-        let row = self.rope.char_to_line(cursor_after_char_offset);
-        let line_char_start = self.rope.line_to_char(row);
-        let col_chars = cursor_after_char_offset.saturating_sub(line_char_start);
-
-        let slice = self.rope.line(row);
-        let line = slice_to_cow(slice);
-
-        let mut taken_chars = 0usize;
-        let mut col_graphemes = 0usize;
-        for g in unicode_segmentation::UnicodeSegmentation::graphemes(line.as_ref(), true) {
-            let g_chars = g.chars().count();
-            if taken_chars + g_chars > col_chars {
-                break;
-            }
-            taken_chars += g_chars;
-            col_graphemes += 1;
-        }
-
-        let cursor_after = (row, col_graphemes);
+        let cursor_after = self.cursor_pos_from_char_offset(cursor_after_char_offset);
         self.cursor = cursor_after;
         self.selection = None;
         self.cached_char_pos = Some(cursor_after_char_offset);

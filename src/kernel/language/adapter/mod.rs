@@ -1100,7 +1100,7 @@ pub(crate) fn default_normalize_hover_payload(payload: &LspHoverPayload) -> Opti
             }
             LspHoverBlock::Code { language, code } if !code.trim().is_empty() => {
                 Some(HoverBlock::Code {
-                    language: language.as_deref().and_then(language_id_from_code_fence),
+                    language: language.as_deref().and_then(LanguageId::from_code_fence),
                     code: code.clone(),
                 })
             }
@@ -1167,31 +1167,6 @@ fn utf16_offset_to_byte(text: &str, offset: u32) -> usize {
         units = next;
     }
     text.len()
-}
-
-fn language_id_from_code_fence(language: &str) -> Option<LanguageId> {
-    match language.trim().to_ascii_lowercase().as_str() {
-        "rust" | "rs" => Some(LanguageId::Rust),
-        "go" => Some(LanguageId::Go),
-        "python" | "py" => Some(LanguageId::Python),
-        "javascript" | "js" => Some(LanguageId::JavaScript),
-        "typescript" | "ts" => Some(LanguageId::TypeScript),
-        "jsx" => Some(LanguageId::Jsx),
-        "tsx" => Some(LanguageId::Tsx),
-        "c" => Some(LanguageId::C),
-        "cpp" | "c++" | "cc" | "cxx" => Some(LanguageId::Cpp),
-        "java" => Some(LanguageId::Java),
-        "json" => Some(LanguageId::Json),
-        "yaml" | "yml" => Some(LanguageId::Yaml),
-        "html" => Some(LanguageId::Html),
-        "xml" => Some(LanguageId::Xml),
-        "css" => Some(LanguageId::Css),
-        "toml" => Some(LanguageId::Toml),
-        "sql" => Some(LanguageId::Sql),
-        "bash" | "sh" | "shell" => Some(LanguageId::Bash),
-        "markdown" | "md" => Some(LanguageId::Markdown),
-        _ => None,
-    }
 }
 
 fn language_code_fence(language: LanguageId) -> &'static str {

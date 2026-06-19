@@ -384,7 +384,7 @@ pub fn render_markdown(markdown: &str, width: u16, max_lines: usize) -> Vec<DocL
                     in_code = true;
                     code_lang = md
                         .fence_language(line_idx)
-                        .and_then(markdown::language_id_for_fence);
+                        .and_then(LanguageId::from_code_fence);
                 }
             }
             MdBlockKind::CodeBlock if in_code => {
