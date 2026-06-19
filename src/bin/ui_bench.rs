@@ -50,10 +50,8 @@ fn main() -> std::io::Result<()> {
         }
     }
 
-    let panes = 1usize;
     let tabs_per_pane = tabs_per_pane.max(1);
-    let required_tabs = panes.saturating_mul(tabs_per_pane);
-    let explorer_files = explorer_files.max(required_tabs);
+    let explorer_files = explorer_files.max(tabs_per_pane);
 
     let root = create_fixture_dir(explorer_files)?;
     let (tx, _rx) = mpsc::channel();
@@ -64,19 +62,16 @@ fn main() -> std::io::Result<()> {
     let long = generate_rust_like(long_lines, long_cols);
     let small = "fn main() {}\n".to_string();
 
-    for pane in 0..panes {
-        for tab in 0..tabs_per_pane {
-            let idx = pane.saturating_mul(tabs_per_pane).saturating_add(tab);
-            let path = root.join("src").join(format!("file_{idx}.rs"));
-            let content = if tab + 1 == tabs_per_pane {
-                long.clone()
-            } else if tab == 0 {
-                normal.clone()
-            } else {
-                small.clone()
-            };
-            workbench.bench_open_file(pane, path, content);
-        }
+    for tab in 0..tabs_per_pane {
+        let path = root.join("src").join(format!("file_{tab}.rs"));
+        let content = if tab + 1 == tabs_per_pane {
+            long.clone()
+        } else if tab == 0 {
+            normal.clone()
+        } else {
+            small.clone()
+        };
+        workbench.bench_open_file(0, path, content);
     }
 
     workbench.bench_set_active_pane(0);

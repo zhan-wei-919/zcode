@@ -96,10 +96,6 @@ pub fn text_hash(text: &str) -> u64 {
     hasher.finish()
 }
 
-pub fn natural_width(markdown: &str) -> usize {
-    natural_width_with_tab_size(markdown, 4)
-}
-
 pub fn natural_width_with_tab_size(markdown: &str, tab_size: u8) -> usize {
     markdown
         .lines()

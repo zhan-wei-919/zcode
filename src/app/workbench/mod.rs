@@ -359,7 +359,7 @@ impl Workbench {
             last_settings_check: Instant::now(),
             last_settings_modified,
             last_input_at: Instant::now(),
-            ui: UiDisplayState::new(Instant::now()),
+            ui: UiDisplayState::new(),
             lsp_sync: LspSyncState {
                 open_paths_version: lsp_open_paths_version,
                 file_watcher_open_paths_version,

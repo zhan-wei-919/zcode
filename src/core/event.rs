@@ -194,33 +194,6 @@ impl MousePosition {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MouseAction {
-    Down(MouseButton),
-    Up(MouseButton),
-    Drag(MouseButton),
-    Moved,
-    ScrollUp,
-    ScrollDown,
-    ScrollLeft,
-    ScrollRight,
-}
-
-impl From<MouseEventKind> for MouseAction {
-    fn from(kind: MouseEventKind) -> Self {
-        match kind {
-            MouseEventKind::Down(btn) => MouseAction::Down(btn),
-            MouseEventKind::Up(btn) => MouseAction::Up(btn),
-            MouseEventKind::Drag(btn) => MouseAction::Drag(btn),
-            MouseEventKind::Moved => MouseAction::Moved,
-            MouseEventKind::ScrollUp => MouseAction::ScrollUp,
-            MouseEventKind::ScrollDown => MouseAction::ScrollDown,
-            MouseEventKind::ScrollLeft => MouseAction::ScrollLeft,
-            MouseEventKind::ScrollRight => MouseAction::ScrollRight,
-        }
-    }
-}
-
 #[cfg(test)]
 #[path = "../../tests/unit/core/event.rs"]
 mod tests;

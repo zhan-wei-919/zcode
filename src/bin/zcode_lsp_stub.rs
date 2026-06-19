@@ -1212,9 +1212,6 @@ fn handle_request(
 
             (Response::new_ok(req.id, Some(edit)), None, Vec::new())
         }
-        m if m == lsp_types::request::Shutdown::METHOD => {
-            (Response::new_ok(req.id, ()), None, Vec::new())
-        }
         _ => (
             Response::new_err(
                 req.id,

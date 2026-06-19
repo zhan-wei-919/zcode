@@ -12,7 +12,6 @@ impl Workbench {
     /// 常驻文件列表：sidebar 只画 explorer，没有 activity bar / 标签栏。
     pub(super) fn render_sidebar(&mut self, backend: &mut dyn Backend, area: UiRect) {
         if area.is_empty() {
-            self.frame_layout.sidebar_content_area = None;
             return;
         }
 
@@ -55,7 +54,6 @@ impl Workbench {
         }
 
         if inner.is_empty() {
-            self.frame_layout.sidebar_content_area = None;
             backend.draw(ui_full, painter.cmds());
             return;
         }
@@ -87,7 +85,6 @@ impl Workbench {
             inner.w,
             inner.h.saturating_sub(header_h),
         );
-        self.frame_layout.sidebar_content_area = Some(tree_area);
 
         self.sync_explorer_view_height(tree_area.h);
         let active_open_file_id = {

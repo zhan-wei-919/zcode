@@ -24,21 +24,9 @@ pub(super) enum FocusPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MouseRouteReason {
-    ContextMenuModal,
-    CommandLineModal,
-    OverlayModal,
-    SidebarSplitterHit,
-    FocusByArea,
-    FocusDispatch,
-    NoRoute,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct MouseDispatchPlan {
     pub(super) target: MouseTarget,
     pub(super) focus_plan: Option<FocusPlan>,
-    pub(super) reason: MouseRouteReason,
 }
 
 pub(super) fn mouse_target_from_focus(focus: FocusTarget) -> MouseTarget {
@@ -51,24 +39,15 @@ pub(super) fn mouse_target_from_focus(focus: FocusTarget) -> MouseTarget {
 }
 
 impl MouseDispatchPlan {
-    pub(super) fn modal(target: MouseTarget, reason: MouseRouteReason) -> Self {
+    pub(super) fn modal(target: MouseTarget) -> Self {
         Self {
             target,
             focus_plan: None,
-            reason,
         }
     }
 
     pub(super) fn with_focus(target: MouseTarget, focus_plan: Option<FocusPlan>) -> Self {
-        Self {
-            target,
-            focus_plan,
-            reason: if focus_plan.is_some() {
-                MouseRouteReason::FocusByArea
-            } else {
-                MouseRouteReason::FocusDispatch
-            },
-        }
+        Self { target, focus_plan }
     }
 }
 
@@ -122,33 +101,19 @@ fn split_target(workbench: &Workbench, event: &MouseEvent) -> Option<MouseTarget
 
 pub(super) fn plan_mouse_dispatch(workbench: &Workbench, event: &MouseEvent) -> MouseDispatchPlan {
     if workbench.store.state().ui.context_menu.visible {
-        return MouseDispatchPlan::modal(
-            MouseTarget::ContextMenu,
-            MouseRouteReason::ContextMenuModal,
-        );
+        return MouseDispatchPlan::modal(MouseTarget::ContextMenu);
     }
 
     if workbench.store.state().ui.command_line.active {
-        return MouseDispatchPlan::modal(
-            MouseTarget::CommandLine,
-            MouseRouteReason::CommandLineModal,
-        );
+        return MouseDispatchPlan::modal(MouseTarget::CommandLine);
     }
 
     if workbench.store.state().ui.overlay.is_visible() {
-        return MouseDispatchPlan::modal(MouseTarget::Overlay, MouseRouteReason::OverlayModal);
+        return MouseDispatchPlan::modal(MouseTarget::Overlay);
     }
 
     if let Some(target) = split_target(workbench, event) {
-        let reason = match target {
-            MouseTarget::SidebarSplitter => MouseRouteReason::SidebarSplitterHit,
-            _ => MouseRouteReason::NoRoute,
-        };
-        return MouseDispatchPlan {
-            target,
-            focus_plan: None,
-            reason,
-        };
+        return MouseDispatchPlan::modal(target);
     }
 
     let focus_plan = focus_plan_for_area(workbench, event);

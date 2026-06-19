@@ -5,7 +5,6 @@
 //! highlighting for the cursor line.
 
 use crate::kernel::editor::{HighlightKind, HighlightSpan, LanguageId};
-use crate::models::{EditOp, OpKind};
 use unicode_width::UnicodeWidthStr;
 
 /// Block-level classification for each line.
@@ -88,8 +87,6 @@ struct TableLineInfo {
 
 #[derive(Debug, Clone)]
 struct TableBlock {
-    start_line: usize,
-    end_line: usize,
     aligns: Vec<TableAlign>,
     col_widths: Vec<usize>,
 }
@@ -137,73 +134,6 @@ impl MarkdownDocument {
         self.fence_opening = fence_opening;
         self.table_lines = table_lines;
         self.table_blocks = table_blocks;
-        self.version = version;
-    }
-
-    pub fn apply_edit(&mut self, op: &EditOp, rope: &ropey::Rope, version: u64) {
-        let old_len = self.block_kinds.len();
-        let new_len = rope.len_lines().max(1);
-        if old_len != new_len {
-            self.reparse(rope, version);
-            return;
-        }
-
-        let (start_char, inserted, deleted) = match &op.kind {
-            OpKind::Insert { char_offset, text } => (*char_offset, text.as_str(), ""),
-            OpKind::Delete { start, deleted, .. } => (*start, "", deleted.as_str()),
-            OpKind::Replace {
-                start,
-                inserted,
-                deleted,
-                ..
-            } => (*start, inserted.as_str(), deleted.as_str()),
-            OpKind::Batch { .. } => {
-                self.reparse(rope, version);
-                return;
-            }
-        };
-
-        let inserted_lines = inserted.matches('\n').count();
-        let deleted_lines = deleted.matches('\n').count();
-        if inserted_lines != deleted_lines {
-            self.reparse(rope, version);
-            return;
-        }
-
-        if inserted.len().max(deleted.len()) > 8 * 1024 || inserted_lines > 64 {
-            self.reparse(rope, version);
-            return;
-        }
-
-        let start_char = start_char.min(rope.len_chars());
-        let start_line = rope.char_to_line(start_char);
-        let mut line_start = start_line.saturating_sub(2);
-        let mut line_end = (start_line + inserted_lines + 3).min(new_len);
-
-        while line_start > 0 && is_structural_kind(self.block_kind(line_start - 1)) {
-            line_start -= 1;
-        }
-        while line_end < old_len && is_structural_kind(self.block_kind(line_end)) {
-            line_end += 1;
-        }
-
-        // Edits touching fence/table regions or introducing fence/table markers
-        // can ripple context far away; keep incremental path strict and safe.
-        if has_structural_markers_around(rope, line_start, line_end) {
-            self.reparse(rope, version);
-            return;
-        }
-
-        for line in line_start..line_end {
-            let src = rope_line_without_newline(rope, line);
-            let trimmed = src.trim_start();
-            self.block_kinds[line] = classify_line(trimmed, &src);
-            self.fence_lang[line] = None;
-            self.fence_opening[line] = false;
-            self.table_lines[line] = None;
-        }
-        self.table_blocks
-            .retain(|b| b.end_line <= line_start || b.start_line >= line_end);
         self.version = version;
     }
 
@@ -343,8 +273,6 @@ fn classify_blocks(rope: &ropey::Rope) -> BlockClassification {
         if let Some(table) = detect_table_block(rope, i) {
             let block_index = table_blocks.len();
             table_blocks.push(TableBlock {
-                start_line: i,
-                end_line: table.end_line,
                 aligns: table.aligns,
                 col_widths: table.col_widths,
             });
@@ -370,7 +298,7 @@ fn classify_blocks(rope: &ropey::Rope) -> BlockClassification {
             continue;
         }
 
-        let kind = classify_line(trimmed, &line);
+        let kind = classify_line(trimmed);
         kinds.push(kind);
         fence_langs.push(None);
         fence_opening.push(false);
@@ -487,7 +415,7 @@ fn parse_table_alignment(cell: &str) -> Option<TableAlign> {
     })
 }
 
-fn classify_line(trimmed: &str, _full: &str) -> MdBlockKind {
+fn classify_line(trimmed: &str) -> MdBlockKind {
     if trimmed.is_empty() {
         return MdBlockKind::Blank;
     }
@@ -524,31 +452,6 @@ fn classify_line(trimmed: &str, _full: &str) -> MdBlockKind {
     }
 
     MdBlockKind::Paragraph
-}
-
-fn is_structural_kind(kind: MdBlockKind) -> bool {
-    matches!(
-        kind,
-        MdBlockKind::CodeFence | MdBlockKind::CodeBlock | MdBlockKind::Table
-    )
-}
-
-fn has_structural_markers_around(rope: &ropey::Rope, line_start: usize, line_end: usize) -> bool {
-    let total = rope.len_lines().max(1);
-    let start = line_start.saturating_sub(1);
-    let end = (line_end + 1).min(total);
-    for line in start..end {
-        let src = rope_line_without_newline(rope, line);
-        if line_has_structural_marker(&src) {
-            return true;
-        }
-    }
-    false
-}
-
-fn line_has_structural_marker(src: &str) -> bool {
-    let trimmed = src.trim_start();
-    parse_fence_marker(trimmed).is_some() || parse_table_cells(src).is_some()
 }
 
 fn is_unordered_list_marker(trimmed: &str) -> bool {
@@ -625,8 +528,6 @@ fn rope_line_without_newline(rope: &ropey::Rope, line: usize) -> String {
     let s = slice.to_string();
     s.trim_end_matches(&['\n', '\r'][..]).to_string()
 }
-
-// PLACEHOLDER_RENDER_FUNCTIONS
 
 fn render_heading(src: &str, level: u8) -> MdRenderedLine {
     // Strip leading `# ` markers
@@ -1112,8 +1013,6 @@ fn render_paragraph(src: &str) -> MdRenderedLine {
         offset_map,
     }
 }
-
-// PLACEHOLDER_INLINE_PARSER
 
 // ---------------------------------------------------------------------------
 // Inline formatting parser

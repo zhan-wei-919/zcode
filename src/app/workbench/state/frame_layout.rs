@@ -12,7 +12,6 @@ use crate::ui::core::geom::Rect;
 /// 二者目前恒等，但分属不同层、保留独立向量，便于将来 pane 内边距等扩展。
 #[derive(Debug, Default)]
 pub(in crate::app::workbench) struct EditorFrameLayout {
-    pub(in crate::app::workbench) container_area: Option<Rect>,
     pub(in crate::app::workbench) outer_areas: Vec<Rect>,
     pub(in crate::app::workbench) inner_areas: Vec<Rect>,
 }
@@ -28,7 +27,6 @@ impl EditorFrameLayout {
 pub(in crate::app::workbench) struct FrameLayout {
     pub(in crate::app::workbench) render_area: Option<Rect>,
     pub(in crate::app::workbench) sidebar_area: Option<Rect>,
-    pub(in crate::app::workbench) sidebar_content_area: Option<Rect>,
     pub(in crate::app::workbench) sidebar_container_area: Option<Rect>,
     pub(in crate::app::workbench) overlay_area: Option<Rect>,
     pub(in crate::app::workbench) editor: EditorFrameLayout,

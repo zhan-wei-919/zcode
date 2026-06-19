@@ -54,14 +54,11 @@ pub(super) fn render(workbench: &mut Workbench, backend: &mut dyn Backend, area:
         if !sidebar_area.is_empty() {
             let _scope = perf::scope("render.sidebar");
             workbench.render_sidebar(backend, sidebar_area);
-        } else {
-            workbench.frame_layout.sidebar_content_area = None;
         }
 
         (sidebar_area, editor_area)
     } else {
         workbench.frame_layout.sidebar_area = None;
-        workbench.frame_layout.sidebar_content_area = None;
         workbench.frame_layout.sidebar_container_area = None;
         workbench.interaction.sidebar_split_dragging = false;
         (Rect::default(), main_area)

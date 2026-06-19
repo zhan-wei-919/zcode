@@ -96,14 +96,6 @@ impl UiTree {
         self.nodes.push(node);
     }
 
-    pub fn hit_test(&self, p: Pos) -> Option<&Node> {
-        // Highest layer wins; within a layer, higher z wins.
-        self.nodes
-            .iter()
-            .filter(|n| n.contains(p))
-            .max_by(|a, b| (a.layer, a.z).cmp(&(b.layer, b.z)))
-    }
-
     pub fn hit_test_with_sense(&self, p: Pos, required: Sense) -> Option<&Node> {
         self.nodes
             .iter()

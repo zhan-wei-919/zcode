@@ -17,15 +17,6 @@ impl Insets {
             bottom: v,
         }
     }
-
-    pub const fn xy(x: u16, y: u16) -> Self {
-        Self {
-            left: x,
-            right: x,
-            top: y,
-            bottom: y,
-        }
-    }
 }
 
 impl Rect {
@@ -87,14 +78,6 @@ impl Rect {
         let rest = Rect::new(self.x, self.y, rest_w, self.h);
         let right = Rect::new(self.x.saturating_add(rest_w), self.y, right_w, self.h);
         (rest, right)
-    }
-
-    pub fn centered(self, w: u16, h: u16) -> Rect {
-        let w = w.min(self.w);
-        let h = h.min(self.h);
-        let x = self.x.saturating_add(self.w.saturating_sub(w) / 2);
-        let y = self.y.saturating_add(self.h.saturating_sub(h) / 2);
-        Rect::new(x, y, w, h)
     }
 }
 

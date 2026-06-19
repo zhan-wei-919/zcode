@@ -624,7 +624,6 @@ impl Workbench {
         let rects = compute_pane_rects(area);
 
         // 帧布局契约：几何一次性前置写入，render 与 interaction 共享同一份。
-        self.frame_layout.editor.container_area = (!area.is_empty()).then_some(area);
         self.frame_layout.editor.outer_areas.clear();
         self.frame_layout
             .editor
@@ -650,16 +649,11 @@ impl Workbench {
     }
 
     /// 渲染单个 editor pane：计算内部布局、同步 viewport、注册节点并绘制。
-    /// 返回 false 表示该 pane 状态缺失（调用方据此中止，复刻原 `else { return }` 语义）。
-    fn render_one_editor_pane(
-        &mut self,
-        backend: &mut dyn Backend,
-        pane: usize,
-        inner: UiRect,
-    ) -> bool {
+    /// pane 状态缺失时直接中止。
+    fn render_one_editor_pane(&mut self, backend: &mut dyn Backend, pane: usize, inner: UiRect) {
         let layout = {
             let Some(pane_state) = self.store.state().editor.pane(pane) else {
-                return false;
+                return;
             };
             let config = &self.store.state().editor.config;
             compute_editor_pane_layout(inner, pane_state, config)
@@ -686,7 +680,6 @@ impl Workbench {
             let markdown = md_tab_id.and_then(|tab_id| self.markdown_doc_for_tab(tab_id));
             self.draw_editor_pane(backend, pane, &layout, pane_state, markdown, options);
         }
-        true
     }
 }
 

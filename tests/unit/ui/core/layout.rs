@@ -50,10 +50,3 @@ fn split_left_and_right() {
     assert_eq!(rest, Rect::new(0, 0, 6, 5));
     assert_eq!(right, Rect::new(6, 0, 4, 5));
 }
-
-#[test]
-fn centered_clamps_to_bounds() {
-    let r = Rect::new(0, 0, 10, 5);
-    assert_eq!(r.centered(4, 1), Rect::new(3, 2, 4, 1));
-    assert_eq!(r.centered(100, 100), r);
-}

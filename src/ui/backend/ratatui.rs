@@ -99,12 +99,6 @@ impl Widget for PaintWidget<'_> {
             match cmd {
                 PaintCmd::FillRect { rect, style } => fill_rect(buf, *rect, *style),
                 PaintCmd::StyleRect { rect, style } => style_rect(buf, *rect, *style),
-                PaintCmd::HLine {
-                    pos,
-                    len,
-                    ch,
-                    style,
-                } => draw_hline(buf, *pos, *len, *ch, *style),
                 PaintCmd::VLine {
                     pos,
                     len,
@@ -191,20 +185,6 @@ fn style_rect(buf: &mut Buffer, rect: Rect, style: Style) {
             if let Some(cell) = buf.cell_mut((x, y)) {
                 cell.set_style(style);
             }
-        }
-    }
-}
-
-fn draw_hline(buf: &mut Buffer, pos: Pos, len: u16, ch: char, style: Style) {
-    if len == 0 {
-        return;
-    }
-    let style = to_ratatui_style(style);
-    let y = pos.y;
-    let right = pos.x.saturating_add(len);
-    for x in pos.x..right {
-        if let Some(cell) = buf.cell_mut((x, y)) {
-            cell.set_char(ch).set_style(style);
         }
     }
 }

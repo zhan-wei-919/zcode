@@ -17,12 +17,6 @@ pub enum PaintCmd {
         rect: Rect,
         style: Style,
     },
-    HLine {
-        pos: Pos,
-        len: u16,
-        ch: char,
-        style: Style,
-    },
     VLine {
         pos: Pos,
         len: u16,
@@ -60,25 +54,12 @@ impl Painter {
         &self.cmds
     }
 
-    pub fn push(&mut self, cmd: PaintCmd) {
-        self.cmds.push(cmd);
-    }
-
     pub fn fill_rect(&mut self, rect: Rect, style: Style) {
         self.cmds.push(PaintCmd::FillRect { rect, style });
     }
 
     pub fn style_rect(&mut self, rect: Rect, style: Style) {
         self.cmds.push(PaintCmd::StyleRect { rect, style });
-    }
-
-    pub fn hline(&mut self, pos: Pos, len: u16, ch: char, style: Style) {
-        self.cmds.push(PaintCmd::HLine {
-            pos,
-            len,
-            ch,
-            style,
-        });
     }
 
     pub fn vline(&mut self, pos: Pos, len: u16, ch: char, style: Style) {

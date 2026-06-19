@@ -1,10 +1,8 @@
 //! 命令系统：语义命令定义
 //!
-//! 架构：
-//! - Command: 语义命令枚举（不关心具体按键）
-//! - 支持命令历史（undo/redo）
-//! - 支持宏录制
-//! - 支持自定义命令扩展
+//! `Command` 是与具体按键解耦的语义命令枚举。`Command::Custom(String)` 是未知 `:command`
+//! 的兜底 sink——`from_name` 把无法识别的名字归入它，下游 reducer 记录结构化 warn 后忽略，
+//! 不会静默吞掉拼错的命令。
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Command {
@@ -62,7 +60,6 @@ pub enum Command {
 
     // ==================== 文件操作 ====================
     Save,
-    SaveAs,
     OpenFile,
     CloseTab,
     NextTab,
@@ -164,7 +161,7 @@ pub enum Command {
     OpenSettings,
     HardReload,
 
-    // ==================== 扩展点 ====================
+    // 未知 `:command` 的兜底 sink（见模块文档）。
     Custom(String),
 }
 
@@ -212,7 +209,6 @@ impl Command {
             Command::PageUp => "pageUp",
             Command::PageDown => "pageDown",
             Command::Save => "save",
-            Command::SaveAs => "saveAs",
             Command::OpenFile => "openFile",
             Command::CloseTab => "closeTab",
             Command::NextTab => "nextTab",
@@ -341,7 +337,6 @@ impl Command {
             "pageUp" => Command::PageUp,
             "pageDown" => Command::PageDown,
             "save" => Command::Save,
-            "saveAs" => Command::SaveAs,
             "openFile" => Command::OpenFile,
             "closeTab" => Command::CloseTab,
             "nextTab" => Command::NextTab,

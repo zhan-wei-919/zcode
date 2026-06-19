@@ -12,5 +12,5 @@ pub mod text_window;
 pub mod wakeup;
 
 pub use command::Command;
-pub use event::{InputEvent, Key, MouseAction, MousePosition};
+pub use event::{InputEvent, Key, MousePosition};
 pub use service::{Service, ServiceError, ServiceRegistry};

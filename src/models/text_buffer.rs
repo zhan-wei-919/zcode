@@ -10,7 +10,6 @@ use super::selection::Selection;
 use compact_str::CompactString;
 use ropey::{Rope, RopeSlice};
 use std::borrow::Cow;
-use std::io::{self, Write};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// 从 RopeSlice 获取字符串，优先零拷贝
@@ -59,14 +58,6 @@ impl TextBuffer {
         &self.rope
     }
 
-    /// 流式写入到 Writer，避免大文件 OOM
-    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        for chunk in self.rope.chunks() {
-            writer.write_all(chunk.as_bytes())?;
-        }
-        Ok(())
-    }
-
     pub fn text(&self) -> String {
         self.rope.to_string()
     }
@@ -82,10 +73,6 @@ impl TextBuffer {
 
     pub fn selection(&self) -> Option<&Selection> {
         self.selection.as_ref()
-    }
-
-    pub fn selection_mut(&mut self) -> Option<&mut Selection> {
-        self.selection.as_mut()
     }
 
     pub fn set_selection(&mut self, selection: Option<Selection>) {
@@ -468,13 +455,6 @@ impl TextBuffer {
     pub fn set_rope(&mut self, rope: Rope) {
         self.rope = rope;
         self.selection = None;
-        self.invalidate_char_pos_cache();
-    }
-
-    /// 替换指定范围的文本（用于搜索替换）
-    pub fn replace_range(&mut self, start_char: usize, end_char: usize, text: &str) {
-        self.rope.remove(start_char..end_char);
-        self.rope.insert(start_char, text);
         self.invalidate_char_pos_cache();
     }
 

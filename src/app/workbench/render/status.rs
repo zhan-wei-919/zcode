@@ -62,7 +62,7 @@ impl Workbench {
             .fg(self.theme.core.mode_text_fg)
             .add_mod(Mod::BOLD);
         painter.text_clipped(Pos::new(area.x, area.y), chip, chip_style, area);
-        let mut x = area
+        let x = area
             .x
             .saturating_add(chip.width().min(u16::MAX as usize) as u16);
 
@@ -75,8 +75,6 @@ impl Workbench {
             disk_indicator
         );
         painter.text_clipped(Pos::new(x, area.y), mid.as_str(), base, area);
-        x = x.saturating_add(mid.width().min(u16::MAX as usize) as u16);
-        let _ = x;
 
         // 右：行:列。
         if let Some((row, col)) = cursor {

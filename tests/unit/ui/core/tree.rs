@@ -18,7 +18,9 @@ fn hit_test_prefers_higher_layer() {
     tree.push(node(1, r, 0, 1, Sense::CLICK));
     tree.push(node(2, r, 1, 0, Sense::CLICK));
 
-    let hit = tree.hit_test(Pos::new(5, 5)).unwrap();
+    let hit = tree
+        .hit_test_with_sense(Pos::new(5, 5), Sense::CLICK)
+        .unwrap();
     assert_eq!(hit.id, Id::raw(2));
 }
 
@@ -29,7 +31,9 @@ fn hit_test_prefers_higher_z_within_same_layer() {
     tree.push(node(1, r, 0, 1, Sense::CLICK));
     tree.push(node(2, r, 0, 2, Sense::CLICK));
 
-    let hit = tree.hit_test(Pos::new(5, 5)).unwrap();
+    let hit = tree
+        .hit_test_with_sense(Pos::new(5, 5), Sense::CLICK)
+        .unwrap();
     assert_eq!(hit.id, Id::raw(2));
 }
 

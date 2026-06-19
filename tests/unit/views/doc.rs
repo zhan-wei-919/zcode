@@ -60,7 +60,7 @@ fn render_markdown_wraps_text_and_keeps_indentation() {
 #[test]
 fn natural_width_ignores_fence_markers() {
     let md = "```rust\nabc   \n```\n";
-    assert_eq!(natural_width(md), 3);
+    assert_eq!(natural_width_with_tab_size(md, 4), 3);
 }
 
 #[test]

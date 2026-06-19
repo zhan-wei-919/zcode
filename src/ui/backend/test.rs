@@ -92,12 +92,6 @@ impl Backend for TestBackend {
             match cmd {
                 PaintCmd::FillRect { rect, style } => fill_rect(&mut self.buf, *rect, *style),
                 PaintCmd::StyleRect { rect, style } => style_rect(&mut self.buf, *rect, *style),
-                PaintCmd::HLine {
-                    pos,
-                    len,
-                    ch,
-                    style,
-                } => draw_hline(&mut self.buf, *pos, *len, *ch, *style),
                 PaintCmd::VLine {
                     pos,
                     len,
@@ -153,6 +147,8 @@ fn style_rect(buf: &mut TestBuffer, rect: Rect, style: Style) {
     }
 }
 
+// 仅余直接单测覆盖（PaintCmd::HLine 已删，无渲染路径再调用它）。
+#[cfg(test)]
 fn draw_hline(buf: &mut TestBuffer, pos: Pos, len: u16, ch: char, style: Style) {
     if len == 0 {
         return;
