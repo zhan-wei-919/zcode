@@ -3,7 +3,7 @@
 # zcode
 
 [![Rust](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![English](https://img.shields.io/badge/README-English-green.svg)](README.md)
 [![Chinese](https://img.shields.io/badge/README-中文-red.svg)](README_zh.md)
 
@@ -271,4 +271,4 @@ cargo test --all-targets --all-features
 
 ## License
 
-GPL-3.0. See `LICENSE`.
+MIT. See `LICENSE`.
