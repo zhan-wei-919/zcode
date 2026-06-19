@@ -1,42 +1,16 @@
 use crate::core::Command;
 use crate::kernel::editor::EditorTabState;
 use crate::kernel::language::adapter::editing::BRACE_LANGUAGE_EDITING_POLICY;
-use crate::kernel::language::adapter::syntax_bridge::{syntax_facts_for_tab, SYNTAX_BRIDGE};
+use crate::kernel::language::adapter::syntax_bridge::SYNTAX_BRIDGE;
 use crate::kernel::language::adapter::{
     apply_callable_completion_fallback, default_context_allows_completion, default_prefix_bounds,
     default_should_close_on_command, default_triggered_by_insert, language_features,
     normalize_server_completion_text, CompletionBehavior, CompletionContext, IncludeContext,
     LanguageAdapter, LanguageEditingPolicy, LanguageFeatures, LanguageRuntimeContext, LineContext,
-    MemberAccessKind, TextEditPlan,
+    MemberAccessKind, SyntaxFacts, TextEditPlan,
 };
 use crate::kernel::language::LanguageId;
 use crate::kernel::services::ports::{LspCompletionItem, LspInsertTextFormat};
-
-#[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-#[cfg(test)]
-static INCLUDE_CONTEXT_CALLS: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-pub(crate) fn reset_include_context_perf_counter() {
-    INCLUDE_CONTEXT_CALLS.store(0, Ordering::Relaxed);
-}
-
-#[cfg(test)]
-pub(crate) fn include_context_perf_counter() -> usize {
-    INCLUDE_CONTEXT_CALLS.load(Ordering::Relaxed)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[cfg(not(test))]
-pub(crate) fn reset_include_context_perf_counter() {}
-
-#[cfg_attr(not(test), allow(dead_code))]
-#[cfg(not(test))]
-pub(crate) fn include_context_perf_counter() -> usize {
-    0
-}
 
 pub(crate) struct CFamilyCompletionBehavior;
 
@@ -61,13 +35,13 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
             || ch == '/'
     }
 
-    fn context_allows_completion(&self, tab: &EditorTabState) -> bool {
-        match directive_completion_state(tab) {
+    fn context_allows_completion(&self, syntax: &SyntaxFacts, tab: &EditorTabState) -> bool {
+        match directive_completion_state(syntax, tab) {
             DirectiveCompletionState::DirectiveName
             | DirectiveCompletionState::IncludeBeforeDelimiter
             | DirectiveCompletionState::IncludePath => true,
             DirectiveCompletionState::IncludeClosed => false,
-            DirectiveCompletionState::None => default_context_allows_completion(tab),
+            DirectiveCompletionState::None => default_context_allows_completion(syntax),
         }
     }
 
@@ -75,46 +49,57 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
         ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == '>' || ch == '/' || ch == '<'
     }
 
-    fn prefix_bounds(&self, tab: &EditorTabState) -> (usize, usize) {
-        include_bounds(tab).unwrap_or_else(|| default_prefix_bounds(tab))
+    fn prefix_bounds(&self, syntax: &SyntaxFacts, tab: &EditorTabState) -> (usize, usize) {
+        include_bounds(syntax).unwrap_or_else(|| default_prefix_bounds(tab, syntax))
     }
 
-    fn triggered_by_insert(&self, tab: &EditorTabState, ch: char, triggers: &[char]) -> bool {
+    fn triggered_by_insert(
+        &self,
+        syntax: &SyntaxFacts,
+        tab: &EditorTabState,
+        ch: char,
+        triggers: &[char],
+    ) -> bool {
         if ch == '#' && is_hash_at_line_start(tab) {
             return true;
         }
         if ch == '>' && preceded_by_dash(tab) {
             return true;
         }
-        if matches!(ch, '<' | '/') && include_bounds(tab).is_some() {
+        if matches!(ch, '<' | '/') && include_bounds(syntax).is_some() {
             return true;
         }
-        default_triggered_by_insert(tab, ch, triggers)
+        default_triggered_by_insert(syntax, ch, triggers)
     }
 
-    fn should_close_on_command(&self, cmd: &Command, tab: Option<&EditorTabState>) -> bool {
+    fn should_close_on_command(
+        &self,
+        cmd: &Command,
+        syntax: Option<&SyntaxFacts>,
+        tab: Option<&EditorTabState>,
+    ) -> bool {
         match cmd {
-            Command::InsertChar(' ') => tab.is_none_or(|current| {
+            Command::InsertChar(' ') => syntax.zip(tab).is_none_or(|(syntax, tab)| {
                 !matches!(
-                    directive_completion_state(current),
+                    directive_completion_state(syntax, tab),
                     DirectiveCompletionState::DirectiveName
                         | DirectiveCompletionState::IncludeBeforeDelimiter
                 )
             }),
             Command::InsertChar('/') | Command::InsertChar('<') => {
-                tab.is_none_or(|current| include_bounds(current).is_none())
+                syntax.is_none_or(|syntax| include_bounds(syntax).is_none())
             }
-            Command::InsertChar('>') => tab.is_none_or(|current| {
-                !preceded_by_dash_for_insert(current) && include_bounds(current).is_none()
+            Command::InsertChar('>') => syntax.zip(tab).is_none_or(|(syntax, tab)| {
+                !preceded_by_dash_for_insert(tab) && include_bounds(syntax).is_none()
             }),
             _ => default_should_close_on_command(self, cmd),
         }
     }
 
-    fn completion_should_keep_open(&self, tab: &EditorTabState) -> bool {
-        match directive_completion_state(tab) {
+    fn completion_should_keep_open(&self, syntax: &SyntaxFacts, tab: &EditorTabState) -> bool {
+        match directive_completion_state(syntax, tab) {
             DirectiveCompletionState::IncludePath => {
-                if let Some((start_char, end_char)) = include_bounds(tab) {
+                if let Some((start_char, end_char)) = include_bounds(syntax) {
                     if start_char != end_char {
                         return true;
                     }
@@ -132,7 +117,6 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
             DirectiveCompletionState::DirectiveName
             | DirectiveCompletionState::IncludeBeforeDelimiter => true,
             DirectiveCompletionState::None => {
-                let syntax = syntax_facts_for_tab(tab);
                 if syntax.in_string_or_comment() {
                     return false;
                 }
@@ -168,7 +152,7 @@ impl CompletionBehavior for CFamilyCompletionBehavior {
         &self,
         ctx: &LanguageRuntimeContext<'_>,
     ) -> Vec<LspCompletionItem> {
-        match directive_completion_state(ctx.tab) {
+        match directive_completion_state(&ctx.syntax, ctx.tab) {
             DirectiveCompletionState::DirectiveName => directive_keyword_completion_items(),
             DirectiveCompletionState::IncludeBeforeDelimiter => {
                 include_delimiter_completion_items()
@@ -230,20 +214,18 @@ pub(crate) static C_ADAPTER: CFamilyLanguageAdapter = CFamilyLanguageAdapter::ne
 pub(crate) static CPP_ADAPTER: CFamilyLanguageAdapter =
     CFamilyLanguageAdapter::new(LanguageId::Cpp);
 
-fn include_bounds(tab: &EditorTabState) -> Option<(usize, usize)> {
-    #[cfg(test)]
-    {
-        INCLUDE_CONTEXT_CALLS.fetch_add(1, Ordering::Relaxed);
-    }
-
-    match syntax_facts_for_tab(tab).line_context {
+fn include_bounds(syntax: &SyntaxFacts) -> Option<(usize, usize)> {
+    match syntax.line_context {
         LineContext::Include(include) => include.bounds,
         _ => None,
     }
 }
 
-fn directive_completion_state(tab: &EditorTabState) -> DirectiveCompletionState {
-    match syntax_facts_for_tab(tab).line_context {
+fn directive_completion_state(
+    syntax: &SyntaxFacts,
+    tab: &EditorTabState,
+) -> DirectiveCompletionState {
+    match syntax.line_context {
         LineContext::Include(IncludeContext {
             bounds: Some(_), ..
         }) => DirectiveCompletionState::IncludePath,

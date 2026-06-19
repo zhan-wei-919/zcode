@@ -15,12 +15,31 @@ pub(crate) struct SyntaxBridge;
 
 pub(crate) static SYNTAX_BRIDGE: SyntaxBridge = SyntaxBridge;
 
-pub(crate) fn syntax_facts_for_tab(tab: &EditorTabState) -> SyntaxFacts {
-    SYNTAX_BRIDGE.syntax_facts(tab)
+// Test-only counter of full `SyntaxFacts` tree descents (one per
+// `SyntaxBridge::syntax_facts`). Lets completion hot-path tests assert that
+// policy methods reuse a precomputed `SyntaxFacts` (`ctx.syntax`) instead of
+// re-descending. Thread-local so the parallel test runner's other tests can't
+// pollute a measured delta. Compiles out entirely in non-test builds.
+#[cfg(test)]
+thread_local! {
+    static SYNTAX_FACTS_DESCENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_syntax_facts_descent_counter() {
+    SYNTAX_FACTS_DESCENTS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn syntax_facts_descent_counter() -> usize {
+    SYNTAX_FACTS_DESCENTS.with(|count| count.get())
 }
 
 impl SyntaxBehavior for SyntaxBridge {
     fn syntax_facts(&self, tab: &EditorTabState) -> SyntaxFacts {
+        #[cfg(test)]
+        SYNTAX_FACTS_DESCENTS.with(|count| count.set(count.get() + 1));
+
         let rope = tab.buffer.rope();
         let char_offset = crate::kernel::language::adapter::cursor_char_offset(tab);
         let (in_string, in_comment) = token_context(tab, rope, char_offset);

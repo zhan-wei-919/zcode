@@ -20,8 +20,6 @@ use crate::kernel::services::ports::{
     LspSignatureParameterLabel, LspTextEdit,
 };
 
-#[cfg(test)]
-pub(crate) use c_family::{include_context_perf_counter, reset_include_context_perf_counter};
 use c_family::{CPP_ADAPTER, C_ADAPTER};
 use default::{
     BASH_ADAPTER, CSS_ADAPTER, DEFAULT_ADAPTER, HTML_ADAPTER, JAVA_ADAPTER, JSON_ADAPTER,
@@ -31,6 +29,8 @@ use go::GO_ADAPTER;
 use js::{JSX_ADAPTER, JS_ADAPTER, TSX_ADAPTER, TS_ADAPTER};
 use python::PYTHON_ADAPTER;
 use rust::RUST_ADAPTER;
+#[cfg(test)]
+pub(crate) use syntax_bridge::{reset_syntax_facts_descent_counter, syntax_facts_descent_counter};
 
 pub use editing::{DelimiterRule, LanguageEditingPolicy, LineSuffixIndentRule};
 pub use launch::{LspLaunchContext, LspLaunchPlan, LspLaunchPolicy};
@@ -480,7 +480,7 @@ pub trait LanguageInteractionPolicy: Send + Sync {
     }
 
     fn context_allows_completion(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
-        default_context_allows_completion(ctx.tab)
+        default_context_allows_completion(&ctx.syntax)
     }
 
     fn keeps_open_on_char(&self, ch: char) -> bool {
@@ -488,7 +488,7 @@ pub trait LanguageInteractionPolicy: Send + Sync {
     }
 
     fn completion_prefix_bounds(&self, ctx: &LanguageRuntimeContext<'_>) -> (usize, usize) {
-        default_prefix_bounds(ctx.tab)
+        default_prefix_bounds(ctx.tab, &ctx.syntax)
     }
 
     fn completion_triggered_by_insert(
@@ -497,7 +497,7 @@ pub trait LanguageInteractionPolicy: Send + Sync {
         ch: char,
         triggers: &[char],
     ) -> bool {
-        default_triggered_by_insert(ctx.tab, ch, triggers)
+        default_triggered_by_insert(&ctx.syntax, ch, triggers)
     }
 
     fn signature_help_triggered(
@@ -518,7 +518,7 @@ pub trait LanguageInteractionPolicy: Send + Sync {
     }
 
     fn signature_help_should_keep_open(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
-        default_signature_help_should_keep_open(ctx.tab)
+        default_signature_help_should_keep_open(ctx.tab, &ctx.syntax)
     }
 
     fn should_close_on_command(
@@ -530,7 +530,7 @@ pub trait LanguageInteractionPolicy: Send + Sync {
     }
 
     fn completion_should_keep_open(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
-        default_completion_should_keep_open(ctx.tab)
+        default_completion_should_keep_open(&ctx.syntax)
     }
 }
 
@@ -596,20 +596,26 @@ pub(crate) trait CompletionBehavior: Send + Sync {
         ch.is_alphanumeric() || ch == '_' || ch == '.' || ch == ':'
     }
 
-    fn context_allows_completion(&self, tab: &EditorTabState) -> bool {
-        default_context_allows_completion(tab)
+    fn context_allows_completion(&self, syntax: &SyntaxFacts, _tab: &EditorTabState) -> bool {
+        default_context_allows_completion(syntax)
     }
 
     fn keeps_open_on_char(&self, ch: char) -> bool {
         ch.is_alphanumeric() || ch == '_' || ch == '.'
     }
 
-    fn prefix_bounds(&self, tab: &EditorTabState) -> (usize, usize) {
-        default_prefix_bounds(tab)
+    fn prefix_bounds(&self, syntax: &SyntaxFacts, tab: &EditorTabState) -> (usize, usize) {
+        default_prefix_bounds(tab, syntax)
     }
 
-    fn triggered_by_insert(&self, tab: &EditorTabState, ch: char, triggers: &[char]) -> bool {
-        default_triggered_by_insert(tab, ch, triggers)
+    fn triggered_by_insert(
+        &self,
+        syntax: &SyntaxFacts,
+        _tab: &EditorTabState,
+        ch: char,
+        triggers: &[char],
+    ) -> bool {
+        default_triggered_by_insert(syntax, ch, triggers)
     }
 
     fn signature_help_triggered(&self, ch: char, triggers: &[char]) -> bool {
@@ -624,16 +630,21 @@ pub(crate) trait CompletionBehavior: Send + Sync {
         matches!(ch, ')')
     }
 
-    fn signature_help_should_keep_open(&self, tab: &EditorTabState) -> bool {
-        default_signature_help_should_keep_open(tab)
+    fn signature_help_should_keep_open(&self, syntax: &SyntaxFacts, tab: &EditorTabState) -> bool {
+        default_signature_help_should_keep_open(tab, syntax)
     }
 
-    fn should_close_on_command(&self, cmd: &Command, _tab: Option<&EditorTabState>) -> bool {
+    fn should_close_on_command(
+        &self,
+        cmd: &Command,
+        _syntax: Option<&SyntaxFacts>,
+        _tab: Option<&EditorTabState>,
+    ) -> bool {
         default_should_close_on_command(self, cmd)
     }
 
-    fn completion_should_keep_open(&self, tab: &EditorTabState) -> bool {
-        default_completion_should_keep_open(tab)
+    fn completion_should_keep_open(&self, syntax: &SyntaxFacts, _tab: &EditorTabState) -> bool {
+        default_completion_should_keep_open(syntax)
     }
 
     fn normalize_completion_item(&self, context: &CompletionContext<'_>) -> TextEditPlan {
@@ -657,7 +668,7 @@ where
     }
 
     fn context_allows_completion(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
-        CompletionBehavior::context_allows_completion(self, ctx.tab)
+        CompletionBehavior::context_allows_completion(self, &ctx.syntax, ctx.tab)
     }
 
     fn keeps_open_on_char(&self, ch: char) -> bool {
@@ -665,7 +676,7 @@ where
     }
 
     fn completion_prefix_bounds(&self, ctx: &LanguageRuntimeContext<'_>) -> (usize, usize) {
-        CompletionBehavior::prefix_bounds(self, ctx.tab)
+        CompletionBehavior::prefix_bounds(self, &ctx.syntax, ctx.tab)
     }
 
     fn completion_triggered_by_insert(
@@ -674,7 +685,7 @@ where
         ch: char,
         triggers: &[char],
     ) -> bool {
-        CompletionBehavior::triggered_by_insert(self, ctx.tab, ch, triggers)
+        CompletionBehavior::triggered_by_insert(self, &ctx.syntax, ctx.tab, ch, triggers)
     }
 
     fn signature_help_triggered(
@@ -691,7 +702,7 @@ where
     }
 
     fn signature_help_should_keep_open(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
-        CompletionBehavior::signature_help_should_keep_open(self, ctx.tab)
+        CompletionBehavior::signature_help_should_keep_open(self, &ctx.syntax, ctx.tab)
     }
 
     fn should_close_on_command(
@@ -699,11 +710,16 @@ where
         cmd: &Command,
         ctx: Option<&LanguageRuntimeContext<'_>>,
     ) -> bool {
-        CompletionBehavior::should_close_on_command(self, cmd, ctx.map(|runtime| runtime.tab))
+        CompletionBehavior::should_close_on_command(
+            self,
+            cmd,
+            ctx.map(|runtime| &runtime.syntax),
+            ctx.map(|runtime| runtime.tab),
+        )
     }
 
     fn completion_should_keep_open(&self, ctx: &LanguageRuntimeContext<'_>) -> bool {
-        CompletionBehavior::completion_should_keep_open(self, ctx.tab)
+        CompletionBehavior::completion_should_keep_open(self, &ctx.syntax, ctx.tab)
     }
 }
 
@@ -789,8 +805,7 @@ pub(crate) fn cursor_char_offset(tab: &EditorTabState) -> usize {
     tab.buffer.pos_to_char((row, col)).min(rope.len_chars())
 }
 
-pub(crate) fn default_context_allows_completion(tab: &EditorTabState) -> bool {
-    let syntax = syntax_bridge::syntax_facts_for_tab(tab);
+pub(crate) fn default_context_allows_completion(syntax: &SyntaxFacts) -> bool {
     if syntax.in_string_or_comment() {
         return false;
     }
@@ -818,9 +833,8 @@ pub(crate) fn default_should_close_on_command<S: LanguageInteractionPolicy + ?Si
     }
 }
 
-pub(crate) fn default_prefix_bounds(tab: &EditorTabState) -> (usize, usize) {
+pub(crate) fn default_prefix_bounds(tab: &EditorTabState, syntax: &SyntaxFacts) -> (usize, usize) {
     let cursor = cursor_char_offset(tab);
-    let syntax = syntax_bridge::syntax_facts_for_tab(tab);
     syntax
         .identifier_bounds
         .map(|(start, _end)| (start, cursor))
@@ -828,11 +842,10 @@ pub(crate) fn default_prefix_bounds(tab: &EditorTabState) -> (usize, usize) {
 }
 
 pub(crate) fn default_triggered_by_insert(
-    tab: &EditorTabState,
+    syntax: &SyntaxFacts,
     inserted: char,
     triggers: &[char],
 ) -> bool {
-    let syntax = syntax_bridge::syntax_facts_for_tab(tab);
     if triggers.is_empty() {
         return match inserted {
             '.' => true,
@@ -849,8 +862,11 @@ pub(crate) fn default_triggered_by_insert(
     }
 }
 
-pub(crate) fn default_signature_help_should_keep_open(tab: &EditorTabState) -> bool {
-    if syntax_bridge::syntax_facts_for_tab(tab).in_string_or_comment() {
+pub(crate) fn default_signature_help_should_keep_open(
+    tab: &EditorTabState,
+    syntax: &SyntaxFacts,
+) -> bool {
+    if syntax.in_string_or_comment() {
         return false;
     }
 
@@ -886,8 +902,7 @@ pub(crate) fn default_signature_help_should_keep_open(tab: &EditorTabState) -> b
     false
 }
 
-pub(crate) fn default_completion_should_keep_open(tab: &EditorTabState) -> bool {
-    let syntax = syntax_bridge::syntax_facts_for_tab(tab);
+pub(crate) fn default_completion_should_keep_open(syntax: &SyntaxFacts) -> bool {
     if syntax.in_string_or_comment() {
         return false;
     }

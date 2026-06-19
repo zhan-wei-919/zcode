@@ -1,6 +1,6 @@
 use super::*;
 use crate::kernel::language::adapter::{
-    adapter_for_tab, include_context_perf_counter, reset_include_context_perf_counter,
+    adapter_for_tab, reset_syntax_facts_descent_counter, syntax_facts_descent_counter,
 };
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::{
@@ -2346,8 +2346,8 @@ fn experiment_completion_filtering_scale_baseline() {
 }
 
 #[test]
-fn experiment_cpp_include_context_lookup_counts() {
-    reset_include_context_perf_counter();
+fn experiment_completion_policy_reuses_ctx_syntax() {
+    reset_syntax_facts_descent_counter();
 
     let mut store = new_store();
     store.state.ui.focus = FocusTarget::Editor;
@@ -2374,21 +2374,25 @@ fn experiment_cpp_include_context_lookup_counts() {
     let adapter = adapter_for_tab(tab);
     let runtime = runtime_for_tab(tab);
 
+    // The context built above carries one precomputed `SyntaxFacts`. Snapshot the
+    // descent counter, then drive the policy methods repeatedly: each must reuse
+    // `runtime.syntax` and perform zero additional full-tree descents. Before this
+    // refactor the same loop re-descended on every call (~3000 descents).
+    let before = syntax_facts_descent_counter();
     for _ in 0..1000 {
         let _ = adapter.interaction().context_allows_completion(&runtime);
         let _ = adapter.interaction().completion_prefix_bounds(&runtime);
         let _ = adapter.interaction().completion_should_keep_open(&runtime);
     }
+    let added = syntax_facts_descent_counter() - before;
 
-    let calls = include_context_perf_counter();
     eprintln!(
-        "[experiment] cpp_include_context loops=1000 include_context_bounds_calls={}",
-        calls
+        "[experiment] cpp_completion_policy loops=1000 syntax_facts_descents_in_loop={added}"
     );
 
-    assert!(
-        calls >= 1,
-        "expected at least one include lookup, calls={calls}"
+    assert_eq!(
+        added, 0,
+        "policy methods must reuse ctx.syntax; loop performed {added} re-descents"
     );
 }
 
