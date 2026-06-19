@@ -17,6 +17,9 @@ use unicode_width::UnicodeWidthStr;
 
 use super::layout::{vertical_scrollbar_metrics, EditorPaneLayout, VerticalScrollbarMetrics};
 use super::markdown::{self, MarkdownDocument};
+use super::search_bar_layout::{
+    search_bar_match_info, search_bar_nav_origin, windowed_search_text, SEARCH_NAV_BUTTONS_WIDTH,
+};
 use super::tab_row::{compute_tab_row_layout, ellipsize_title};
 
 // U+250A "BOX DRAWINGS LIGHT QUADRUPLE DASH VERTICAL" keeps guides subtle.
@@ -24,7 +27,6 @@ const INDENT_GUIDE_SYMBOL: &str = "\u{250A}";
 
 /// Width of the search bar navigation buttons: " ▲ ▼ ✕"
 const SEARCH_NAV_BUTTONS: &str = " \u{25B2} \u{25BC} \u{2715}";
-const SEARCH_NAV_BUTTONS_WIDTH: u16 = 8;
 const V_SCROLL_TRACK_SYMBOL: char = '│';
 const V_SCROLL_THUMB_SYMBOL: char = '█';
 
@@ -204,7 +206,7 @@ fn paint_tabs(
 }
 
 fn paint_search_bar(painter: &mut Painter, area: Rect, state: &SearchBarState, theme: &Theme) {
-    if !state.visible || area.is_empty() {
+    if !state.visible || area.is_empty() || area.h == 0 {
         return;
     }
 
@@ -215,147 +217,104 @@ fn paint_search_bar(painter: &mut Painter, area: Rect, state: &SearchBarState, t
     let case_indicator = if state.case_sensitive { "[Aa]" } else { "[aa]" };
     let regex_indicator = if state.use_regex { "[.*]" } else { "[  ]" };
 
-    let label_style = Style::default().fg(theme.header_fg);
-    let muted_style = Style::default().fg(theme.palette_muted_fg);
+    // Find 行：Search 整条、Replace 顶行共用；Replace 仅多画一行替换框。
+    let find_row = Rect::new(area.x, area.y, area.w, 1);
+    paint_find_row(
+        painter,
+        find_row,
+        state,
+        case_indicator,
+        regex_indicator,
+        &match_info,
+        theme,
+    );
 
-    match state.mode {
-        SearchBarMode::Search => {
-            if area.h == 0 {
-                return;
-            }
-            let row = Rect::new(area.x, area.y, area.w, 1);
-            let (visible_text, _start) = windowed_search_text(
-                state.search_text.as_str(),
-                state.cursor_pos,
-                state.focused_field == SearchBarField::Search,
-                row.w,
-                case_indicator,
-                regex_indicator,
-                &match_info,
-            );
-            let input_style = if state.focused_field == SearchBarField::Search {
-                Style::default().fg(theme.palette_fg)
-            } else {
-                muted_style
-            };
+    if matches!(state.mode, SearchBarMode::Replace) && area.h >= 2 {
+        let replace_area = Rect::new(area.x, area.y.saturating_add(1), area.w, 1);
+        let (visible_replace, _replace_start) = windowed_replace_text(
+            state.replace_text.as_str(),
+            state.cursor_pos,
+            state.focused_field == SearchBarField::Replace,
+            replace_area.w,
+        );
+        let label_style = Style::default().fg(theme.header_fg);
+        let muted_style = Style::default().fg(theme.palette_muted_fg);
+        let replace_style = if state.focused_field == SearchBarField::Replace {
+            Style::default().fg(theme.palette_fg)
+        } else {
+            muted_style
+        };
 
-            let mut x = row.x;
-            painter.text_clipped(Pos::new(x, row.y), "Find: ", label_style, row);
-            x = x.saturating_add("Find: ".width() as u16);
-
-            painter.text_clipped(Pos::new(x, row.y), visible_text, input_style, row);
-            x = x.saturating_add(visible_text.width().min(u16::MAX as usize) as u16);
-
-            painter.text_clipped(Pos::new(x, row.y), " ", Style::default(), row);
-            x = x.saturating_add(1);
-
-            painter.text_clipped(Pos::new(x, row.y), case_indicator, muted_style, row);
-            x = x.saturating_add(case_indicator.width().min(u16::MAX as usize) as u16);
-
-            painter.text_clipped(Pos::new(x, row.y), regex_indicator, muted_style, row);
-            x = x.saturating_add(regex_indicator.width().min(u16::MAX as usize) as u16);
-
-            painter.text_clipped(Pos::new(x, row.y), " ", Style::default(), row);
-            x = x.saturating_add(1);
-
-            painter.text_clipped(Pos::new(x, row.y), &match_info, label_style, row);
-            x = x.saturating_add(match_info.width().min(u16::MAX as usize) as u16);
-
-            paint_search_bar_nav_buttons(painter, x, row.y, row, theme);
-        }
-        SearchBarMode::Replace => {
-            if area.h == 0 {
-                return;
-            }
-
-            let top = Rect::new(area.x, area.y, area.w, 1);
-            let (visible_search, _search_start) = windowed_search_text(
-                state.search_text.as_str(),
-                state.cursor_pos,
-                state.focused_field == SearchBarField::Search,
-                top.w,
-                case_indicator,
-                regex_indicator,
-                &match_info,
-            );
-            let search_style = if state.focused_field == SearchBarField::Search {
-                Style::default().fg(theme.palette_fg)
-            } else {
-                muted_style
-            };
-
-            let mut x = top.x;
-            painter.text_clipped(Pos::new(x, top.y), "Find: ", label_style, top);
-            x = x.saturating_add("Find: ".width() as u16);
-
-            painter.text_clipped(Pos::new(x, top.y), visible_search, search_style, top);
-            x = x.saturating_add(visible_search.width().min(u16::MAX as usize) as u16);
-
-            painter.text_clipped(Pos::new(x, top.y), " ", Style::default(), top);
-            x = x.saturating_add(1);
-
-            painter.text_clipped(Pos::new(x, top.y), case_indicator, muted_style, top);
-            x = x.saturating_add(case_indicator.width().min(u16::MAX as usize) as u16);
-
-            painter.text_clipped(Pos::new(x, top.y), regex_indicator, muted_style, top);
-            x = x.saturating_add(regex_indicator.width().min(u16::MAX as usize) as u16);
-
-            painter.text_clipped(Pos::new(x, top.y), " ", Style::default(), top);
-            x = x.saturating_add(1);
-
-            painter.text_clipped(Pos::new(x, top.y), &match_info, label_style, top);
-            x = x.saturating_add(match_info.width().min(u16::MAX as usize) as u16);
-
-            paint_search_bar_nav_buttons(painter, x, top.y, top, theme);
-
-            if area.h >= 2 {
-                let replace_area = Rect::new(area.x, area.y.saturating_add(1), area.w, 1);
-                let (visible_replace, _replace_start) = windowed_replace_text(
-                    state.replace_text.as_str(),
-                    state.cursor_pos,
-                    state.focused_field == SearchBarField::Replace,
-                    replace_area.w,
-                );
-                let replace_style = if state.focused_field == SearchBarField::Replace {
-                    Style::default().fg(theme.palette_fg)
-                } else {
-                    muted_style
-                };
-
-                let mut x = replace_area.x;
-                painter.text_clipped(
-                    Pos::new(x, replace_area.y),
-                    "Replace: ",
-                    label_style,
-                    replace_area,
-                );
-                x = x.saturating_add("Replace: ".width() as u16);
-                painter.text_clipped(
-                    Pos::new(x, replace_area.y),
-                    visible_replace,
-                    replace_style,
-                    replace_area,
-                );
-            }
-        }
+        let mut x = replace_area.x;
+        painter.text_clipped(
+            Pos::new(x, replace_area.y),
+            "Replace: ",
+            label_style,
+            replace_area,
+        );
+        x = x.saturating_add("Replace: ".width() as u16);
+        painter.text_clipped(
+            Pos::new(x, replace_area.y),
+            visible_replace,
+            replace_style,
+            replace_area,
+        );
     }
 }
 
-fn search_bar_match_info(state: &SearchBarState) -> String {
-    if state.searching {
-        "Searching...".to_string()
-    } else if let Some(err) = state.last_error.as_deref() {
-        format!("Error: {}", err)
-    } else if state.matches.is_empty() {
-        if state.search_text.is_empty() {
-            String::new()
-        } else {
-            "No results".to_string()
-        }
+/// 绘制搜索栏 Find 行（Search 整条、Replace 顶行共用）。导航按钮位置取自权威的
+/// `search_bar_nav_origin`，与 `hit_test_search_bar` 同源，杜绝点击漂移。
+fn paint_find_row(
+    painter: &mut Painter,
+    row: Rect,
+    state: &SearchBarState,
+    case_indicator: &str,
+    regex_indicator: &str,
+    match_info: &str,
+    theme: &Theme,
+) {
+    let label_style = Style::default().fg(theme.header_fg);
+    let muted_style = Style::default().fg(theme.palette_muted_fg);
+
+    let (visible_text, _start) = windowed_search_text(
+        state.search_text.as_str(),
+        state.cursor_pos,
+        state.focused_field == SearchBarField::Search,
+        row.w,
+        case_indicator,
+        regex_indicator,
+        match_info,
+    );
+    let input_style = if state.focused_field == SearchBarField::Search {
+        Style::default().fg(theme.palette_fg)
     } else {
-        let current = state.current_match_index.map(|i| i + 1).unwrap_or(0);
-        format!("{}/{}", current, state.matches.len())
-    }
+        muted_style
+    };
+
+    let mut x = row.x;
+    painter.text_clipped(Pos::new(x, row.y), "Find: ", label_style, row);
+    x = x.saturating_add("Find: ".width() as u16);
+
+    painter.text_clipped(Pos::new(x, row.y), visible_text, input_style, row);
+    x = x.saturating_add(visible_text.width().min(u16::MAX as usize) as u16);
+
+    painter.text_clipped(Pos::new(x, row.y), " ", Style::default(), row);
+    x = x.saturating_add(1);
+
+    painter.text_clipped(Pos::new(x, row.y), case_indicator, muted_style, row);
+    x = x.saturating_add(case_indicator.width().min(u16::MAX as usize) as u16);
+
+    painter.text_clipped(Pos::new(x, row.y), regex_indicator, muted_style, row);
+    x = x.saturating_add(regex_indicator.width().min(u16::MAX as usize) as u16);
+
+    painter.text_clipped(Pos::new(x, row.y), " ", Style::default(), row);
+    x = x.saturating_add(1);
+
+    painter.text_clipped(Pos::new(x, row.y), match_info, label_style, row);
+
+    // 导航按钮（▲ ▼ ✕）摆放取权威 nav-origin，命中据此同源定位。
+    let (nav_x, _nav_y) = search_bar_nav_origin(row.x, row.y, row.w, state);
+    paint_search_bar_nav_buttons(painter, nav_x, row.y, row, theme);
 }
 
 /// Paint ▲ ▼ ✕ navigation buttons after match info. Returns the x position after buttons.
@@ -369,29 +328,6 @@ fn paint_search_bar_nav_buttons(
     let style = Style::default().fg(theme.palette_fg);
     painter.text_clipped(Pos::new(x, y), SEARCH_NAV_BUTTONS, style, row_clip);
     x.saturating_add(SEARCH_NAV_BUTTONS_WIDTH)
-}
-
-fn windowed_search_text<'a>(
-    text: &'a str,
-    cursor_pos: usize,
-    focused: bool,
-    area_width: u16,
-    case_indicator: &str,
-    regex_indicator: &str,
-    match_info: &str,
-) -> (&'a str, usize) {
-    let prefix = "Find: ";
-    let suffix_w = 1u16
-        .saturating_add(case_indicator.width() as u16)
-        .saturating_add(regex_indicator.width() as u16)
-        .saturating_add(1)
-        .saturating_add(match_info.width() as u16)
-        .saturating_add(SEARCH_NAV_BUTTONS_WIDTH);
-    let prefix_w = prefix.width() as u16;
-    let available = area_width.saturating_sub(prefix_w).saturating_sub(suffix_w) as usize;
-    let cursor = if focused { cursor_pos } else { text.len() }.min(text.len());
-    let (start, end) = text_window::window(text, cursor, available);
-    (&text[start..end], start)
 }
 
 fn windowed_replace_text(

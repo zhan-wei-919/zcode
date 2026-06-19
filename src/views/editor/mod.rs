@@ -6,6 +6,7 @@ mod layout;
 pub mod markdown;
 pub mod markdown_cache;
 mod render;
+mod search_bar_layout;
 mod tab_row;
 
 pub use hit_test::{

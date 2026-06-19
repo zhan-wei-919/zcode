@@ -1,4 +1,4 @@
-use super::super::paint::centered_rect_ui;
+use super::super::util::centered_rect;
 use super::super::Workbench;
 use crate::core::text_window;
 use crate::ui::core::geom::{Pos, Rect as UiRect};
@@ -133,7 +133,7 @@ pub(super) fn render_context_menu(workbench: &mut Workbench, painter: &mut Paint
 }
 
 fn input_dialog_area(area: UiRect) -> UiRect {
-    super::super::util::centered_rect(60, 7, area)
+    centered_rect(60, 7, area)
 }
 
 pub(super) fn render_input_dialog(workbench: &Workbench, painter: &mut Painter, area: UiRect) {
@@ -142,7 +142,7 @@ pub(super) fn render_input_dialog(workbench: &Workbench, painter: &mut Painter, 
         return;
     }
 
-    let popup_area = centered_rect_ui(60, 7, area);
+    let popup_area = centered_rect(60, 7, area);
     if popup_area.w < 20 || popup_area.h < 5 {
         return;
     }

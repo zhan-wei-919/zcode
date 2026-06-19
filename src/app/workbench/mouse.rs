@@ -12,7 +12,7 @@ use crate::ui::core::runtime::UiRuntimeOutput;
 use crate::ui::core::tree::Sense;
 
 impl Workbench {
-    fn editor_pane_at(&self, x: u16, y: u16) -> Option<usize> {
+    pub(super) fn editor_pane_at(&self, x: u16, y: u16) -> Option<usize> {
         self.frame_layout
             .editor
             .outer_areas

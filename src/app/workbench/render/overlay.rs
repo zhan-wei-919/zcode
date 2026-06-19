@@ -1,4 +1,4 @@
-use super::super::paint::centered_rect_ui;
+use super::super::util::centered_rect;
 use super::super::Workbench;
 use crate::kernel::{OverlayKind, ProblemSeverity, SearchResultItem};
 use crate::ui::core::geom::{Pos, Rect as UiRect};
@@ -17,7 +17,7 @@ impl Workbench {
 
         // 高度取可用区域的 70%，但留出边框与标题。
         let height = (area.h.saturating_mul(70) / 100).max(6).min(area.h);
-        let popup = centered_rect_ui(70, height, area);
+        let popup = centered_rect(70, height, area);
         if popup.w < 3 || popup.h < 3 {
             self.frame_layout.overlay_area = None;
             return;

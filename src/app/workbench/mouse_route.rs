@@ -51,16 +51,6 @@ impl MouseDispatchPlan {
     }
 }
 
-fn editor_pane_at(workbench: &Workbench, x: u16, y: u16) -> Option<usize> {
-    workbench
-        .frame_layout
-        .editor
-        .outer_areas
-        .iter()
-        .enumerate()
-        .find_map(|(index, area)| util::rect_contains(*area, x, y).then_some(index))
-}
-
 fn focus_plan_for_area(workbench: &Workbench, event: &MouseEvent) -> Option<FocusPlan> {
     match event.kind {
         MouseEventKind::Down(MouseButton::Left) | MouseEventKind::Down(MouseButton::Right) => {
@@ -71,7 +61,8 @@ fn focus_plan_for_area(workbench: &Workbench, event: &MouseEvent) -> Option<Focu
             {
                 Some(FocusPlan::SidebarArea)
             } else {
-                editor_pane_at(workbench, event.column, event.row)
+                workbench
+                    .editor_pane_at(event.column, event.row)
                     .map(|pane| FocusPlan::EditorPane { pane })
             }
         }
