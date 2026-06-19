@@ -1,6 +1,6 @@
 use super::super::paint::centered_rect_ui;
 use super::super::Workbench;
-use crate::kernel::{OverlayKind, ProblemSeverity, SearchResultItem, SearchViewport};
+use crate::kernel::{OverlayKind, ProblemSeverity, SearchResultItem};
 use crate::ui::core::geom::{Pos, Rect as UiRect};
 use crate::ui::core::painter::{BorderKind, Painter};
 use crate::ui::core::style::{Mod, Style as UiStyle};
@@ -386,12 +386,8 @@ impl Workbench {
             query_area,
         );
 
-        self.sync_search_view_height(SearchViewport::BottomPanel, list_area.h);
-        let snapshot = self
-            .store
-            .state()
-            .search
-            .snapshot(SearchViewport::BottomPanel);
+        self.sync_search_view_height(list_area.h);
+        let snapshot = self.store.state().search.snapshot();
 
         let summary = if snapshot.searching {
             format!(

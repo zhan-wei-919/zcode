@@ -1,12 +1,6 @@
 use crate::kernel::services::ports::{FileMatches, GlobalSearchMessage, Match};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SearchViewport {
-    /// 居中浮层视口（telescope 搜索）。历史名保留为 BottomPanel，语义即「唯一浮层视口」。
-    BottomPanel,
-}
-
 #[derive(Debug, Clone)]
 pub struct SearchViewportState {
     pub view_height: usize,
@@ -43,9 +37,6 @@ pub enum SearchResultItem {
 #[derive(Debug, Clone, Default)]
 pub struct SearchState {
     pub query: String,
-    pub query_cursor: usize,
-    pub case_sensitive: bool,
-    pub use_regex: bool,
     pub searching: bool,
     pub active_search_id: Option<u64>,
     pub files_searched: usize,
@@ -73,8 +64,8 @@ pub struct SearchResultsSnapshot<'a> {
 }
 
 impl SearchState {
-    pub fn snapshot(&self, viewport: SearchViewport) -> SearchResultsSnapshot<'_> {
-        let scroll_offset = self.viewport(viewport).scroll_offset;
+    pub fn snapshot(&self) -> SearchResultsSnapshot<'_> {
+        let scroll_offset = self.panel_view.scroll_offset;
         SearchResultsSnapshot {
             search_text: &self.query,
             searching: self.searching,
@@ -118,41 +109,26 @@ impl SearchState {
     }
 
     pub fn append_query_char(&mut self, ch: char) -> bool {
-        if self.query_cursor >= self.query.len() {
-            self.query.push(ch);
-        } else {
-            self.query.insert(self.query_cursor, ch);
-        }
-        self.query_cursor += ch.len_utf8();
+        // 搜索框无文本光标，编辑恒在末尾，等价 push/pop。
+        self.query.push(ch);
         true
     }
 
     pub fn backspace_query(&mut self) -> bool {
-        if self.query_cursor == 0 {
-            return false;
-        }
-        let prev = self.query[..self.query_cursor]
-            .char_indices()
-            .last()
-            .map(|(i, _)| i)
-            .unwrap_or(0);
-        self.query.remove(prev);
-        self.query_cursor = prev;
-        true
+        self.query.pop().is_some()
     }
 
-    pub fn set_view_height(&mut self, viewport: SearchViewport, height: usize) -> bool {
+    pub fn set_view_height(&mut self, height: usize) -> bool {
         let height = height.max(1);
-        let view = self.viewport_mut(viewport);
-        if view.view_height == height {
+        if self.panel_view.view_height == height {
             return false;
         }
-        view.view_height = height;
-        self.clamp_scroll(viewport);
+        self.panel_view.view_height = height;
+        self.clamp_scroll();
         true
     }
 
-    pub fn move_selection(&mut self, delta: isize, viewport: SearchViewport) -> bool {
+    pub fn move_selection(&mut self, delta: isize) -> bool {
         if self.items.is_empty() || delta == 0 {
             return false;
         }
@@ -172,11 +148,11 @@ impl SearchState {
             self.selected_index = 0;
         }
 
-        self.keep_row_visible(self.selected_index, viewport);
+        self.keep_row_visible(self.selected_index);
         self.selected_index != prev
     }
 
-    pub fn click_row(&mut self, row: usize, viewport: SearchViewport) -> bool {
+    pub fn click_row(&mut self, row: usize) -> bool {
         if row >= self.items.len() {
             return false;
         }
@@ -184,28 +160,30 @@ impl SearchState {
             return false;
         }
         self.selected_index = row;
-        self.keep_row_visible(self.selected_index, viewport);
+        self.keep_row_visible(self.selected_index);
         true
     }
 
-    pub fn scroll(&mut self, delta: isize, viewport: SearchViewport) -> bool {
+    pub fn scroll(&mut self, delta: isize) -> bool {
         if self.items.is_empty() || delta == 0 {
             return false;
         }
 
-        let view_height = self.viewport(viewport).view_height.max(1);
+        let view_height = self.panel_view.view_height.max(1);
         let max_scroll = self.items.len().saturating_sub(view_height);
-        let prev = self.viewport(viewport).scroll_offset;
+        let prev = self.panel_view.scroll_offset;
 
         if delta > 0 {
-            let view = self.viewport_mut(viewport);
-            view.scroll_offset = (view.scroll_offset + delta as usize).min(max_scroll);
+            self.panel_view.scroll_offset =
+                (self.panel_view.scroll_offset + delta as usize).min(max_scroll);
         } else {
-            let view = self.viewport_mut(viewport);
-            view.scroll_offset = view.scroll_offset.saturating_sub((-delta) as usize);
+            self.panel_view.scroll_offset = self
+                .panel_view
+                .scroll_offset
+                .saturating_sub((-delta) as usize);
         }
 
-        self.viewport(viewport).scroll_offset != prev
+        self.panel_view.scroll_offset != prev
     }
 
     pub fn apply_message(&mut self, msg: GlobalSearchMessage) -> bool {
@@ -376,48 +354,33 @@ impl SearchState {
             }
         }
 
-        self.keep_row_visible(self.selected_index, SearchViewport::BottomPanel);
+        self.keep_row_visible(self.selected_index);
 
         true
     }
 
-    fn viewport(&self, viewport: SearchViewport) -> &SearchViewportState {
-        match viewport {
-            SearchViewport::BottomPanel => &self.panel_view,
-        }
-    }
-
-    fn viewport_mut(&mut self, viewport: SearchViewport) -> &mut SearchViewportState {
-        match viewport {
-            SearchViewport::BottomPanel => &mut self.panel_view,
-        }
-    }
-
-    fn clamp_scroll(&mut self, viewport: SearchViewport) {
-        let view_height = self.viewport(viewport).view_height.max(1);
+    fn clamp_scroll(&mut self) {
+        let view_height = self.panel_view.view_height.max(1);
         let max_scroll = self.items.len().saturating_sub(view_height);
-        let view = self.viewport_mut(viewport);
-        view.scroll_offset = view.scroll_offset.min(max_scroll);
+        self.panel_view.scroll_offset = self.panel_view.scroll_offset.min(max_scroll);
     }
 
-    fn keep_row_visible(&mut self, row: usize, viewport: SearchViewport) {
-        let view_height = self.viewport(viewport).view_height.max(1);
-        let scroll_offset = self.viewport(viewport).scroll_offset;
+    fn keep_row_visible(&mut self, row: usize) {
+        let view_height = self.panel_view.view_height.max(1);
+        let scroll_offset = self.panel_view.scroll_offset;
 
         if row < scroll_offset {
-            let view = self.viewport_mut(viewport);
-            view.scroll_offset = row;
-            self.clamp_scroll(viewport);
+            self.panel_view.scroll_offset = row;
+            self.clamp_scroll();
             return;
         }
 
         let end = scroll_offset + view_height;
         if row >= end {
-            let view = self.viewport_mut(viewport);
-            view.scroll_offset = row + 1 - view_height;
+            self.panel_view.scroll_offset = row + 1 - view_height;
         }
 
-        self.clamp_scroll(viewport);
+        self.clamp_scroll();
     }
 }
 

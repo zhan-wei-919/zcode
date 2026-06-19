@@ -19,7 +19,7 @@ pub use panel::code_actions::CodeActionsState;
 pub use panel::locations::{LocationItem, LocationsState};
 pub use panel::problems::{ProblemItem, ProblemRange, ProblemSeverity, ProblemsState};
 pub use panel::symbols::{SymbolItem, SymbolsState};
-pub use search::{SearchResultItem, SearchResultsSnapshot, SearchState, SearchViewport};
+pub use search::{SearchResultItem, SearchResultsSnapshot, SearchState};
 pub use state::{
     AppState, CommandLineState, ConfirmDialogState, EditorLayoutState, ExplorerState, FocusTarget,
     InputDialogKind, InputDialogState, LspState, OverlayKind, OverlayState, PendingAction, UiState,

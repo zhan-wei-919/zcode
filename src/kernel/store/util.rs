@@ -1,4 +1,4 @@
-use crate::kernel::{EditorState, FocusTarget, OverlayKind, SearchViewport, UiState};
+use crate::kernel::{EditorState, FocusTarget, OverlayKind, UiState};
 use ropey::RopeSlice;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,13 +21,8 @@ pub(super) fn resolve_renamed_path(
     path
 }
 
-pub(super) fn search_viewport_for_focus(ui: &UiState) -> Option<SearchViewport> {
-    match ui.focus {
-        FocusTarget::Overlay if ui.overlay.active == Some(OverlayKind::Search) => {
-            Some(SearchViewport::BottomPanel)
-        }
-        _ => None,
-    }
+pub(super) fn search_overlay_focused(ui: &UiState) -> bool {
+    ui.focus == FocusTarget::Overlay && ui.overlay.active == Some(OverlayKind::Search)
 }
 
 pub(super) fn is_lsp_source_path(path: &Path) -> bool {

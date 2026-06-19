@@ -6,7 +6,6 @@ use crate::kernel::editor::EditorAction;
 use crate::kernel::panel::locations::LocationItem;
 use crate::kernel::panel::problems::ProblemItem;
 use crate::kernel::panel::symbols::SymbolItem;
-use crate::kernel::search::SearchViewport;
 use crate::kernel::services::ports::DirEntryInfo;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::GlobalSearchMessage;
@@ -78,14 +77,12 @@ pub enum Action {
         to: PathBuf,
     },
     SearchSetViewHeight {
-        viewport: SearchViewport,
         height: usize,
     },
     SearchAppend(char),
     SearchBackspace,
     SearchClickRow {
         row: usize,
-        viewport: SearchViewport,
     },
     SearchStarted {
         search_id: u64,

@@ -2,7 +2,7 @@ use super::super::util;
 use super::super::Workbench;
 use crate::core::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::core::Command;
-use crate::kernel::{Action as KernelAction, OverlayKind, SearchResultItem, SearchViewport};
+use crate::kernel::{Action as KernelAction, OverlayKind, SearchResultItem};
 use crate::tui::view::EventResult;
 
 impl Workbench {
@@ -97,10 +97,7 @@ impl Workbench {
         }
 
         let item = self.store.state().search.items.get(row).copied();
-        let _ = self.dispatch_kernel(KernelAction::SearchClickRow {
-            row,
-            viewport: SearchViewport::BottomPanel,
-        });
+        let _ = self.dispatch_kernel(KernelAction::SearchClickRow { row });
         match item {
             Some(SearchResultItem::FileHeader { .. }) => {
                 let _ = self

@@ -1,5 +1,5 @@
 use super::Workbench;
-use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget, SearchViewport};
+use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget};
 use crate::ui::backend::Backend;
 use crate::ui::core::geom::Rect;
 use std::time::Duration;
@@ -51,7 +51,7 @@ impl Workbench {
         self.render_cache.viewport.explorer_view_height = Some(height);
     }
 
-    fn sync_search_view_height(&mut self, _viewport: SearchViewport, height: u16) {
+    fn sync_search_view_height(&mut self, height: u16) {
         if height == 0 {
             return;
         }
@@ -160,7 +160,6 @@ impl Workbench {
                     .viewport
                     .applied_search_panel_results_height = Some(height);
                 changed |= self.dispatch_kernel(KernelAction::SearchSetViewHeight {
-                    viewport: SearchViewport::BottomPanel,
                     height: height as usize,
                 });
             }

@@ -26,9 +26,9 @@ pub(super) fn search_open_target(
 impl super::Store {
     pub(super) fn reduce_search_action(&mut self, action: Action) -> super::DispatchResult {
         match action {
-            Action::SearchSetViewHeight { viewport, height } => super::DispatchResult {
+            Action::SearchSetViewHeight { height } => super::DispatchResult {
                 effects: Vec::new(),
-                state_changed: self.state.search.set_view_height(viewport, height),
+                state_changed: self.state.search.set_view_height(height),
             },
             Action::SearchAppend(ch) => super::DispatchResult {
                 effects: Vec::new(),
@@ -38,9 +38,9 @@ impl super::Store {
                 effects: Vec::new(),
                 state_changed: self.state.search.backspace_query(),
             },
-            Action::SearchClickRow { row, viewport } => super::DispatchResult {
+            Action::SearchClickRow { row } => super::DispatchResult {
                 effects: Vec::new(),
-                state_changed: self.state.search.click_row(row, viewport),
+                state_changed: self.state.search.click_row(row),
             },
             Action::SearchStarted { search_id } => super::DispatchResult {
                 effects: Vec::new(),

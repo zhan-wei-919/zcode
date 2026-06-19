@@ -6,7 +6,7 @@ use super::intel::lsp::{
     lsp_position_encoding_for_path, lsp_position_to_byte_offset, problem_byte_offset,
 };
 use super::search::search_open_target;
-use super::util::{find_open_tab, search_viewport_for_focus};
+use super::util::{find_open_tab, search_overlay_focused};
 use super::DispatchResult;
 
 impl super::Store {
@@ -21,23 +21,22 @@ impl super::Store {
                 if search_focused && !self.state.search.query.is_empty() {
                     let root = self.state.workspace_root.clone();
                     let pattern = self.state.search.query.clone();
-                    let case_sensitive = self.state.search.case_sensitive;
-                    let use_regex = self.state.search.use_regex;
                     let changed = self.state.search.begin_search();
                     return DispatchResult {
                         effects: vec![Effect::StartGlobalSearch {
                             root,
                             pattern,
-                            case_sensitive,
-                            use_regex,
+                            // 全局搜索固定为字面量 + 大小写不敏感（移除分屏搜索后无 UI 暴露开关）。
+                            case_sensitive: false,
+                            use_regex: false,
                         }],
                         state_changed: changed,
                     };
                 }
             }
             Command::SearchResultsMoveUp => {
-                if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
-                    state_changed = self.state.search.move_selection(-1, viewport);
+                if search_overlay_focused(&self.state.ui) {
+                    state_changed = self.state.search.move_selection(-1);
                 } else if self.state.ui.focus == FocusTarget::Overlay
                     && self.state.ui.overlay.active == Some(OverlayKind::Problems)
                 {
@@ -57,8 +56,8 @@ impl super::Store {
                 }
             }
             Command::SearchResultsMoveDown => {
-                if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
-                    state_changed = self.state.search.move_selection(1, viewport);
+                if search_overlay_focused(&self.state.ui) {
+                    state_changed = self.state.search.move_selection(1);
                 } else if self.state.ui.focus == FocusTarget::Overlay
                     && self.state.ui.overlay.active == Some(OverlayKind::Problems)
                 {
@@ -78,8 +77,8 @@ impl super::Store {
                 }
             }
             Command::SearchResultsScrollUp => {
-                if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
-                    state_changed = self.state.search.scroll(-3, viewport);
+                if search_overlay_focused(&self.state.ui) {
+                    state_changed = self.state.search.scroll(-3);
                 } else if self.state.ui.focus == FocusTarget::Overlay
                     && self.state.ui.overlay.active == Some(OverlayKind::Problems)
                 {
@@ -99,8 +98,8 @@ impl super::Store {
                 }
             }
             Command::SearchResultsScrollDown => {
-                if let Some(viewport) = search_viewport_for_focus(&self.state.ui) {
-                    state_changed = self.state.search.scroll(3, viewport);
+                if search_overlay_focused(&self.state.ui) {
+                    state_changed = self.state.search.scroll(3);
                 } else if self.state.ui.focus == FocusTarget::Overlay
                     && self.state.ui.overlay.active == Some(OverlayKind::Problems)
                 {
@@ -120,12 +119,12 @@ impl super::Store {
                 }
             }
             Command::SearchResultsToggleExpand => {
-                if search_viewport_for_focus(&self.state.ui).is_some() {
+                if search_overlay_focused(&self.state.ui) {
                     state_changed = self.state.search.toggle_selected_file_expanded();
                 }
             }
             Command::SearchResultsOpenSelected => {
-                if search_viewport_for_focus(&self.state.ui).is_some() {
+                if search_overlay_focused(&self.state.ui) {
                     let prev_focus = self.state.ui.focus;
                     let prev_active_pane = self.state.ui.editor_layout.active_pane;
 

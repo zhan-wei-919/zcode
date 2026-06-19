@@ -39,15 +39,15 @@ fn test_query_editing() {
     assert!(state.append_query_char('h'));
     assert!(state.append_query_char('i'));
     assert_eq!(state.query, "hi");
-    assert_eq!(state.query_cursor, 2);
 
     assert!(state.backspace_query());
     assert_eq!(state.query, "h");
-    assert_eq!(state.query_cursor, 1);
 
     assert!(state.backspace_query());
     assert!(state.query.is_empty());
-    assert_eq!(state.query_cursor, 0);
+
+    // 空查询再退格无变化。
+    assert!(!state.backspace_query());
 }
 
 #[test]
@@ -73,9 +73,9 @@ fn test_selection_wraps() {
 
     assert_eq!(state.selected_index, 0);
     state.panel_view.view_height = 1;
-    assert!(state.move_selection(-1, SearchViewport::BottomPanel));
+    assert!(state.move_selection(-1));
     assert_eq!(state.selected_index, 1);
-    assert!(state.move_selection(1, SearchViewport::BottomPanel));
+    assert!(state.move_selection(1));
     assert_eq!(state.selected_index, 0);
 }
 
