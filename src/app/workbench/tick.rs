@@ -1,17 +1,15 @@
+use super::settings_parse::{parse_settings, ParsedSettings};
 use super::Workbench;
 use crate::core::Command;
-use crate::kernel::services::adapters::lsp::LspServerCommandOverride;
 use crate::kernel::services::adapters::{
-    ConfigService, FileWatchEvent, KeybindingContext, KeybindingService, LspService,
+    ConfigService, FileWatchEvent, KeybindingService, LspService,
 };
 use crate::kernel::services::ports::lsp::column_for_chars;
-use crate::kernel::services::ports::LspServerKind;
 use crate::kernel::services::ports::{
     GlobalSearchMessage, LspPosition, LspPositionEncoding, SearchMessage,
 };
 use crate::kernel::services::KernelMessagePayload;
 use crate::kernel::{Action as KernelAction, EditorAction, FocusTarget};
-use rustc_hash::FxHashMap;
 use std::sync::mpsc;
 use std::time::Instant;
 
@@ -426,77 +424,12 @@ impl Workbench {
             return false;
         };
 
-        let editor_config = settings.editor.clone();
-        let mut keybindings = KeybindingService::new();
-        let mut lsp_settings_override: Option<(String, Vec<String>, Option<serde_json::Value>)> =
-            None;
-        let mut lsp_server_overrides: FxHashMap<LspServerKind, LspServerCommandOverride> =
-            FxHashMap::default();
-        for rule in settings.keybindings {
-            if let Some(key) =
-                crate::kernel::services::adapters::settings::parse_keybinding(&rule.key)
-            {
-                let context = rule
-                    .context
-                    .as_deref()
-                    .and_then(KeybindingContext::parse)
-                    .unwrap_or(KeybindingContext::Global);
-                if rule.command.trim().is_empty() {
-                    let _ = keybindings.unbind(context, &key);
-                } else {
-                    keybindings.bind(context, key, Command::from_name(&rule.command));
-                }
-            }
-        }
-
-        if let Some(command) = settings
-            .lsp
-            .command
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        {
-            let args = settings
-                .lsp
-                .args
-                .iter()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect::<Vec<_>>();
-            lsp_settings_override = Some((command.to_string(), args, None));
-        }
-
-        for (name, cfg) in &settings.lsp.servers {
-            let Some(kind) = LspServerKind::from_settings_key(name) else {
-                continue;
-            };
-
-            let command = cfg
-                .command
-                .as_deref()
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-                .map(str::to_string);
-            let args = cfg.args.as_ref().map(|args| {
-                args.iter()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            });
-
-            let entry = lsp_server_overrides.entry(kind).or_default();
-            if let Some(command) = command {
-                entry.command = Some(command);
-            }
-            if let Some(args) = args {
-                entry.args = Some(args);
-            }
-            if let Some(initialization_options) = cfg.initialization_options.clone() {
-                entry.initialization_options = Some(initialization_options);
-            }
-        }
+        let ParsedSettings {
+            keybindings,
+            editor_config,
+            lsp_settings_override,
+            lsp_server_overrides,
+        } = parse_settings(settings);
 
         let _ = self.store.dispatch(KernelAction::EditorConfigUpdated {
             config: editor_config.clone(),

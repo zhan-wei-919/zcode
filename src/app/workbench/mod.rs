@@ -9,7 +9,7 @@ use crate::kernel::services::adapters::perf;
 use crate::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use crate::kernel::services::adapters::{
     ClipboardService, ConfigService, FileWatcherService, GlobalSearchService, GlobalSearchTask,
-    KeybindingContext, KeybindingService, LspService, SearchService, SearchTask,
+    KeybindingService, LspService, SearchService, SearchTask,
 };
 use crate::kernel::services::ports::{
     EditorConfig, GlobalSearchMessage, LspServerKind, SearchMessage,
@@ -36,6 +36,7 @@ mod mouse;
 mod mouse_route;
 mod mouse_tracker;
 mod render;
+mod settings_parse;
 mod state;
 #[cfg(test)]
 #[path = "../../../tests/unit/app/workbench.rs"]
@@ -245,70 +246,11 @@ impl Workbench {
 
         if settings_enabled() {
             if let Some(settings) = crate::kernel::services::adapters::settings::load_settings() {
-                for rule in settings.keybindings {
-                    if let Some(key) =
-                        crate::kernel::services::adapters::settings::parse_keybinding(&rule.key)
-                    {
-                        let context = rule
-                            .context
-                            .as_deref()
-                            .and_then(KeybindingContext::parse)
-                            .unwrap_or(KeybindingContext::Global);
-                        if rule.command.trim().is_empty() {
-                            let _ = keybindings.unbind(context, &key);
-                        } else {
-                            keybindings.bind(context, key, Command::from_name(&rule.command));
-                        }
-                    }
-                }
-                if let Some(command) = settings
-                    .lsp
-                    .command
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                {
-                    let args = settings
-                        .lsp
-                        .args
-                        .iter()
-                        .map(|s| s.trim())
-                        .filter(|s| !s.is_empty())
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>();
-                    lsp_settings_override = Some((command.to_string(), args, None));
-                }
-                for (name, cfg) in &settings.lsp.servers {
-                    let Some(kind) = LspServerKind::from_settings_key(name) else {
-                        continue;
-                    };
-
-                    let command = cfg
-                        .command
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|v| !v.is_empty())
-                        .map(str::to_string);
-                    let args = cfg.args.as_ref().map(|args| {
-                        args.iter()
-                            .map(|s| s.trim())
-                            .filter(|s| !s.is_empty())
-                            .map(str::to_string)
-                            .collect::<Vec<_>>()
-                    });
-
-                    let entry = lsp_server_overrides.entry(kind).or_default();
-                    if let Some(command) = command {
-                        entry.command = Some(command);
-                    }
-                    if let Some(args) = args {
-                        entry.args = Some(args);
-                    }
-                    if let Some(initialization_options) = cfg.initialization_options.clone() {
-                        entry.initialization_options = Some(initialization_options);
-                    }
-                }
-                editor_config = settings.editor;
+                let parsed = settings_parse::parse_settings(settings);
+                keybindings = parsed.keybindings;
+                editor_config = parsed.editor_config;
+                lsp_settings_override = parsed.lsp_settings_override;
+                lsp_server_overrides = parsed.lsp_server_overrides;
             }
         }
 

@@ -12,7 +12,8 @@ mod logging;
 
 use zcode::app::Workbench;
 use zcode::core::event::InputEvent;
-use zcode::kernel::services::adapters::AsyncRuntime;
+use zcode::core::wakeup::WakeupSender;
+use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use zcode::tui::view::{EventResult, View};
 use zcode::tui::{self, terminal_guard::TerminationSignal};
 use zcode::ui::backend::terminal::RatatuiTerminal;
@@ -127,6 +128,17 @@ fn env_truthy(key: &str) -> bool {
     )
 }
 
+/// 重建 workbench：新建消息 channel + AsyncRuntime + Workbench，返回新 workbench 与接收端。
+/// runtime 持 sender 维持 channel 存活，故 run_app 无需再持 tx。两条重启路径共用此序列。
+fn restart_workbench(
+    root: &Path,
+    wakeup_tx: &WakeupSender,
+) -> io::Result<(Workbench, mpsc::Receiver<AppMessage>)> {
+    let (tx, rx) = mpsc::channel();
+    let workbench = Workbench::new(root, AsyncRuntime::new(tx)?, Some(wakeup_tx.clone()))?;
+    Ok((workbench, rx))
+}
+
 fn run_app(
     terminal: &mut RatatuiTerminal,
     path: &Path,
@@ -134,14 +146,8 @@ fn run_app(
     term_rx: &mpsc::Receiver<TerminationSignal>,
 ) -> io::Result<()> {
     let mut root_path = path.to_path_buf();
-    let (mut tx, mut rx) = mpsc::channel();
-
     let (wakeup_tx, wakeup_rx) = zcode::core::wakeup::wakeup_pipe()?;
-    let mut workbench = Workbench::new(
-        root_path.as_path(),
-        AsyncRuntime::new(tx.clone())?,
-        Some(wakeup_tx.clone()),
-    )?;
+    let (mut workbench, mut rx) = restart_workbench(root_path.as_path(), &wakeup_tx)?;
     if let Some(path) = startup_file {
         workbench.runtime().load_file(path);
     }
@@ -178,14 +184,10 @@ fn run_app(
                     EventResult::Quit => return Ok(()),
                     EventResult::Restart { path, hard } => {
                         root_path = path;
-                        let (new_tx, new_rx) = mpsc::channel();
-                        tx = new_tx;
+                        let (new_workbench, new_rx) =
+                            restart_workbench(root_path.as_path(), &wakeup_tx)?;
+                        workbench = new_workbench;
                         rx = new_rx;
-                        workbench = Workbench::new(
-                            root_path.as_path(),
-                            AsyncRuntime::new(tx.clone())?,
-                            Some(wakeup_tx.clone()),
-                        )?;
                         dirty = true;
                         last_tick = Instant::now();
                         if hard {
@@ -212,14 +214,9 @@ fn run_app(
             dirty = true;
             if let Some((path, hard)) = workbench.take_pending_restart() {
                 root_path = path;
-                let (new_tx, new_rx) = mpsc::channel();
-                tx = new_tx;
+                let (new_workbench, new_rx) = restart_workbench(root_path.as_path(), &wakeup_tx)?;
+                workbench = new_workbench;
                 rx = new_rx;
-                workbench = Workbench::new(
-                    root_path.as_path(),
-                    AsyncRuntime::new(tx.clone())?,
-                    Some(wakeup_tx.clone()),
-                )?;
                 dirty = true;
                 last_tick = Instant::now();
                 if hard {
