@@ -5,6 +5,8 @@ use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
 
+use crate::kernel::panel::list_selection::ListSelectionState;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProblemSeverity {
     Error,
@@ -43,85 +45,38 @@ pub struct ProblemItem {
 
 #[derive(Debug, Default)]
 pub struct ProblemsState {
-    items: Vec<ProblemItem>,
+    inner: ListSelectionState<ProblemItem>,
+    // 每个文件路径在 `inner.items()` 中占据的连续区间，用于按路径增量更新而非整列重排。
     ranges_by_path: BTreeMap<PathBuf, Range<usize>>,
-    selected_index: usize,
-    view_height: usize,
-    scroll_offset: usize,
 }
 
 impl ProblemsState {
     pub fn items(&self) -> &[ProblemItem] {
-        &self.items
+        self.inner.items()
     }
 
     pub fn selected_index(&self) -> usize {
-        self.selected_index
+        self.inner.selected_index()
     }
 
     pub fn scroll_offset(&self) -> usize {
-        self.scroll_offset
+        self.inner.scroll_offset()
     }
 
     pub fn set_view_height(&mut self, height: usize) -> bool {
-        let height = height.max(1);
-        if self.view_height == height {
-            return false;
-        }
-        self.view_height = height;
-        self.clamp_scroll();
-        true
+        self.inner.set_view_height(height)
     }
 
     pub fn move_selection(&mut self, delta: isize) -> bool {
-        if self.items.is_empty() || delta == 0 {
-            return false;
-        }
-
-        let prev = self.selected_index;
-        let len = self.items.len();
-
-        if delta < 0 {
-            if self.selected_index > 0 {
-                self.selected_index -= 1;
-            } else {
-                self.selected_index = len - 1;
-            }
-        } else if self.selected_index + 1 < len {
-            self.selected_index += 1;
-        } else {
-            self.selected_index = 0;
-        }
-
-        self.keep_row_visible(self.selected_index);
-        self.selected_index != prev
+        self.inner.move_selection(delta)
     }
 
     pub fn scroll(&mut self, delta: isize) -> bool {
-        if self.items.is_empty() || delta == 0 {
-            return false;
-        }
-
-        let max_scroll = self.items.len().saturating_sub(self.view_height.max(1));
-        let prev = self.scroll_offset;
-        if delta > 0 {
-            self.scroll_offset = (self.scroll_offset + delta as usize).min(max_scroll);
-        } else {
-            self.scroll_offset = self.scroll_offset.saturating_sub((-delta) as usize);
-        }
-        self.scroll_offset != prev
+        self.inner.scroll(delta)
     }
 
     pub fn click_row(&mut self, row: usize) -> bool {
-        if row >= self.items.len() {
-            return false;
-        }
-        if self.selected_index == row {
-            return false;
-        }
-        self.selected_index = row;
-        self.keep_row_visible(self.selected_index);
-        true
+        self.inner.click_row(row)
     }
 
     pub fn update_path(&mut self, path: PathBuf, mut items: Vec<ProblemItem>) -> bool {
@@ -131,7 +86,7 @@ impl ProblemsState {
 
         let existing_range = self.ranges_by_path.get(&path).cloned();
         let changed = match existing_range.as_ref() {
-            Some(range) => &self.items[range.clone()] != items.as_slice(),
+            Some(range) => &self.inner.items()[range.clone()] != items.as_slice(),
             None => !items.is_empty(),
         };
 
@@ -142,7 +97,7 @@ impl ProblemsState {
         let new_len = items.len();
         if let Some(range) = existing_range {
             let old_len = range.end.saturating_sub(range.start);
-            self.items.splice(range.clone(), items);
+            self.inner.items_mut().splice(range.clone(), items);
 
             if new_len == 0 {
                 self.ranges_by_path.remove(&path);
@@ -155,14 +110,13 @@ impl ProblemsState {
             self.shift_ranges_after(&path, delta);
         } else if new_len > 0 {
             let insert_at = self.insert_index_for_path(&path);
-            self.items.splice(insert_at..insert_at, items);
+            self.inner.items_mut().splice(insert_at..insert_at, items);
             self.ranges_by_path
                 .insert(path.clone(), insert_at..insert_at + new_len);
             self.shift_ranges_after(&path, new_len as isize);
         }
 
-        self.clamp_selection();
-        self.clamp_scroll();
+        self.inner.clamp_after_items_changed();
         true
     }
 
@@ -171,7 +125,7 @@ impl ProblemsState {
             .range((Excluded(path.to_path_buf()), Unbounded))
             .next()
             .map(|(_, range)| range.start)
-            .unwrap_or(self.items.len())
+            .unwrap_or(self.inner.items().len())
     }
 
     fn shift_ranges_after(&mut self, path: &Path, delta: isize) {
@@ -190,33 +144,6 @@ impl ProblemsState {
                 range.end = offset_index(range.end, delta);
             }
         }
-    }
-
-    fn clamp_selection(&mut self) {
-        if self.items.is_empty() {
-            self.selected_index = 0;
-            self.scroll_offset = 0;
-            return;
-        }
-        self.selected_index = self.selected_index.min(self.items.len().saturating_sub(1));
-        self.keep_row_visible(self.selected_index);
-    }
-
-    fn clamp_scroll(&mut self) {
-        let max_scroll = self.items.len().saturating_sub(self.view_height.max(1));
-        self.scroll_offset = self.scroll_offset.min(max_scroll);
-    }
-
-    fn keep_row_visible(&mut self, row: usize) {
-        let view_height = self.view_height.max(1);
-        if row < self.scroll_offset {
-            self.scroll_offset = row;
-            return;
-        }
-        if row >= self.scroll_offset + view_height {
-            self.scroll_offset = row.saturating_add(1).saturating_sub(view_height);
-        }
-        self.clamp_scroll();
     }
 }
 
