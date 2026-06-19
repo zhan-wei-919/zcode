@@ -17,6 +17,8 @@ mod util;
 mod context_menu;
 #[path = "reducers/explorer.rs"]
 mod explorer;
+#[path = "reducers/explorer_command.rs"]
+mod explorer_command;
 #[path = "reducers/input_dialog.rs"]
 mod input_dialog;
 #[path = "reducers/search.rs"]
@@ -1850,173 +1852,19 @@ impl Store {
                 result.state_changed = true;
                 return result;
             }
-            Command::ExplorerUp => {
-                if self.state.ui.focus == FocusTarget::Explorer {
-                    state_changed = self.state.explorer.move_selection(-1);
-                }
-            }
-            Command::ExplorerDown => {
-                if self.state.ui.focus == FocusTarget::Explorer {
-                    state_changed = self.state.explorer.move_selection(1);
-                }
-            }
-            Command::ExplorerActivate => {
-                if self.state.ui.focus == FocusTarget::Explorer {
-                    let (changed, fx) = self.state.explorer.activate_selected();
-                    return DispatchResult {
-                        effects: fx,
-                        state_changed: changed,
-                    };
-                }
-            }
-            Command::ExplorerCollapse => {
-                if self.state.ui.focus == FocusTarget::Explorer {
-                    state_changed = self.state.explorer.collapse_selected();
-                }
-            }
-            Command::ExplorerScrollUp => {
-                if self.state.ui.focus == FocusTarget::Explorer {
-                    state_changed = self.state.explorer.scroll(-3);
-                }
-            }
-            Command::ExplorerScrollDown => {
-                if self.state.ui.focus == FocusTarget::Explorer {
-                    state_changed = self.state.explorer.scroll(3);
-                }
-            }
-            Command::ExplorerNewFile => {
-                if self.state.ui.input_dialog.visible {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                let parent_dir = self.state.explorer.selected_create_parent_dir();
-                self.state.ui.input_dialog.reset();
-                self.state.ui.input_dialog.visible = true;
-                self.state.ui.input_dialog.title = "New File".to_string();
-                self.state.ui.input_dialog.kind = Some(InputDialogKind::NewFile { parent_dir });
-                state_changed = true;
-            }
-            Command::ExplorerNewFolder => {
-                if self.state.ui.input_dialog.visible {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                let parent_dir = self.state.explorer.selected_create_parent_dir();
-                self.state.ui.input_dialog.reset();
-                self.state.ui.input_dialog.visible = true;
-                self.state.ui.input_dialog.title = "New Folder".to_string();
-                self.state.ui.input_dialog.kind = Some(InputDialogKind::NewFolder { parent_dir });
-                state_changed = true;
-            }
-            Command::ExplorerRename => {
-                if self.state.ui.input_dialog.visible {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                let Some((path, _is_dir)) = self.state.explorer.selected_path_and_kind() else {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                };
-                let root = self.state.workspace_root.as_path();
-                if path.as_path() == root || !path.starts_with(root) {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                let file_name = path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                if file_name.is_empty() {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                self.state.ui.input_dialog.reset();
-                self.state.ui.input_dialog.visible = true;
-                self.state.ui.input_dialog.title = "Rename".to_string();
-                self.state.ui.input_dialog.value = file_name;
-                self.state.ui.input_dialog.cursor = self.state.ui.input_dialog.value.len();
-                self.state.ui.input_dialog.kind =
-                    Some(InputDialogKind::ExplorerRename { from: path });
-                state_changed = true;
-            }
-            Command::ExplorerDelete => {
-                if self.state.ui.confirm_dialog.visible {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                let Some((path, is_dir)) = self.state.explorer.selected_path_and_kind() else {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                };
-                let root = self.state.workspace_root.as_path();
-                if path.as_path() == root || !path.starts_with(root) {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                }
-
-                let rel = path
-                    .strip_prefix(&self.state.workspace_root)
-                    .ok()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path.to_string_lossy().to_string());
-                let message = if is_dir {
-                    format!("Delete folder \"{}\" and all contents?", rel)
-                } else {
-                    format!("Delete file \"{}\"?", rel)
-                };
-
-                self.state.ui.confirm_dialog.visible = true;
-                self.state.ui.confirm_dialog.message = message;
-                self.state.ui.confirm_dialog.on_confirm =
-                    Some(super::PendingAction::DeletePath { path, is_dir });
-                state_changed = true;
-            }
-            Command::ExplorerCut => {
-                state_changed = self.set_explorer_clipboard_from_selection(
-                    super::state::ExplorerClipboardMode::Cut,
-                );
-            }
-            Command::ExplorerCopy => {
-                state_changed = self.set_explorer_clipboard_from_selection(
-                    super::state::ExplorerClipboardMode::Copy,
-                );
-            }
-            Command::ExplorerPaste => {
-                let Some(effect) = self.explorer_paste_effect() else {
-                    return DispatchResult {
-                        effects,
-                        state_changed: false,
-                    };
-                };
-                return DispatchResult {
-                    effects: vec![effect],
-                    state_changed: false,
-                };
-            }
+            cmd @ Command::ExplorerUp
+            | cmd @ Command::ExplorerDown
+            | cmd @ Command::ExplorerActivate
+            | cmd @ Command::ExplorerCollapse
+            | cmd @ Command::ExplorerScrollUp
+            | cmd @ Command::ExplorerScrollDown
+            | cmd @ Command::ExplorerNewFile
+            | cmd @ Command::ExplorerNewFolder
+            | cmd @ Command::ExplorerRename
+            | cmd @ Command::ExplorerDelete
+            | cmd @ Command::ExplorerCut
+            | cmd @ Command::ExplorerCopy
+            | cmd @ Command::ExplorerPaste => return self.reduce_explorer_command(cmd),
             Command::GlobalSearchStart => {
                 let search_focused = self.state.ui.focus == FocusTarget::Overlay
                     && self.state.ui.overlay.active == Some(OverlayKind::Search);
