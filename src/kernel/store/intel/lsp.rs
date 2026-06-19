@@ -388,6 +388,94 @@ impl super::super::Store {
         false
     }
 
+    // 文件打开后，按服务器能力排期可选 LSP 请求（语义高亮 / inlay / folding）。
+    // 注：两处 `else { return; }` 守卫（tab 缺失 / caps 缺失）实际不可达——tab 是刚
+    // 打开的、`supports_semantic_tokens` 已蕴含 caps.is_some；与原内联块的区别仅在于
+    // 原块命中守卫时会 `return` 整个 dispatch、越过 match 后处理，此处只是不再追加
+    // effect，差异落在不可达路径，不可观测。
+    pub(in crate::kernel::store) fn schedule_lsp_requests_for_opened_file(
+        &self,
+        pane: usize,
+        path: &Path,
+        effects: &mut Vec<crate::kernel::Effect>,
+    ) {
+        let caps = lsp_server_capabilities_for_path(&self.state, path);
+        let supports_semantic_tokens = caps.is_some_and(|c| {
+            c.semantic_tokens && (c.semantic_tokens_full || c.semantic_tokens_range)
+        });
+        let supports_inlay_hints = caps.is_some_and(|c| c.inlay_hints);
+        let supports_folding_range = caps.is_some_and(|c| c.folding_range);
+        if (supports_semantic_tokens || supports_inlay_hints || supports_folding_range)
+            && is_lsp_source_path(path)
+        {
+            let Some(tab) = self
+                .state
+                .editor
+                .pane(pane)
+                .and_then(|pane_state| pane_state.active_tab())
+            else {
+                return;
+            };
+            let version = tab.edit_version;
+            let encoding = lsp_position_encoding_for_path(&self.state, path);
+
+            if supports_semantic_tokens {
+                let Some(caps) = caps else {
+                    return;
+                };
+
+                let total_lines = tab.buffer.len_lines().max(1);
+                let can_range = caps.semantic_tokens_range;
+                let can_full = caps.semantic_tokens_full;
+                let prefer_range = can_range && (total_lines >= 2000 || !can_full);
+
+                if prefer_range {
+                    let viewport_top = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
+                    let height = tab.viewport.height.max(1);
+                    let overscan = 40usize.min(total_lines);
+                    let start_line = viewport_top.saturating_sub(overscan);
+                    let end_line_exclusive = (viewport_top + height + overscan).min(total_lines);
+                    if let Some(range) =
+                        lsp_range_for_full_lines(tab, start_line, end_line_exclusive, encoding)
+                    {
+                        effects.push(Effect::LspSemanticTokensRangeRequest {
+                            path: path.to_path_buf(),
+                            version,
+                            range,
+                        });
+                    }
+                } else if can_full {
+                    effects.push(Effect::LspSemanticTokensRequest {
+                        path: path.to_path_buf(),
+                        version,
+                    });
+                }
+            }
+
+            if supports_inlay_hints {
+                let total_lines = tab.buffer.len_lines().max(1);
+                let start_line = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
+                let end_line_exclusive = (start_line + tab.viewport.height.max(1)).min(total_lines);
+                if let Some(range) =
+                    lsp_range_for_full_lines(tab, start_line, end_line_exclusive, encoding)
+                {
+                    effects.push(Effect::LspInlayHintsRequest {
+                        path: path.to_path_buf(),
+                        version,
+                        range,
+                    });
+                }
+            }
+
+            if supports_folding_range {
+                effects.push(Effect::LspFoldingRangeRequest {
+                    path: path.to_path_buf(),
+                    version,
+                });
+            }
+        }
+    }
+
     pub(in crate::kernel::store) fn apply_workspace_edit(
         &mut self,
         edit: LspWorkspaceEdit,

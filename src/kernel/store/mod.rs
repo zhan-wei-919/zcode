@@ -34,9 +34,10 @@ use intel::completion::{
 };
 pub use intel::completion_rank::CompletionRanker;
 
+#[cfg(test)]
+use intel::lsp::lsp_range_for_full_lines;
 use intel::lsp::{
     lsp_position_encoding, lsp_position_encoding_for_path, lsp_position_to_byte_offset,
-    lsp_range_for_full_lines, lsp_server_capabilities_for_path,
 };
 use intel::semantic::reconcile_pending_semantic_row;
 use util::is_lsp_source_path;
@@ -590,224 +591,132 @@ impl Store {
                     false
                 };
 
-                let mut result = match editor_action {
-                    EditorAction::OpenFile {
-                        pane,
-                        path,
-                        content,
-                    } => {
-                        let opened_path = path.clone();
-                        let pending = self
-                            .state
-                            .ui
-                            .pending_editor_nav
-                            .as_ref()
-                            .filter(|p| p.pane == pane && p.path == path)
-                            .map(|p| p.target.clone());
+                let mut result =
+                    match editor_action {
+                        EditorAction::OpenFile {
+                            pane,
+                            path,
+                            content,
+                        } => {
+                            let opened_path = path.clone();
+                            let pending = self
+                                .state
+                                .ui
+                                .pending_editor_nav
+                                .as_ref()
+                                .filter(|p| p.pane == pane && p.path == path)
+                                .map(|p| p.target.clone());
 
-                        let (mut state_changed, mut effects) =
-                            self.state.editor.dispatch_action(EditorAction::OpenFile {
-                                pane,
-                                path,
-                                content,
-                            });
+                            let (mut state_changed, mut effects) =
+                                self.state.editor.dispatch_action(EditorAction::OpenFile {
+                                    pane,
+                                    path,
+                                    content,
+                                });
 
-                        if let Some(target) = pending {
-                            let byte_offset = match target {
-                                super::state::PendingEditorNavigationTarget::ByteOffset {
-                                    byte_offset,
-                                } => byte_offset,
-                                super::state::PendingEditorNavigationTarget::LineColumn {
-                                    line,
-                                    column,
-                                } => self
-                                    .state
-                                    .editor
-                                    .pane(pane)
-                                    .and_then(|pane_state| pane_state.active_tab())
-                                    .map(|tab| {
-                                        lsp_position_to_byte_offset(
-                                            tab,
-                                            line,
-                                            column,
-                                            lsp_position_encoding(&self.state),
-                                        )
-                                    })
-                                    .unwrap_or(0),
-                            };
-
-                            let (changed, cmd_effects) =
-                                self.state
-                                    .editor
-                                    .dispatch_action(EditorAction::GotoByteOffset {
-                                        pane,
+                            if let Some(target) = pending {
+                                let byte_offset = match target {
+                                    super::state::PendingEditorNavigationTarget::ByteOffset {
                                         byte_offset,
-                                    });
-                            state_changed |= changed;
-                            effects.extend(cmd_effects);
-                            self.state.ui.pending_editor_nav = None;
-                        }
+                                    } => byte_offset,
+                                    super::state::PendingEditorNavigationTarget::LineColumn {
+                                        line,
+                                        column,
+                                    } => self
+                                        .state
+                                        .editor
+                                        .pane(pane)
+                                        .and_then(|pane_state| pane_state.active_tab())
+                                        .map(|tab| {
+                                            lsp_position_to_byte_offset(
+                                                tab,
+                                                line,
+                                                column,
+                                                lsp_position_encoding(&self.state),
+                                            )
+                                        })
+                                        .unwrap_or(0),
+                                };
 
-                        let caps = lsp_server_capabilities_for_path(&self.state, &opened_path);
-                        let supports_semantic_tokens = caps.is_some_and(|c| {
-                            c.semantic_tokens && (c.semantic_tokens_full || c.semantic_tokens_range)
-                        });
-                        let supports_inlay_hints = caps.is_some_and(|c| c.inlay_hints);
-                        let supports_folding_range = caps.is_some_and(|c| c.folding_range);
-                        if (supports_semantic_tokens
-                            || supports_inlay_hints
-                            || supports_folding_range)
-                            && is_lsp_source_path(&opened_path)
-                        {
-                            let Some(tab) = self
+                                let (changed, cmd_effects) = self.state.editor.dispatch_action(
+                                    EditorAction::GotoByteOffset { pane, byte_offset },
+                                );
+                                state_changed |= changed;
+                                effects.extend(cmd_effects);
+                                self.state.ui.pending_editor_nav = None;
+                            }
+
+                            self.schedule_lsp_requests_for_opened_file(
+                                pane,
+                                &opened_path,
+                                &mut effects,
+                            );
+
+                            DispatchResult {
+                                effects,
+                                state_changed,
+                            }
+                        }
+                        EditorAction::SetActiveTab { pane, index } => {
+                            let (state_changed, effects) = self
                                 .state
                                 .editor
-                                .pane(pane)
-                                .and_then(|pane_state| pane_state.active_tab())
-                            else {
-                                return DispatchResult {
-                                    effects,
-                                    state_changed,
-                                };
-                            };
-                            let version = tab.edit_version;
-                            let encoding =
-                                lsp_position_encoding_for_path(&self.state, &opened_path);
+                                .dispatch_action(EditorAction::SetActiveTab { pane, index });
 
-                            if supports_semantic_tokens {
-                                let Some(caps) = caps else {
-                                    return DispatchResult {
-                                        effects,
-                                        state_changed,
-                                    };
-                                };
-
-                                let total_lines = tab.buffer.len_lines().max(1);
-                                let can_range = caps.semantic_tokens_range;
-                                let can_full = caps.semantic_tokens_full;
-                                let prefer_range = can_range && (total_lines >= 2000 || !can_full);
-
-                                if prefer_range {
-                                    let viewport_top =
-                                        tab.viewport.line_offset.min(total_lines.saturating_sub(1));
-                                    let height = tab.viewport.height.max(1);
-                                    let overscan = 40usize.min(total_lines);
-                                    let start_line = viewport_top.saturating_sub(overscan);
-                                    let end_line_exclusive =
-                                        (viewport_top + height + overscan).min(total_lines);
-                                    if let Some(range) = lsp_range_for_full_lines(
-                                        tab,
-                                        start_line,
-                                        end_line_exclusive,
-                                        encoding,
-                                    ) {
-                                        effects.push(Effect::LspSemanticTokensRangeRequest {
-                                            path: opened_path.clone(),
-                                            version,
-                                            range,
-                                        });
-                                    }
-                                } else if can_full {
-                                    effects.push(Effect::LspSemanticTokensRequest {
-                                        path: opened_path.clone(),
-                                        version,
-                                    });
-                                }
+                            DispatchResult {
+                                effects,
+                                state_changed,
                             }
-
-                            if supports_inlay_hints {
-                                let total_lines = tab.buffer.len_lines().max(1);
-                                let start_line =
-                                    tab.viewport.line_offset.min(total_lines.saturating_sub(1));
-                                let end_line_exclusive =
-                                    (start_line + tab.viewport.height.max(1)).min(total_lines);
-                                if let Some(range) = lsp_range_for_full_lines(
-                                    tab,
-                                    start_line,
-                                    end_line_exclusive,
-                                    encoding,
-                                ) {
-                                    effects.push(Effect::LspInlayHintsRequest {
-                                        path: opened_path.clone(),
-                                        version,
-                                        range,
-                                    });
-                                }
-                            }
-
-                            if supports_folding_range {
-                                effects.push(Effect::LspFoldingRangeRequest {
-                                    path: opened_path,
+                        }
+                        EditorAction::Saved {
+                            pane,
+                            path,
+                            success,
+                            version,
+                        } => {
+                            let (state_changed, effects) =
+                                self.state.editor.dispatch_action(EditorAction::Saved {
+                                    pane,
+                                    path,
+                                    success,
                                     version,
                                 });
+
+                            DispatchResult {
+                                effects,
+                                state_changed,
                             }
                         }
+                        EditorAction::CloseTabAt { pane, index } => {
+                            let (state_changed, effects) = self
+                                .state
+                                .editor
+                                .dispatch_action(EditorAction::CloseTabAt { pane, index });
 
-                        DispatchResult {
-                            effects,
-                            state_changed,
+                            DispatchResult {
+                                effects,
+                                state_changed,
+                            }
                         }
-                    }
-                    EditorAction::SetActiveTab { pane, index } => {
-                        let (state_changed, effects) = self
-                            .state
-                            .editor
-                            .dispatch_action(EditorAction::SetActiveTab { pane, index });
+                        EditorAction::CloseTabsById { pane, tab_ids } => {
+                            let (state_changed, effects) = self
+                                .state
+                                .editor
+                                .dispatch_action(EditorAction::CloseTabsById { pane, tab_ids });
 
-                        DispatchResult {
-                            effects,
-                            state_changed,
+                            DispatchResult {
+                                effects,
+                                state_changed,
+                            }
                         }
-                    }
-                    EditorAction::Saved {
-                        pane,
-                        path,
-                        success,
-                        version,
-                    } => {
-                        let (state_changed, effects) =
-                            self.state.editor.dispatch_action(EditorAction::Saved {
-                                pane,
-                                path,
-                                success,
-                                version,
-                            });
-
-                        DispatchResult {
-                            effects,
-                            state_changed,
+                        other => {
+                            let (state_changed, effects) = self.state.editor.dispatch_action(other);
+                            DispatchResult {
+                                effects,
+                                state_changed,
+                            }
                         }
-                    }
-                    EditorAction::CloseTabAt { pane, index } => {
-                        let (state_changed, effects) = self
-                            .state
-                            .editor
-                            .dispatch_action(EditorAction::CloseTabAt { pane, index });
-
-                        DispatchResult {
-                            effects,
-                            state_changed,
-                        }
-                    }
-                    EditorAction::CloseTabsById { pane, tab_ids } => {
-                        let (state_changed, effects) = self
-                            .state
-                            .editor
-                            .dispatch_action(EditorAction::CloseTabsById { pane, tab_ids });
-
-                        DispatchResult {
-                            effects,
-                            state_changed,
-                        }
-                    }
-                    other => {
-                        let (state_changed, effects) = self.state.editor.dispatch_action(other);
-                        DispatchResult {
-                            effects,
-                            state_changed,
-                        }
-                    }
-                };
+                    };
 
                 result.state_changed |= completion_changed;
 
