@@ -26,21 +26,12 @@ pub(super) fn node_is_field(parent: Node<'_>, field_name: &str, node: Node<'_>) 
 }
 
 pub(super) fn node_in_field_subtree(parent: Node<'_>, field_name: &str, node: Node<'_>) -> bool {
-    let Some(field_node) = parent.child_by_field_name(field_name) else {
-        return false;
-    };
-
-    let mut current = Some(node);
-    while let Some(cursor) = current {
-        if same_node(cursor, field_node) {
-            return true;
-        }
-        if same_node(cursor, parent) {
-            break;
-        }
-        current = cursor.parent();
-    }
-    false
+    // A node can have several children sharing one field name (e.g. a `declaration`
+    // with multiple `declarator` fields: `int a = 1, b = 2;`). `child_by_field_name`
+    // only returns the first, so iterate every field child to find one that contains `node`.
+    let mut cursor = parent.walk();
+    let mut field_nodes = parent.children_by_field_name(field_name, &mut cursor);
+    field_nodes.any(|field_node| node_contains(field_node, node))
 }
 
 pub(super) fn node_contains(ancestor: Node<'_>, descendant: Node<'_>) -> bool {

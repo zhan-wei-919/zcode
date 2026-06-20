@@ -985,6 +985,28 @@ void f() {\n\
 }
 
 #[test]
+fn test_highlight_cpp_multi_declarator_all_names_highlighted() {
+    // 一行声明多个 declarator 时，除第一个外都应被高亮为 Variable。
+    let src = "int BM = 128, BN = 128, BK = 16;\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.cpp"), &rope).expect("cpp syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, rope.len_lines());
+    let line = src.lines().next().unwrap();
+
+    for name in ["BM", "BN", "BK"] {
+        let idx = line.find(name).unwrap();
+        assert!(
+            spans[0].iter().any(|s| {
+                s.kind == HighlightKind::Variable && s.start <= idx && idx < s.end
+            }),
+            "expected Variable for `{name}`, got: {:?}",
+            spans[0]
+        );
+    }
+}
+
+#[test]
 fn test_highlight_header_defaults_to_cpp() {
     let src = "class A {};\n";
     let rope = Rope::from_str(src);
