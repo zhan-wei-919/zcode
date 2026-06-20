@@ -61,7 +61,6 @@ fn test_default_config() {
     assert_eq!(config.tab_size, 4);
     assert!(config.show_line_numbers);
     assert!(config.show_indent_guides);
-    assert!(!config.format_on_save);
     assert!(config.lsp_hover.show_definition_source);
     assert_eq!(config.lsp_hover.definition_max_lines, 400);
 }

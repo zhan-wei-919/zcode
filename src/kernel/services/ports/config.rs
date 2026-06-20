@@ -11,8 +11,6 @@ pub struct EditorConfig {
     pub scroll_lines: usize,
     pub show_line_numbers: bool,
     pub auto_indent: bool,
-    #[serde(default, alias = "formatOnSave")]
-    pub format_on_save: bool,
     #[serde(default = "default_show_indent_guides", alias = "showIndentGuides")]
     pub show_indent_guides: bool,
     #[serde(default, alias = "lspInputTiming")]
@@ -132,7 +130,6 @@ impl Default for EditorConfig {
             scroll_lines: 1,
             show_line_numbers: true,
             auto_indent: true,
-            format_on_save: false,
             show_indent_guides: default_show_indent_guides(),
             lsp_input_timing: LspInputTimingConfig::default(),
             lsp_hover: LspHoverConfig::default(),

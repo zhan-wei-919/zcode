@@ -179,9 +179,6 @@ pub enum Action {
     LspApplyWorkspaceEdit {
         edit: LspWorkspaceEdit,
     },
-    LspFormatCompleted {
-        path: PathBuf,
-    },
     LspProgressEnd,
     CompletionClose,
     CompletionMoveSelection {

@@ -556,7 +556,6 @@ impl AppState {
 pub struct LspState {
     pub server_capabilities: FxHashMap<LspClientKey, LspServerCapabilities>,
     pub payload_fingerprints: LspPayloadFingerprints,
-    pub pending_format_on_save: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

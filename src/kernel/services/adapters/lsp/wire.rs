@@ -630,9 +630,6 @@ fn dispatch_empty_response(kind: &LspRequestKind, ctx: &KernelServiceContext) {
         LspRequestKind::SignatureHelp => ctx.dispatch(Action::LspSignatureHelp {
             payload: LspSignatureHelpPayload::default(),
         }),
-        LspRequestKind::Format { path } => {
-            ctx.dispatch(Action::LspFormatCompleted { path: path.clone() })
-        }
         _ => {}
     }
 }
@@ -1003,8 +1000,6 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                     },
                 });
             }
-
-            ctx.dispatch(Action::LspFormatCompleted { path });
         }
         LspRequestKind::ExecuteCommand => {}
         LspRequestKind::Shutdown => {}

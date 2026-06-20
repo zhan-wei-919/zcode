@@ -252,24 +252,6 @@ impl super::Store {
                 let mut effects = effects;
                 effects.extend(cmd_effects);
 
-                if self.state.editor.config.format_on_save {
-                    let path = self
-                        .state
-                        .editor
-                        .pane(pane)
-                        .and_then(|pane_state| pane_state.active_tab())
-                        .and_then(|tab| tab.path.clone());
-                    if let Some(path) = path {
-                        if is_lsp_source_path(&path)
-                            && lsp_server_capabilities_for_path(&self.state, &path)
-                                .is_some_and(|c| c.format)
-                        {
-                            self.state.lsp.pending_format_on_save = Some(path.clone());
-                            effects.push(Effect::LspFormatRequest { path });
-                        }
-                    }
-                }
-
                 return DispatchResult {
                     effects,
                     state_changed,

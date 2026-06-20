@@ -1237,49 +1237,6 @@ impl super::super::Store {
         }
     }
 
-    fn handle_format_completed(
-        &mut self,
-        path: std::path::PathBuf,
-    ) -> super::super::DispatchResult {
-        if self.state.lsp.pending_format_on_save.as_ref() != Some(&path) {
-            return super::super::DispatchResult {
-                effects: Vec::new(),
-                state_changed: false,
-            };
-        }
-        self.state.lsp.pending_format_on_save = None;
-
-        let preferred_pane = self.state.ui.editor_layout.active_pane;
-        let Some((pane, tab_index)) = find_open_tab(&self.state.editor, preferred_pane, &path)
-        else {
-            return super::super::DispatchResult {
-                effects: Vec::new(),
-                state_changed: false,
-            };
-        };
-        let Some(version) = self
-            .state
-            .editor
-            .pane(pane)
-            .and_then(|pane_state| pane_state.tabs.get(tab_index))
-            .map(|tab| tab.edit_version)
-        else {
-            return super::super::DispatchResult {
-                effects: Vec::new(),
-                state_changed: false,
-            };
-        };
-
-        super::super::DispatchResult {
-            effects: vec![Effect::WriteFile {
-                pane,
-                path,
-                version,
-            }],
-            state_changed: false,
-        }
-    }
-
     pub(in crate::kernel::store) fn reduce_lsp_action(
         &mut self,
         action: Action,
@@ -1386,7 +1343,6 @@ impl super::super::Store {
                     state_changed: changed,
                 }
             }
-            Action::LspFormatCompleted { path } => self.handle_format_completed(path),
             _ => unreachable!("non-lsp action passed to reduce_lsp_action"),
         }
     }

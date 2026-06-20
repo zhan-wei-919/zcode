@@ -628,8 +628,7 @@ impl Store {
             | action @ Action::LspCompletion { .. }
             | action @ Action::LspCompletionResolved { .. }
             | action @ Action::LspSignatureHelp { .. }
-            | action @ Action::LspApplyWorkspaceEdit { .. }
-            | action @ Action::LspFormatCompleted { .. } => self.reduce_lsp_action(action),
+            | action @ Action::LspApplyWorkspaceEdit { .. } => self.reduce_lsp_action(action),
             Action::LspProgressEnd => DispatchResult {
                 effects: Vec::new(),
                 state_changed: true,
