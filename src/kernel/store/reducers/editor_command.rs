@@ -28,21 +28,6 @@ impl super::Store {
                 let mut effects = effects;
                 effects.extend(cmd_effects);
 
-                let boundary_chars = self
-                    .state
-                    .editor
-                    .config
-                    .lsp_input_timing
-                    .boundary_chars
-                    .as_str();
-                if let Some((path, version)) = self.active_editor_lsp_path_and_version() {
-                    if boundary_chars.contains(ch) {
-                        state_changed |= self.flush_pending_semantic_highlights_for_path(&path);
-                    } else if changed {
-                        self.arm_semantic_flush_defer_for_path(path, version);
-                    }
-                }
-
                 let tab = self
                     .state
                     .editor
@@ -442,21 +427,6 @@ impl super::Store {
             }
             other => {
                 let pane = self.state.ui.editor_layout.active_pane;
-                let should_flush_newline = matches!(other, Command::InsertNewline);
-                let should_flush_tab = matches!(other, Command::InsertTab);
-                let should_flush_cursor_move = other.is_cursor_command();
-                let should_defer_semantic_after_edit = matches!(
-                    other,
-                    Command::DeleteBackward
-                        | Command::DeleteForward
-                        | Command::DeleteLine
-                        | Command::DeleteToLineEnd
-                        | Command::DeleteSelection
-                        | Command::Undo
-                        | Command::Redo
-                        | Command::Paste
-                        | Command::Cut
-                );
                 let (changed, cmd_effects) = self.state.editor.apply_command(pane, other);
                 if changed {
                     state_changed = true;
@@ -464,39 +434,6 @@ impl super::Store {
                 // TODO: avoid allocation by using SmallVec if needed.
                 let mut effects = effects;
                 effects.extend(cmd_effects);
-
-                if should_flush_newline || should_flush_tab {
-                    let boundary_chars = self
-                        .state
-                        .editor
-                        .config
-                        .lsp_input_timing
-                        .boundary_chars
-                        .as_str();
-                    let should_flush = (should_flush_newline && boundary_chars.contains('\n'))
-                        || (should_flush_tab && boundary_chars.contains('\t'));
-                    if should_flush {
-                        if let Some(path) = self.active_editor_file_path() {
-                            state_changed |= self.flush_pending_semantic_highlights_for_path(&path);
-                        }
-                    } else if changed {
-                        if let Some((path, version)) = self.active_editor_lsp_path_and_version() {
-                            self.arm_semantic_flush_defer_for_path(path, version);
-                        }
-                    }
-                }
-
-                if should_flush_cursor_move {
-                    if let Some(path) = self.active_editor_file_path() {
-                        state_changed |= self.flush_pending_semantic_highlights_for_path(&path);
-                    }
-                }
-
-                if should_defer_semantic_after_edit && changed {
-                    if let Some((path, version)) = self.active_editor_lsp_path_and_version() {
-                        self.arm_semantic_flush_defer_for_path(path, version);
-                    }
-                }
 
                 let had_signature_help = self.state.ui.signature_help.is_active();
                 if had_signature_help {

@@ -14,7 +14,6 @@ use crate::kernel::services::ports::LspCommand;
 use crate::kernel::services::ports::LspCompletionItem;
 use crate::kernel::services::ports::LspFoldingRange;
 use crate::kernel::services::ports::LspInlayHint;
-use crate::kernel::services::ports::LspSemanticToken;
 use crate::kernel::services::ports::LspServerCapabilities;
 use crate::kernel::services::ports::LspServerKind;
 use crate::kernel::services::ports::LspSignatureHelpPayload;
@@ -147,17 +146,6 @@ pub enum Action {
         server: LspServerKind,
         root: PathBuf,
         capabilities: LspServerCapabilities,
-    },
-    LspSemanticTokens {
-        path: PathBuf,
-        version: u64,
-        tokens: Vec<LspSemanticToken>,
-    },
-    LspSemanticTokensRange {
-        path: PathBuf,
-        version: u64,
-        range: crate::kernel::services::ports::LspRange,
-        tokens: Vec<LspSemanticToken>,
     },
     LspInlayHints {
         path: PathBuf,

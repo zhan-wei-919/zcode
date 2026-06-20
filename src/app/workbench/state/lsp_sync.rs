@@ -7,7 +7,6 @@ use std::time::Instant;
 /// 三类按需 LSP 请求的去抖截止时间。到点后由 tick 触发一次请求。
 #[derive(Debug, Default)]
 pub(in crate::app::workbench) struct LspDebounceState {
-    pub(in crate::app::workbench) semantic_tokens: Option<Instant>,
     pub(in crate::app::workbench) inlay_hints: Option<Instant>,
     pub(in crate::app::workbench) folding_range: Option<Instant>,
 }

@@ -118,15 +118,6 @@ pub enum Effect {
         path: PathBuf,
         range: LspRange,
     },
-    LspSemanticTokensRequest {
-        path: PathBuf,
-        version: u64,
-    },
-    LspSemanticTokensRangeRequest {
-        path: PathBuf,
-        version: u64,
-        range: LspRange,
-    },
     LspInlayHintsRequest {
         path: PathBuf,
         version: u64,

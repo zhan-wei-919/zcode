@@ -274,23 +274,7 @@ fn handle_request(
                 }),
                 folding_range_provider: (!disable_optional)
                     .then_some(lsp_types::FoldingRangeProviderCapability::Simple(true)),
-                semantic_tokens_provider: (!disable_optional).then_some(
-                    lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
-                        lsp_types::SemanticTokensOptions {
-                            work_done_progress_options: lsp_types::WorkDoneProgressOptions::default(
-                            ),
-                            legend: lsp_types::SemanticTokensLegend {
-                                token_types: vec![
-                                    lsp_types::SemanticTokenType::KEYWORD,
-                                    lsp_types::SemanticTokenType::FUNCTION,
-                                ],
-                                token_modifiers: Vec::new(),
-                            },
-                            range: Some(true),
-                            full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
-                        },
-                    ),
-                ),
+                semantic_tokens_provider: None,
                 inlay_hint_provider: (!disable_optional).then_some(lsp_types::OneOf::Left(true)),
                 document_formatting_provider: Some(lsp_types::OneOf::Left(true)),
                 document_range_formatting_provider: Some(lsp_types::OneOf::Left(true)),
@@ -523,111 +507,6 @@ fn handle_request(
             }];
 
             (Response::new_ok(req.id, Some(ranges)), None, Vec::new())
-        }
-        m if m == lsp_types::request::SemanticTokensFullRequest::METHOD => {
-            let params = serde_json::from_value::<lsp_types::SemanticTokensParams>(req.params)
-                .unwrap_or_else(|_| lsp_types::SemanticTokensParams {
-                    work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
-                    partial_result_params: lsp_types::PartialResultParams::default(),
-                    text_document: lsp_types::TextDocumentIdentifier {
-                        uri: lsp_types::Url::parse("file:///").unwrap(),
-                    },
-                });
-
-            let keyword_len = position_encoding.col_units_for_str("fn");
-            let fn_name_start = position_encoding.col_units_for_str("fn ");
-            let fn_name_len = position_encoding.col_units_for_str("main");
-
-            let data = vec![
-                lsp_types::SemanticToken {
-                    delta_line: 0,
-                    delta_start: 0,
-                    length: keyword_len,
-                    token_type: 0,
-                    token_modifiers_bitset: 0,
-                },
-                lsp_types::SemanticToken {
-                    delta_line: 0,
-                    delta_start: fn_name_start,
-                    length: fn_name_len,
-                    token_type: 1,
-                    token_modifiers_bitset: 0,
-                },
-            ];
-
-            let tokens = lsp_types::SemanticTokens {
-                result_id: None,
-                data,
-            };
-
-            (
-                Response::new_ok(
-                    req.id,
-                    Some(lsp_types::SemanticTokensResult::Tokens(tokens)),
-                ),
-                params
-                    .text_document
-                    .uri
-                    .to_file_path()
-                    .ok()
-                    .and_then(|path| path.parent().map(|dir| dir.to_path_buf())),
-                Vec::new(),
-            )
-        }
-        m if m == lsp_types::request::SemanticTokensRangeRequest::METHOD => {
-            let params = serde_json::from_value::<lsp_types::SemanticTokensRangeParams>(req.params)
-                .unwrap_or_else(|_| lsp_types::SemanticTokensRangeParams {
-                    work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
-                    partial_result_params: lsp_types::PartialResultParams::default(),
-                    text_document: lsp_types::TextDocumentIdentifier {
-                        uri: lsp_types::Url::parse("file:///").unwrap(),
-                    },
-                    range: lsp_types::Range::new(
-                        lsp_types::Position::new(0, 0),
-                        lsp_types::Position::new(1, 0),
-                    ),
-                });
-
-            let target_line = params.range.start.line;
-            let keyword_len = position_encoding.col_units_for_str("fn");
-            let fn_name_start = position_encoding.col_units_for_str("fn ");
-            let fn_name_len = position_encoding.col_units_for_str("main");
-
-            let data = vec![
-                lsp_types::SemanticToken {
-                    delta_line: target_line,
-                    delta_start: 0,
-                    length: keyword_len,
-                    token_type: 0,
-                    token_modifiers_bitset: 0,
-                },
-                lsp_types::SemanticToken {
-                    delta_line: 0,
-                    delta_start: fn_name_start,
-                    length: fn_name_len,
-                    token_type: 1,
-                    token_modifiers_bitset: 0,
-                },
-            ];
-
-            let tokens = lsp_types::SemanticTokens {
-                result_id: None,
-                data,
-            };
-
-            (
-                Response::new_ok(
-                    req.id,
-                    Some(lsp_types::SemanticTokensRangeResult::Tokens(tokens)),
-                ),
-                params
-                    .text_document
-                    .uri
-                    .to_file_path()
-                    .ok()
-                    .and_then(|path| path.parent().map(|dir| dir.to_path_buf())),
-                Vec::new(),
-            )
         }
         m if m == lsp_types::request::InlayHintRequest::METHOD => {
             let params = serde_json::from_value::<lsp_types::InlayHintParams>(req.params)

@@ -11,7 +11,6 @@ mod overlay;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum LspDebouncePipeline {
-    SemanticTokens,
     InlayHints,
     FoldingRange,
 }
@@ -57,28 +56,15 @@ pub(super) fn lsp_debounce_duration(
     let millis = match trigger {
         LspDebounceTrigger::Immediate => 0,
         LspDebounceTrigger::Identifier => match pipeline {
-            LspDebouncePipeline::SemanticTokens => timing.identifier_debounce_ms.semantic_tokens,
             LspDebouncePipeline::InlayHints => timing.identifier_debounce_ms.inlay_hints,
             LspDebouncePipeline::FoldingRange => timing.identifier_debounce_ms.folding_range,
         },
         LspDebounceTrigger::Delete => match pipeline {
-            LspDebouncePipeline::SemanticTokens => timing.delete_debounce_ms.semantic_tokens,
             LspDebouncePipeline::InlayHints => timing.delete_debounce_ms.inlay_hints,
             LspDebouncePipeline::FoldingRange => timing.delete_debounce_ms.folding_range,
         },
     };
     Duration::from_millis(millis)
-}
-
-pub(super) fn semantic_tokens_trigger(
-    trigger: LspDebounceTrigger,
-    eager_refresh: bool,
-) -> LspDebounceTrigger {
-    if eager_refresh {
-        LspDebounceTrigger::Immediate
-    } else {
-        trigger
-    }
 }
 
 fn is_lsp_boundary_char(ch: char, boundary_chars: &str) -> bool {
@@ -117,42 +103,12 @@ mod tests {
     fn debounce_duration_reads_pipeline_specific_values() {
         let timing = LspInputTimingConfig::default();
 
-        let semantic = lsp_debounce_duration(
-            &timing,
-            LspDebouncePipeline::SemanticTokens,
-            LspDebounceTrigger::Identifier,
-        );
         let inlay_delete = lsp_debounce_duration(
             &timing,
             LspDebouncePipeline::InlayHints,
             LspDebounceTrigger::Delete,
         );
 
-        assert_eq!(semantic, Duration::from_millis(360));
         assert_eq!(inlay_delete, Duration::from_millis(180));
-    }
-
-    #[test]
-    fn semantic_tokens_trigger_stays_immediate_when_eager() {
-        assert_eq!(
-            semantic_tokens_trigger(LspDebounceTrigger::Identifier, true),
-            LspDebounceTrigger::Immediate
-        );
-        assert_eq!(
-            semantic_tokens_trigger(LspDebounceTrigger::Delete, true),
-            LspDebounceTrigger::Immediate
-        );
-    }
-
-    #[test]
-    fn semantic_tokens_trigger_keeps_original_when_not_eager() {
-        assert_eq!(
-            semantic_tokens_trigger(LspDebounceTrigger::Identifier, false),
-            LspDebounceTrigger::Identifier
-        );
-        assert_eq!(
-            semantic_tokens_trigger(LspDebounceTrigger::Delete, false),
-            LspDebounceTrigger::Delete
-        );
     }
 }

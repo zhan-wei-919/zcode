@@ -1,4 +1,3 @@
-use crate::kernel::language::adapter::adapter_for_tab;
 use crate::kernel::services::ports::{LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit};
 use crate::kernel::{Action, Effect};
 
@@ -7,7 +6,6 @@ use super::intel::completion::{
     completion_replace_range, CompletionInsertion,
 };
 use super::intel::lsp::{lsp_position_encoding_for_path, lsp_position_to_byte_offset};
-use super::seed_completion_semantic_highlight;
 use super::DispatchResult;
 
 impl super::Store {
@@ -91,15 +89,6 @@ impl super::Store {
                         state_changed: false,
                     };
                 };
-                let completion_highlight_kind = {
-                    let adapter = adapter_for_tab(tab);
-                    adapter.completion_protocol().completion_highlight_kind(
-                        &crate::kernel::language::CompletionContext::snapshot(
-                            req.normalization.clone(),
-                            &record.raw,
-                        ),
-                    )
-                };
                 let entry = record.entry;
 
                 {
@@ -172,13 +161,6 @@ impl super::Store {
                             if insertion.has_cursor_or_selection() {
                                 apply_completion_insertion_cursor(tab, &insertion, tab_size);
                             }
-                            if let Some(kind) = completion_highlight_kind {
-                                let _ = seed_completion_semantic_highlight(
-                                    tab,
-                                    insertion.text.as_str(),
-                                    kind,
-                                );
-                            }
                         }
                     }
                 }
@@ -189,21 +171,6 @@ impl super::Store {
                         arguments: cmd.arguments,
                     });
                 }
-
-                let requested_semantic_refresh = effects.iter().any(|effect| {
-                    matches!(
-                        effect,
-                        Effect::LspSemanticTokensRequest { path, .. }
-                            | Effect::LspSemanticTokensRangeRequest { path, .. }
-                            if path == &req.path
-                    )
-                });
-                if requested_semantic_refresh {
-                    self.arm_eager_semantic_refresh_for_path(req.path.clone());
-                }
-
-                // Flush pending semantic highlights immediately on completion confirm.
-                self.flush_pending_semantic_highlights_for_path(&req.path);
 
                 DispatchResult {
                     effects,

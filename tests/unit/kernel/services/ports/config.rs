@@ -9,12 +9,10 @@ fn test_lsp_input_timing_defaults() {
     assert!(timing.boundary_immediate);
 
     assert_eq!(timing.identifier_debounce_ms.completion, 240);
-    assert_eq!(timing.identifier_debounce_ms.semantic_tokens, 360);
     assert_eq!(timing.identifier_debounce_ms.inlay_hints, 420);
     assert_eq!(timing.identifier_debounce_ms.folding_range, 480);
 
     assert_eq!(timing.delete_debounce_ms.completion, 120);
-    assert_eq!(timing.delete_debounce_ms.semantic_tokens, 140);
     assert_eq!(timing.delete_debounce_ms.inlay_hints, 180);
     assert_eq!(timing.delete_debounce_ms.folding_range, 220);
 }
@@ -33,13 +31,11 @@ fn test_lsp_input_timing_serde_aliases() {
           "boundaryImmediate": false,
           "identifierDebounceMs": {
             "completion": 11,
-            "semantic_tokens": 22,
             "inlay_hints": 33,
             "folding_range": 44
           },
           "deleteDebounceMs": {
             "completion": 55,
-            "semantic_tokens": 66,
             "inlay_hints": 77,
             "folding_range": 88
           }
@@ -52,11 +48,9 @@ fn test_lsp_input_timing_serde_aliases() {
     assert_eq!(timing.boundary_chars, ",.;");
     assert!(!timing.boundary_immediate);
     assert_eq!(timing.identifier_debounce_ms.completion, 11);
-    assert_eq!(timing.identifier_debounce_ms.semantic_tokens, 22);
     assert_eq!(timing.identifier_debounce_ms.inlay_hints, 33);
     assert_eq!(timing.identifier_debounce_ms.folding_range, 44);
     assert_eq!(timing.delete_debounce_ms.completion, 55);
-    assert_eq!(timing.delete_debounce_ms.semantic_tokens, 66);
     assert_eq!(timing.delete_debounce_ms.inlay_hints, 77);
     assert_eq!(timing.delete_debounce_ms.folding_range, 88);
 }

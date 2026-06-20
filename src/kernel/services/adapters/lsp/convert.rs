@@ -3,7 +3,7 @@ use crate::kernel::panel::symbols::SymbolItem;
 use crate::kernel::services::ports::{
     LspCodeAction, LspCommand, LspCompletionItem, LspHoverBlock, LspHoverPayload, LspInlayHint,
     LspInsertTextFormat, LspMarkup, LspPosition, LspPositionEncoding, LspRange, LspResourceOp,
-    LspSemanticToken, LspSemanticTokensLegend, LspServerCapabilities, LspSignatureHelpPayload,
+    LspServerCapabilities, LspSignatureHelpPayload,
     LspSignatureInfo, LspSignatureParameter, LspSignatureParameterLabel, LspTextChange,
     LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
@@ -96,56 +96,6 @@ pub(super) fn server_capabilities_from_lsp(
             .and_then(|p| p.trigger_characters.clone()),
     );
 
-    let semantic_tokens_legend = caps.semantic_tokens_provider.as_ref().map(|provider| {
-        let options = match provider {
-            lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => options,
-            lsp_types::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
-                options,
-            ) => &options.semantic_tokens_options,
-        };
-
-        let token_types = options
-            .legend
-            .token_types
-            .iter()
-            .map(|t| t.as_str().to_string())
-            .collect::<Vec<_>>();
-        let token_modifiers = options
-            .legend
-            .token_modifiers
-            .iter()
-            .map(|t| t.as_str().to_string())
-            .collect::<Vec<_>>();
-
-        LspSemanticTokensLegend {
-            token_types,
-            token_modifiers,
-        }
-    });
-
-    let (semantic_tokens_range, semantic_tokens_full) = caps
-        .semantic_tokens_provider
-        .as_ref()
-        .map(|provider| {
-            let options = match provider {
-                lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => {
-                    options
-                }
-                lsp_types::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
-                    options,
-                ) => &options.semantic_tokens_options,
-            };
-
-            let range = options.range.unwrap_or(false);
-            let full = options.full.as_ref().is_some_and(|full| match full {
-                lsp_types::SemanticTokensFullOptions::Bool(enabled) => *enabled,
-                lsp_types::SemanticTokensFullOptions::Delta { .. } => true,
-            });
-
-            (range, full)
-        })
-        .unwrap_or((false, false));
-
     LspServerCapabilities {
         position_encoding: encoding,
         hover: hover(&caps.hover_provider),
@@ -159,43 +109,12 @@ pub(super) fn server_capabilities_from_lsp(
         rename: one_of_bool(&caps.rename_provider),
         format: one_of_bool(&caps.document_formatting_provider),
         range_format: one_of_bool(&caps.document_range_formatting_provider),
-        semantic_tokens: caps.semantic_tokens_provider.is_some(),
-        semantic_tokens_range,
-        semantic_tokens_full,
-        semantic_tokens_legend,
         inlay_hints: one_of_bool(&caps.inlay_hint_provider),
         folding_range: folding(&caps.folding_range_provider),
         completion_resolve,
         completion_triggers,
         signature_help_triggers,
     }
-}
-
-pub(super) fn decode_semantic_tokens(
-    tokens: Vec<lsp_types::SemanticToken>,
-) -> Vec<LspSemanticToken> {
-    let mut out = Vec::with_capacity(tokens.len().min(2048));
-    let mut line = 0u32;
-    let mut start = 0u32;
-
-    for token in tokens {
-        line = line.saturating_add(token.delta_line);
-        if token.delta_line == 0 {
-            start = start.saturating_add(token.delta_start);
-        } else {
-            start = token.delta_start;
-        }
-
-        out.push(LspSemanticToken {
-            line,
-            start,
-            length: token.length,
-            token_type: token.token_type,
-            modifiers: token.token_modifiers_bitset,
-        });
-    }
-
-    out
 }
 
 pub(super) fn inlay_hints_from_lsp(hints: Vec<lsp_types::InlayHint>) -> Vec<LspInlayHint> {
@@ -1083,55 +1002,6 @@ pub(super) fn client_capabilities() -> lsp_types::ClientCapabilities {
     };
 
     let workspace_symbol = lsp_types::WorkspaceSymbolClientCapabilities::default();
-    let semantic_tokens = lsp_types::SemanticTokensClientCapabilities {
-        dynamic_registration: Some(false),
-        requests: lsp_types::SemanticTokensClientCapabilitiesRequests {
-            range: Some(true),
-            full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
-        },
-        token_types: vec![
-            lsp_types::SemanticTokenType::NAMESPACE,
-            lsp_types::SemanticTokenType::TYPE,
-            lsp_types::SemanticTokenType::CLASS,
-            lsp_types::SemanticTokenType::ENUM,
-            lsp_types::SemanticTokenType::INTERFACE,
-            lsp_types::SemanticTokenType::STRUCT,
-            lsp_types::SemanticTokenType::TYPE_PARAMETER,
-            lsp_types::SemanticTokenType::PARAMETER,
-            lsp_types::SemanticTokenType::VARIABLE,
-            lsp_types::SemanticTokenType::PROPERTY,
-            lsp_types::SemanticTokenType::ENUM_MEMBER,
-            lsp_types::SemanticTokenType::EVENT,
-            lsp_types::SemanticTokenType::FUNCTION,
-            lsp_types::SemanticTokenType::METHOD,
-            lsp_types::SemanticTokenType::MACRO,
-            lsp_types::SemanticTokenType::KEYWORD,
-            lsp_types::SemanticTokenType::MODIFIER,
-            lsp_types::SemanticTokenType::COMMENT,
-            lsp_types::SemanticTokenType::STRING,
-            lsp_types::SemanticTokenType::NUMBER,
-            lsp_types::SemanticTokenType::REGEXP,
-            lsp_types::SemanticTokenType::OPERATOR,
-            lsp_types::SemanticTokenType::DECORATOR,
-        ],
-        token_modifiers: vec![
-            lsp_types::SemanticTokenModifier::DECLARATION,
-            lsp_types::SemanticTokenModifier::DEFINITION,
-            lsp_types::SemanticTokenModifier::READONLY,
-            lsp_types::SemanticTokenModifier::STATIC,
-            lsp_types::SemanticTokenModifier::DEPRECATED,
-            lsp_types::SemanticTokenModifier::ABSTRACT,
-            lsp_types::SemanticTokenModifier::ASYNC,
-            lsp_types::SemanticTokenModifier::MODIFICATION,
-            lsp_types::SemanticTokenModifier::DOCUMENTATION,
-            lsp_types::SemanticTokenModifier::DEFAULT_LIBRARY,
-        ],
-        formats: vec![lsp_types::TokenFormat::RELATIVE],
-        overlapping_token_support: Some(false),
-        multiline_token_support: Some(false),
-        server_cancel_support: Some(true),
-        augments_syntax_tokens: Some(true),
-    };
     let inlay_hint = lsp_types::InlayHintClientCapabilities {
         dynamic_registration: Some(false),
         resolve_support: None,
@@ -1159,7 +1029,6 @@ pub(super) fn client_capabilities() -> lsp_types::ClientCapabilities {
             completion: Some(completion),
             signature_help: Some(signature_help),
             document_symbol: Some(document_symbol),
-            semantic_tokens: Some(semantic_tokens),
             inlay_hint: Some(inlay_hint),
             ..Default::default()
         }),

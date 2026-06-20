@@ -184,7 +184,6 @@ impl Workbench {
                         .map(|tab| tab.edit_version);
                     if before_version != after_version {
                         let refresh = Command::Paste;
-                        self.maybe_schedule_semantic_tokens_debounce(&refresh);
                         self.maybe_schedule_inlay_hints_debounce(&refresh);
                         self.maybe_schedule_folding_range_debounce(&refresh);
                     }
@@ -211,7 +210,6 @@ impl Workbench {
             let cmd_for_schedule = cmd.clone();
             let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd));
             self.maybe_trigger_completion(&cmd_for_schedule);
-            self.maybe_schedule_semantic_tokens_debounce(&cmd_for_schedule);
             self.maybe_schedule_inlay_hints_debounce(&cmd_for_schedule);
             self.maybe_schedule_folding_range_debounce(&cmd_for_schedule);
             if self.store.state().ui.should_quit {
@@ -238,7 +236,6 @@ impl Workbench {
                     let cmd = Command::InsertChar(ch);
                     let _ = self.dispatch_kernel(KernelAction::RunCommand(cmd.clone()));
                     self.maybe_trigger_completion(&cmd);
-                    self.maybe_schedule_semantic_tokens_debounce(&cmd);
                     self.maybe_schedule_inlay_hints_debounce(&cmd);
                     self.maybe_schedule_folding_range_debounce(&cmd);
                     EventResult::Consumed

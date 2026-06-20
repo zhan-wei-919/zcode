@@ -1,10 +1,8 @@
 use super::*;
-use crate::kernel::editor::HighlightKind;
 use crate::kernel::language::adapter::adapter_for_tab;
 use crate::kernel::services::ports::{
     EditorConfig, LspCommand, LspCompletionItem, LspFoldingRange, LspInlayHint,
-    LspInsertTextFormat, LspPosition, LspRange, LspSemanticToken, LspSemanticTokensLegend,
-    LspServerCapabilities, LspServerKind, LspTextEdit,
+    LspInsertTextFormat, LspPosition, LspRange, LspServerCapabilities, LspServerKind, LspTextEdit,
 };
 use crate::models::FileTree;
 use std::ffi::OsString;
@@ -24,10 +22,6 @@ fn rust_content(lines: usize) -> String {
     out
 }
 
-fn install_rust_lsp_caps(store: &mut Store) {
-    install_rust_lsp_caps_with_triggers(store, Vec::new(), Vec::new());
-}
-
 fn install_rust_lsp_caps_with_triggers(
     store: &mut Store,
     completion_triggers: Vec<char>,
@@ -37,13 +31,6 @@ fn install_rust_lsp_caps_with_triggers(
         server: LspServerKind::RustAnalyzer,
         root: store.state.workspace_root.clone(),
         capabilities: LspServerCapabilities {
-            semantic_tokens: true,
-            semantic_tokens_full: true,
-            semantic_tokens_range: true,
-            semantic_tokens_legend: Some(LspSemanticTokensLegend {
-                token_types: vec!["function".to_string(), "variable".to_string()],
-                token_modifiers: vec![],
-            }),
             completion: true,
             completion_resolve: true,
             completion_triggers,
@@ -164,74 +151,6 @@ fn run_input_key_cycle(store: &mut Store, loops: usize) -> (std::time::Duration,
         changed += usize::from(r.state_changed);
     }
     (start.elapsed(), changed)
-}
-
-#[test]
-fn experiment_semantic_tokens_fanout_scale_baseline() {
-    let mut store = new_store();
-    install_rust_lsp_caps(&mut store);
-
-    let panes = 4usize;
-    let lines = 1200usize;
-    let path = store.state.workspace_root.join("fanout_semantic.rs");
-    let content = rust_content(lines);
-    let version = open_shared_path_tabs(&mut store, panes, &path, &content);
-
-    let tokens: Vec<LspSemanticToken> = (0..lines)
-        .map(|line| LspSemanticToken {
-            line: line as u32,
-            start: 3,
-            length: 8,
-            token_type: (line % 2) as u32,
-            modifiers: 0,
-        })
-        .collect();
-
-    let _ = store.dispatch(Action::LspSemanticTokens {
-        path: path.clone(),
-        version,
-        tokens: tokens.clone(),
-    });
-
-    let loops = 120usize;
-    let mut changed_count = 0usize;
-    let start = Instant::now();
-    for _ in 0..loops {
-        let result = store.dispatch(Action::LspSemanticTokens {
-            path: path.clone(),
-            version,
-            tokens: tokens.clone(),
-        });
-        if result.state_changed {
-            changed_count += 1;
-        }
-    }
-    let elapsed = start.elapsed();
-    let avg_us = elapsed.as_secs_f64() * 1_000_000.0 / loops as f64;
-
-    eprintln!(
-        "[experiment] semantic_tokens_fanout loops={} tabs={} tokens={} elapsed_ms={} avg_us={:.2} changed_count={}",
-        loops,
-        panes,
-        tokens.len(),
-        elapsed.as_millis(),
-        avg_us,
-        changed_count
-    );
-
-    for pane in 0..panes {
-        let tab = store
-            .state
-            .editor
-            .pane(pane)
-            .and_then(|p| p.active_tab())
-            .expect("tab exists");
-        let line = tab
-            .semantic_segments_lines(0, 1)
-            .and_then(|slice| slice.first())
-            .expect("semantic line exists");
-        assert!(!line.is_empty());
-    }
 }
 
 #[test]
@@ -401,40 +320,6 @@ fn experiment_inlay_hints_apply_scale_baseline() {
 }
 
 #[test]
-fn lsp_semantic_tokens_identical_payload_second_dispatch_is_noop() {
-    let mut store = new_store();
-    install_rust_lsp_caps(&mut store);
-
-    let path = store.state.workspace_root.join("semantic_fast_path.rs");
-    let content = rust_content(64);
-    let version = open_shared_path_tabs(&mut store, 2, &path, &content);
-
-    let tokens: Vec<LspSemanticToken> = (0..64)
-        .map(|line| LspSemanticToken {
-            line: line as u32,
-            start: 3,
-            length: 8,
-            token_type: (line % 2) as u32,
-            modifiers: 0,
-        })
-        .collect();
-
-    let first = store.dispatch(Action::LspSemanticTokens {
-        path: path.clone(),
-        version,
-        tokens: tokens.clone(),
-    });
-    assert!(first.state_changed);
-
-    let second = store.dispatch(Action::LspSemanticTokens {
-        path,
-        version,
-        tokens,
-    });
-    assert!(!second.state_changed);
-}
-
-#[test]
 fn lsp_inlay_hints_identical_payload_second_dispatch_is_noop() {
     let mut store = new_store();
 
@@ -551,185 +436,6 @@ fn lsp_inlay_hints_unsorted_payload_still_orders_by_column_then_label() {
         line,
         &vec!["a4".to_string(), "b4".to_string(), "z12".to_string()]
     );
-}
-
-#[test]
-fn lsp_semantic_tokens_legend_change_misses_fast_path() {
-    let mut store = new_store();
-    install_rust_lsp_caps(&mut store);
-
-    let path = store.state.workspace_root.join("semantic_legend_change.rs");
-    let content = "let value = 1;\n";
-    let version = open_shared_path_tabs(&mut store, 1, &path, content);
-    let tokens = vec![LspSemanticToken {
-        line: 0,
-        start: 4,
-        length: 5,
-        token_type: 1,
-        modifiers: 0,
-    }];
-
-    let first = store.dispatch(Action::LspSemanticTokens {
-        path: path.clone(),
-        version,
-        tokens: tokens.clone(),
-    });
-    assert!(first.state_changed);
-
-    let tab = store
-        .state
-        .editor
-        .pane(0)
-        .and_then(|p| p.active_tab())
-        .expect("tab exists");
-    let first_kind = tab
-        .semantic_segments_lines(0, 1)
-        .and_then(|rows| rows.first())
-        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
-    assert_eq!(first_kind, Some(HighlightKind::Variable));
-
-    let _ = store.dispatch(Action::LspServerCapabilities {
-        server: LspServerKind::RustAnalyzer,
-        root: store.state.workspace_root.clone(),
-        capabilities: LspServerCapabilities {
-            semantic_tokens: true,
-            semantic_tokens_full: true,
-            semantic_tokens_range: true,
-            semantic_tokens_legend: Some(LspSemanticTokensLegend {
-                token_types: vec!["function".to_string(), "keyword".to_string()],
-                token_modifiers: vec![],
-            }),
-            completion: true,
-            completion_resolve: true,
-            signature_help: true,
-            inlay_hints: true,
-            folding_range: true,
-            ..Default::default()
-        },
-    });
-
-    let second = store.dispatch(Action::LspSemanticTokens {
-        path,
-        version,
-        tokens,
-    });
-    assert!(second.state_changed);
-
-    let tab = store
-        .state
-        .editor
-        .pane(0)
-        .and_then(|p| p.active_tab())
-        .expect("tab exists");
-    let second_kind = tab
-        .semantic_segments_lines(0, 1)
-        .and_then(|rows| rows.first())
-        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
-    assert_eq!(second_kind, Some(HighlightKind::Keyword));
-}
-
-#[test]
-fn semantic_tokens_are_deferred_until_boundary_flush() {
-    let mut store = new_store();
-    install_rust_lsp_caps(&mut store);
-
-    let path = store.state.workspace_root.join("semantic_defer.rs");
-    let content = "let value = 1;\n";
-    let version = open_shared_path_tabs(&mut store, 1, &path, content);
-    let tokens = vec![LspSemanticToken {
-        line: 0,
-        start: 4,
-        length: 5,
-        token_type: 1,
-        modifiers: 0,
-    }];
-
-    let first = store.dispatch(Action::LspSemanticTokens {
-        path: path.clone(),
-        version,
-        tokens: tokens.clone(),
-    });
-    assert!(first.state_changed);
-
-    let tab = store
-        .state
-        .editor
-        .pane(0)
-        .and_then(|p| p.active_tab())
-        .expect("tab exists");
-    let first_kind = tab
-        .semantic_segments_lines(0, 1)
-        .and_then(|rows| rows.first())
-        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
-    assert_eq!(first_kind, Some(HighlightKind::Variable));
-
-    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('x')));
-    let version_after_identifier = store
-        .state
-        .editor
-        .pane(0)
-        .and_then(|p| p.active_tab())
-        .map(|tab| tab.edit_version)
-        .expect("tab exists");
-
-    let second = store.dispatch(Action::LspSemanticTokens {
-        path: path.clone(),
-        version: version_after_identifier,
-        tokens: vec![LspSemanticToken {
-            line: 0,
-            start: 0,
-            length: 1,
-            token_type: 0,
-            modifiers: 0,
-        }],
-    });
-    assert!(!second.state_changed);
-
-    let tab = store
-        .state
-        .editor
-        .pane(0)
-        .and_then(|p| p.active_tab())
-        .expect("tab exists");
-    let second_kind = tab
-        .semantic_segments_lines(0, 1)
-        .and_then(|rows| rows.first())
-        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
-    assert_eq!(second_kind, Some(HighlightKind::Variable));
-
-    let _ = store.dispatch(Action::RunCommand(Command::InsertChar(' ')));
-    let version_after_boundary = store
-        .state
-        .editor
-        .pane(0)
-        .and_then(|p| p.active_tab())
-        .map(|tab| tab.edit_version)
-        .expect("tab exists");
-
-    let third = store.dispatch(Action::LspSemanticTokens {
-        path,
-        version: version_after_boundary,
-        tokens: vec![LspSemanticToken {
-            line: 0,
-            start: 0,
-            length: 1,
-            token_type: 0,
-            modifiers: 0,
-        }],
-    });
-    assert!(third.state_changed);
-
-    let tab = store
-        .state
-        .editor
-        .pane(0)
-        .and_then(|p| p.active_tab())
-        .expect("tab exists");
-    let second_kind = tab
-        .semantic_segments_lines(0, 1)
-        .and_then(|rows| rows.first())
-        .and_then(|line| line.iter().find_map(|t| t.semantic_kind));
-    assert_eq!(second_kind, Some(HighlightKind::Function));
 }
 
 #[test]

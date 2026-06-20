@@ -13,7 +13,7 @@ use crate::kernel::state::{
 use crate::kernel::EditorAction;
 use crate::kernel::{Action, Effect, FocusTarget, OverlayKind};
 use rustc_hash::FxHasher;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::Instant;
@@ -23,9 +23,6 @@ use super::super::util::{is_lsp_source_path, open_tabs_for_path, resolve_renamed
 use super::completion::{
     completion_runtime_context, filtered_completion_indices, language_runtime_context,
     normalize_completion_record, sort_completion_items,
-};
-use super::semantic::{
-    semantic_segment_lines_from_tokens, semantic_segment_lines_from_tokens_range,
 };
 
 // Test-only counter of `lsp_server_capabilities_for_path` calls (each resolves an
@@ -141,33 +138,6 @@ pub(in crate::kernel::store) fn lsp_position_encoding_for_path(
     lsp_server_capabilities_for_path(state, path)
         .map(|c| c.position_encoding)
         .unwrap_or(LspPositionEncoding::Utf16)
-}
-
-fn encoding_tag(encoding: LspPositionEncoding) -> u8 {
-    match encoding {
-        LspPositionEncoding::Utf8 => 8,
-        LspPositionEncoding::Utf16 => 16,
-        LspPositionEncoding::Utf32 => 32,
-    }
-}
-
-fn hash_semantic_tokens_payload(
-    tokens: &[crate::kernel::services::ports::LspSemanticToken],
-    encoding: LspPositionEncoding,
-    legend: &crate::kernel::services::ports::LspSemanticTokensLegend,
-) -> u64 {
-    let mut hasher = FxHasher::default();
-    encoding_tag(encoding).hash(&mut hasher);
-    legend.token_types.hash(&mut hasher);
-    legend.token_modifiers.hash(&mut hasher);
-    for token in tokens {
-        token.line.hash(&mut hasher);
-        token.start.hash(&mut hasher);
-        token.length.hash(&mut hasher);
-        token.token_type.hash(&mut hasher);
-        token.modifiers.hash(&mut hasher);
-    }
-    hasher.finish()
 }
 
 fn hash_inlay_hints_payload(hints: &[crate::kernel::services::ports::LspInlayHint]) -> u64 {
@@ -363,35 +333,7 @@ fn end_line_exclusive_from_range(range: &LspRange) -> usize {
 }
 
 impl super::super::Store {
-    fn arm_second_semantic_pass(&mut self, path: &Path, version: u64) {
-        self.state
-            .lsp
-            .pending_second_semantic_pass_by_path
-            .insert(path.to_path_buf(), version);
-    }
-
-    fn consume_second_semantic_pass(&mut self, path: &Path, version: u64) -> bool {
-        let pending = self
-            .state
-            .lsp
-            .pending_second_semantic_pass_by_path
-            .get(path)
-            .copied();
-        if pending == Some(version) {
-            self.state
-                .lsp
-                .pending_second_semantic_pass_by_path
-                .remove(path);
-            return true;
-        }
-        false
-    }
-
-    // 文件打开后，按服务器能力排期可选 LSP 请求（语义高亮 / inlay / folding）。
-    // 注：两处 `else { return; }` 守卫（tab 缺失 / caps 缺失）实际不可达——tab 是刚
-    // 打开的、`supports_semantic_tokens` 已蕴含 caps.is_some；与原内联块的区别仅在于
-    // 原块命中守卫时会 `return` 整个 dispatch、越过 match 后处理，此处只是不再追加
-    // effect，差异落在不可达路径，不可观测。
+    // 文件打开后，按服务器能力排期可选 LSP 请求（inlay / folding）。
     pub(in crate::kernel::store) fn schedule_lsp_requests_for_opened_file(
         &self,
         pane: usize,
@@ -399,14 +341,9 @@ impl super::super::Store {
         effects: &mut Vec<crate::kernel::Effect>,
     ) {
         let caps = lsp_server_capabilities_for_path(&self.state, path);
-        let supports_semantic_tokens = caps.is_some_and(|c| {
-            c.semantic_tokens && (c.semantic_tokens_full || c.semantic_tokens_range)
-        });
         let supports_inlay_hints = caps.is_some_and(|c| c.inlay_hints);
         let supports_folding_range = caps.is_some_and(|c| c.folding_range);
-        if (supports_semantic_tokens || supports_inlay_hints || supports_folding_range)
-            && is_lsp_source_path(path)
-        {
+        if (supports_inlay_hints || supports_folding_range) && is_lsp_source_path(path) {
             let Some(tab) = self
                 .state
                 .editor
@@ -417,39 +354,6 @@ impl super::super::Store {
             };
             let version = tab.edit_version;
             let encoding = lsp_position_encoding_for_path(&self.state, path);
-
-            if supports_semantic_tokens {
-                let Some(caps) = caps else {
-                    return;
-                };
-
-                let total_lines = tab.buffer.len_lines().max(1);
-                let can_range = caps.semantic_tokens_range;
-                let can_full = caps.semantic_tokens_full;
-                let prefer_range = can_range && (total_lines >= 2000 || !can_full);
-
-                if prefer_range {
-                    let viewport_top = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
-                    let height = tab.viewport.height.max(1);
-                    let overscan = 40usize.min(total_lines);
-                    let start_line = viewport_top.saturating_sub(overscan);
-                    let end_line_exclusive = (viewport_top + height + overscan).min(total_lines);
-                    if let Some(range) =
-                        lsp_range_for_full_lines(tab, start_line, end_line_exclusive, encoding)
-                    {
-                        effects.push(Effect::LspSemanticTokensRangeRequest {
-                            path: path.to_path_buf(),
-                            version,
-                            range,
-                        });
-                    }
-                } else if can_full {
-                    effects.push(Effect::LspSemanticTokensRequest {
-                        path: path.to_path_buf(),
-                        version,
-                    });
-                }
-            }
 
             if supports_inlay_hints {
                 let total_lines = tab.buffer.len_lines().max(1);
@@ -487,7 +391,6 @@ impl super::super::Store {
         let mut pending_file_edits: Vec<LspWorkspaceFileEdit> = Vec::new();
         let mut any_changed = false;
         let mut open_paths_changed = false;
-        let mut changed_open_paths: HashSet<std::path::PathBuf> = HashSet::new();
         let encoding = lsp_position_encoding(&self.state);
 
         let mut rename_forward: HashMap<std::path::PathBuf, std::path::PathBuf> = HashMap::new();
@@ -573,15 +476,6 @@ impl super::super::Store {
                     effects.extend(editor_effects);
                     if changed {
                         any_changed = true;
-                        if let Some(path) = self
-                            .state
-                            .editor
-                            .pane(pane)
-                            .and_then(|pane_state| pane_state.tabs.get(tab_index))
-                            .and_then(|tab| tab.path.clone())
-                        {
-                            changed_open_paths.insert(path);
-                        }
                     }
                 }
             }
@@ -608,72 +502,6 @@ impl super::super::Store {
         if open_paths_changed {
             self.state.editor.open_paths_version =
                 self.state.editor.open_paths_version.saturating_add(1);
-        }
-
-        let preferred_pane = self.state.ui.editor_layout.active_pane;
-        for path in changed_open_paths {
-            if !is_lsp_source_path(&path) {
-                continue;
-            }
-
-            let Some(caps) = lsp_server_capabilities_for_path(&self.state, &path).cloned() else {
-                continue;
-            };
-            if !(caps.semantic_tokens && (caps.semantic_tokens_full || caps.semantic_tokens_range))
-            {
-                continue;
-            }
-
-            let Some((pane, tab_index)) = find_open_tab(&self.state.editor, preferred_pane, &path)
-            else {
-                continue;
-            };
-            let Some(tab) = self
-                .state
-                .editor
-                .pane(pane)
-                .and_then(|pane_state| pane_state.tabs.get(tab_index))
-            else {
-                continue;
-            };
-
-            let version = tab.edit_version;
-            let total_lines = tab.buffer.len_lines().max(1);
-            let can_range = caps.semantic_tokens_range;
-            let can_full = caps.semantic_tokens_full;
-            let prefer_range = can_range && (total_lines >= 2000 || !can_full);
-            let trigger_second_pass = self.state.lsp.pending_format_on_save.as_ref() == Some(&path);
-
-            if prefer_range {
-                let viewport_top = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
-                let height = tab.viewport.height.max(1);
-                let overscan = 40usize.min(total_lines);
-                let start_line = viewport_top.saturating_sub(overscan);
-                let end_line_exclusive = (viewport_top + height + overscan).min(total_lines);
-                if let Some(range) = lsp_range_for_full_lines(
-                    tab,
-                    start_line,
-                    end_line_exclusive,
-                    caps.position_encoding,
-                ) {
-                    effects.push(Effect::LspSemanticTokensRangeRequest {
-                        path: path.clone(),
-                        version,
-                        range,
-                    });
-                    if trigger_second_pass {
-                        self.arm_second_semantic_pass(&path, version);
-                    }
-                }
-            } else if can_full {
-                effects.push(Effect::LspSemanticTokensRequest {
-                    path: path.clone(),
-                    version,
-                });
-                if trigger_second_pass {
-                    self.arm_second_semantic_pass(&path, version);
-                }
-            }
         }
 
         if !resource_ops.is_empty() || !pending_file_edits.is_empty() {
@@ -908,38 +736,6 @@ impl super::super::Store {
                 let version = tab.edit_version;
                 let encoding = caps.position_encoding;
 
-                if caps.semantic_tokens && (caps.semantic_tokens_full || caps.semantic_tokens_range)
-                {
-                    let total_lines = tab.buffer.len_lines().max(1);
-                    let can_range = caps.semantic_tokens_range;
-                    let can_full = caps.semantic_tokens_full;
-                    let prefer_range = can_range && (total_lines >= 2000 || !can_full);
-
-                    if prefer_range {
-                        let viewport_top =
-                            tab.viewport.line_offset.min(total_lines.saturating_sub(1));
-                        let height = tab.viewport.height.max(1);
-                        let overscan = 40usize.min(total_lines);
-                        let start_line = viewport_top.saturating_sub(overscan);
-                        let end_line_exclusive =
-                            (viewport_top + height + overscan).min(total_lines);
-                        if let Some(range) =
-                            lsp_range_for_full_lines(tab, start_line, end_line_exclusive, encoding)
-                        {
-                            effects.push(Effect::LspSemanticTokensRangeRequest {
-                                path: path.clone(),
-                                version,
-                                range,
-                            });
-                        }
-                    } else if can_full {
-                        effects.push(Effect::LspSemanticTokensRequest {
-                            path: path.clone(),
-                            version,
-                        });
-                    }
-                }
-
                 if caps.inlay_hints {
                     let total_lines = tab.buffer.len_lines().max(1);
                     let start_line = tab.viewport.line_offset.min(total_lines.saturating_sub(1));
@@ -966,267 +762,6 @@ impl super::super::Store {
         }
         super::super::DispatchResult {
             effects,
-            state_changed: changed,
-        }
-    }
-
-    fn handle_semantic_tokens(
-        &mut self,
-        path: std::path::PathBuf,
-        version: u64,
-        tokens: Vec<crate::kernel::services::ports::LspSemanticToken>,
-    ) -> super::super::DispatchResult {
-        let second_pass = self.consume_second_semantic_pass(&path, version);
-        let second_pass_effect = || {
-            if second_pass {
-                vec![Effect::LspSemanticTokensRequest {
-                    path: path.clone(),
-                    version,
-                }]
-            } else {
-                Vec::new()
-            }
-        };
-
-        let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
-            .and_then(|c| c.semantic_tokens_legend.as_ref())
-        else {
-            return super::super::DispatchResult {
-                effects: second_pass_effect(),
-                state_changed: false,
-            };
-        };
-
-        let encoding = lsp_position_encoding_for_path(&self.state, &path);
-        let matched_tabs = self
-            .state
-            .editor
-            .panes
-            .iter()
-            .flat_map(|pane| pane.tabs.iter())
-            .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
-            .count();
-        if matched_tabs == 0 {
-            return super::super::DispatchResult {
-                effects: second_pass_effect(),
-                state_changed: false,
-            };
-        }
-
-        let eager_flush = self.state.lsp.eager_semantic_refresh_paths.contains(&path);
-        let stamp = PayloadStamp {
-            version,
-            item_count: tokens.len(),
-            digest: hash_semantic_tokens_payload(&tokens, encoding, legend),
-        };
-        if self
-            .state
-            .lsp
-            .payload_fingerprints
-            .semantic_full_by_path
-            .get(&path)
-            .copied()
-            == Some(stamp)
-        {
-            if eager_flush {
-                self.clear_eager_semantic_refresh_for_path(&path);
-            }
-            return super::super::DispatchResult {
-                effects: second_pass_effect(),
-                state_changed: false,
-            };
-        }
-
-        let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
-            .and_then(|c| c.semantic_tokens_legend.clone())
-        else {
-            return super::super::DispatchResult {
-                effects: second_pass_effect(),
-                state_changed: false,
-            };
-        };
-
-        let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticSegment>>> = None;
-        let mut changed = false;
-        let defer_flush = !eager_flush && self.is_semantic_flush_deferred(&path, version);
-        let active_pane_idx = self.state.ui.editor_layout.active_pane;
-
-        for (pane_idx, pane) in self.state.editor.panes.iter_mut().enumerate() {
-            let active_tab_idx = pane.active;
-            for (tab_idx, tab) in pane.tabs.iter_mut().enumerate() {
-                if tab.path.as_ref() != Some(&path) || tab.edit_version != version {
-                    continue;
-                }
-
-                if snapshot_lines.is_none() {
-                    snapshot_lines = Some(semantic_segment_lines_from_tokens(
-                        tab.buffer.rope(),
-                        &tokens,
-                        &legend,
-                        encoding,
-                    ));
-                }
-
-                if let Some(lines) = snapshot_lines.as_ref() {
-                    let _ = tab.set_pending_semantic_highlight_from_slice(version, lines);
-                }
-
-                if !defer_flush {
-                    let is_active_tab = pane_idx == active_pane_idx && tab_idx == active_tab_idx;
-                    changed |= Self::flush_pending_semantic_highlight_for_tab(tab, is_active_tab);
-                }
-            }
-        }
-        self.state
-            .lsp
-            .payload_fingerprints
-            .semantic_full_by_path
-            .insert(path.clone(), stamp);
-        if eager_flush {
-            self.clear_eager_semantic_refresh_for_path(&path);
-        }
-
-        super::super::DispatchResult {
-            effects: second_pass_effect(),
-            state_changed: changed,
-        }
-    }
-
-    fn handle_semantic_tokens_range(
-        &mut self,
-        path: std::path::PathBuf,
-        version: u64,
-        range: LspRange,
-        tokens: Vec<crate::kernel::services::ports::LspSemanticToken>,
-    ) -> super::super::DispatchResult {
-        let second_pass = self.consume_second_semantic_pass(&path, version);
-        let second_pass_effect = || {
-            if second_pass {
-                vec![Effect::LspSemanticTokensRangeRequest {
-                    path: path.clone(),
-                    version,
-                    range,
-                }]
-            } else {
-                Vec::new()
-            }
-        };
-
-        let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
-            .and_then(|c| c.semantic_tokens_legend.as_ref())
-        else {
-            return super::super::DispatchResult {
-                effects: second_pass_effect(),
-                state_changed: false,
-            };
-        };
-
-        let start_line = range.start.line as usize;
-        let end_line_exclusive = end_line_exclusive_from_range(&range);
-        if end_line_exclusive <= start_line {
-            return super::super::DispatchResult {
-                effects: second_pass_effect(),
-                state_changed: false,
-            };
-        }
-
-        let encoding = lsp_position_encoding_for_path(&self.state, &path);
-        let matched_tabs = self
-            .state
-            .editor
-            .panes
-            .iter()
-            .flat_map(|pane| pane.tabs.iter())
-            .filter(|tab| tab.path.as_ref() == Some(&path) && tab.edit_version == version)
-            .count();
-        if matched_tabs == 0 {
-            return super::super::DispatchResult {
-                effects: second_pass_effect(),
-                state_changed: false,
-            };
-        }
-
-        let eager_flush = self.state.lsp.eager_semantic_refresh_paths.contains(&path);
-        let stamp = RangePayloadStamp {
-            version,
-            item_count: tokens.len(),
-            start_line,
-            end_line_exclusive,
-            digest: hash_semantic_tokens_payload(&tokens, encoding, legend),
-        };
-        if self
-            .state
-            .lsp
-            .payload_fingerprints
-            .semantic_range_by_path
-            .get(&path)
-            .copied()
-            == Some(stamp)
-        {
-            if eager_flush {
-                self.clear_eager_semantic_refresh_for_path(&path);
-            }
-            return super::super::DispatchResult {
-                effects: second_pass_effect(),
-                state_changed: false,
-            };
-        }
-
-        let Some(legend) = lsp_server_capabilities_for_path(&self.state, &path)
-            .and_then(|c| c.semantic_tokens_legend.clone())
-        else {
-            return super::super::DispatchResult {
-                effects: second_pass_effect(),
-                state_changed: false,
-            };
-        };
-
-        let mut snapshot_lines: Option<Vec<Vec<crate::kernel::editor::SemanticSegment>>> = None;
-        let mut changed = false;
-        let defer_flush = !eager_flush && self.is_semantic_flush_deferred(&path, version);
-        let active_pane_idx = self.state.ui.editor_layout.active_pane;
-
-        for (pane_idx, pane) in self.state.editor.panes.iter_mut().enumerate() {
-            let active_tab_idx = pane.active;
-            for (tab_idx, tab) in pane.tabs.iter_mut().enumerate() {
-                if tab.path.as_ref() != Some(&path) || tab.edit_version != version {
-                    continue;
-                }
-
-                if snapshot_lines.is_none() {
-                    snapshot_lines = Some(semantic_segment_lines_from_tokens_range(
-                        tab.buffer.rope(),
-                        &tokens,
-                        &legend,
-                        encoding,
-                        start_line,
-                        end_line_exclusive,
-                    ));
-                }
-
-                if let Some(lines) = snapshot_lines.as_ref() {
-                    let _ = tab.set_pending_semantic_highlight_range_from_slice(
-                        version, start_line, lines,
-                    );
-                }
-
-                if !defer_flush {
-                    let is_active_tab = pane_idx == active_pane_idx && tab_idx == active_tab_idx;
-                    changed |= Self::flush_pending_semantic_highlight_for_tab(tab, is_active_tab);
-                }
-            }
-        }
-        self.state
-            .lsp
-            .payload_fingerprints
-            .semantic_range_by_path
-            .insert(path.clone(), stamp);
-        if eager_flush {
-            self.clear_eager_semantic_refresh_for_path(&path);
-        }
-
-        super::super::DispatchResult {
-            effects: second_pass_effect(),
             state_changed: changed,
         }
     }
@@ -1806,17 +1341,6 @@ impl super::super::Store {
                 root,
                 capabilities,
             } => self.handle_server_capabilities(server, root, capabilities),
-            Action::LspSemanticTokens {
-                path,
-                version,
-                tokens,
-            } => self.handle_semantic_tokens(path, version, tokens),
-            Action::LspSemanticTokensRange {
-                path,
-                version,
-                range,
-                tokens,
-            } => self.handle_semantic_tokens_range(path, version, range, tokens),
             Action::LspInlayHints {
                 path,
                 version,

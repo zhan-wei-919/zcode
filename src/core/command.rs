@@ -133,7 +133,6 @@ pub enum Command {
     LspCodeAction,
     LspDocumentSymbols,
     LspWorkspaceSymbols,
-    LspSemanticTokens,
     LspInlayHints,
     LspFoldingRange,
 
@@ -268,7 +267,6 @@ impl Command {
             Command::LspCodeAction => "lspCodeAction",
             Command::LspDocumentSymbols => "lspDocumentSymbols",
             Command::LspWorkspaceSymbols => "lspWorkspaceSymbols",
-            Command::LspSemanticTokens => "lspSemanticTokens",
             Command::LspInlayHints => "lspInlayHints",
             Command::LspFoldingRange => "lspFoldingRange",
             Command::EditorFoldToggle => "editorFoldToggle",
@@ -396,7 +394,6 @@ impl Command {
             "lspCodeAction" => Command::LspCodeAction,
             "lspDocumentSymbols" => Command::LspDocumentSymbols,
             "lspWorkspaceSymbols" => Command::LspWorkspaceSymbols,
-            "lspSemanticTokens" => Command::LspSemanticTokens,
             "lspInlayHints" => Command::LspInlayHints,
             "lspFoldingRange" => Command::LspFoldingRange,
             "editorFoldToggle" => Command::EditorFoldToggle,

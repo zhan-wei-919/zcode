@@ -52,9 +52,6 @@ impl LspClient {
             if let Ok(mut map) = self.pending_requests.lock() {
                 map.clear();
             }
-            if let Ok(mut map) = self.latest_semantic_tokens_by_path.lock() {
-                map.clear();
-            }
 
             self.schedule_restart_backoff();
             return false;
@@ -156,7 +153,6 @@ impl LspClient {
                 let latest_code_action = self.latest_code_action.clone();
                 let latest_completion = self.latest_completion.clone();
                 let latest_completion_resolve = self.latest_completion_resolve.clone();
-                let latest_semantic_tokens_by_path = self.latest_semantic_tokens_by_path.clone();
                 let latest_inlay_hints = self.latest_inlay_hints.clone();
                 let latest_folding_range = self.latest_folding_range.clone();
                 let latest_signature_help = self.latest_signature_help.clone();
@@ -186,7 +182,6 @@ impl LspClient {
                         latest_code_action,
                         latest_completion,
                         latest_completion_resolve,
-                        latest_semantic_tokens_by_path,
                         latest_inlay_hints,
                         latest_folding_range,
                         latest_signature_help,

@@ -24,7 +24,6 @@ impl Workbench {
         changed |= self.poll_kernel_bus();
         changed |= self.poll_settings();
         self.store.tick();
-        changed |= self.poll_lsp_debounce(LspDebouncePipeline::SemanticTokens);
         changed |= self.poll_lsp_debounce(LspDebouncePipeline::InlayHints);
         changed |= self.poll_lsp_debounce(LspDebouncePipeline::FoldingRange);
         changed |= self.poll_idle_hover();
@@ -199,7 +198,6 @@ impl Workbench {
                             drained += 1;
                             changed |= self.dispatch_kernel(action);
                             if is_progress_end {
-                                self.lsp_sync.debounce.semantic_tokens = Some(Instant::now());
                                 self.lsp_sync.debounce.inlay_hints = Some(Instant::now());
                                 self.lsp_sync.debounce.folding_range = Some(Instant::now());
                             }
@@ -348,7 +346,6 @@ impl Workbench {
     /// 同一抑制块（焦点不在编辑器、命令行 / 对话框可见时跳过）。pipeline 选 slot + 命令。
     fn poll_lsp_debounce(&mut self, pipeline: LspDebouncePipeline) -> bool {
         let deadline = match pipeline {
-            LspDebouncePipeline::SemanticTokens => self.lsp_sync.debounce.semantic_tokens,
             LspDebouncePipeline::InlayHints => self.lsp_sync.debounce.inlay_hints,
             LspDebouncePipeline::FoldingRange => self.lsp_sync.debounce.folding_range,
         };
@@ -360,7 +357,6 @@ impl Workbench {
         }
 
         match pipeline {
-            LspDebouncePipeline::SemanticTokens => self.lsp_sync.debounce.semantic_tokens = None,
             LspDebouncePipeline::InlayHints => self.lsp_sync.debounce.inlay_hints = None,
             LspDebouncePipeline::FoldingRange => self.lsp_sync.debounce.folding_range = None,
         }
@@ -376,7 +372,6 @@ impl Workbench {
         }
 
         let command = match pipeline {
-            LspDebouncePipeline::SemanticTokens => Command::LspSemanticTokens,
             LspDebouncePipeline::InlayHints => Command::LspInlayHints,
             LspDebouncePipeline::FoldingRange => Command::LspFoldingRange,
         };

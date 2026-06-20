@@ -1,7 +1,5 @@
 use crate::core::Command;
-use crate::kernel::editor::{EditorTabState, HighlightKind, PendingSemanticLine, ReloadCause};
-use std::path::Path;
-use unicode_xid::UnicodeXID;
+use crate::kernel::editor::ReloadCause;
 
 #[cfg(test)]
 use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding};
@@ -41,8 +39,6 @@ pub use intel::completion_rank::CompletionRanker;
 #[cfg(test)]
 use intel::lsp::lsp_range_for_full_lines;
 use intel::lsp::{lsp_position_encoding, lsp_position_to_byte_offset};
-use intel::semantic::reconcile_pending_semantic_row;
-use util::is_lsp_source_path;
 
 #[cfg(test)]
 use super::InputDialogKind;
@@ -64,8 +60,6 @@ fn perf_action_label(action: &Action) -> &'static str {
         Action::Tick => "kernel.action.tick",
         Action::LspCompletion { .. } => "kernel.action.lsp_completion",
         Action::LspCompletionResolved { .. } => "kernel.action.lsp_completion_resolved",
-        Action::LspSemanticTokens { .. } => "kernel.action.lsp_semantic_tokens",
-        Action::LspSemanticTokensRange { .. } => "kernel.action.lsp_semantic_tokens_range",
         Action::LspInlayHints { .. } => "kernel.action.lsp_inlay_hints",
         Action::LspFoldingRanges { .. } => "kernel.action.lsp_folding_ranges",
         Action::LspDiagnostics { .. } => "kernel.action.lsp_diagnostics",
@@ -102,7 +96,6 @@ fn perf_command_label(command: &Command) -> &'static str {
         Command::CursorUp => "kernel.command.cursor_up",
         Command::CursorDown => "kernel.command.cursor_down",
         Command::LspCompletion => "kernel.command.lsp_completion",
-        Command::LspSemanticTokens => "kernel.command.lsp_semantic_tokens",
         Command::LspInlayHints => "kernel.command.lsp_inlay_hints",
         Command::LspFoldingRange => "kernel.command.lsp_folding_range",
         Command::LspHover => "kernel.command.lsp_hover",
@@ -122,130 +115,6 @@ fn perf_command_label(command: &Command) -> &'static str {
         Command::Escape => "kernel.command.escape",
         _ => "kernel.command.other",
     }
-}
-
-fn is_completion_identifier_start(ch: char) -> bool {
-    ch == '_' || UnicodeXID::is_xid_start(ch)
-}
-
-fn is_completion_identifier_continue(ch: char) -> bool {
-    ch == '_' || UnicodeXID::is_xid_continue(ch)
-}
-
-fn advance_identifier_end(text: &str, start: usize) -> usize {
-    let mut end = start;
-    for (offset, ch) in text[start..].char_indices() {
-        if !is_completion_identifier_continue(ch) {
-            break;
-        }
-        end = start + offset + ch.len_utf8();
-    }
-    end
-}
-
-fn completion_seed_head(text: &str) -> Option<&str> {
-    let (mut start, _) = text
-        .char_indices()
-        .find(|(_, ch)| is_completion_identifier_start(*ch))?;
-    let mut end = advance_identifier_end(text, start);
-    let mut last = (start, end);
-
-    loop {
-        let rest = &text[end..];
-        let sep_len = if rest.starts_with("::") || rest.starts_with("->") {
-            2
-        } else if rest.starts_with('.') {
-            1
-        } else {
-            0
-        };
-        if sep_len == 0 {
-            break;
-        }
-
-        let next_start = end + sep_len;
-        let Some(next_ch) = text[next_start..].chars().next() else {
-            break;
-        };
-        if !is_completion_identifier_start(next_ch) {
-            break;
-        }
-
-        start = next_start;
-        end = advance_identifier_end(text, start);
-        last = (start, end);
-    }
-
-    text.get(last.0..last.1)
-}
-
-fn byte_offset_for_char_offset(text: &str, char_offset: usize) -> usize {
-    text.char_indices()
-        .nth(char_offset)
-        .map(|(idx, _)| idx)
-        .unwrap_or(text.len())
-}
-
-fn completion_seed_matches_boundary(line: &str, start: usize, end: usize) -> bool {
-    let prev_ok = line[..start]
-        .chars()
-        .next_back()
-        .is_none_or(|ch| !is_completion_identifier_continue(ch));
-    let next_ok = line[end..]
-        .chars()
-        .next()
-        .is_none_or(|ch| !is_completion_identifier_continue(ch));
-    prev_ok && next_ok
-}
-
-fn seed_completion_semantic_highlight(
-    tab: &mut EditorTabState,
-    inserted_text: &str,
-    kind: HighlightKind,
-) -> bool {
-    if inserted_text.contains('\n') {
-        return false;
-    }
-
-    let Some(head) = completion_seed_head(inserted_text) else {
-        return false;
-    };
-
-    let (row, col) = tab.buffer.cursor();
-    let rope = tab.buffer.rope();
-    let line_start_char = rope.line_to_char(row);
-    let cursor_char = tab
-        .buffer
-        .pos_to_char((row, col))
-        .saturating_sub(line_start_char);
-
-    let Some(line_slice) = tab.buffer.line_slice(row) else {
-        return false;
-    };
-    let line_owned = line_slice.to_string();
-    let line = line_owned.strip_suffix('\n').unwrap_or(&line_owned);
-    let line = line.strip_suffix('\r').unwrap_or(line);
-    let cursor_byte = byte_offset_for_char_offset(line, cursor_char);
-    let search_end = cursor_byte.min(line.len());
-
-    let start = line[..search_end]
-        .rmatch_indices(head)
-        .find_map(|(idx, _)| {
-            let end = idx + head.len();
-            completion_seed_matches_boundary(line, idx, end).then_some(idx)
-        })
-        .or_else(|| {
-            line.rmatch_indices(head).find_map(|(idx, _)| {
-                let end = idx + head.len();
-                completion_seed_matches_boundary(line, idx, end).then_some(idx)
-            })
-        });
-    let Some(start) = start else {
-        return false;
-    };
-
-    let end = start + head.len();
-    tab.seed_completion_token_semantic_kind(row, start, end, line.len(), kind)
 }
 
 pub struct Store {
@@ -422,114 +291,6 @@ impl Store {
             .pane(active_pane)
             .and_then(|pane_state| pane_state.active_tab())
             .and_then(|tab| tab.path.clone())
-    }
-
-    fn active_editor_lsp_path_and_version(&self) -> Option<(std::path::PathBuf, u64)> {
-        let active_pane = self.state.ui.editor_layout.active_pane;
-        let tab = self
-            .state
-            .editor
-            .pane(active_pane)
-            .and_then(|pane_state| pane_state.active_tab())?;
-        let path = tab.path.as_ref()?.clone();
-        if !is_lsp_source_path(&path) {
-            return None;
-        }
-        Some((path, tab.edit_version))
-    }
-
-    fn arm_semantic_flush_defer_for_path(&mut self, path: std::path::PathBuf, version: u64) {
-        if self.state.lsp.eager_semantic_refresh_paths.contains(&path) {
-            return;
-        }
-        self.state
-            .lsp
-            .defer_semantic_flush_by_path
-            .insert(path, version);
-    }
-
-    fn arm_eager_semantic_refresh_for_path(&mut self, path: std::path::PathBuf) {
-        self.state.lsp.eager_semantic_refresh_paths.insert(path);
-    }
-
-    fn clear_eager_semantic_refresh_for_path(&mut self, path: &Path) {
-        self.state.lsp.eager_semantic_refresh_paths.remove(path);
-    }
-
-    fn clear_semantic_flush_defer_for_path(&mut self, path: &Path) {
-        self.state.lsp.defer_semantic_flush_by_path.remove(path);
-    }
-
-    fn is_semantic_flush_deferred(&self, path: &Path, version: u64) -> bool {
-        self.state
-            .lsp
-            .defer_semantic_flush_by_path
-            .get(path)
-            .is_some_and(|deferred_version| *deferred_version == version)
-    }
-
-    fn reconcile_pending_semantic_for_active_line(tab: &mut EditorTabState) {
-        let (row, col) = tab.buffer.cursor();
-        let Some(line_slice) = tab.buffer.line_slice(row) else {
-            return;
-        };
-
-        let line_owned = line_slice.to_string();
-        let line = line_owned.strip_suffix('\n').unwrap_or(&line_owned);
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        let line_start_char = tab.buffer.rope().line_to_char(row);
-        let cursor_char = tab
-            .buffer
-            .pos_to_char((row, col))
-            .saturating_sub(line_start_char);
-        let cursor_byte = byte_offset_for_char_offset(line, cursor_char);
-        let merged_row = {
-            let current = tab.semantic_segments_line(row);
-            match tab.pending_semantic_line(row) {
-                PendingSemanticLine::Uncovered => None,
-                PendingSemanticLine::Covered(pending) => {
-                    reconcile_pending_semantic_row(line, current, pending, cursor_byte)
-                }
-            }
-        };
-        let Some(merged_row) = merged_row else {
-            return;
-        };
-
-        let merged_lines = [merged_row];
-        let _ = tab.set_pending_semantic_highlight_range_from_slice(
-            tab.edit_version,
-            row,
-            &merged_lines,
-        );
-    }
-
-    fn flush_pending_semantic_highlight_for_tab(
-        tab: &mut EditorTabState,
-        is_active_tab: bool,
-    ) -> bool {
-        if is_active_tab {
-            Self::reconcile_pending_semantic_for_active_line(tab);
-        }
-        tab.flush_pending_semantic_highlight()
-    }
-
-    fn flush_pending_semantic_highlights_for_path(&mut self, path: &Path) -> bool {
-        self.clear_semantic_flush_defer_for_path(path);
-
-        let active_pane_idx = self.state.ui.editor_layout.active_pane;
-        let mut changed = false;
-        for (pane_idx, pane) in self.state.editor.panes.iter_mut().enumerate() {
-            let active_tab_idx = pane.active;
-            for (tab_idx, tab) in pane.tabs.iter_mut().enumerate() {
-                if tab.path.as_deref() != Some(path) {
-                    continue;
-                }
-                let is_active_tab = pane_idx == active_pane_idx && tab_idx == active_tab_idx;
-                changed |= Self::flush_pending_semantic_highlight_for_tab(tab, is_active_tab);
-            }
-        }
-        changed
     }
 
     fn sync_explorer_selection_to_path(&mut self, path: &std::path::Path) -> bool {
@@ -862,8 +623,6 @@ impl Store {
             | action @ Action::LspCodeActions { .. }
             | action @ Action::LspSymbols { .. }
             | action @ Action::LspServerCapabilities { .. }
-            | action @ Action::LspSemanticTokens { .. }
-            | action @ Action::LspSemanticTokensRange { .. }
             | action @ Action::LspInlayHints { .. }
             | action @ Action::LspFoldingRanges { .. }
             | action @ Action::LspCompletion { .. }
@@ -1264,7 +1023,6 @@ impl Store {
             | cmd @ Command::LspReferences
             | cmd @ Command::LspDocumentSymbols
             | cmd @ Command::LspWorkspaceSymbols
-            | cmd @ Command::LspSemanticTokens
             | cmd @ Command::LspInlayHints
             | cmd @ Command::LspFoldingRange
             | cmd @ Command::LspCodeAction => return self.reduce_lsp_command(cmd),

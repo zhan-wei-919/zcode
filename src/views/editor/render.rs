@@ -1,7 +1,7 @@
 use crate::core::text_window;
 use crate::kernel::editor::{
     cursor_display_x_abs, EditorPaneState, EditorTabState, HighlightKind, HighlightSpan,
-    SearchBarField, SearchBarMode, SearchBarState, SemanticSegment,
+    SearchBarField, SearchBarMode, SearchBarState,
 };
 use crate::kernel::services::ports::{EditorConfig, Match};
 use crate::models::{cursor_set, slice_to_cow};
@@ -735,22 +735,6 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
         let line = line.strip_suffix('\n').unwrap_or(&line);
         let line = line.strip_suffix('\r').unwrap_or(line);
 
-        let mut semantic_segments_fallback: Vec<SemanticSegment> = Vec::new();
-        if !line.is_empty() {
-            semantic_segments_fallback.push(SemanticSegment {
-                start: 0,
-                end: line.len(),
-                semantic_kind: None,
-            });
-        }
-        let semantic_segments: &[SemanticSegment] = match tab.semantic_segments_line(row) {
-            Some(segments) if semantic_segments_row_is_valid(segments, line.len()) => segments,
-            Some(_) | None => semantic_segments_fallback.as_slice(),
-        };
-        let has_semantic_kinds = semantic_segments
-            .iter()
-            .any(|segment| segment.semantic_kind.is_some() && segment.end > segment.start);
-
         let mut x = area.x;
         let right = area.right();
         let row_clip = Rect::new(area.x, y, area.w, 1);
@@ -775,8 +759,6 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
                 byte_offset = start;
             }
         }
-
-        let mut semantic_state = SemanticSegmentCacheState::default();
 
         let mut seg: Option<TextSegment> = None;
 
@@ -827,29 +809,14 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
             if selected {
                 style = selection_style;
             } else {
-                let mut highlight_style = None;
                 let syntax_kind = if has_syntax_spans {
                     highlight_kind_cached(highlight_spans, &mut highlight_state, g_start)
                 } else {
                     None
                 };
-                let opaque = syntax_kind.is_some_and(|kind| kind.is_opaque());
-                if has_semantic_kinds && !opaque {
-                    if let Some(kind) =
-                        semantic_kind_cached(semantic_segments, &mut semantic_state, g_start)
-                    {
-                        highlight_style =
-                            Some(Style::default().fg(theme.syntax_fg(kind.color_group())));
-                    }
-                }
-                if highlight_style.is_none() {
-                    if let Some(kind) = syntax_kind {
-                        highlight_style =
-                            Some(Style::default().fg(theme.syntax_fg(kind.color_group())));
-                    }
-                }
-                if let Some(hl) = highlight_style {
-                    style = row_base_style.patch(hl);
+                if let Some(kind) = syntax_kind {
+                    style = row_base_style
+                        .patch(Style::default().fg(theme.syntax_fg(kind.color_group())));
                 }
                 if has_line_matches {
                     if let Some(bg) = search_match_bg(
@@ -1242,68 +1209,6 @@ fn highlight_kind_cached(
     state.active_end = span.end;
     state.active_kind = Some(span.kind);
     Some(span.kind)
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct SemanticSegmentCacheState {
-    idx: usize,
-    active_start: usize,
-    active_end: usize,
-}
-
-#[inline]
-fn semantic_kind_cached(
-    semantic_segments: &[SemanticSegment],
-    state: &mut SemanticSegmentCacheState,
-    byte_offset: usize,
-) -> Option<HighlightKind> {
-    if semantic_segments.is_empty() {
-        return None;
-    }
-
-    if byte_offset >= state.active_start && byte_offset < state.active_end {
-        return semantic_segments
-            .get(state.idx)
-            .and_then(|segment| segment.semantic_kind);
-    }
-
-    while state.idx < semantic_segments.len() && semantic_segments[state.idx].end <= byte_offset {
-        state.idx += 1;
-    }
-
-    let segment = semantic_segments.get(state.idx)?;
-    if byte_offset < segment.start || byte_offset >= segment.end {
-        state.active_start = 0;
-        state.active_end = 0;
-        return None;
-    }
-
-    state.active_start = segment.start;
-    state.active_end = segment.end;
-    segment.semantic_kind
-}
-
-fn semantic_segments_row_is_valid(segments: &[SemanticSegment], line_len: usize) -> bool {
-    if line_len == 0 {
-        return segments.is_empty();
-    }
-
-    let Some(first) = segments.first() else {
-        return false;
-    };
-    if first.start != 0 {
-        return false;
-    }
-
-    let mut cursor = 0usize;
-    for segment in segments {
-        if segment.start != cursor || segment.end <= segment.start || segment.end > line_len {
-            return false;
-        }
-        cursor = segment.end;
-    }
-
-    cursor == line_len
 }
 
 fn search_match_bg(

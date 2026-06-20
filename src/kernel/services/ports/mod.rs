@@ -12,7 +12,7 @@ pub use lsp::{
     LspClientKey, LspCodeAction, LspCommand, LspCompletionItem, LspCompletionTriggerContext,
     LspCompletionTriggerKind, LspFoldingRange, LspHoverBlock, LspHoverPayload,
     LspHoverPreviewPayload, LspInlayHint, LspInsertTextFormat, LspMarkup, LspPosition,
-    LspPositionEncoding, LspRange, LspResourceOp, LspSemanticToken, LspSemanticTokensLegend,
+    LspPositionEncoding, LspRange, LspResourceOp,
     LspServerCapabilities, LspServerKind, LspSignatureHelpPayload, LspSignatureInfo,
     LspSignatureParameter, LspSignatureParameterLabel, LspTextChange, LspTextEdit,
     LspWorkspaceEdit, LspWorkspaceFileEdit,

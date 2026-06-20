@@ -38,7 +38,6 @@ pub struct LspInputTimingConfig {
 #[serde(default)]
 pub struct LspIdentifierDebounceMs {
     pub completion: u64,
-    pub semantic_tokens: u64,
     pub inlay_hints: u64,
     pub folding_range: u64,
 }
@@ -47,7 +46,6 @@ pub struct LspIdentifierDebounceMs {
 #[serde(default)]
 pub struct LspDeleteDebounceMs {
     pub completion: u64,
-    pub semantic_tokens: u64,
     pub inlay_hints: u64,
     pub folding_range: u64,
 }
@@ -81,7 +79,6 @@ impl Default for LspIdentifierDebounceMs {
     fn default() -> Self {
         Self {
             completion: 240,
-            semantic_tokens: 360,
             inlay_hints: 420,
             folding_range: 480,
         }
@@ -92,7 +89,6 @@ impl Default for LspDeleteDebounceMs {
     fn default() -> Self {
         Self {
             completion: 120,
-            semantic_tokens: 140,
             inlay_hints: 180,
             folding_range: 220,
         }

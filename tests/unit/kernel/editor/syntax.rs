@@ -53,35 +53,6 @@ fn highlight_kind_is_leaf_matches_expected() {
 }
 
 #[test]
-fn highlight_kind_is_opaque_matches_expected() {
-    assert!(HighlightKind::Comment.is_opaque());
-    assert!(HighlightKind::String.is_opaque());
-    assert!(HighlightKind::Regex.is_opaque());
-
-    assert!(!HighlightKind::Attribute.is_opaque());
-    assert!(!HighlightKind::Keyword.is_opaque());
-    assert!(HighlightKind::KeywordControl.is_opaque());
-    assert!(!HighlightKind::KeywordOperator.is_opaque());
-    assert!(!HighlightKind::Type.is_opaque());
-    assert!(!HighlightKind::TypeBuiltin.is_opaque());
-    assert!(!HighlightKind::Number.is_opaque());
-    assert!(!HighlightKind::Boolean.is_opaque());
-    assert!(!HighlightKind::Lifetime.is_opaque());
-    assert!(!HighlightKind::Function.is_opaque());
-    assert!(!HighlightKind::Method.is_opaque());
-    assert!(!HighlightKind::Macro.is_opaque());
-    assert!(!HighlightKind::Namespace.is_opaque());
-    assert!(!HighlightKind::Variable.is_opaque());
-    assert!(!HighlightKind::Parameter.is_opaque());
-    assert!(!HighlightKind::Property.is_opaque());
-    assert!(!HighlightKind::Constant.is_opaque());
-    assert!(!HighlightKind::EnumMember.is_opaque());
-    assert!(!HighlightKind::Operator.is_opaque());
-    assert!(!HighlightKind::Tag.is_opaque());
-    assert!(!HighlightKind::TagAttribute.is_opaque());
-}
-
-#[test]
 fn test_highlight_comment_range_rust() {
     let rope = Rope::from_str("fn main() { // hi\n}\n");
     let doc = SyntaxDocument::for_path(Path::new("test.rs"), &rope).expect("rust syntax");

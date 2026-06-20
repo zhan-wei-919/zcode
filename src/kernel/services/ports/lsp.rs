@@ -240,21 +240,6 @@ pub struct LspWorkspaceEdit {
     pub resource_ops: Vec<LspResourceOp>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct LspSemanticTokensLegend {
-    pub token_types: Vec<String>,
-    pub token_modifiers: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LspSemanticToken {
-    pub line: u32,
-    pub start: u32,
-    pub length: u32,
-    pub token_type: u32,
-    pub modifiers: u32,
-}
-
 #[derive(Debug, Clone)]
 pub struct LspInlayHint {
     pub position: LspPosition,
@@ -352,10 +337,6 @@ pub struct LspServerCapabilities {
     pub rename: bool,
     pub format: bool,
     pub range_format: bool,
-    pub semantic_tokens: bool,
-    pub semantic_tokens_range: bool,
-    pub semantic_tokens_full: bool,
-    pub semantic_tokens_legend: Option<LspSemanticTokensLegend>,
     pub inlay_hints: bool,
     pub folding_range: bool,
     pub completion_resolve: bool,

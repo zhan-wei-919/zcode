@@ -750,7 +750,6 @@ impl Workbench {
         } else {
             Command::ScrollUp
         };
-        self.maybe_schedule_semantic_tokens_debounce(&cmd);
         self.maybe_schedule_inlay_hints_debounce(&cmd);
         self.maybe_schedule_folding_range_debounce(&cmd);
 

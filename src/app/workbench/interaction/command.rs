@@ -1,6 +1,6 @@
 use super::super::Workbench;
 use super::{
-    classify_lsp_edit_trigger, lsp_debounce_duration, semantic_tokens_trigger, LspDebouncePipeline,
+    classify_lsp_edit_trigger, lsp_debounce_duration, LspDebouncePipeline,
     LspDebounceTrigger,
 };
 use crate::core::Command;
@@ -56,7 +56,6 @@ impl Workbench {
                     text: text.to_string(),
                 }));
                 let refresh = Command::Paste;
-                self.maybe_schedule_semantic_tokens_debounce(&refresh);
                 self.maybe_schedule_inlay_hints_debounce(&refresh);
                 self.maybe_schedule_folding_range_debounce(&refresh);
                 EventResult::Consumed
@@ -133,59 +132,6 @@ impl Workbench {
     /// 这些条目改写入日志文件，避免静默吞掉错误。
     pub(in super::super) fn push_log_line(&self, line: String) {
         tracing::warn!(target: "zcode::workbench", "{line}");
-    }
-
-    pub(super) fn maybe_schedule_semantic_tokens_debounce(&mut self, cmd: &Command) {
-        let Some(ctx) = self.active_lsp_editing_context() else {
-            return;
-        };
-
-        let timing = &self.store.state().editor.config.lsp_input_timing;
-        let eager_refresh = self
-            .store
-            .state()
-            .lsp
-            .eager_semantic_refresh_paths
-            .contains(&ctx.path);
-
-        let edit_trigger = classify_lsp_edit_trigger(cmd, timing);
-
-        let supports_semantic_tokens_range =
-            lsp_registry::client_key_for_path(&self.store.state().workspace_root, &ctx.path)
-                .map(|(_, key)| key)
-                .and_then(|key| self.store.state().lsp.server_capabilities.get(&key))
-                .is_some_and(|c| c.semantic_tokens_range);
-        let buffer_lines = self
-            .store
-            .state()
-            .editor
-            .pane(ctx.pane)
-            .and_then(|pane| pane.active_tab())
-            .map(|tab| tab.buffer.len_lines().max(1))
-            .unwrap_or(0);
-        let move_should_schedule = matches!(
-            cmd,
-            Command::CursorUp
-                | Command::CursorDown
-                | Command::ScrollUp
-                | Command::ScrollDown
-                | Command::PageUp
-                | Command::PageDown
-        ) && supports_semantic_tokens_range
-            && buffer_lines >= 2000;
-
-        if let Some(trigger) = edit_trigger {
-            let trigger = semantic_tokens_trigger(trigger, eager_refresh);
-            let delay = lsp_debounce_duration(timing, LspDebouncePipeline::SemanticTokens, trigger);
-            self.lsp_sync.debounce.semantic_tokens = Some(Instant::now() + delay);
-            return;
-        }
-
-        if move_should_schedule {
-            let trigger = semantic_tokens_trigger(LspDebounceTrigger::Identifier, eager_refresh);
-            let delay = lsp_debounce_duration(timing, LspDebouncePipeline::SemanticTokens, trigger);
-            self.lsp_sync.debounce.semantic_tokens = Some(Instant::now() + delay);
-        }
     }
 
     pub(super) fn maybe_schedule_inlay_hints_debounce(&mut self, cmd: &Command) {

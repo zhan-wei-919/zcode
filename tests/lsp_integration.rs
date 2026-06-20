@@ -12,7 +12,6 @@ use zcode::core::event::{
     InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
 };
-use zcode::kernel::editor::HighlightKind;
 use zcode::kernel::services::adapters::{AppMessage, AsyncRuntime};
 use zcode::kernel::services::ports::{LspPositionEncoding, LspServerKind};
 use zcode::kernel::{FocusTarget, OverlayKind};
@@ -1278,20 +1277,11 @@ fn test_optional_lsp_requests_are_gated_by_capabilities() {
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
         w.state().lsp.server_capabilities.iter().any(|(k, c)| {
-            k.server == LspServerKind::Pyright
-                && !c.semantic_tokens
-                && !c.inlay_hints
-                && !c.folding_range
+            k.server == LspServerKind::Pyright && !c.inlay_hints && !c.folding_range
         })
     });
 
     let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
-    assert!(
-        !trace
-            .lines()
-            .any(|line| line.trim() == "request textDocument/semanticTokens/full"),
-        "unexpected semanticTokens/full request in lsp trace:\n{trace}"
-    );
     assert!(
         !trace
             .lines()
@@ -2877,77 +2867,6 @@ fn test_completion_filters_items_while_typing() {
 }
 
 #[test]
-fn test_semantic_tokens_apply_expected_highlight_kinds() {
-    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(
-        stub_path.is_file(),
-        "stub binary missing at {}",
-        stub_path.display()
-    );
-
-    let dir = tempdir().unwrap();
-    let a_path = dir.path().join("a.rs");
-    let trace_path = dir.path().join("lsp_trace.txt");
-
-    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
-        .remove("ZCODE_DISABLE_LSP")
-        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
-        .remove("ZCODE_LSP_ARGS")
-        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
-
-    std::fs::write(&a_path, "fn main() {}\n").unwrap();
-
-    let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
-    assert!(workbench.has_lsp_service());
-
-    workbench.handle_message(AppMessage::FileLoaded {
-        path: a_path.clone(),
-        content: std::fs::read_to_string(&a_path).unwrap(),
-    });
-
-    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state()
-            .lsp
-            .server_capabilities
-            .iter()
-            .any(|(k, c)| k.server == LspServerKind::RustAnalyzer && c.semantic_tokens)
-    });
-
-    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
-        code: KeyCode::End,
-        modifiers: KeyModifiers::NONE,
-        kind: KeyEventKind::Press,
-    }));
-    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
-        code: KeyCode::Char(' '),
-        modifiers: KeyModifiers::NONE,
-        kind: KeyEventKind::Press,
-    }));
-
-    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
-            return false;
-        };
-        let Some(lines) = tab.semantic_segments_lines(0, 1) else {
-            return false;
-        };
-        let line = tab.buffer.rope().line(0).to_string();
-        let line = line.trim_end_matches(['\n', '\r']);
-        lines.first().is_some_and(|segments| {
-            segments.iter().any(|segment| {
-                segment.semantic_kind == Some(HighlightKind::Keyword)
-                    && line.get(segment.start..segment.end) == Some("fn")
-            }) && segments.iter().any(|segment| {
-                segment.semantic_kind == Some(HighlightKind::Function)
-                    && line.get(segment.start..segment.end) == Some("main")
-            })
-        })
-    });
-}
-
-#[test]
 fn test_inlay_hints_are_applied_for_single_line_file() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
     let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
@@ -3142,104 +3061,6 @@ fn test_inlay_hints_refresh_after_mouse_scroll() {
                 .and_then(|lines| lines.first())
                 .is_some_and(|hints| hints.iter().any(|hint| hint == &target))
     });
-}
-
-#[test]
-fn test_semantic_tokens_range_is_used_for_large_files() {
-    let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-    let stub_path = std::path::PathBuf::from(env!("CARGO_BIN_EXE_zcode_lsp_stub"));
-    assert!(
-        stub_path.is_file(),
-        "stub binary missing at {}",
-        stub_path.display()
-    );
-
-    let dir = tempdir().unwrap();
-    let a_path = dir.path().join("a.rs");
-    let trace_path = dir.path().join("lsp_trace.txt");
-
-    let _env = EnvGuard::set_str("ZCODE_DISABLE_SETTINGS", "1")
-        .remove("ZCODE_DISABLE_LSP")
-        .set("ZCODE_LSP_COMMAND", stub_path.as_os_str())
-        .remove("ZCODE_LSP_ARGS")
-        .set("ZCODE_LSP_STUB_TRACE_PATH", trace_path.as_os_str());
-
-    let mut content = String::new();
-    for _ in 0..2100 {
-        content.push_str("fn main() {}\n");
-    }
-    std::fs::write(&a_path, content).unwrap();
-
-    let (runtime, rx) = create_runtime();
-    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
-    assert!(workbench.has_lsp_service());
-
-    workbench.handle_message(AppMessage::FileLoaded {
-        path: a_path.clone(),
-        content: std::fs::read_to_string(&a_path).unwrap(),
-    });
-
-    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state()
-            .problems
-            .items()
-            .iter()
-            .any(|item| item.message == "didOpen")
-    });
-
-    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
-        code: KeyCode::End,
-        modifiers: KeyModifiers::NONE,
-        kind: KeyEventKind::Press,
-    }));
-    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
-        code: KeyCode::Char(' '),
-        modifiers: KeyModifiers::NONE,
-        kind: KeyEventKind::Press,
-    }));
-
-    drive_until(&mut workbench, &rx, Duration::from_secs(3), |_| {
-        let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();
-        trace
-            .lines()
-            .any(|line| line.trim() == "request textDocument/semanticTokens/range")
-    });
-
-    drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        let Some(tab) = w.state().editor.pane(0).and_then(|pane| pane.active_tab()) else {
-            return false;
-        };
-        let Some(lines) = tab.semantic_segments_lines(0, 1) else {
-            return false;
-        };
-        let line = tab.buffer.rope().line(0).to_string();
-        let line = line.trim_end_matches(['\n', '\r']);
-        lines.first().is_some_and(|segments| {
-            segments.iter().any(|segment| {
-                segment.semantic_kind == Some(HighlightKind::Keyword)
-                    && line.get(segment.start..segment.end) == Some("fn")
-            }) && segments.iter().any(|segment| {
-                segment.semantic_kind == Some(HighlightKind::Function)
-                    && line.get(segment.start..segment.end) == Some("main")
-            })
-        })
-    });
-
-    let _ = workbench.handle_input(&InputEvent::Key(KeyEvent {
-        code: KeyCode::Char('x'),
-        modifiers: KeyModifiers::NONE,
-        kind: KeyEventKind::Press,
-    }));
-    assert!(
-        workbench
-            .state()
-            .editor
-            .pane(0)
-            .and_then(|pane| pane.active_tab())
-            .and_then(|tab| tab.semantic_segments_lines(0, 1))
-            .is_some(),
-        "semantic highlight should remain visible while new semantic response is pending"
-    );
 }
 
 #[test]

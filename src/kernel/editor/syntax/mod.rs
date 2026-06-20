@@ -146,18 +146,6 @@ impl HighlightKind {
         )
     }
 
-    /// Rendering merge: avoid semantic token overrides when a highlight kind is "opaque".
-    ///
-    /// Tree-sitter is treated as authoritative for comments/strings/regex. `KeywordControl` is
-    /// also syntax-authoritative so control-flow colors stay stable instead of being flattened by
-    /// generic semantic `keyword` tokens.
-    pub const fn is_opaque(self) -> bool {
-        matches!(
-            self,
-            Self::Comment | Self::String | Self::Regex | Self::KeywordControl
-        )
-    }
-
     pub const fn color_group(self) -> SyntaxColorGroup {
         match self {
             Self::Comment => SyntaxColorGroup::Comment,
@@ -196,13 +184,6 @@ pub struct HighlightSpan {
     pub start: usize,
     pub end: usize,
     pub kind: HighlightKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SemanticSegment {
-    pub start: usize,
-    pub end: usize,
-    pub semantic_kind: Option<HighlightKind>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

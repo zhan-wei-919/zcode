@@ -816,7 +816,7 @@ pub(crate) fn default_should_close_on_command<S: LanguageInteractionPolicy + ?Si
 ) -> bool {
     match cmd {
         Command::LspCompletion => false,
-        Command::LspSemanticTokens | Command::LspInlayHints | Command::LspFoldingRange => false,
+        Command::LspInlayHints | Command::LspFoldingRange => false,
         Command::InsertChar(ch) => !behavior.keeps_open_on_char(*ch),
         Command::DeleteBackward | Command::DeleteForward | Command::DeleteSelection => false,
         _ => true,

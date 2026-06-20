@@ -12,7 +12,6 @@ mod viewport;
 
 pub use crate::kernel::language::LanguageId;
 pub use action::EditorAction;
-pub(crate) use state::PendingSemanticLine;
 pub(crate) use state::SnippetTabstop;
 pub use state::{
     DiskSnapshot, DiskState, EditorPaneState, EditorState, EditorTabState, EditorViewportState,
@@ -20,7 +19,7 @@ pub use state::{
 };
 pub(crate) use syntax::compute_highlight_patches;
 pub use syntax::{
-    highlight_snippet, HighlightKind, HighlightSpan, SemanticSegment, SyntaxColorGroup,
+    highlight_snippet, HighlightKind, HighlightSpan, SyntaxColorGroup,
     SyntaxHighlightPatch, DEFAULT_CONFIGURABLE_SYNTAX_RGB_HEX,
 };
 pub(crate) use viewport::clamp_and_follow;

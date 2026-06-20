@@ -1655,7 +1655,6 @@ impl EditorTabState {
     fn commit_op(&mut self, op: EditOp, tab_size: u8) {
         self.snippet_apply_edit(&op);
         self.apply_syntax_edit(&op);
-        self.invalidate_semantic_highlight_on_edit(&op);
         self.last_edit_op_id = Some(op.id);
         self.reset_cursor_goal_col();
         self.history.push(op);

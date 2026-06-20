@@ -1,5 +1,5 @@
 use super::convert::{
-    code_actions_from_lsp, command_from_lsp, completion_items, decode_semantic_tokens,
+    code_actions_from_lsp, command_from_lsp, completion_items,
     definition_location, definition_preview_target, diagnostics_from_params, documentation_text,
     hover_payload, inlay_hints_from_lsp, insert_text_format, language_id_for_path,
     push_document_symbols, range_from_lsp, server_capabilities_from_lsp, signature_help_payload,
@@ -77,15 +77,6 @@ pub(super) enum LspRequestKind {
     Completion,
     CompletionResolve {
         item_id: u64,
-    },
-    SemanticTokens {
-        path: PathBuf,
-        version: u64,
-    },
-    SemanticTokensRange {
-        path: PathBuf,
-        version: u64,
-        range: LspRange,
     },
     InlayHints {
         path: PathBuf,
@@ -249,7 +240,6 @@ pub(super) struct ReaderLoopArgs {
     pub(super) latest_code_action: Arc<AtomicI32>,
     pub(super) latest_completion: Arc<AtomicI32>,
     pub(super) latest_completion_resolve: Arc<AtomicI32>,
-    pub(super) latest_semantic_tokens_by_path: Arc<Mutex<FxHashMap<PathBuf, i32>>>,
     pub(super) latest_inlay_hints: Arc<AtomicI32>,
     pub(super) latest_folding_range: Arc<AtomicI32>,
     pub(super) latest_signature_help: Arc<AtomicI32>,
@@ -279,7 +269,6 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
         latest_code_action,
         latest_completion,
         latest_completion_resolve,
-        latest_semantic_tokens_by_path,
         latest_inlay_hints,
         latest_folding_range,
         latest_signature_help,
@@ -427,20 +416,6 @@ pub(super) fn reader_loop(args: ReaderLoopArgs) {
                                 == RequestId::from(
                                     latest_completion_resolve.load(Ordering::Relaxed),
                                 )
-                        }
-                        LspRequestKind::SemanticTokens { .. }
-                        | LspRequestKind::SemanticTokensRange { .. } => {
-                            let latest = match &kind {
-                                LspRequestKind::SemanticTokens { path, .. }
-                                | LspRequestKind::SemanticTokensRange { path, .. } => {
-                                    latest_semantic_tokens_by_path
-                                        .lock()
-                                        .ok()
-                                        .and_then(|map| map.get(path).copied())
-                                }
-                                _ => None,
-                            };
-                            latest.is_some_and(|id| resp.id == RequestId::from(id))
                         }
                         LspRequestKind::InlayHints { .. } => {
                             resp.id == RequestId::from(latest_inlay_hints.load(Ordering::Relaxed))
@@ -646,7 +621,6 @@ fn dispatch_empty_response(kind: &LspRequestKind, ctx: &KernelServiceContext) {
             items: Vec::new(),
             is_incomplete: false,
         }),
-        LspRequestKind::SemanticTokens { .. } | LspRequestKind::SemanticTokensRange { .. } => {}
         LspRequestKind::InlayHints { .. } => {}
         LspRequestKind::FoldingRange { path, version } => ctx.dispatch(Action::LspFoldingRanges {
             path: path.clone(),
@@ -676,8 +650,6 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
         LspRequestKind::CodeAction => "codeAction",
         LspRequestKind::Completion => "completion",
         LspRequestKind::CompletionResolve { .. } => "completionResolve",
-        LspRequestKind::SemanticTokens { .. } => "semanticTokens",
-        LspRequestKind::SemanticTokensRange { .. } => "semanticTokensRange",
         LspRequestKind::InlayHints { .. } => "inlayHints",
         LspRequestKind::FoldingRange { .. } => "foldingRange",
         LspRequestKind::SignatureHelp => "signatureHelp",
@@ -690,10 +662,7 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
     if let Some(err) = resp.error {
         let is_optional_method = matches!(
             &kind,
-            LspRequestKind::SemanticTokens { .. }
-                | LspRequestKind::SemanticTokensRange { .. }
-                | LspRequestKind::InlayHints { .. }
-                | LspRequestKind::FoldingRange { .. }
+            LspRequestKind::InlayHints { .. } | LspRequestKind::FoldingRange { .. }
         );
         if err.code == ErrorCode::MethodNotFound as i32 && is_optional_method {
             tracing::debug!(code = err.code, error = %err.message, "lsp method not supported");
@@ -913,48 +882,6 @@ pub(super) fn handle_response(kind: LspRequestKind, resp: Response, ctx: &Kernel
                 replace_range,
                 additional_text_edits,
                 command,
-            });
-        }
-        LspRequestKind::SemanticTokens { path, version } => {
-            let resp = serde_json::from_value::<Option<lsp_types::SemanticTokensResult>>(result)
-                .ok()
-                .flatten();
-            let Some(resp) = resp else {
-                return;
-            };
-            let tokens = match resp {
-                lsp_types::SemanticTokensResult::Tokens(tokens) => tokens.data,
-                lsp_types::SemanticTokensResult::Partial(tokens) => tokens.data,
-            };
-            let tokens = decode_semantic_tokens(tokens);
-            ctx.dispatch(Action::LspSemanticTokens {
-                path,
-                version,
-                tokens,
-            });
-        }
-        LspRequestKind::SemanticTokensRange {
-            path,
-            version,
-            range,
-        } => {
-            let resp =
-                serde_json::from_value::<Option<lsp_types::SemanticTokensRangeResult>>(result)
-                    .ok()
-                    .flatten();
-            let Some(resp) = resp else {
-                return;
-            };
-            let tokens = match resp {
-                lsp_types::SemanticTokensRangeResult::Tokens(tokens) => tokens.data,
-                lsp_types::SemanticTokensRangeResult::Partial(tokens) => tokens.data,
-            };
-            let tokens = decode_semantic_tokens(tokens);
-            ctx.dispatch(Action::LspSemanticTokensRange {
-                path,
-                version,
-                range,
-                tokens,
             });
         }
         LspRequestKind::InlayHints {

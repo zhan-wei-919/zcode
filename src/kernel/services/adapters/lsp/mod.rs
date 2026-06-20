@@ -56,8 +56,6 @@ impl Default for HoverRequestOptions {
 }
 
 #[cfg(test)]
-use lsp_server::Response;
-#[cfg(test)]
 use std::time::Duration;
 #[cfg(test)]
 use wire::handle_response;
@@ -318,20 +316,6 @@ impl LspService {
         }
     }
 
-    pub fn request_semantic_tokens(&mut self, path: &Path, version: u64) {
-        let Some(client) = self.client_for_path_mut(path) else {
-            return;
-        };
-        client.request_semantic_tokens(path, version);
-    }
-
-    pub fn request_semantic_tokens_range(&mut self, path: &Path, range: LspRange, version: u64) {
-        let Some(client) = self.client_for_path_mut(path) else {
-            return;
-        };
-        client.request_semantic_tokens_range(path, range, version);
-    }
-
     pub fn request_inlay_hints(&mut self, path: &Path, range: LspRange, version: u64) {
         let Some(client) = self.client_for_path_mut(path) else {
             return;
@@ -417,7 +401,6 @@ struct LspClient {
     latest_code_action: Arc<AtomicI32>,
     latest_completion: Arc<AtomicI32>,
     latest_completion_resolve: Arc<AtomicI32>,
-    latest_semantic_tokens_by_path: Arc<Mutex<FxHashMap<PathBuf, i32>>>,
     latest_inlay_hints: Arc<AtomicI32>,
     latest_folding_range: Arc<AtomicI32>,
     latest_signature_help: Arc<AtomicI32>,
@@ -452,7 +435,6 @@ impl LspClient {
             latest_code_action: Arc::new(AtomicI32::new(0)),
             latest_completion: Arc::new(AtomicI32::new(0)),
             latest_completion_resolve: Arc::new(AtomicI32::new(0)),
-            latest_semantic_tokens_by_path: Arc::new(Mutex::new(FxHashMap::default())),
             latest_inlay_hints: Arc::new(AtomicI32::new(0)),
             latest_folding_range: Arc::new(AtomicI32::new(0)),
             latest_signature_help: Arc::new(AtomicI32::new(0)),
