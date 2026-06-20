@@ -647,6 +647,8 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
     let is_markdown = tab.is_markdown();
     let cursor_row = tab.buffer.cursor().0;
+    // 光标贴着的括号与其配对括号——渲染成亮橙加粗，盖掉原本的语法色。
+    let bracket_match = tab.matching_bracket();
     let mut match_cursor = visible_lines
         .first()
         .map(|first_line| search_matches.partition_point(|m| m.line < *first_line))
@@ -833,6 +835,12 @@ fn paint_content(painter: &mut Painter, tab: &EditorTabState, ctx: ContentPaintC
 
                 if has_snippet && g_idx >= snippet_range.0 && g_idx < snippet_range.1 {
                     style = style.patch(snippet_style);
+                }
+
+                if let Some(cells) = bracket_match {
+                    if cells.iter().any(|&(br, bc)| br == row && bc == g_idx) {
+                        style = style.fg(theme.bracket_match_fg).add_mod(Mod::BOLD);
+                    }
                 }
             }
 

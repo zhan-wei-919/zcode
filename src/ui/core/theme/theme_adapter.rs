@@ -44,6 +44,7 @@ pub fn adapt_theme(theme: &Theme, support: TerminalColorSupport) -> Theme {
         md_marker_fg: map_color_for_support(theme.md_marker_fg, support),
         search_match_bg: map_color_for_support(theme.search_match_bg, support),
         search_current_match_bg: map_color_for_support(theme.search_current_match_bg, support),
+        bracket_match_fg: map_color_for_support(theme.bracket_match_fg, support),
     };
 
     apply_non_truecolor_syntax_palette(&mut adapted, theme, support);

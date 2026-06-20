@@ -38,6 +38,8 @@ pub struct Theme {
     pub md_marker_fg: Color,
     pub search_match_bg: Color,
     pub search_current_match_bg: Color,
+    /// 光标所贴括号与其配对括号的前景色（加粗渲染）。
+    pub bracket_match_fg: Color,
 }
 
 impl Theme {
@@ -95,6 +97,7 @@ impl Default for Theme {
             md_marker_fg: Color::Indexed(8),               // DarkGray
             search_match_bg: Color::Rgb(0x5A, 0x4A, 0x1E), // Soft amber
             search_current_match_bg: Color::Rgb(0x80, 0x60, 0x10), // Bright amber
+            bracket_match_fg: Color::Rgb(0xFF, 0xA5, 0x00), // Bright orange
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Editor domain: headless state + actions.
 
 mod action;
+mod bracket;
 mod edit;
 mod mouse;
 mod reducer;
