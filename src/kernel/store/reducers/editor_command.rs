@@ -49,19 +49,20 @@ impl super::Store {
                     .pane(pane)
                     .and_then(|pane| pane.active_tab());
                 let tab_with_adapter = tab.map(|t| (t, adapter_for_tab(t)));
-                let (
-                    _tab_supports_completion_resolve,
-                    should_complete,
-                    should_trigger_signature_help,
-                ) = {
+                // Compute this keystroke's `SyntaxFacts` ONCE (the single syntax-tree
+                // descent). Every completion / signature-help policy check below reads
+                // only `syntax`/`tab`/`language`, so each reuses this snapshot through a
+                // lightweight runtime context instead of re-descending the tree (and
+                // without the server-capability lookup a full context would perform).
+                let key_syntax =
+                    tab_with_adapter.map(|(t, adapter)| adapter.syntax().syntax_facts(t));
+                let (should_complete, should_trigger_signature_help) = {
                     let signature_help_active = self.state.ui.signature_help.is_active();
                     let caps = tab
                         .and_then(|t| t.path.as_ref())
                         .and_then(|path| lsp_server_capabilities_for_path(&self.state, path));
 
                     let tab_supports_completion = caps.is_none_or(|caps| caps.completion);
-                    let tab_supports_completion_resolve =
-                        caps.is_none_or(|caps| caps.completion_resolve);
                     let tab_supports_signature_help = caps.is_none_or(|caps| caps.signature_help);
 
                     let completion_triggers: &[char] = caps
@@ -83,7 +84,14 @@ impl super::Store {
                             return false;
                         }
 
-                        let runtime = completion_runtime_context(&self.state, tab, adapter);
+                        let Some(syntax) = key_syntax.as_ref() else {
+                            return false;
+                        };
+                        let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+                            tab.language(),
+                            tab,
+                            syntax.clone(),
+                        );
                         adapter.interaction().completion_triggered_by_insert(
                             &runtime,
                             ch,
@@ -93,7 +101,14 @@ impl super::Store {
 
                     let should_trigger_signature_help = tab_supports_signature_help
                         && tab_with_adapter.is_some_and(|(tab, adapter)| {
-                            let runtime = completion_runtime_context(&self.state, tab, adapter);
+                            let Some(syntax) = key_syntax.as_ref() else {
+                                return false;
+                            };
+                            let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+                                tab.language(),
+                                tab,
+                                syntax.clone(),
+                            );
                             adapter.interaction().signature_help_triggered(
                                 &runtime,
                                 ch,
@@ -106,11 +121,7 @@ impl super::Store {
                     let should_trigger_signature_help =
                         should_trigger_signature_help && (ch != ',' || signature_help_active);
 
-                    (
-                        tab_supports_completion_resolve,
-                        should_complete,
-                        should_trigger_signature_help,
-                    )
+                    (should_complete, should_trigger_signature_help)
                 };
 
                 if should_complete {
@@ -120,7 +131,12 @@ impl super::Store {
                         self.state.ui.hover.clear();
                         self.state.ui.completion.close();
                         self.state.ui.completion.pending_request =
-                            Some(self.completion_request_context(pane, path.clone(), version));
+                            Some(self.completion_request_context(
+                                pane,
+                                path.clone(),
+                                version,
+                                key_syntax.clone(),
+                            ));
 
                         effects.push(Effect::LspCompletionRequest {
                             path,
@@ -146,7 +162,7 @@ impl super::Store {
                             let runtime = crate::kernel::language::LanguageRuntimeContext::new(
                                 tab.language(),
                                 tab,
-                                adapter.syntax().syntax_facts(tab),
+                                key_syntax.clone().unwrap_or_default(),
                             );
                             let mut changed = sync_completion_items_from_cache(
                                 &mut self.state.ui.completion,
@@ -219,7 +235,14 @@ impl super::Store {
                 let had_signature_help = self.state.ui.signature_help.is_active();
                 if had_signature_help
                     && !tab_with_adapter.is_some_and(|(t, adapter)| {
-                        let runtime = completion_runtime_context(&self.state, t, adapter);
+                        let Some(syntax) = key_syntax.as_ref() else {
+                            return false;
+                        };
+                        let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+                            t.language(),
+                            t,
+                            syntax.clone(),
+                        );
                         adapter
                             .interaction()
                             .signature_help_should_keep_open(&runtime)
@@ -294,6 +317,15 @@ impl super::Store {
                 let mut effects = effects;
                 effects.extend(cmd_effects);
 
+                // One syntax-tree descent for the whole keystroke; the keep-open / sync
+                // policy checks below reuse it via lightweight runtime contexts.
+                let key_syntax = self
+                    .state
+                    .editor
+                    .pane(pane)
+                    .and_then(|p| p.active_tab())
+                    .map(|tab| adapter_for_tab(tab).syntax().syntax_facts(tab));
+
                 if let Some(tab) = self.state.editor.pane(pane).and_then(|p| p.active_tab()) {
                     let session = self.state.ui.completion.request.as_ref().or(self
                         .state
@@ -306,16 +338,16 @@ impl super::Store {
                         session.pane == pane && tab.path.as_ref() == Some(&session.path)
                     });
                     let adapter = adapter_for_tab(tab);
-                    let keep_completion_open = {
-                        let runtime = completion_runtime_context(&self.state, tab, adapter);
-                        adapter.interaction().completion_should_keep_open(&runtime)
-                    };
-                    let keep_signature_help_open = {
-                        let runtime = completion_runtime_context(&self.state, tab, adapter);
-                        adapter
-                            .interaction()
-                            .signature_help_should_keep_open(&runtime)
-                    };
+                    let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+                        tab.language(),
+                        tab,
+                        key_syntax.clone().unwrap_or_default(),
+                    );
+                    let keep_completion_open =
+                        adapter.interaction().completion_should_keep_open(&runtime);
+                    let keep_signature_help_open = adapter
+                        .interaction()
+                        .signature_help_should_keep_open(&runtime);
 
                     if session_ok && !keep_completion_open {
                         if self.state.ui.completion.close() {
@@ -338,7 +370,7 @@ impl super::Store {
                         let runtime = crate::kernel::language::LanguageRuntimeContext::new(
                             tab.language(),
                             tab,
-                            adapter.syntax().syntax_facts(tab),
+                            key_syntax.clone().unwrap_or_default(),
                         );
                         let mut changed = sync_completion_items_from_cache(
                             &mut self.state.ui.completion,
@@ -384,8 +416,15 @@ impl super::Store {
                         .pane(pane)
                         .and_then(|p| p.active_tab())
                         .is_some_and(|t| {
+                            let Some(syntax) = key_syntax.as_ref() else {
+                                return false;
+                            };
                             let adapter = adapter_for_tab(t);
-                            let runtime = completion_runtime_context(&self.state, t, adapter);
+                            let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+                                t.language(),
+                                t,
+                                syntax.clone(),
+                            );
                             adapter
                                 .interaction()
                                 .signature_help_should_keep_open(&runtime)

@@ -18,9 +18,6 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::Instant;
 
-#[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use super::super::util::find_open_tab;
 use super::super::util::{is_lsp_source_path, open_tabs_for_path, resolve_renamed_path};
 use super::completion::{
@@ -31,8 +28,14 @@ use super::semantic::{
     semantic_segment_lines_from_tokens, semantic_segment_lines_from_tokens_range,
 };
 
+// Test-only counter of `lsp_server_capabilities_for_path` calls (each resolves an
+// `LspClientKey` via a filesystem marker-root walk). Thread-local — like the
+// `SyntaxFacts` descent counter — so the parallel test runner's other tests can't
+// pollute a measured per-keystroke delta. Compiles out entirely in non-test builds.
 #[cfg(test)]
-static LSP_CAPABILITY_LOOKUP_CALLS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static LSP_CAPABILITY_LOOKUP_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 fn normalize_hover_preview_for_active_tab(
     state: &crate::kernel::AppState,
@@ -62,12 +65,12 @@ fn normalize_hover_preview_for_active_tab(
 
 #[cfg(test)]
 pub(in crate::kernel::store) fn reset_lsp_capability_lookup_perf_counter() {
-    LSP_CAPABILITY_LOOKUP_CALLS.store(0, Ordering::Relaxed);
+    LSP_CAPABILITY_LOOKUP_CALLS.with(|count| count.set(0));
 }
 
 #[cfg(test)]
 pub(in crate::kernel::store) fn lsp_capability_lookup_perf_counter() -> usize {
-    LSP_CAPABILITY_LOOKUP_CALLS.load(Ordering::Relaxed)
+    LSP_CAPABILITY_LOOKUP_CALLS.with(|count| count.get())
 }
 
 pub(in crate::kernel::store) fn problem_byte_offset(
@@ -117,9 +120,7 @@ pub(in crate::kernel::store) fn lsp_server_capabilities_for_path<'a>(
     path: &Path,
 ) -> Option<&'a LspServerCapabilities> {
     #[cfg(test)]
-    {
-        LSP_CAPABILITY_LOOKUP_CALLS.fetch_add(1, Ordering::Relaxed);
-    }
+    LSP_CAPABILITY_LOOKUP_CALLS.with(|count| count.set(count.get() + 1));
 
     let key = lsp_client_key_for_path(state, path)?;
     state.lsp.server_capabilities.get(&key)

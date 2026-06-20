@@ -32,7 +32,10 @@ mod search_command;
 
 #[cfg(test)]
 use intel::completion::{apply_completion_insertion_cursor, CompletionInsertion};
-use intel::completion::{completion_runtime_context, should_close_completion_on_editor_action};
+use intel::completion::{
+    completion_runtime_context, language_runtime_context_with_syntax,
+    should_close_completion_on_editor_action,
+};
 pub use intel::completion_rank::CompletionRanker;
 
 #[cfg(test)]
@@ -45,7 +48,8 @@ use util::is_lsp_source_path;
 use super::InputDialogKind;
 use super::{Action, AppState, EditorAction, Effect, FocusTarget, OverlayKind};
 use crate::kernel::language::{
-    adapter::adapter_for_tab, adapter_for, CompletionRecord, CompletionResolveState,
+    adapter::adapter_for_tab, adapter::SyntaxFacts, adapter_for, CompletionRecord,
+    CompletionResolveState,
 };
 
 pub struct DispatchResult {
@@ -300,6 +304,7 @@ impl Store {
         pane: usize,
         path: std::path::PathBuf,
         version: u64,
+        syntax: Option<SyntaxFacts>,
     ) -> super::state::CompletionRequestContext {
         let normalization = self
             .state
@@ -308,7 +313,11 @@ impl Store {
             .and_then(|pane_state| pane_state.active_tab())
             .map(|tab| {
                 let adapter = adapter_for_tab(tab);
-                completion_runtime_context(&self.state, tab, adapter).completion_snapshot()
+                // Reuse the caller's per-keystroke `SyntaxFacts` when provided;
+                // otherwise descend the syntax tree once here.
+                let syntax = syntax.unwrap_or_else(|| adapter.syntax().syntax_facts(tab));
+                language_runtime_context_with_syntax(&self.state, tab, adapter, syntax)
+                    .completion_snapshot()
             })
             .unwrap_or_else(|| {
                 crate::kernel::language::CompletionNormalizationSnapshot::detached(
@@ -558,7 +567,15 @@ impl Store {
                     .and_then(|p| p.active_tab());
                 let completion_changed = if let Some(tab) = active_tab {
                     let adapter = self.active_tab_adapter();
-                    let runtime = completion_runtime_context(&self.state, tab, adapter);
+                    // `should_close_on_command` reads only `syntax`/`tab`, never server
+                    // caps, so build a lightweight context: this drops the per-keystroke
+                    // server-capability lookup (a filesystem marker-root walk) that the
+                    // full context would do here purely to be ignored.
+                    let runtime = crate::kernel::language::LanguageRuntimeContext::new(
+                        tab.language(),
+                        tab,
+                        adapter.syntax().syntax_facts(tab),
+                    );
                     if adapter
                         .interaction()
                         .should_close_on_command(&cmd, Some(&runtime))

@@ -2435,6 +2435,110 @@ fn experiment_insert_char_signature_help_capability_lookup_counts() {
 }
 
 #[test]
+fn insert_char_reuses_one_syntax_facts_snapshot_in_reducer() {
+    use crate::kernel::store::intel::lsp::{
+        lsp_capability_lookup_perf_counter, reset_lsp_capability_lookup_perf_counter,
+    };
+
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let content = "fn main() { foo".to_string();
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    reset_syntax_facts_descent_counter();
+    reset_lsp_capability_lookup_perf_counter();
+    let _ = store.dispatch(Action::RunCommand(Command::InsertChar('x')));
+    let descents = syntax_facts_descent_counter();
+    let cap_lookups = lsp_capability_lookup_perf_counter();
+
+    eprintln!("[experiment] insert_char descents={descents} capability_lookups={cap_lookups}");
+
+    // A keystroke does exactly two `SyntaxFacts` descents, and they are NOT
+    // redundant: one is `dispatch`'s pre-edit `should_close_on_command` pre-pass,
+    // the other is `reduce_editor_command`'s post-edit completion / signature-help
+    // decision. They snapshot different buffer states, so they can't be merged.
+    // What Step 3 fixed: the reducer now reuses ONE post-edit snapshot across all of
+    // its policy checks. Before, it rebuilt the runtime context per check — 2 here,
+    // and 3 once a completion request fired. A regression past 2 means the reducer
+    // is re-descending per check again.
+    assert_eq!(
+        descents, 2,
+        "expected 1 pre-edit (dispatch) + 1 post-edit (reducer) descent; got {descents}"
+    );
+    // Only the reducer's own capability lookup remains. The dispatch pre-pass now
+    // uses a lightweight context, so it no longer does a redundant server-capability
+    // filesystem walk on every keystroke.
+    assert_eq!(
+        cap_lookups, 1,
+        "should_close pre-pass must use a lightweight (no-caps) context; got {cap_lookups}"
+    );
+}
+
+#[test]
+fn delete_reuses_one_syntax_facts_snapshot_in_reducer() {
+    use crate::kernel::store::intel::lsp::{
+        lsp_capability_lookup_perf_counter, reset_lsp_capability_lookup_perf_counter,
+    };
+
+    let mut store = new_store();
+    store.state.ui.focus = FocusTarget::Editor;
+    let content = "fn main() { foo".to_string();
+    let path = store.state.workspace_root.join("main.rs");
+    let _ = store.dispatch(Action::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.clone(),
+    }));
+    {
+        let tab = store
+            .state
+            .editor
+            .pane_mut(0)
+            .unwrap()
+            .active_tab_mut()
+            .unwrap();
+        tab.buffer.set_cursor(0, content.chars().count());
+    }
+
+    reset_syntax_facts_descent_counter();
+    reset_lsp_capability_lookup_perf_counter();
+    let _ = store.dispatch(Action::RunCommand(Command::DeleteBackward));
+    let descents = syntax_facts_descent_counter();
+    let cap_lookups = lsp_capability_lookup_perf_counter();
+
+    eprintln!("[experiment] delete descents={descents} capability_lookups={cap_lookups}");
+
+    // Same shape as InsertChar: one pre-edit `should_close` descent in `dispatch`,
+    // one post-edit descent in `reduce_editor_command`. The Delete branch's two
+    // keep-open checks (`completion_should_keep_open` + `signature_help_should_keep_open`)
+    // now share the single post-edit snapshot rather than each rebuilding the context
+    // (which was 2 reducer descents before Step 3, i.e. 3 total).
+    assert_eq!(
+        descents, 2,
+        "expected 1 pre-edit (dispatch) + 1 post-edit (reducer) descent; got {descents}"
+    );
+    assert_eq!(
+        cap_lookups, 0,
+        "the Delete keep-open checks must use lightweight contexts (no caps); got {cap_lookups}"
+    );
+}
+
+#[test]
 fn lsp_workspace_edit_applies_to_all_open_tabs_for_path() {
     let mut store = new_store();
     store.state.editor.ensure_panes(2);

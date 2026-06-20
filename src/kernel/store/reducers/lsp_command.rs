@@ -179,7 +179,7 @@ impl super::Store {
                         self.state.ui.completion.close();
                     }
                     self.state.ui.completion.pending_request =
-                        Some(self.completion_request_context(pane, path.clone(), version));
+                        Some(self.completion_request_context(pane, path.clone(), version, None));
 
                     return DispatchResult {
                         effects: vec![Effect::LspCompletionRequest {

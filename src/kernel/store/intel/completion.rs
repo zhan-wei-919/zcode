@@ -2,7 +2,7 @@ use crate::kernel::editor::EditorTabState;
 use crate::kernel::editor::SnippetTabstop;
 use crate::kernel::language::adapter::{
     CompletionContext, CompletionProtocolAdapter, CompletionRecord, CompletionReplacePolicy,
-    LanguageInteractionPolicy, LanguageRuntimeContext, TextEditPlan,
+    LanguageInteractionPolicy, LanguageRuntimeContext, SyntaxFacts, TextEditPlan,
 };
 use crate::kernel::language::{CompletionEntry, LanguageId};
 use crate::kernel::services::ports::{LspCompletionItem, LspPositionEncoding, LspRange};
@@ -25,10 +25,14 @@ pub(in crate::kernel::store) fn should_close_completion_on_editor_action(
     )
 }
 
-pub(in crate::kernel::store) fn language_runtime_context<'a>(
+/// Builds a full runtime context from an already-computed `SyntaxFacts`, skipping
+/// the syntax-tree descent. Lets a hot path (e.g. the per-keystroke completion
+/// decision) compute `SyntaxFacts` once and reuse it across every context it needs.
+pub(in crate::kernel::store) fn language_runtime_context_with_syntax<'a>(
     state: &'a AppState,
     tab: &'a EditorTabState,
     adapter: &dyn crate::kernel::language::LanguageAdapter,
+    syntax: SyntaxFacts,
 ) -> LanguageRuntimeContext<'a> {
     let server_caps = tab
         .path
@@ -40,8 +44,15 @@ pub(in crate::kernel::store) fn language_runtime_context<'a>(
         .and_then(|path| super::lsp::lsp_client_key_for_path(state, path).map(|key| key.server))
         .or(adapter.features().lsp_server);
 
-    LanguageRuntimeContext::new(tab.language(), tab, adapter.syntax().syntax_facts(tab))
-        .with_server(server, server_caps)
+    LanguageRuntimeContext::new(tab.language(), tab, syntax).with_server(server, server_caps)
+}
+
+pub(in crate::kernel::store) fn language_runtime_context<'a>(
+    state: &'a AppState,
+    tab: &'a EditorTabState,
+    adapter: &dyn crate::kernel::language::LanguageAdapter,
+) -> LanguageRuntimeContext<'a> {
+    language_runtime_context_with_syntax(state, tab, adapter, adapter.syntax().syntax_facts(tab))
 }
 
 pub(in crate::kernel::store) fn completion_runtime_context<'a>(
