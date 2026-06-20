@@ -9,6 +9,11 @@ pub fn is_lsp_source_path(path: &Path) -> bool {
         .is_some()
 }
 
+/// Resolves the LSP client key — `(server kind, nearest project root)` — for a file.
+///
+/// Capabilities and clients are keyed by `(server kind + root)` rather than by
+/// server kind alone so a monorepo with multiple roots runs one client per root
+/// instead of sharing (and misrouting) a single server.
 pub fn client_key_for_path(
     workspace_root: &Path,
     path: &Path,

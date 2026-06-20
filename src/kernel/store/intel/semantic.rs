@@ -385,7 +385,7 @@ fn semantic_segments_for_line(line: &str, spans: &[HighlightSpan]) -> Vec<Semant
     segments
 }
 
-pub(crate) fn merge_adjacent_semantic_segments(segments: &mut Vec<SemanticSegment>) {
+fn merge_adjacent_semantic_segments(segments: &mut Vec<SemanticSegment>) {
     if segments.len() < 2 {
         return;
     }

@@ -68,12 +68,11 @@ fn union_bounds(
 
 fn selection_from_bounds_with_primary_orientation(
     bounds: ((usize, usize), (usize, usize)),
-    primary_pos: (usize, usize),
     primary_selection: Option<&Selection>,
-) -> (Option<Selection>, (usize, usize)) {
+) -> Option<Selection> {
     let (start, end) = bounds;
     if start == end {
-        return (None, primary_pos);
+        return None;
     }
 
     let (anchor, cursor) = match primary_selection {
@@ -92,7 +91,7 @@ fn selection_from_bounds_with_primary_orientation(
     let mut selection = Selection::new(anchor, Granularity::Char);
     // Granularity::Char ignores rope, but the API requires one.
     selection.update_cursor(cursor, &Rope::new());
-    (Some(selection), cursor)
+    Some(selection)
 }
 
 /// Merges overlapping secondary cursors/selections and merges any overlaps into primary.
@@ -130,14 +129,8 @@ pub fn merge_overlapping(
             overlaps(primary_sel.as_ref(), primary_pos, sec_sel.as_ref(), sec_pos);
         if overlaps_primary {
             let bounds = union_bounds(primary_sel.as_ref(), primary_pos, sec_sel.as_ref(), sec_pos);
-            let (new_sel, new_primary_pos) = selection_from_bounds_with_primary_orientation(
-                bounds,
-                primary_pos,
-                primary_sel.as_ref(),
-            );
-            primary_sel = new_sel;
-            // Primary position becomes the active end when a selection exists.
-            let _ = new_primary_pos;
+            primary_sel =
+                selection_from_bounds_with_primary_orientation(bounds, primary_sel.as_ref());
             secondaries.remove(i);
             continue;
         }
@@ -173,6 +166,8 @@ pub fn merge_overlapping(
     }
     *secondaries = out;
 
+    // After any merges, the primary cursor follows the merged selection's active
+    // end; with no selection it stays where it was.
     let primary_selection = primary_sel;
     let primary_pos = primary_selection
         .as_ref()

@@ -1,4 +1,4 @@
-use crate::ui::core::geom::Rect;
+use crate::ui::core::geom::{Pos, Rect};
 
 pub(super) fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
     let width = area.w.saturating_mul(width_percent).saturating_div(100);
@@ -15,7 +15,7 @@ pub(super) fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect
 }
 
 pub(super) fn rect_contains(area: Rect, x: u16, y: u16) -> bool {
-    x >= area.x && x < area.x + area.w && y >= area.y && y < area.y + area.h
+    area.contains(Pos::new(x, y))
 }
 
 pub(super) fn sidebar_width(available: u16) -> u16 {

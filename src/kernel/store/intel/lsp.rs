@@ -129,10 +129,8 @@ pub(in crate::kernel::store) fn lsp_client_key_for_path(
     state: &crate::kernel::AppState,
     path: &Path,
 ) -> Option<LspClientKey> {
-    crate::kernel::lsp_registry::client_key_for_path(&state.workspace_root, path).map(|(_, key)| {
-        // Ensure we key capabilities by (server kind + root) to support monorepos with multiple roots.
-        key
-    })
+    crate::kernel::lsp_registry::client_key_for_path(&state.workspace_root, path)
+        .map(|(_, key)| key)
 }
 
 pub(in crate::kernel::store) fn lsp_position_encoding_for_path(

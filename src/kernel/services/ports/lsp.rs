@@ -41,6 +41,10 @@ impl LspServerKind {
     }
 }
 
+/// Identifies one LSP client (and its capability set) by `(server kind, root)`.
+///
+/// `root` is part of the key so a monorepo with multiple project roots gets one
+/// client per root rather than all files sharing a single server.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LspClientKey {
     pub server: LspServerKind,
