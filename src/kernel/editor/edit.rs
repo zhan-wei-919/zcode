@@ -1,5 +1,6 @@
 use crate::core::Command;
 use crate::kernel::language::adapter_for;
+use crate::kernel::language::IndentUnit;
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::Match;
 use crate::models::cursor_set;
@@ -59,7 +60,7 @@ fn empty_pair_replace_plan(
     cursor: (usize, usize),
     open: &str,
     close: &str,
-    tab_size: u8,
+    indent: IndentUnit,
 ) -> Option<EmptyPairReplacePlan> {
     let (row, col) = cursor;
     let slice = buffer.line_slice(row)?;
@@ -97,21 +98,23 @@ fn empty_pair_replace_plan(
         .unwrap_or(line.len());
     let base_indent = &line[..indent_end];
     let base_indent_chars = base_indent.chars().count();
-    let indent_spaces = tab_size as usize;
+    let indent_str = indent.as_str();
+    // 缩进单位是 1~2 个 `\t`，每个 Tab 占一个 grapheme 列。
+    let indent_cols = indent_str.chars().count();
 
     let mut inserted =
-        String::with_capacity(1 + base_indent.len() + indent_spaces + 1 + base_indent.len());
+        String::with_capacity(1 + base_indent.len() + indent_str.len() + 1 + base_indent.len());
     inserted.push('\n');
     inserted.push_str(base_indent);
-    inserted.push_str(&" ".repeat(indent_spaces));
+    inserted.push_str(indent_str);
     inserted.push('\n');
     inserted.push_str(base_indent);
 
     let start_char = buffer.pos_to_char((row, left + 1));
     let end_char = buffer.pos_to_char((row, right));
 
-    let cursor_after = (row.saturating_add(1), base_indent_chars + indent_spaces);
-    let cursor_after_char_offset = start_char + 1 + base_indent_chars + indent_spaces;
+    let cursor_after = (row.saturating_add(1), base_indent_chars + indent_cols);
+    let cursor_after_char_offset = start_char + 1 + base_indent_chars + indent_cols;
 
     Some(EmptyPairReplacePlan {
         start_char,
@@ -834,7 +837,7 @@ impl EditorTabState {
             }
             Command::InsertNewline => {
                 if config.auto_indent && !self.in_string_or_comment() {
-                    if let Some(op) = self.expand_electric_enter_op(tab_size, parent) {
+                    if let Some(op) = self.expand_electric_enter_op(parent) {
                         ops.push(op);
                         self.reset_cursor_goal_col();
                         return DryExecution { changed: true, ops };
@@ -849,7 +852,7 @@ impl EditorTabState {
                 }
 
                 let op = if config.auto_indent {
-                    self.insert_newline_with_indent_op(tab_size, parent)
+                    self.insert_newline_with_indent_op(parent)
                 } else {
                     self.buffer.insert_char_op('\n', parent)
                 };
@@ -869,7 +872,8 @@ impl EditorTabState {
                     self.buffer.clear_selection();
                 }
 
-                ops.push(self.buffer.insert_char_op('\t', parent));
+                let unit = self.indent_unit();
+                ops.push(self.buffer.insert_str_op(unit.as_str(), parent));
                 self.reset_cursor_goal_col();
                 changed = true;
             }
@@ -1141,7 +1145,7 @@ impl EditorTabState {
                 Command::InsertNewline => {
                     if config.auto_indent && !self.in_string_or_comment_at(record.cursor_char) {
                         let cursor = self.buffer.cursor_pos_from_char_offset(record.cursor_char);
-                        if let Some(plan) = self.electric_enter_plan(cursor, config.tab_size) {
+                        if let Some(plan) = self.electric_enter_plan(cursor) {
                             return plan.start_char;
                         }
                     }
@@ -1176,9 +1180,9 @@ impl EditorTabState {
         cursor: (usize, usize),
         open: &str,
         close: &str,
-        tab_size: u8,
     ) -> Option<EmptyPairReplacePlan> {
-        empty_pair_replace_plan(&self.buffer, cursor, open, close, tab_size)
+        let indent = self.indent_unit();
+        empty_pair_replace_plan(&self.buffer, cursor, open, close, indent)
     }
 
     fn delete_to_line_end_op(&mut self, parent: OpId) -> Option<EditOp> {
@@ -1671,11 +1675,14 @@ impl EditorTabState {
         adapter_for(self.language()).editing()
     }
 
-    fn electric_enter_plan(
-        &self,
-        cursor: (usize, usize),
-        tab_size: u8,
-    ) -> Option<EmptyPairReplacePlan> {
+    /// 当前 buffer 的缩进单位；未知语言（None）退到默认一个 Tab。
+    fn indent_unit(&self) -> IndentUnit {
+        self.language()
+            .map(|lang| lang.indent_unit())
+            .unwrap_or(IndentUnit::OneTab)
+    }
+
+    fn electric_enter_plan(&self, cursor: (usize, usize)) -> Option<EmptyPairReplacePlan> {
         self.editing_policy()
             .delimiter_rules()
             .iter()
@@ -1687,12 +1694,11 @@ impl EditorTabState {
                     cursor,
                     rule.open.encode_utf8(&mut open_buf),
                     rule.close.encode_utf8(&mut close_buf),
-                    tab_size,
                 )
             })
     }
 
-    fn expand_electric_enter_op(&mut self, tab_size: u8, parent: OpId) -> Option<EditOp> {
+    fn expand_electric_enter_op(&mut self, parent: OpId) -> Option<EditOp> {
         for rule in self
             .editing_policy()
             .delimiter_rules()
@@ -1704,7 +1710,6 @@ impl EditorTabState {
             if let Some(op) = self.expand_empty_pair_op(
                 rule.open.encode_utf8(&mut open_buf),
                 rule.close.encode_utf8(&mut close_buf),
-                tab_size,
                 parent,
             ) {
                 return Some(op);
@@ -1749,7 +1754,7 @@ impl EditorTabState {
         )
     }
 
-    fn insert_newline_with_indent_op(&mut self, tab_size: u8, parent: OpId) -> EditOp {
+    fn insert_newline_with_indent_op(&mut self, parent: OpId) -> EditOp {
         let row = self.buffer.cursor().0;
         let cursor_char_offset = self.buffer.cursor_char_offset();
         let in_string_or_comment = self.in_string_or_comment();
@@ -1771,7 +1776,8 @@ impl EditorTabState {
         if !in_string_or_comment {
             let extra_levels = self.editing_policy().newline_indent_extra_levels(trimmed);
             if extra_levels > 0 {
-                indent.push_str(&" ".repeat(tab_size as usize * extra_levels as usize));
+                let unit = self.indent_unit();
+                indent.push_str(&unit.as_str().repeat(extra_levels as usize));
             }
         }
 
@@ -1782,19 +1788,14 @@ impl EditorTabState {
         self.buffer.insert_str_op(&text, parent)
     }
 
-    fn expand_empty_pair_op(
-        &mut self,
-        open: &str,
-        close: &str,
-        tab_size: u8,
-        parent: OpId,
-    ) -> Option<EditOp> {
+    fn expand_empty_pair_op(&mut self, open: &str, close: &str, parent: OpId) -> Option<EditOp> {
         if self.buffer.has_selection() {
             return None;
         }
 
+        let indent = self.indent_unit();
         let (row, col) = self.buffer.cursor();
-        let plan = empty_pair_replace_plan(&self.buffer, (row, col), open, close, tab_size)?;
+        let plan = empty_pair_replace_plan(&self.buffer, (row, col), open, close, indent)?;
         Some(self.buffer.replace_range_op(
             plan.start_char,
             plan.end_char,

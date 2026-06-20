@@ -39,7 +39,34 @@ pub enum LanguageId {
     Markdown,
 }
 
+/// 一个缩进层级对应的硬 Tab 数量。缩进统一用 `\t`，显示宽度由 tab_size 在显示层决定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndentUnit {
+    OneTab,
+    TwoTabs,
+}
+
+impl IndentUnit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IndentUnit::OneTab => "\t",
+            IndentUnit::TwoTabs => "\t\t",
+        }
+    }
+}
+
 impl LanguageId {
+    /// 每种语言一个缩进层级用几个硬 Tab。缩进单位用于 Tab 键、换行自动缩进、
+    /// 空括号对展开，保证同一文件缩进自洽。
+    pub fn indent_unit(self) -> IndentUnit {
+        match self {
+            // C/C++/CUDA（.cu/.cuh 在 from_path 已归到 Cpp）：两个 Tab 一级。
+            Self::C | Self::Cpp => IndentUnit::TwoTabs,
+            // 其余语言：一个 Tab 一级。
+            _ => IndentUnit::OneTab,
+        }
+    }
+
     pub fn from_path(path: &Path) -> Option<Self> {
         match path.extension().and_then(|s| s.to_str())? {
             "rs" => Some(Self::Rust),

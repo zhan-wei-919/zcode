@@ -20,8 +20,9 @@ fn test_rust_brace_pair_and_electric_enter() {
     assert_eq!(tab.buffer.cursor(), (0, "fn main() {".len()));
 
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
-    assert_eq!(tab.buffer.text(), "fn main() {\n    \n}");
-    assert_eq!(tab.buffer.cursor(), (1, 4));
+    // Rust 缩进单位是一个硬 Tab。
+    assert_eq!(tab.buffer.text(), "fn main() {\n\t\n}");
+    assert_eq!(tab.buffer.cursor(), (1, 1));
 }
 
 #[test]
@@ -43,8 +44,8 @@ fn test_electric_enter_with_whitespace_between_braces() {
     assert_eq!(tab.buffer.text(), "fn main() {  }");
 
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
-    assert_eq!(tab.buffer.text(), "fn main() {\n    \n}");
-    assert_eq!(tab.buffer.cursor(), (1, 4));
+    assert_eq!(tab.buffer.text(), "fn main() {\n\t\n}");
+    assert_eq!(tab.buffer.cursor(), (1, 1));
 }
 
 #[test]
@@ -60,8 +61,58 @@ fn test_go_paren_pair_and_electric_enter() {
     tab.buffer.set_cursor(0, "import (".len());
 
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
-    assert_eq!(tab.buffer.text(), "import (\n    \n)");
-    assert_eq!(tab.buffer.cursor(), (1, 4));
+    // Go 缩进单位是一个硬 Tab。
+    assert_eq!(tab.buffer.text(), "import (\n\t\n)");
+    assert_eq!(tab.buffer.cursor(), (1, 1));
+}
+
+#[test]
+fn test_cpp_brace_pair_uses_two_tabs() {
+    let config = EditorConfig::default();
+    let mut tab = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.cpp"),
+        "int main() ",
+        &config,
+    );
+
+    let end = tab.buffer.line_grapheme_len(0);
+    tab.buffer.set_cursor(0, end);
+
+    let _ = tab.apply_command(Command::InsertChar('{'), 0, &config);
+    assert_eq!(tab.buffer.text(), "int main() {}");
+
+    let _ = tab.apply_command(Command::InsertNewline, 0, &config);
+    // C/C++/CUDA 缩进单位是两个硬 Tab。
+    assert_eq!(tab.buffer.text(), "int main() {\n\t\t\n}");
+    assert_eq!(tab.buffer.cursor(), (1, 2));
+}
+
+#[test]
+fn test_tab_key_inserts_indent_unit() {
+    let config = EditorConfig::default();
+
+    // Rust：一次 Tab 一个 \t。
+    let mut rust = EditorTabState::from_file(
+        TabId::new(1),
+        PathBuf::from("test.rs"),
+        "",
+        &config,
+    );
+    let _ = rust.apply_command(Command::InsertTab, 0, &config);
+    assert_eq!(rust.buffer.text(), "\t");
+    assert_eq!(rust.buffer.cursor(), (0, 1));
+
+    // C++：一次 Tab 两个 \t。
+    let mut cpp = EditorTabState::from_file(
+        TabId::new(2),
+        PathBuf::from("test.cpp"),
+        "",
+        &config,
+    );
+    let _ = cpp.apply_command(Command::InsertTab, 0, &config);
+    assert_eq!(cpp.buffer.text(), "\t\t");
+    assert_eq!(cpp.buffer.cursor(), (0, 2));
 }
 
 #[test]
@@ -328,8 +379,9 @@ fn test_c_auto_pair_and_electric_enter() {
     assert_eq!(tab.buffer.cursor(), (0, "int main() {".len()));
 
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
-    assert_eq!(tab.buffer.text(), "int main() {\n    \n}");
-    assert_eq!(tab.buffer.cursor(), (1, 4));
+    // C 缩进单位是两个硬 Tab。
+    assert_eq!(tab.buffer.text(), "int main() {\n\t\t\n}");
+    assert_eq!(tab.buffer.cursor(), (1, 2));
 }
 
 #[test]
@@ -350,8 +402,8 @@ fn test_python_auto_pair_and_colon_indent() {
     tab.buffer.set_cursor(0, "if value:".len());
 
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
-    assert_eq!(tab.buffer.text(), "if value:\n    ");
-    assert_eq!(tab.buffer.cursor(), (1, 4));
+    assert_eq!(tab.buffer.text(), "if value:\n\t");
+    assert_eq!(tab.buffer.cursor(), (1, 1));
 }
 
 #[test]
@@ -373,13 +425,8 @@ fn test_rust_paren_newline_uses_electric_enter() {
     tab.buffer.set_cursor(0, "call(".len());
 
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
-    assert_eq!(
-        tab.buffer.text(),
-        "call(
-    
-)"
-    );
-    assert_eq!(tab.buffer.cursor(), (1, 4));
+    assert_eq!(tab.buffer.text(), "call(\n\t\n)");
+    assert_eq!(tab.buffer.cursor(), (1, 1));
 }
 
 #[test]
@@ -395,13 +442,8 @@ fn test_rust_bracket_newline_uses_electric_enter() {
     tab.buffer.set_cursor(0, "let items = vec![".len());
 
     let _ = tab.apply_command(Command::InsertNewline, 0, &config);
-    assert_eq!(
-        tab.buffer.text(),
-        "let items = vec![
-    
-];"
-    );
-    assert_eq!(tab.buffer.cursor(), (1, 4));
+    assert_eq!(tab.buffer.text(), "let items = vec![\n\t\n];");
+    assert_eq!(tab.buffer.cursor(), (1, 1));
 }
 
 #[test]
