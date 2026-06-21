@@ -978,6 +978,37 @@ fn test_highlight_cpp_multi_declarator_all_names_highlighted() {
 }
 
 #[test]
+fn test_highlight_cpp_restrict_qualifier_is_keyword() {
+    // GNU 的 __restrict__ / __restrict 是类型限定符（type_qualifier 节点），
+    // 应当像 const 一样被高亮为 Keyword，而不是因拼写不在关键字表里就漏色。
+    let src = "void f(const float *__restrict__ wpe);\n";
+    let rope = Rope::from_str(src);
+    let doc = SyntaxDocument::for_path(Path::new("test.cpp"), &rope).expect("cpp syntax");
+
+    let spans = highlight_lines(&doc, &rope, 0, 1);
+    let line = "void f(const float *__restrict__ wpe);";
+    let idx_const = line.find("const").unwrap();
+    let idx_restrict = line.find("__restrict__").unwrap();
+
+    // 基线：const 一直就会被高亮（确保整行能正常解析）。
+    assert!(
+        spans[0].iter().any(|s| {
+            s.kind == HighlightKind::Keyword && s.start <= idx_const && idx_const < s.end
+        }),
+        "expected Keyword for `const`, got: {:?}",
+        spans[0]
+    );
+    // 回归点：__restrict__ 也应被高亮为 Keyword。
+    assert!(
+        spans[0].iter().any(|s| {
+            s.kind == HighlightKind::Keyword && s.start <= idx_restrict && idx_restrict < s.end
+        }),
+        "expected Keyword for `__restrict__`, got: {:?}",
+        spans[0]
+    );
+}
+
+#[test]
 fn test_highlight_header_defaults_to_cpp() {
     let src = "class A {};\n";
     let rope = Rope::from_str(src);

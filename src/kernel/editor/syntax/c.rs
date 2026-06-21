@@ -13,6 +13,9 @@ pub(super) fn classify(
     match node.kind() {
         "if" | "else" | "for" | "while" | "do" | "switch" | "case" | "return" | "break"
         | "continue" | "goto" | "catch" | "throw" | "try" => Some(HighlightKind::KeywordControl),
+        // 按节点类型（而非枚举关键字字符串）覆盖所有类型限定符，
+        // 这样 GNU 拼法 __restrict__/__restrict 与 _Atomic 等也能高亮，不会漏。
+        "type_qualifier" => Some(HighlightKind::Keyword),
         "identifier" => classify_identifier(node),
         "field_identifier" => classify_field_identifier(node),
         "namespace_identifier" if language == LanguageId::Cpp => Some(HighlightKind::Namespace),
