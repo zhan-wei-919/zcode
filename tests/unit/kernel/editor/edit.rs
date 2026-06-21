@@ -93,23 +93,13 @@ fn test_tab_key_inserts_indent_unit() {
     let config = EditorConfig::default();
 
     // Rust：一次 Tab 一个 \t。
-    let mut rust = EditorTabState::from_file(
-        TabId::new(1),
-        PathBuf::from("test.rs"),
-        "",
-        &config,
-    );
+    let mut rust = EditorTabState::from_file(TabId::new(1), PathBuf::from("test.rs"), "", &config);
     let _ = rust.apply_command(Command::InsertTab, 0, &config);
     assert_eq!(rust.buffer.text(), "\t");
     assert_eq!(rust.buffer.cursor(), (0, 1));
 
     // C++：一次 Tab 两个 \t。
-    let mut cpp = EditorTabState::from_file(
-        TabId::new(2),
-        PathBuf::from("test.cpp"),
-        "",
-        &config,
-    );
+    let mut cpp = EditorTabState::from_file(TabId::new(2), PathBuf::from("test.cpp"), "", &config);
     let _ = cpp.apply_command(Command::InsertTab, 0, &config);
     assert_eq!(cpp.buffer.text(), "\t\t");
     assert_eq!(cpp.buffer.cursor(), (0, 2));

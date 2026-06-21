@@ -1276,9 +1276,11 @@ fn test_optional_lsp_requests_are_gated_by_capabilities() {
     });
 
     drive_until(&mut workbench, &rx, Duration::from_secs(3), |w| {
-        w.state().lsp.server_capabilities.iter().any(|(k, c)| {
-            k.server == LspServerKind::Pyright && !c.inlay_hints && !c.folding_range
-        })
+        w.state()
+            .lsp
+            .server_capabilities
+            .iter()
+            .any(|(k, c)| k.server == LspServerKind::Pyright && !c.inlay_hints && !c.folding_range)
     });
 
     let trace = std::fs::read_to_string(&trace_path).unwrap_or_default();

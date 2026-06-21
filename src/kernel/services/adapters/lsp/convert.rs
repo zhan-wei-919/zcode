@@ -3,9 +3,8 @@ use crate::kernel::panel::symbols::SymbolItem;
 use crate::kernel::services::ports::{
     LspCodeAction, LspCommand, LspCompletionItem, LspHoverBlock, LspHoverPayload, LspInlayHint,
     LspInsertTextFormat, LspMarkup, LspPosition, LspPositionEncoding, LspRange, LspResourceOp,
-    LspServerCapabilities, LspSignatureHelpPayload,
-    LspSignatureInfo, LspSignatureParameter, LspSignatureParameterLabel, LspTextChange,
-    LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
+    LspServerCapabilities, LspSignatureHelpPayload, LspSignatureInfo, LspSignatureParameter,
+    LspSignatureParameterLabel, LspTextChange, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use rustc_hash::FxHashMap;
 use serde_json::Value;

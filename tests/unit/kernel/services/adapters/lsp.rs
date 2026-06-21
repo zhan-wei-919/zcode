@@ -1054,4 +1054,3 @@ fn hover_request_with_definition_preview_sends_hover_and_definition_requests() {
     }
     assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
 }
-

@@ -1,7 +1,6 @@
 use super::super::Workbench;
 use super::{
-    classify_lsp_edit_trigger, lsp_debounce_duration, LspDebouncePipeline,
-    LspDebounceTrigger,
+    classify_lsp_edit_trigger, lsp_debounce_duration, LspDebouncePipeline, LspDebounceTrigger,
 };
 use crate::core::Command;
 use crate::kernel::lsp_registry;

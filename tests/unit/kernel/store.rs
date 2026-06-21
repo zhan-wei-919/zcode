@@ -5,8 +5,7 @@ use crate::kernel::language::adapter::{
 use crate::kernel::services::ports::EditorConfig;
 use crate::kernel::services::ports::{
     LspCompletionTriggerKind, LspHoverBlock, LspHoverPayload, LspInsertTextFormat, LspPosition,
-    LspRange, LspTextEdit, LspWorkspaceEdit,
-    LspWorkspaceFileEdit,
+    LspRange, LspTextEdit, LspWorkspaceEdit, LspWorkspaceFileEdit,
 };
 use crate::kernel::state::{
     CompletionRequestContext, ContextMenuRequest, PendingAction, PendingEditorNavigation,

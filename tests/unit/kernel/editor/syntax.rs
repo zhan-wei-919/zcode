@@ -968,9 +968,9 @@ fn test_highlight_cpp_multi_declarator_all_names_highlighted() {
     for name in ["BM", "BN", "BK"] {
         let idx = line.find(name).unwrap();
         assert!(
-            spans[0].iter().any(|s| {
-                s.kind == HighlightKind::Variable && s.start <= idx && idx < s.end
-            }),
+            spans[0]
+                .iter()
+                .any(|s| { s.kind == HighlightKind::Variable && s.start <= idx && idx < s.end }),
             "expected Variable for `{name}`, got: {:?}",
             spans[0]
         );
