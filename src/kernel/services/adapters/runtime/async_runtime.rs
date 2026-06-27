@@ -134,7 +134,14 @@ impl AsyncRuntime {
         });
     }
 
-    pub fn write_file(&self, pane: usize, path: PathBuf, version: u64, rope: Rope) {
+    pub fn write_file(
+        &self,
+        pane: usize,
+        path: PathBuf,
+        version: u64,
+        head: crate::models::OpId,
+        rope: Rope,
+    ) {
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
             let tx_for_error = tx.clone();
@@ -171,6 +178,7 @@ impl AsyncRuntime {
                 path,
                 success,
                 version,
+                head,
             });
         });
     }

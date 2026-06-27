@@ -449,14 +449,14 @@ impl Store {
                             pane,
                             path,
                             success,
-                            version,
+                            head,
                         } => {
                             let (state_changed, effects) =
                                 self.state.editor.dispatch_action(EditorAction::Saved {
                                     pane,
                                     path,
                                     success,
-                                    version,
+                                    head,
                                 });
 
                             DispatchResult {

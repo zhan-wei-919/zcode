@@ -2147,9 +2147,12 @@ impl EditorTabState {
         true
     }
 
-    pub fn on_saved(&mut self) {
-        self.history.on_save();
-        self.dirty = false;
+    /// 保存成功回调：`written_head` 是发起写盘那一刻的 HEAD，标识已落盘的内容。
+    /// 把它记为已保存基线后按 HEAD 身份重算 dirty —— 而不是无条件清零 —— 这样
+    /// 保存发起后又产生的真实编辑仍正确保持脏，而 undo/redo 来回到已写盘内容则清脏。
+    pub fn on_saved_at(&mut self, written_head: crate::models::OpId) {
+        self.history.mark_saved_at(written_head);
+        self.dirty = self.history.is_dirty();
         self.disk_state = super::state::DiskState::InSync;
     }
 }

@@ -335,6 +335,7 @@ impl Workbench {
                 pane,
                 path,
                 version,
+                head,
             } => {
                 let _scope = perf::scope("effect.write_file");
                 let Some(pane_state) = self.store.state().editor.pane(pane) else {
@@ -349,7 +350,7 @@ impl Workbench {
                 };
 
                 let rope = tab.buffer.rope().clone();
-                self.runtime.write_file(pane, path, version, rope);
+                self.runtime.write_file(pane, path, version, head, rope);
             }
             KernelEffect::SetClipboardText(text) => {
                 let _scope = perf::scope("effect.clipboard_set");

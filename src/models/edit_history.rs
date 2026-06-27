@@ -142,6 +142,13 @@ impl EditHistory {
         self.saved_head = self.head;
     }
 
+    /// 把指定 HEAD 记为已保存基线。用于异步写盘：基线应是发起写盘那一刻的
+    /// HEAD（被写入磁盘的内容），而非回调到达时的当前 HEAD —— 两者可能因
+    /// 期间的编辑或 undo/redo 而不同。
+    pub fn mark_saved_at(&mut self, head: OpId) {
+        self.saved_head = head;
+    }
+
     /// 重置历史，丢弃全部已记录操作。
     pub fn clear(&mut self) {
         self.saved_head = OpId::root();

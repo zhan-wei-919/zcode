@@ -181,8 +181,8 @@ impl EditorState {
                 pane,
                 path,
                 success,
-                version,
-            } => self.saved(pane, path, success, version),
+                head,
+            } => self.saved(pane, path, success, head),
             EditorAction::CloseTabAt { pane, index } => self.close_tab_at(pane, index),
             EditorAction::CloseTabsById { pane, tab_ids } => self.close_tabs_by_id(pane, &tab_ids),
             EditorAction::MoveTab {
@@ -758,12 +758,14 @@ impl EditorState {
             return (false, Vec::new());
         };
         let version = tab.edit_version;
+        let head = tab.history.head();
         (
             false,
             vec![Effect::WriteFile {
                 pane,
                 path,
                 version,
+                head,
             }],
         )
     }
@@ -1090,7 +1092,7 @@ impl EditorState {
         pane: usize,
         path: std::path::PathBuf,
         success: bool,
-        version: u64,
+        head: crate::models::OpId,
     ) -> (bool, Vec<Effect>) {
         if !success {
             return (false, Vec::new());
@@ -1105,10 +1107,10 @@ impl EditorState {
         else {
             return (false, Vec::new());
         };
-        if tab.edit_version != version {
-            return (false, Vec::new());
-        }
-        tab.on_saved();
+        // 把「写盘那一刻的 HEAD」记为已保存基线，再据此重算 dirty：
+        // 当前 HEAD == 写盘 HEAD 时为干净；若期间有真实新编辑则 HEAD 不同、
+        // 仍为脏。这样 undo/redo 来回（只 bump 计数器、内容不变）不会再卡住脏标记。
+        tab.on_saved_at(head);
         (true, Vec::new())
     }
 

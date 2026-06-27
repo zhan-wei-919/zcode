@@ -491,6 +491,7 @@ impl Workbench {
                 path,
                 success,
                 version,
+                head,
             } => {
                 let save_key = (pane, path.clone());
                 if self
@@ -525,7 +526,7 @@ impl Workbench {
                     pane,
                     path,
                     success,
-                    version,
+                    head,
                 }));
             }
             AppMessage::FileError { path, error } => {

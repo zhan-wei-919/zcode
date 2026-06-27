@@ -9,6 +9,7 @@ use crate::kernel::services::ports::{
     LspCompletionItem, LspCompletionTriggerContext, LspPositionEncoding, LspRange, LspResourceOp,
     LspWorkspaceFileEdit,
 };
+use crate::models::OpId;
 
 #[derive(Debug, Clone)]
 pub enum Effect {
@@ -59,7 +60,12 @@ pub enum Effect {
     WriteFile {
         pane: usize,
         path: PathBuf,
+        // version：单调计数器，仅用于回调的去重/排序（LSP 同步）。
         version: u64,
+        // head：发起写盘那一刻的编辑历史 HEAD，标识被写入磁盘的内容。
+        // 保存成功后据此判断当前缓冲区是否仍等于磁盘内容，避免用 version
+        // 计数器误判（undo/redo 会前进 version 却不改变内容）。
+        head: OpId,
     },
     SetClipboardText(String),
     RequestClipboardText {

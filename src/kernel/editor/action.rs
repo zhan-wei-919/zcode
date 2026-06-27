@@ -1,5 +1,5 @@
 use crate::kernel::services::ports::SearchMessage;
-use crate::models::Granularity;
+use crate::models::{Granularity, OpId};
 use std::path::PathBuf;
 
 use super::ReloadRequest;
@@ -128,7 +128,8 @@ pub enum EditorAction {
         pane: usize,
         path: PathBuf,
         success: bool,
-        version: u64,
+        // head：发起写盘那一刻的 HEAD，标识落盘内容；驱动保存后脏标记的重算。
+        head: OpId,
     },
     CloseTabAt {
         pane: usize,

@@ -1,6 +1,7 @@
 use crate::kernel::editor::ReloadRequest;
 use crate::kernel::editor::{SyntaxHighlightPatch, TabId};
 use crate::kernel::services::ports::DirEntryInfo;
+use crate::models::OpId;
 use std::path::PathBuf;
 
 pub enum AppMessage {
@@ -24,7 +25,9 @@ pub enum AppMessage {
         pane: usize,
         path: PathBuf,
         success: bool,
+        // version：单调计数器，用于回调去重/排序；head：落盘内容对应的 HEAD。
         version: u64,
+        head: OpId,
     },
     PathCreated {
         path: PathBuf,

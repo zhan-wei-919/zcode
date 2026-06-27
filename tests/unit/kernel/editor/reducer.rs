@@ -59,7 +59,9 @@ fn test_goto_byte_offset_eof_multibyte() {
 }
 
 #[test]
-fn test_saved_version_mismatch_does_not_clear_dirty() {
+fn test_saved_with_stale_head_does_not_clear_dirty_when_newer_edits_exist() {
+    // 保存发起后用户又产生了真实新编辑（HEAD 前进）。旧保存的回调（带旧 HEAD）
+    // 到达时不能清脏——磁盘内容落后于缓冲区；只有匹配当前 HEAD 的保存才清脏。
     let config = EditorConfig::default();
     let mut editor = EditorState::new(config);
     let path = PathBuf::from("test.txt");
@@ -74,36 +76,84 @@ fn test_saved_version_mismatch_does_not_clear_dirty() {
     assert!(changed);
 
     let (_, effects) = editor.apply_command(0, Command::Save);
-    let version1 = match effects.as_slice() {
-        [Effect::WriteFile { version, .. }] => *version,
+    let head1 = match effects.as_slice() {
+        [Effect::WriteFile { head, .. }] => *head,
         other => panic!("expected WriteFile effect, got {other:?}"),
     };
 
+    // 写盘窗口内产生真实新编辑：HEAD 前进，缓冲区不再等于已写盘内容。
     let (changed, _) = editor.apply_command(0, Command::InsertChar('y'));
     assert!(changed);
 
-    let (dirty, version2) = {
-        let tab = editor.pane(0).unwrap().active_tab().unwrap();
-        (tab.dirty, tab.edit_version)
-    };
-    assert!(dirty);
-    assert!(version2 > version1);
+    let head2 = editor.pane(0).unwrap().active_tab().unwrap().history.head();
+    assert!(head2 != head1);
+    assert!(editor.pane(0).unwrap().active_tab().unwrap().dirty);
 
+    // 旧保存（head1）的回调：磁盘只到 'x'，缓冲区已是 'xy'，仍应为脏。
     let _ = editor.dispatch_action(EditorAction::Saved {
         pane: 0,
         path: path.clone(),
         success: true,
-        version: version1,
+        head: head1,
     });
     assert!(editor.pane(0).unwrap().active_tab().unwrap().dirty);
 
+    // 与当前 HEAD 匹配的保存回调到达：清脏。
     let _ = editor.dispatch_action(EditorAction::Saved {
         pane: 0,
         path,
         success: true,
-        version: version2,
+        head: head2,
     });
     assert!(!editor.pane(0).unwrap().active_tab().unwrap().dirty);
+}
+
+#[test]
+fn test_saved_clears_dirty_when_undo_redo_returns_to_written_content() {
+    // 复现「Ctrl+S 保存不掉」的假 dirty：保存发起后、异步写盘完成前，
+    // 在窗口内做了一次 undo+redo 回到写盘时的内容。undo/redo 会 bump
+    // edit_version，于是回调里 edit_version != version，dirty 永不清除——
+    // 但磁盘内容与当前缓冲区其实完全一致，应当是干净的。
+    let config = EditorConfig::default();
+    let mut editor = EditorState::new(config);
+    let path = PathBuf::from("test.txt");
+
+    let _ = editor.dispatch_action(EditorAction::OpenFile {
+        pane: 0,
+        path: path.clone(),
+        content: "hello".to_string(),
+    });
+
+    let (changed, _) = editor.apply_command(0, Command::InsertChar('x'));
+    assert!(changed);
+
+    // 发起保存：此刻写盘的内容 = 当前缓冲区（"xhello"），记录写盘 HEAD。
+    let (_, effects) = editor.apply_command(0, Command::Save);
+    let (version, head) = match effects.as_slice() {
+        [Effect::WriteFile { version, head, .. }] => (*version, *head),
+        other => panic!("expected WriteFile effect, got {other:?}"),
+    };
+
+    // 异步写盘窗口内：undo 再 redo，缓冲区回到写盘时的内容，但 edit_version 已前进。
+    let _ = editor.apply_command(0, Command::Undo);
+    let _ = editor.apply_command(0, Command::Redo);
+    let after_version = editor.pane(0).unwrap().active_tab().unwrap().edit_version;
+    assert!(
+        after_version != version,
+        "undo+redo should have advanced edit_version past the save snapshot"
+    );
+
+    // 写盘成功回调到达：当前 HEAD == 写盘 HEAD，磁盘内容 == 缓冲区，dirty 应被清除。
+    let _ = editor.dispatch_action(EditorAction::Saved {
+        pane: 0,
+        path,
+        success: true,
+        head,
+    });
+    assert!(
+        !editor.pane(0).unwrap().active_tab().unwrap().dirty,
+        "buffer content matches what was written to disk; dirty must clear"
+    );
 }
 
 #[test]
