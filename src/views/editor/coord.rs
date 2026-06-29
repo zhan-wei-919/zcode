@@ -49,7 +49,10 @@ pub fn screen_to_col(
             g.width() as u32
         };
 
-        if display_col + w / 2 >= target_x {
+        // 把点击的单元格按其“中心”归边：落在字形左半 → 光标在字形前，右半 → 字形后。
+        // 用 (w-1)/2 而非 w/2：宽字形（CJK 宽 2、Tab 宽 4）才能对称地按最近边界落点，
+        // 否则 w/2 会把右半也判成“前”，使光标恒偏到字形左侧一格。窄字符 (w=1) 阈值为 0，行为不变。
+        if display_col + w.saturating_sub(1) / 2 >= target_x {
             col = i;
             break;
         }
@@ -78,7 +81,8 @@ fn screen_to_col_markdown(
 
     for g in rendered.text.graphemes(true) {
         let w = g.width() as u32;
-        if display_col + w / 2 >= target_x {
+        // 同 screen_to_col：按单元格中心归最近边界，(w-1)/2 消除宽字形的左偏一格。
+        if display_col + w.saturating_sub(1) / 2 >= target_x {
             break;
         }
         display_col += w;

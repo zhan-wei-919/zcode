@@ -2582,3 +2582,89 @@ fn test_lsp_definition_highlight_is_deferred_until_target_file_opens() {
     assert!(workbench.tick());
     assert!(workbench.definition_jump_highlight.is_none());
 }
+
+// --- 点击落点 vs 光标渲染对齐 ---
+// 在内容区从最左列起逐列单击，单击后渲染一帧并读回 TestBackend 收到的硬件光标 x，
+// 返回每列的 `光标x - 点击x`。点击经 screen_to_col 解析为源列、再经 cursor_position_editor
+// 反算回屏幕 x；二者应按“最近字形边界”对称落点。
+//
+// 回归点：宽字形（CJK 宽 2、Tab 宽 4）此前用 w/2 阈值把单元格按左边缘归边，导致点击字形
+// 右半也判成“字形前”，光标恒偏到点击位置左边一格。改为 (w-1)/2 后按单元格中心归最近边界。
+fn click_cursor_deltas(content: &str, clicks: u16) -> Vec<i32> {
+    let dir = tempdir().unwrap();
+    let (runtime, _rx) = create_test_runtime();
+    let mut workbench = Workbench::new(dir.path(), runtime, None).unwrap();
+    let path = dir.path().join("align.txt");
+    let _ = workbench.dispatch_kernel(KernelAction::Editor(EditorAction::OpenFile {
+        pane: 0,
+        path,
+        content: content.to_string(),
+    }));
+    let _ = workbench.dispatch_kernel(KernelAction::RunCommand(Command::FocusEditor));
+
+    let (w, h) = (100u16, 24u16);
+    render_once(&mut workbench, w, h);
+
+    let (cax, cay) = {
+        let area = *workbench.frame_layout.editor.inner_areas.first().unwrap();
+        let state = workbench.store.state();
+        let pane = state.editor.pane(0).unwrap();
+        let layout = compute_editor_pane_layout(area, pane, &state.editor.config);
+        (layout.content_area.x, layout.content_area.y)
+    };
+
+    let mut out = Vec::new();
+    for k in 0..clicks {
+        let click_x = cax + k;
+        let _ = workbench.handle_input(&mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            click_x,
+            cay,
+        ));
+        let _ = workbench.handle_input(&mouse(MouseEventKind::Up(MouseButton::Left), click_x, cay));
+        let mut backend = TestBackend::new(w, h);
+        workbench.render(&mut backend, Rect::new(0, 0, w, h));
+        let cx = backend.cursor().map(|p| p.x).unwrap_or(9999);
+        out.push(cx as i32 - click_x as i32);
+    }
+    out
+}
+
+#[test]
+fn click_cursor_alignment_is_exact_for_ascii() {
+    // 窄字符无歧义：每次点击光标都落在被点单元格本身，零偏移。
+    let deltas = click_cursor_deltas("abcdefghijklmnopqrst\n", 14);
+    assert!(
+        deltas.iter().all(|&d| d == 0),
+        "ASCII 点击应零偏移，实际 {deltas:?}"
+    );
+}
+
+#[test]
+fn click_cursor_alignment_wide_chars_round_to_nearest_boundary() {
+    // 宽 2 的 CJK：左半单元格 → 字形前(0)，右半单元格 → 字形后(+1)。
+    // 修复前为 [0, -1, 0, -1, ...]（右半被判成字形前，光标偏左一格）。
+    let deltas = click_cursor_deltas("你好世界中文字符测试内容\n", 14);
+    assert!(
+        deltas.iter().all(|&d| d >= 0),
+        "宽字形点击不应把光标偏到点击位置左侧，实际 {deltas:?}"
+    );
+    let expected: Vec<i32> = (0..14).map(|k| if k % 2 == 0 { 0 } else { 1 }).collect();
+    assert_eq!(deltas, expected, "宽字形应按最近边界对称落点");
+}
+
+#[test]
+fn click_cursor_alignment_tab_splits_symmetrically() {
+    // 宽 4 的 Tab：左半两格(偏移0,1) → Tab 起点，右半两格(偏移2,3) → Tab 终点。
+    // 行首两个 Tab 占屏 8 格，第 9 格起是 ASCII。修复前为左偏的 [-1,-2,+1,0]。
+    let deltas = click_cursor_deltas("\t\tabcdefgh\n", 8);
+    let first_tab = &deltas[0..4];
+    assert!(
+        first_tab[0] <= 0 && first_tab[1] <= 0,
+        "Tab 左半应落到起点（光标不偏右），实际 {first_tab:?}"
+    );
+    assert!(
+        first_tab[2] > 0 && first_tab[3] > 0,
+        "Tab 右半应落到终点（光标偏右），实际 {first_tab:?}"
+    );
+}

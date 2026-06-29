@@ -180,7 +180,9 @@ pub fn screen_to_col(
             g.width() as u32
         };
 
-        if display_col + w / 2 >= target_x {
+        // 与 views::editor::coord::screen_to_col 对齐：按单元格中心归最近边界，
+        // (w-1)/2 消除宽字形（CJK/Tab）点击恒偏左一格的问题。
+        if display_col + w.saturating_sub(1) / 2 >= target_x {
             col = i;
             break;
         }
